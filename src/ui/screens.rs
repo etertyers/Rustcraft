@@ -1,11 +1,13 @@
-//! The inventory screens opened with E: survival's (1.0.0's player
-//! inventory) and creative's (every block and item, scrolling).
+//! Screens with slots: the inventory opened with E (survival's, with its
+//! 2×2 crafting grid, or creative's list of every block and item) and the
+//! crafting table's, laid out as in 1.0.0.
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
-    player::{Click, HOTBAR_SLOTS, SLOTS},
+    player::{HOTBAR_SLOTS, SLOTS},
+    slots::{Click, SlotRef},
     stack::ItemStack,
 };
 
@@ -18,15 +20,18 @@ pub enum Screen {
     Creative {
         scroll: f32,
     },
+    /// A crafting table's 3×3 grid.
+    Crafting,
 }
 
 /// What the player did on a screen this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScreenAction {
-    /// Clicked inventory slot `0..36`.
-    Click(usize, Click),
+    Click(SlotRef, Click),
     /// Clicked outside the panel: throw the held stack (all, or one).
-    Throw { all: bool },
+    Throw {
+        all: bool,
+    },
     /// Creative: put a full stack of this in the selected hotbar slot.
     Take(ItemStack),
     /// Creative: clicked the item grid while holding something.
@@ -37,10 +42,8 @@ pub enum ScreenAction {
 
 /// Everything a screen shows.
 pub struct ScreenView<'a> {
-    /// All 36 inventory slots, hotbar first.
-    pub slots: &'a [Option<SlotView>],
-    /// Names for the hover tooltip, per slot.
-    pub names: &'a [Option<String>],
+    /// What a slot holds, with its name for the hover tooltip.
+    pub slot: &'a dyn Fn(SlotRef) -> Option<(SlotView, String)>,
     /// The stack held on the mouse.
     pub cursor: Option<SlotView>,
     /// Creative: every block and item, with how it looks and its name.
@@ -73,13 +76,54 @@ fn wheel_rows(input: &egui::InputState, scale: f32) -> f32 {
         .sum()
 }
 
-/// A slot's top-left in panel pixels, for the survival inventory.
+/// An inventory slot's top-left in panel pixels, below the top part of a
+/// 166-pixel-tall screen.
 fn inventory_slot(index: usize) -> [f32; 2] {
     if index < HOTBAR_SLOTS {
         [8.0 + index as f32 * 18.0, 142.0]
     } else {
         let i = index - HOTBAR_SLOTS;
         [8.0 + (i % 9) as f32 * 18.0, 84.0 + (i / 9) as f32 * 18.0]
+    }
+}
+
+/// A `size` × `size` crafting grid's slots from `at`, and the result's.
+fn crafting_slots(size: usize, at: [f32; 2], result: [f32; 2]) -> Vec<(SlotRef, [f32; 2])> {
+    let cells = (0..size * size).map(|i| {
+        let (column, row) = ((i % size) as f32, (i / size) as f32);
+        (
+            SlotRef::Grid(i),
+            [at[0] + column * 18.0, at[1] + row * 18.0],
+        )
+    });
+    cells.chain([(SlotRef::Result, result)]).collect()
+}
+
+/// The slots `screen` shows and where (1.0.0's container layouts). The
+/// creative item grid isn't included.
+fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
+    let inventory = (0..SLOTS).map(|i| (SlotRef::Inventory(i), inventory_slot(i)));
+    match screen {
+        Screen::Inventory => crafting_slots(2, [88.0, 26.0], [144.0, 36.0])
+            .into_iter()
+            .chain(inventory)
+            .collect(),
+        Screen::Crafting => crafting_slots(3, [30.0, 17.0], [124.0, 35.0])
+            .into_iter()
+            .chain(inventory)
+            .collect(),
+        Screen::Creative { .. } => (0..HOTBAR_SLOTS)
+            .map(|i| (SlotRef::Inventory(i), [9.0 + i as f32 * 18.0, 112.0]))
+            .collect(),
+    }
+}
+
+/// Titles drawn on a screen, with where (1.0.0's foreground layers).
+fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
+    match screen {
+        Screen::Inventory => &[("Crafting", [86.0, 16.0])],
+        Screen::Crafting => &[("Crafting", [28.0, 6.0]), ("Inventory", [8.0, 72.0])],
+        Screen::Creative { .. } => &[],
     }
 }
 
@@ -118,7 +162,7 @@ pub fn show(
     };
 
     let size = match screen {
-        Screen::Inventory => vec2(176.0, 166.0),
+        Screen::Inventory | Screen::Crafting => vec2(176.0, 166.0),
         Screen::Creative { .. } => vec2(195.0, 136.0),
     };
     let origin = full.center() - size * scale / 2.0;
@@ -132,86 +176,84 @@ pub fn show(
     let mut actions = Vec::new();
     let mut tooltip = None;
 
-    // Inventory slots shown on this screen, with where they are.
-    let shown: Vec<(usize, [f32; 2])> = match screen {
-        Screen::Inventory => {
-            gui::sheet_image(
-                &painter,
-                textures.inventory.id(),
-                [0.0, 0.0],
-                size.into(),
-                origin,
-                scale,
-            );
-            (0..SLOTS).map(|i| (i, inventory_slot(i))).collect()
+    let background = match screen {
+        Screen::Inventory => &textures.inventory,
+        Screen::Crafting => &textures.crafting,
+        Screen::Creative { .. } => &textures.creative,
+    };
+    gui::sheet_image(
+        &painter,
+        background.id(),
+        [0.0, 0.0],
+        size.into(),
+        origin,
+        scale,
+    );
+    for &(text, at) in labels(screen) {
+        painter.text(
+            origin + vec2(at[0], at[1]) * scale,
+            egui::Align2::LEFT_TOP,
+            text,
+            egui::FontId::proportional(8.0 * scale),
+            Color32::from_gray(0x40),
+        );
+    }
+    if let Screen::Creative { scroll } = screen {
+        let rows = creative_scroll_rows(view.catalog.len());
+        if let Some(pos) = pointer
+            && panel.contains(pos)
+        {
+            *scroll = (*scroll - wheel).clamp(0.0, rows as f32);
         }
-        Screen::Creative { scroll } => {
-            gui::sheet_image(
-                &painter,
-                textures.creative.id(),
-                [0.0, 0.0],
-                size.into(),
-                origin,
-                scale,
-            );
-            let rows = creative_scroll_rows(view.catalog.len());
-            if let Some(pos) = pointer
-                && panel.contains(pos)
-            {
-                *scroll = (*scroll - wheel).clamp(0.0, rows as f32);
-            }
-            let top_row = scroll.round() as usize;
-            let fraction = if rows == 0 {
-                0.0
-            } else {
-                top_row as f32 / rows as f32
-            };
-            let scroller = origin + vec2(175.0, 18.0 + (112.0 - 15.0) * fraction) * scale;
-            gui::sheet_image(
-                &painter,
-                textures.tabs.id(),
-                [232.0, 0.0],
-                [12.0, 15.0],
-                scroller,
-                scale,
-            );
-            for row in 0..ROWS {
-                for column in 0..COLUMNS {
-                    let index = (top_row + row) * COLUMNS + column;
-                    let Some((stack, slot, name)) = view.catalog.get(index) else {
-                        continue;
-                    };
-                    let rect = slot_rect([9.0 + column as f32 * 18.0, 18.0 + row as f32 * 18.0]);
-                    gui::paint_slot(&painter, rect.min, slot, scale, textures.atlas.id());
-                    if pointer.is_some_and(|pos| rect.contains(pos)) {
-                        painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
-                        tooltip = Some(name.clone());
-                        if click.is_some() {
-                            actions.push(if view.cursor.is_some() {
-                                ScreenAction::Discard
-                            } else {
-                                ScreenAction::Take(*stack)
-                            });
-                        }
+        let top_row = scroll.round() as usize;
+        let fraction = if rows == 0 {
+            0.0
+        } else {
+            top_row as f32 / rows as f32
+        };
+        let scroller = origin + vec2(175.0, 18.0 + (112.0 - 15.0) * fraction) * scale;
+        gui::sheet_image(
+            &painter,
+            textures.tabs.id(),
+            [232.0, 0.0],
+            [12.0, 15.0],
+            scroller,
+            scale,
+        );
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let index = (top_row + row) * COLUMNS + column;
+                let Some((stack, slot, name)) = view.catalog.get(index) else {
+                    continue;
+                };
+                let rect = slot_rect([9.0 + column as f32 * 18.0, 18.0 + row as f32 * 18.0]);
+                gui::paint_slot(&painter, rect.min, slot, scale, textures.atlas.id());
+                if pointer.is_some_and(|pos| rect.contains(pos)) {
+                    painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
+                    tooltip = Some(name.clone());
+                    if click.is_some() {
+                        actions.push(if view.cursor.is_some() {
+                            ScreenAction::Discard
+                        } else {
+                            ScreenAction::Take(*stack)
+                        });
                     }
                 }
             }
-            (0..HOTBAR_SLOTS)
-                .map(|i| (i, [9.0 + i as f32 * 18.0, 112.0]))
-                .collect()
         }
-    };
+    }
 
-    for (index, at) in shown {
+    for (slot, at) in layout(screen) {
         let rect = slot_rect(at);
-        if let Some(slot) = &view.slots[index] {
-            gui::paint_slot(&painter, rect.min, slot, scale, textures.atlas.id());
+        let shown = (view.slot)(slot);
+        if let Some((stack, _)) = &shown {
+            gui::paint_slot(&painter, rect.min, stack, scale, textures.atlas.id());
         }
         if pointer.is_some_and(|pos| rect.contains(pos)) {
             painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
-            tooltip = view.names[index].clone();
+            tooltip = shown.map(|(_, name)| name);
             if let Some(click) = click {
-                actions.push(ScreenAction::Click(index, click));
+                actions.push(ScreenAction::Click(slot, click));
             }
         }
     }
@@ -261,6 +303,18 @@ mod tests {
         assert_eq!(inventory_slot(8), [152.0, 142.0]);
         assert_eq!(inventory_slot(9), [8.0, 84.0]);
         assert_eq!(inventory_slot(35), [152.0, 120.0]);
+    }
+
+    #[test]
+    fn crafting_slots_sit_where_1_0_0_puts_them() {
+        let table = layout(&Screen::Crafting);
+        assert_eq!(table.len(), 9 + 1 + SLOTS);
+        assert!(table.contains(&(SlotRef::Grid(0), [30.0, 17.0])));
+        assert!(table.contains(&(SlotRef::Grid(8), [66.0, 53.0])));
+        assert!(table.contains(&(SlotRef::Result, [124.0, 35.0])));
+        let inventory = layout(&Screen::Inventory);
+        assert!(inventory.contains(&(SlotRef::Grid(3), [106.0, 44.0])));
+        assert!(inventory.contains(&(SlotRef::Result, [144.0, 36.0])));
     }
 
     #[test]

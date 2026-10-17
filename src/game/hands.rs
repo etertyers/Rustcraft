@@ -16,7 +16,10 @@ use crate::{
         raycast::Hit,
         stats::DamageSource,
     },
-    world::{block::Fluid, harvest},
+    world::{
+        block::{Activate, Fluid},
+        harvest,
+    },
 };
 
 /// The arrow item, given back when a stuck arrow is picked up.
@@ -87,7 +90,7 @@ impl Game {
         };
         if wants_break {
             self.mine(hit.block);
-        } else if wants_place {
+        } else if wants_place && !self.activate(hit.block) {
             self.place(&hit);
         }
     }
@@ -344,6 +347,28 @@ impl Game {
         {
             self.inventory.damage_selected(tool.hit_wear, &self.items);
         }
+    }
+
+    /// Right-clicks the block at `cell` (1.0.0's `blockActivated`): opens a
+    /// crafting table and so on. Sneaking with something in hand places
+    /// against it instead. Returns whether the block did something.
+    fn activate(&mut self, cell: IVec3) -> bool {
+        if self.keys.sneak && self.inventory.selected_stack().is_some() {
+            return false;
+        }
+        let Some(action) = self
+            .chunks
+            .world()
+            .block(cell.x, cell.y, cell.z)
+            .and_then(|block| self.items.blocks.get(block.id()))
+            .and_then(|def| def.activate)
+        else {
+            return false;
+        };
+        match action {
+            Activate::Crafting => self.open_crafting_table(),
+        }
+        true
     }
 
     /// Places the selected stack's block against the clicked face.

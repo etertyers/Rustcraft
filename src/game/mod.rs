@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+mod containers;
 pub mod environment;
 mod hands;
 mod mobs;
@@ -11,6 +12,8 @@ use std::{
     path::Path,
     sync::Arc,
 };
+
+pub use containers::Container;
 
 use anyhow::Result;
 use glam::DVec3;
@@ -97,6 +100,8 @@ pub struct Game {
     pub stats: Stats,
     /// The stack held on the mouse in an inventory screen.
     pub cursor: Option<ItemStack>,
+    /// The crafting grid, chest or furnace open, if any.
+    pub container: Option<Container>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     pub arrows: Vec<Arrow>,
@@ -165,6 +170,7 @@ impl Game {
             inventory: Inventory::default(),
             stats: Stats::default(),
             cursor: None,
+            container: None,
             entities: Vec::new(),
             arrows: Vec::new(),
             drawing: None,
@@ -263,10 +269,14 @@ impl Game {
             return Ok(());
         };
         let chunks = self.chunks.save()?;
-        // A stack held in an open inventory screen goes back in the
-        // inventory rather than being lost.
+        // A stack held in an open inventory screen, and the crafting grid,
+        // go back in the inventory rather than being lost.
         let mut inventory = self.inventory.clone();
-        if let Some(held) = self.cursor {
+        let grid = match &self.container {
+            Some(Container::Crafting { grid, .. }) => grid.clone(),
+            _ => Vec::new(),
+        };
+        for held in self.cursor.into_iter().chain(grid.into_iter().flatten()) {
             inventory.add(held, &self.items);
         }
         saved.level.player = PlayerData {
@@ -517,6 +527,9 @@ impl Game {
     fn drop_everything(&mut self) {
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
+        if let Some(Container::Crafting { grid, .. }) = self.container.take() {
+            stacks.extend(grid.into_iter().flatten());
+        }
         for slot in 0..crate::inventory::player::SLOTS {
             if let Some(stack) = self.inventory.slot(slot).copied() {
                 self.inventory.set(slot, None);
@@ -584,7 +597,7 @@ fn hotbar_slot(key: KeyCode) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
     use glam::IVec3;
@@ -592,7 +605,7 @@ mod tests {
     use super::*;
     use crate::{
         entity::mobs::MobRegistry,
-        inventory::{item::ItemRegistry, stack::ItemStack},
+        inventory::{crafting::Recipes, item::ItemRegistry, stack::ItemStack},
         player::stats::MAX_HEALTH,
         world::{
             biome::BiomeColors,
@@ -612,8 +625,9 @@ mod tests {
             BiomeColors::uniform(),
         );
         let items = ItemRegistry::load(&assets.join("data/items.ron")).unwrap();
+        let recipes = Recipes::load(&assets.join("data/recipes.ron")).unwrap();
         (
-            Items::new(Arc::new(blocks), Arc::new(items)),
+            Items::new(Arc::new(blocks), Arc::new(items)).with_recipes(Arc::new(recipes)),
             Arc::new(models),
         )
     }
@@ -691,7 +705,7 @@ mod tests {
 
     /// A flat test world with the player standing at the origin, looking
     /// straight down, with every chunk around them loaded.
-    fn flat_game(mode: GameMode) -> Game {
+    pub(crate) fn flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
         let chunks = ChunkManager::new(ChunkSource::Flat, models, 1, 2);
         let feet = DVec3::new(0.5, 64.0, 0.5);

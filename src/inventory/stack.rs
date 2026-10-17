@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::item::{FIRST_ITEM_ID, ItemDef, ItemId, ItemRegistry, Tool};
+use super::{
+    crafting::Recipes,
+    item::{FIRST_ITEM_ID, ItemDef, ItemId, ItemRegistry, Tool},
+};
 use crate::world::block::{BlockRegistry, BlockState};
 
 /// Some of one item, like 1.0.0's `ItemStack`.
@@ -43,11 +46,21 @@ impl ItemStack {
 pub struct Items {
     pub blocks: Arc<BlockRegistry>,
     pub items: Arc<ItemRegistry>,
+    pub recipes: Arc<Recipes>,
 }
 
 impl Items {
+    /// Without recipes; see `with_recipes`.
     pub fn new(blocks: Arc<BlockRegistry>, items: Arc<ItemRegistry>) -> Self {
-        Self { blocks, items }
+        Self {
+            blocks,
+            items,
+            recipes: Arc::new(Recipes::default()),
+        }
+    }
+
+    pub fn with_recipes(self, recipes: Arc<Recipes>) -> Self {
+        Self { recipes, ..self }
     }
 
     /// The item definition, for IDs that aren't blocks.

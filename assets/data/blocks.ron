@@ -16,6 +16,7 @@
 //   variants  per-data-value overrides: {data: (name, textures, tint)}
 //   tool      tool that mines it fast: Pickaxe, Shovel or Axe
 //   harvest   tool needed to drop anything: (tools: [...], tier: Wood)
+//   activate  what right-clicking it does: Crafting (opens a 3×3 grid)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
 //   drops     Itself (default; keeps the data value if it has variants),
 //             Nothing, All([...]) every drop that rolls, or OneOf([...]) the
@@ -141,7 +142,7 @@
     (id: 55, name: "redstone_wire", hardness: 0.0, drops: All([(item: 331)]), needs_ground: true, shape: RedstoneWire, layer: Cutout, solid: false, textures: (all: "redstone_dust_dot")),
     (id: 56, name: "diamond_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), drops: All([(item: 264)]), textures: (all: "diamond_ore")),
     (id: 57, name: "diamond_block", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "diamond_block")),
-    (id: 58, name: "crafting_table", hardness: 2.5, textures: (top: "crafting_table_top", bottom: "planks_oak", north: "crafting_table_front", south: "crafting_table_front", east: "crafting_table_side", west: "crafting_table_side")),
+    (id: 58, name: "crafting_table", hardness: 2.5, activate: Crafting, textures: (top: "crafting_table_top", bottom: "planks_oak", north: "crafting_table_front", south: "crafting_table_front", east: "crafting_table_side", west: "crafting_table_side")),
     (id: 59, name: "wheat", hardness: 0.0, drops: All([(item: 296, min_data: 7), (item: 295)]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "wheat_stage_0"),
         variants: {
             1: (textures: (all: "wheat_stage_1")),

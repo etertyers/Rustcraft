@@ -21,10 +21,12 @@ use winit::{
 use crate::{
     assets, config,
     entity::mobs::MobRegistry,
-    game::{Game, chunk_workers, environment::environment},
+    game::{Container, Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
     inventory::{
-        player::{HOTBAR_SLOTS, SLOTS},
+        crafting::Recipes,
+        player::HOTBAR_SLOTS,
+        slots::SlotRef,
         stack::{ItemStack, Items},
     },
     level::{self, WorldDir},
@@ -193,7 +195,8 @@ impl App {
         );
         let models = Arc::new(models);
         let icons = ItemIcons::new(&atlas, models.clone(), &items);
-        let items = Items::new(Arc::new(blocks), Arc::new(items));
+        let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
+        let items = Items::new(Arc::new(blocks), Arc::new(items)).with_recipes(Arc::new(recipes));
         self.catalog = catalog(&items, &icons);
         self.icons = Some(Arc::new(icons));
         self.items = Some(items);
@@ -342,18 +345,36 @@ impl App {
         } else {
             Screen::Inventory
         });
+        if let Some(game) = self.game.as_mut() {
+            game.open_inventory();
+        }
         self.set_cursor_grab(false);
     }
 
-    /// Closes the screen, throwing whatever was held on the mouse (1.0.0).
+    /// Closes the screen, throwing out whatever was held on the mouse or
+    /// left in a crafting grid (1.0.0).
     fn close_screen(&mut self) {
         self.screen = None;
-        if let Some(game) = self.game.as_mut()
-            && let Some(stack) = game.cursor.take()
-        {
-            game.throw(stack);
+        if let Some(game) = self.game.as_mut() {
+            game.close_container();
         }
         self.set_cursor_grab(true);
+    }
+
+    /// Shows the screen for a container the game opened (a right-clicked
+    /// crafting table).
+    fn show_opened_container(&mut self) {
+        if self.screen.is_some() {
+            return;
+        }
+        let Some(container) = self.game.as_ref().and_then(|game| game.container.as_ref()) else {
+            return;
+        };
+        self.screen = Some(match container {
+            Container::Crafting { size: 2, .. } => Screen::Inventory,
+            Container::Crafting { .. } => Screen::Crafting,
+        });
+        self.set_cursor_grab(false);
     }
 
     fn on_screen_action(&mut self, action: ScreenAction) {
@@ -362,9 +383,7 @@ impl App {
         };
         let items = game.items().clone();
         match action {
-            ScreenAction::Click(slot, click) => {
-                game.inventory.click(slot, click, &mut game.cursor, &items);
-            }
+            ScreenAction::Click(slot, click) => game.click_slot(slot, click),
             ScreenAction::Throw { all } => {
                 let Some(held) = game.cursor.as_mut() else {
                     return;
@@ -429,6 +448,7 @@ impl App {
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }
+        self.show_opened_container();
         // Dying closes any screen and frees the mouse for the Respawn button.
         if !self.playing() {
             self.screen = None;
@@ -527,15 +547,12 @@ impl App {
             let icons = self.icons.as_ref()?;
             Some(SlotView::of(stack, icons, game.items()))
         };
-        let slots: Vec<Option<SlotView>> = (0..SLOTS)
-            .map(|i| game.inventory.slot(i).and_then(view_of))
-            .collect();
-        let names: Vec<Option<String>> = (0..SLOTS)
-            .map(|i| game.inventory.slot(i).map(|stack| game.items().name(stack)))
-            .collect();
+        let slot = |slot: SlotRef| {
+            let stack = game.slot_stack(slot)?;
+            Some((view_of(&stack)?, game.items().name(&stack)))
+        };
         let view = ScreenView {
-            slots: &slots,
-            names: &names,
+            slot: &slot,
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
         };

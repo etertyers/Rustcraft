@@ -191,6 +191,13 @@ pub enum Placement {
     Torch,
 }
 
+/// What right-clicking a block does (1.0.0's `blockActivated`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Activate {
+    /// Opens a 3×3 crafting grid.
+    Crafting,
+}
+
 /// The liquid a block is (flowing or still).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Fluid {
@@ -256,6 +263,9 @@ pub struct BlockDef {
     pub needs_ground: bool,
     #[serde(default)]
     pub placement: Placement,
+    /// What right-clicking it does, if anything.
+    #[serde(default)]
+    pub activate: Option<Activate>,
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,
