@@ -284,6 +284,10 @@ impl Game {
         &self.items
     }
 
+    pub fn mob_defs(&self) -> &MobRegistry {
+        &self.mob_defs
+    }
+
     /// Game time in ticks since the world was created.
     pub fn time(&self) -> u64 {
         self.time

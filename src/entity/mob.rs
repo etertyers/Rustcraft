@@ -41,10 +41,6 @@ pub struct Mob {
     prev_yaw: f32,
     /// Where the head looks, radians (absolute yaw and pitch).
     pub head_yaw: f32,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "combat and mob rendering come next")
-    )]
     pub pitch: f32,
     pub stats: Stats,
     /// Ticks left flashing red after a hit.
@@ -105,10 +101,6 @@ impl Mob {
     }
 
     /// Feet, facing and leg swing `alpha` of the way from the last tick.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "combat and mob rendering come next")
-    )]
     pub fn pose(&self, alpha: f32) -> (DVec3, f32, f32) {
         let feet = self.prev_feet.lerp(self.feet(), alpha as f64);
         let yaw = self.prev_yaw + angle_difference(self.yaw, self.prev_yaw) * alpha;

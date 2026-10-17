@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use glam::{DVec3, Vec3};
 use log::{error, info, warn};
 use winit::{
@@ -38,6 +38,7 @@ use crate::{
         camera::Camera,
         entities::item_mesh,
         icons::ItemIcons,
+        models::add_mob,
     },
     ui::{
         DebugStats, DebugUi, Hud,
@@ -50,7 +51,7 @@ use crate::{
         block::BlockRegistry,
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
-        mesh::BlockModels,
+        mesh::{BlockModels, Mesh},
         worldgen::{gallery, terrain::Terrain},
     },
 };
@@ -170,7 +171,17 @@ impl App {
                 BiomeColors::uniform()
             });
         let sky = SkyImages::load(&textures.join("environment"))?;
-        let renderer = Renderer::new(window.clone(), &atlas, &sky)?;
+        let mob_defs = Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?);
+        let mob_textures = mob_defs
+            .iter()
+            .map(|(_, def)| {
+                let path = textures.join("entity").join(&def.texture);
+                Ok(image::open(&path)
+                    .with_context(|| format!("loading {}", path.display()))?
+                    .into_rgba8())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -184,7 +195,7 @@ impl App {
         self.icons = Some(Arc::new(icons));
         self.items = Some(items);
         self.models = Some(models);
-        self.mob_defs = Some(Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?));
+        self.mob_defs = Some(mob_defs);
         match self.world_kind.clone() {
             Some(kind) => self.game = Some(self.start_game(kind)?),
             None => self.menu = Some(Menu::new(level::saves_dir())),
@@ -457,6 +468,20 @@ impl App {
                 light_at,
             );
             renderer.set_entities(&mesh);
+            let alpha = game.tick_alpha() as f32;
+            let mut meshes: Vec<(usize, Mesh)> = Vec::new();
+            for mob in &game.mobs {
+                let index = match meshes.iter().position(|(kind, _)| *kind == mob.kind) {
+                    Some(index) => index,
+                    None => {
+                        meshes.push((mob.kind, Mesh::default()));
+                        meshes.len() - 1
+                    }
+                };
+                let def = game.mob_defs().get(mob.kind);
+                add_mob(&mut meshes[index].1, mob, def, alpha, light_at(mob.eye()));
+            }
+            renderer.set_mobs(&meshes);
         }
 
         let chunks = &game.chunks;
