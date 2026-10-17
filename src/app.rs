@@ -96,6 +96,9 @@ pub struct App {
     /// Mouse buttons held for breaking and placing.
     breaking: bool,
     placing: bool,
+    /// Presses not yet handled by a tick, so a click shorter than a tick still counts.
+    break_clicked: bool,
+    place_clicked: bool,
     /// Ticks until a held button acts again.
     break_cooldown: u8,
     place_cooldown: u8,
@@ -150,6 +153,8 @@ impl App {
             target: None,
             breaking: false,
             placing: false,
+            break_clicked: false,
+            place_clicked: false,
             break_cooldown: 0,
             place_cooldown: 0,
             slot: 0,
@@ -268,6 +273,8 @@ impl App {
             self.keys.clear();
             self.breaking = false;
             self.placing = false;
+            self.break_clicked = false;
+            self.place_clicked = false;
         }
     }
 
@@ -316,10 +323,12 @@ impl App {
         match button {
             MouseButton::Left => {
                 self.breaking = pressed;
+                self.break_clicked |= pressed;
                 self.break_cooldown = 0;
             }
             MouseButton::Right => {
                 self.placing = pressed;
+                self.place_clicked |= pressed;
                 self.place_cooldown = 0;
             }
             _ => {}
@@ -374,8 +383,10 @@ impl App {
     fn use_hands(&mut self) {
         self.break_cooldown = self.break_cooldown.saturating_sub(1);
         self.place_cooldown = self.place_cooldown.saturating_sub(1);
-        let wants_break = self.breaking && self.break_cooldown == 0;
-        let wants_place = self.placing && self.place_cooldown == 0;
+        let wants_break = (self.breaking || self.break_clicked) && self.break_cooldown == 0;
+        let wants_place = (self.placing || self.place_clicked) && self.place_cooldown == 0;
+        self.break_clicked = false;
+        self.place_clicked = false;
         if !wants_break && !wants_place {
             return;
         }
