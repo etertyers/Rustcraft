@@ -6,14 +6,35 @@ use glam::{DVec3, IVec3};
 
 use super::Game;
 use crate::{
-    entity::item::ItemEntity,
+    entity::{
+        arrow::{self, Arrow, ArrowEvent},
+        item::ItemEntity,
+    },
     inventory::{item::Tool, player::HOTBAR_SLOTS, stack::ItemStack},
     player::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
         raycast::Hit,
+        stats::DamageSource,
     },
     world::{block::Fluid, harvest},
 };
+
+/// The arrow item, given back when a stuck arrow is picked up.
+const ARROW: u16 = 262;
+
+/// Exhaustion per block broken (1.0.0's `harvestBlock`).
+const BREAK_EXHAUSTION: f32 = 0.025;
+/// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
+const EAT_TICKS: u32 = 32;
+/// Mobs can be hit this far away (1.0.0 limits entity reach to 3).
+const ATTACK_REACH: f64 = 3.0;
+/// Mob hitboxes grow by this for aiming (1.0.0's `getCollisionBorderSize`).
+const TARGET_BORDER: f64 = 0.1;
+/// Exhaustion per attack (1.0.0).
+const ATTACK_EXHAUSTION: f32 = 0.3;
+/// Extra push and lift of a sprinting hit (1.0.0's knockback bonus).
+const SPRINT_KNOCKBACK: f64 = 0.5;
+const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
 
 impl Game {
     /// The tool in the selected slot, if it's a tool.
@@ -27,11 +48,36 @@ impl Game {
         self.break_cooldown = self.break_cooldown.saturating_sub(1);
         self.place_cooldown = self.place_cooldown.saturating_sub(1);
         let wants_break = self.breaking || self.break_clicked;
-        let wants_place = (self.placing || self.place_clicked) && self.place_cooldown == 0;
+        let using = self.placing || self.place_clicked;
+        if self.keep_drawing(using && !wants_break) {
+            self.break_clicked = false;
+            self.place_clicked = false;
+            self.mining = None;
+            return;
+        }
+        if using && !wants_break && self.keep_eating() {
+            self.break_clicked = false;
+            self.place_clicked = false;
+            self.mining = None;
+            return;
+        }
+        self.eating = None;
+        let wants_place = using && self.place_cooldown == 0;
+        let clicked = self.break_clicked;
         self.break_clicked = false;
         self.place_clicked = false;
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let hit = self.find_target(eye);
+        // A mob in front of the targeted block is hit instead, once per click.
+        if let Some(mob) = self.target_mob(eye, hit.as_ref())
+            && (wants_break || self.mining.is_none())
+        {
+            self.mining = None;
+            if clicked {
+                self.attack(mob);
+            }
+            return;
+        }
         if !wants_break || hit.is_none() {
             // Letting go or looking away starts the block over (1.0.0).
             self.mining = None;
@@ -117,12 +163,187 @@ impl Game {
                 }
             }
         }
+        if self.mode.is_vulnerable() {
+            self.stats.add_exhaustion(BREAK_EXHAUSTION);
+        }
         if self.mode.wears_tools()
             && let Some(wear) = self.selected_tool().map(|tool| tool.wear)
         {
             self.inventory.damage_selected(wear, &self.items);
         }
         self.chunks.set_blocks(&edits);
+    }
+
+    /// Draws a bow while `using` (right-click held) with ammunition, and
+    /// shoots on release. Returns true while drawing.
+    fn keep_drawing(&mut self, using: bool) -> bool {
+        let ammo = self
+            .inventory
+            .selected_stack()
+            .and_then(|stack| self.items.item(stack.id))
+            .and_then(|item| item.shoots);
+        let Some(ammo) = ammo else {
+            self.drawing = None;
+            return false;
+        };
+        let has_ammo = !self.mode.uses_up_items() || self.inventory.find(ammo).is_some();
+        if using && has_ammo {
+            self.drawing = Some(self.drawing.map_or(1, |ticks| ticks + 1));
+            return true;
+        }
+        if let Some(ticks) = self.drawing.take()
+            && let Some(power) = arrow::bow_power(ticks)
+        {
+            let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+            let forward = self.camera.forward().as_dvec3();
+            let pickup = self.mode.uses_up_items();
+            self.arrows.push(Arrow::shoot(eye, forward, power, pickup));
+            if pickup && let Some(slot) = self.inventory.find(ammo) {
+                self.inventory.take(slot, 1);
+            }
+            if self.mode.wears_tools() {
+                self.inventory.damage_selected(1, &self.items);
+            }
+        }
+        false
+    }
+
+    /// Moves arrows: hits on mobs, sticking in blocks, picking them up.
+    pub(super) fn tick_arrows(&mut self) {
+        let mut arrows = std::mem::take(&mut self.arrows);
+        let player = self.body.aabb();
+        for arrow in &mut arrows {
+            let world = self.chunks.world();
+            let blocks = &self.items.blocks;
+            let solid = |cell: glam::IVec3| {
+                world
+                    .block(cell.x, cell.y, cell.z)
+                    .and_then(|block| blocks.get(block.id()))
+                    .is_none_or(|def| def.solid)
+            };
+            let block_hit = |from: DVec3, dir: DVec3, reach: f64| {
+                let hit = crate::player::raycast::raycast(from, dir, reach, solid)?;
+                crate::player::collision::Aabb::block(hit.block.x, hit.block.y, hit.block.z)
+                    .ray_hit(from, dir, reach)
+            };
+            let in_water = self.fluid_at(arrow.position) == Some(Fluid::Water);
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            let from = arrow.position;
+            if let Some(ArrowEvent::HitMob { index, damage }) =
+                arrow.tick(block_hit, in_water, &self.mobs, &mut random)
+            {
+                self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+            }
+        }
+        arrows.retain(|arrow| {
+            if arrow.can_pick_up(&player)
+                && self
+                    .inventory
+                    .add(ItemStack::with_damage(ARROW, 1, 0), &self.items)
+                    .is_none()
+            {
+                return false;
+            }
+            !arrow.expired()
+        });
+        self.arrows = arrows;
+    }
+
+    /// A tick of eating the selected food while right-click is held.
+    /// Returns false if the selected item can't be eaten now.
+    fn keep_eating(&mut self) -> bool {
+        let slot = self.inventory.selected;
+        let Some(stack) = self.inventory.selected_stack().copied() else {
+            return false;
+        };
+        let Some(food) = self.items.item(stack.id).and_then(|item| item.food) else {
+            return false;
+        };
+        let hungry = food.always_edible || self.stats.can_eat();
+        if !self.mode.is_vulnerable() || !hungry {
+            return false;
+        }
+        let ticks = match self.eating {
+            Some((eating_slot, ticks)) if eating_slot == slot => ticks + 1,
+            _ => 1,
+        };
+        if ticks < EAT_TICKS {
+            self.eating = Some((slot, ticks));
+            return true;
+        }
+        self.eating = None;
+        self.inventory.take(slot, 1);
+        self.stats.eat(food.hunger, food.saturation);
+        if let Some(leftover) = self.items.item(stack.id).and_then(|item| item.leftover) {
+            let bowl = ItemStack::with_damage(leftover, 1, 0);
+            if self.inventory.slot(slot).is_none() {
+                self.inventory.set(slot, Some(bowl));
+            } else if let Some(rest) = self.inventory.add(bowl, &self.items) {
+                self.throw(rest);
+            }
+        }
+        true
+    }
+
+    /// The living mob under the crosshair within reach, if it's nearer
+    /// than the targeted block.
+    fn target_mob(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
+        let dir = self.camera.forward().as_dvec3();
+        let block_distance = block.map_or(f64::MAX, |hit| {
+            (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5
+        });
+        self.mobs
+            .iter()
+            .enumerate()
+            .filter(|(_, mob)| !mob.is_dead())
+            .filter_map(|(i, mob)| {
+                let distance =
+                    mob.body
+                        .aabb()
+                        .grow(TARGET_BORDER)
+                        .ray_hit(eye, dir, ATTACK_REACH)?;
+                Some((i, distance))
+            })
+            .filter(|&(_, distance)| distance < block_distance)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    /// Hits mob `index` with the selected item (1.0.0's
+    /// `attackTargetEntityWithCurrentItem`): its attack damage (or 1 bare
+    /// handed), a critical bonus while falling, knockback (more when
+    /// sprinting), weapon wear and exhaustion.
+    fn attack(&mut self, index: usize) {
+        let tool = self.selected_tool().cloned();
+        let mut damage = tool.as_ref().map_or(1, |tool| tool.attack);
+        let falling =
+            self.stats.fall_distance > 0.0 && !self.body.on_ground && self.body.liquid.is_none();
+        if falling {
+            damage += (self.rng.next_f64() * (damage / 2 + 2) as f64) as i32;
+        }
+        let from = self.body.position();
+        let sprinting = self.body.sprinting;
+        let yaw = self.camera.yaw as f64;
+        let mob = &mut self.mobs[index];
+        if mob.hurt(damage, Some(from), DamageSource::Mob) && sprinting {
+            mob.body.velocity += DVec3::new(
+                yaw.sin() * SPRINT_KNOCKBACK,
+                SPRINT_KNOCKBACK_LIFT,
+                -yaw.cos() * SPRINT_KNOCKBACK,
+            );
+            self.body.velocity.x *= 0.6;
+            self.body.velocity.z *= 0.6;
+            self.body.sprinting = false;
+        }
+        if self.mode.is_vulnerable() {
+            self.stats.add_exhaustion(ATTACK_EXHAUSTION);
+        }
+        if self.mode.wears_tools()
+            && let Some(tool) = tool
+        {
+            self.inventory.damage_selected(tool.hit_wear, &self.items);
+        }
     }
 
     /// Places the selected stack's block against the clicked face.
@@ -237,9 +458,12 @@ impl Game {
             blocks: &self.items.blocks,
         };
         let player = self.body.aabb();
+        let alive = !self.stats.is_dead();
         for item in &mut self.entities {
             item.tick(&collider);
-            item.pick_up(&player, &mut self.inventory, &self.items);
+            if alive {
+                item.pick_up(&player, &mut self.inventory, &self.items);
+            }
         }
         self.entities.retain(|item| !item.expired());
     }

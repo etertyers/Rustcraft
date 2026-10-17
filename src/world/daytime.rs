@@ -40,6 +40,24 @@ pub fn sun_brightness(angle: f32) -> f32 {
     (1.0 - dark) * 0.8 + 0.2
 }
 
+/// Sky light lost to the time of day: 0 by day, 11 at night (1.0.0's
+/// `skylightSubtracted`). Mob spawning and burning use the reduced level.
+pub fn sky_light_subtracted(angle: f32) -> u8 {
+    let dark = (1.0 - ((angle * TAU).cos() * 2.0 + 0.5)).clamp(0.0, 1.0);
+    (dark * 11.0) as u8
+}
+
+/// 1.0.0's day: while the sky is losing less than 4 light levels.
+pub fn is_daytime(angle: f32) -> bool {
+    sky_light_subtracted(angle) < 4
+}
+
+/// 1.0.0's light level to brightness table (0.0 dark to 1.0 bright).
+pub fn brightness(level: u8) -> f32 {
+    let dark = 1.0 - level.min(15) as f32 / 15.0;
+    (1.0 - dark) / (dark * 3.0 + 1.0)
+}
+
 /// How much daylight colors the sky and fog, 0 (night) to 1 (day).
 fn sky_light(angle: f32) -> f32 {
     ((angle * TAU).cos() * 2.0 + 0.5).clamp(0.0, 1.0)
@@ -174,6 +192,11 @@ mod tests {
         assert_eq!(clock(6000), "day 1, 12:00");
         assert_eq!(clock(18500), "day 1, 00:30");
         assert_eq!(clock(DAY_TICKS + 12000), "day 2, 18:00");
+        assert_eq!(sky_light_subtracted(noon), 0);
+        assert_eq!(sky_light_subtracted(midnight), 11);
+        assert!(is_daytime(noon) && !is_daytime(midnight));
+        assert_eq!(brightness(15), 1.0);
+        assert_eq!(brightness(0), 0.0);
         assert_eq!(moon_phase(0), 0);
         assert_eq!(moon_phase(DAY_TICKS * 9), 1);
     }

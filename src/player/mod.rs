@@ -10,3 +10,4 @@ pub mod physics;
 pub mod raycast;
 #[cfg(test)]
 mod scenario;
+pub mod stats;

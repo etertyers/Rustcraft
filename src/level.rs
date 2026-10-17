@@ -12,7 +12,11 @@ use anyhow::{Context, Result};
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use crate::{inventory::player::Inventory, player::mode::GameMode, world::save::RegionStore};
+use crate::{
+    inventory::player::Inventory,
+    player::{mode::GameMode, stats::Stats},
+    world::save::RegionStore,
+};
 
 const LEVEL_FILE: &str = "level.ron";
 const LEVEL_VERSION: u32 = 1;
@@ -33,6 +37,21 @@ pub struct Level {
     pub time: u64,
     /// Unix seconds when last saved, for sorting the world list.
     pub last_played: u64,
+    /// Animals (added in M9).
+    #[serde(default)]
+    pub mobs: Vec<SavedMob>,
+    /// Chunks whose animals have been placed (added in M9).
+    #[serde(default)]
+    pub populated: Vec<(i32, i32)>,
+}
+
+/// A mob as saved in level.ron.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedMob {
+    pub name: String,
+    pub position: [f64; 3],
+    pub yaw: f32,
+    pub health: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,6 +66,9 @@ pub struct PlayerData {
     /// Creative flight (added in M7).
     #[serde(default)]
     pub flying: bool,
+    /// Health, hunger, air and fire (added in M9).
+    #[serde(default)]
+    pub stats: Stats,
 }
 
 impl Level {
@@ -63,9 +85,12 @@ impl Level {
                 pitch: 0.0,
                 inventory: Inventory::default(),
                 flying: false,
+                stats: Stats::default(),
             },
             time: 0,
             last_played: now(),
+            mobs: Vec::new(),
+            populated: Vec::new(),
         }
     }
 }

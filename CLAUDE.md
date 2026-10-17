@@ -210,7 +210,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Fog at render distance edge; clouds.
 - **Done when:** a full day cycle looks right and you can swim in the ocean.
 
-### - [ ] M9 — Health, hunger, and mobs
+### - [x] M9 — Health, hunger, and mobs
 - Health, hunger and saturation, fall damage, drowning, lava damage, respawn at spawn point; hearts and hunger HUD.
 - Entity system for mobs: AABB physics shared with the player, box-model rendering.
 - Mobs: **pig** (passive, wanders, drops porkchop) and **zombie** (hostile, spawns in darkness, chases and attacks, burns in daylight, drops rotten flesh), with 1.0.0 behaviors. Build the mob code so more 1.0.0 mobs can be added later from data plus a small AI module; adding them isn't planned yet.

@@ -4,8 +4,13 @@
 
 pub mod environment;
 mod hands;
+mod mobs;
 
-use std::{path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use glam::DVec3;
@@ -17,7 +22,7 @@ use winit::{
 
 use crate::{
     config,
-    entity::item::ItemEntity,
+    entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry},
     inventory::{
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
@@ -29,9 +34,12 @@ use crate::{
         mode::GameMode,
         physics::Body,
         raycast::{self, Hit},
+        stats::{DamageSource, Stats, Surroundings},
     },
     render::camera::Camera,
     world::{
+        block::Fluid,
+        chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -52,8 +60,17 @@ const MAX_CATCH_UP: f32 = 10.0 * TICK;
 /// Trackpad scrolling this many pixels moves one hotbar slot.
 const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
 
-/// Falling below this returns the player to spawn (until health exists in M9).
+/// Falling below this hurts 4 a tick, as 1.0.0's void does.
 const VOID_Y: f64 = -64.0;
+const VOID_DAMAGE: i32 = 4;
+
+/// 1.0.0's exhaustion for moving: per block walked, sprinted or swum, and
+/// per jump.
+const WALK_EXHAUSTION: f32 = 0.01;
+const SPRINT_EXHAUSTION: f32 = 0.1;
+const SWIM_EXHAUSTION: f32 = 0.015;
+const JUMP_EXHAUSTION: f32 = 0.2;
+const SPRINT_JUMP_EXHAUSTION: f32 = 0.8;
 
 pub struct Game {
     pub chunks: ChunkManager,
@@ -77,10 +94,22 @@ pub struct Game {
     break_cooldown: u8,
     place_cooldown: u8,
     pub inventory: Inventory,
+    pub stats: Stats,
     /// The stack held on the mouse in an inventory screen.
     pub cursor: Option<ItemStack>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    pub arrows: Vec<Arrow>,
+    /// Ticks the bow has been drawn.
+    drawing: Option<u32>,
+    mob_defs: Arc<MobRegistry>,
+    pub mobs: Vec<Mob>,
+    /// Animals in unloaded chunks, waiting for their chunk to come back.
+    stashed_mobs: HashMap<ChunkPos, Vec<Mob>>,
+    /// Chunks that have had their animals placed (once per chunk).
+    populated: HashSet<ChunkPos>,
+    /// The hotbar slot being eaten from and for how many ticks.
+    eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
     mining: Option<(glam::IVec3, f32)>,
     /// For drops and throws.
@@ -134,9 +163,17 @@ impl Game {
             break_cooldown: 0,
             place_cooldown: 0,
             inventory: Inventory::default(),
+            stats: Stats::default(),
             cursor: None,
             entities: Vec::new(),
+            arrows: Vec::new(),
+            drawing: None,
+            mob_defs: Arc::new(MobRegistry::empty()),
+            mobs: Vec::new(),
+            stashed_mobs: HashMap::new(),
+            populated: HashSet::new(),
             mining: None,
+            eating: None,
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             tick_time: 0.0,
@@ -178,11 +215,27 @@ impl Game {
         game.mode = level.game_mode;
         game.time = level.time;
         game.inventory = player.inventory.clone();
+        game.stats = player.stats.clone();
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
+        game.populated = level
+            .populated
+            .iter()
+            .map(|&(x, z)| ChunkPos::new(x, z))
+            .collect();
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
+    }
+
+    /// Gives the game its mob kinds, and brings back saved animals.
+    pub fn with_mobs(mut self, mobs: Arc<MobRegistry>) -> Self {
+        self.mob_defs = mobs;
+        if let Some(saved) = &self.saved {
+            let animals = saved.level.mobs.clone();
+            self.restore_mobs(&animals);
+        }
+        self
     }
 
     /// Creates a world in a new folder under `saves` and opens it.
@@ -204,6 +257,8 @@ impl Game {
     /// aren't saved.
     pub fn save(&mut self) -> Result<()> {
         self.ticks_since_save = 0;
+        let mobs = self.saved_mobs();
+        let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
         let Some(saved) = self.saved.as_mut() else {
             return Ok(());
         };
@@ -220,8 +275,11 @@ impl Game {
             pitch: self.camera.pitch,
             inventory,
             flying: self.body.flying,
+            stats: self.stats.clone(),
         };
         saved.level.time = self.time;
+        saved.level.mobs = mobs;
+        saved.level.populated = populated;
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -229,6 +287,10 @@ impl Game {
 
     pub fn items(&self) -> &Items {
         &self.items
+    }
+
+    pub fn mob_defs(&self) -> &MobRegistry {
+        &self.mob_defs
     }
 
     /// Game time in ticks since the world was created.
@@ -349,9 +411,14 @@ impl Game {
     /// One game tick: player physics, then breaking and placing.
     fn tick(&mut self) {
         self.prev_feet = self.body.position();
-        self.move_player();
-        self.use_hands();
+        if !self.stats.is_dead() {
+            self.move_player();
+            self.tick_stats();
+            self.use_hands();
+        }
         self.tick_items();
+        self.tick_arrows();
+        self.tick_mobs();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -378,9 +445,99 @@ impl Game {
         self.body
             .tick(&self.keys.move_input(), self.camera.yaw, &collider);
         if self.body.position().y < VOID_Y {
-            self.body = Body::new(self.spawn);
-            self.prev_feet = self.spawn;
+            if self.mode.is_vulnerable() {
+                self.stats.damage(VOID_DAMAGE, DamageSource::Fall);
+            } else {
+                // Creative players can't die, so the void sends them home.
+                self.body = Body::new(self.spawn);
+                self.prev_feet = self.spawn;
+            }
         }
+    }
+
+    /// The liquid at `point`, if any.
+    fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
+        let p = point.floor().as_ivec3();
+        let block = self.chunks.world().block(p.x, p.y, p.z)?;
+        self.items.blocks.get(block.id())?.fluid
+    }
+
+    /// Exhaustion from moving, then a tick of health, hunger, air and fire
+    /// (1.0.0's `addMovementStat` and `onEntityUpdate`). Dying drops the
+    /// whole inventory.
+    fn tick_stats(&mut self) {
+        let vulnerable = self.mode.is_vulnerable();
+        let moved = self.body.position() - self.prev_feet;
+        let horizontal = moved.x.hypot(moved.z) as f32;
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let eyes_in_water = self.fluid_at(eye) == Some(Fluid::Water);
+        let liquid = self.body.liquid;
+        if vulnerable {
+            if self.body.jumped {
+                let cost = if self.body.sprinting {
+                    SPRINT_JUMP_EXHAUSTION
+                } else {
+                    JUMP_EXHAUSTION
+                };
+                self.stats.add_exhaustion(cost);
+            }
+            if eyes_in_water {
+                self.stats
+                    .add_exhaustion(SWIM_EXHAUSTION * moved.length() as f32);
+            } else if liquid == Some(Fluid::Water) {
+                self.stats.add_exhaustion(SWIM_EXHAUSTION * horizontal);
+            } else if self.body.on_ground {
+                let per_block = if self.body.sprinting {
+                    SPRINT_EXHAUSTION
+                } else {
+                    WALK_EXHAUSTION
+                };
+                self.stats.add_exhaustion(per_block * horizontal);
+            }
+        }
+        let around = Surroundings {
+            on_ground: self.body.on_ground,
+            fell: -moved.y as f32,
+            in_water: liquid == Some(Fluid::Water),
+            in_lava: liquid == Some(Fluid::Lava),
+            eyes_in_water,
+            flying: self.body.flying,
+        };
+        self.stats.tick(&around, vulnerable);
+        if vulnerable {
+            self.stats.tick_food();
+        }
+        self.body.can_sprint = !vulnerable || self.stats.can_sprint();
+        if self.stats.is_dead() {
+            self.drop_everything();
+        }
+    }
+
+    /// Scatters every stack in the inventory (and the mouse) around the player.
+    fn drop_everything(&mut self) {
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
+        for slot in 0..crate::inventory::player::SLOTS {
+            if let Some(stack) = self.inventory.slot(slot).copied() {
+                self.inventory.set(slot, None);
+                stacks.push(stack);
+            }
+        }
+        let rng = &mut self.rng;
+        let mut random = || rng.next_f64() as f32;
+        for stack in stacks {
+            self.entities
+                .push(ItemEntity::scattered(stack, eye, &mut random));
+        }
+    }
+
+    /// Back to the world spawn with full health and food (1.0.0's respawn).
+    pub fn respawn(&mut self) {
+        self.body = Body::new(self.spawn);
+        self.prev_feet = self.spawn;
+        self.stats = Stats::default();
+        self.mining = None;
+        self.release_input();
     }
 
     /// The block the crosshair points at from `eye`, within reach.
@@ -434,7 +591,9 @@ mod tests {
 
     use super::*;
     use crate::{
+        entity::mobs::MobRegistry,
         inventory::{item::ItemRegistry, stack::ItemStack},
+        player::stats::MAX_HEALTH,
         world::{
             biome::BiomeColors,
             block::{BlockRegistry, BlockState},
@@ -640,5 +799,266 @@ mod tests {
         }
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
         assert!(game.entities.is_empty());
+    }
+
+    #[test]
+    fn a_ten_block_fall_hurts_7_in_survival_and_nothing_in_creative() {
+        for (mode, hurt) in [(GameMode::Survival, 7), (GameMode::Creative, 0)] {
+            let mut game = flat_game(mode);
+            game.body = Body::new(DVec3::new(0.5, 74.0, 0.5));
+            for _ in 0..60 {
+                game.tick();
+            }
+            assert_eq!(game.body.position().y, 64.0);
+            assert_eq!(MAX_HEALTH - game.stats.health, hurt, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn dying_scatters_the_inventory_and_respawning_starts_fresh() {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(4, 30)));
+        game.inventory.set(20, Some(ItemStack::new(270, 1)));
+        game.body = Body::new(DVec3::new(0.5, 100.0, 0.5));
+        for _ in 0..100 {
+            game.tick();
+        }
+        assert!(game.stats.is_dead());
+        assert_eq!(game.stats.last_source, Some(DamageSource::Fall));
+        assert_eq!(game.inventory.slot(0), None);
+        assert_eq!(game.entities.len(), 2, "both stacks dropped");
+        game.respawn();
+        assert_eq!(game.stats, Stats::default());
+        assert_eq!(game.body.position(), game.spawn);
+    }
+
+    #[test]
+    fn holding_right_click_for_32_ticks_eats_a_porkchop() {
+        let mut game = flat_game(GameMode::Survival);
+        game.stats.food = 10;
+        game.stats.saturation = 0.0;
+        game.inventory.set(0, Some(ItemStack::new(320, 2)));
+        game.camera.pitch = 1.5;
+        game.advance(0.0);
+        game.placing = true;
+        for _ in 0..31 {
+            game.tick();
+        }
+        assert_eq!(game.stats.food, 10, "still chewing");
+        game.tick();
+        assert_eq!(game.stats.food, 18);
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+        // Full: no more eating.
+        game.stats.food = 20;
+        for _ in 0..40 {
+            game.tick();
+        }
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+    }
+
+    #[test]
+    fn stew_leaves_its_bowl_and_creative_doesnt_eat() {
+        let mut game = flat_game(GameMode::Survival);
+        game.stats.food = 5;
+        game.inventory.set(0, Some(ItemStack::new(282, 1)));
+        game.camera.pitch = 1.5;
+        game.placing = true;
+        for _ in 0..32 {
+            game.tick();
+        }
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(281, 1)));
+
+        let mut creative = flat_game(GameMode::Creative);
+        creative.stats.food = 5;
+        creative.inventory.set(0, Some(ItemStack::new(320, 1)));
+        creative.camera.pitch = 1.5;
+        creative.placing = true;
+        for _ in 0..40 {
+            creative.tick();
+        }
+        assert_eq!(creative.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+    }
+
+    fn mob_registry() -> Arc<MobRegistry> {
+        Arc::new(MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap())
+    }
+
+    /// A flat world 5×5 chunks around the origin with light computed.
+    fn lit_flat_game(mode: GameMode) -> Game {
+        let (items, models) = registries();
+        let chunks = ChunkManager::new(ChunkSource::Flat, models, 2, 4);
+        let feet = DVec3::new(0.5, 64.0, 0.5);
+        let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).with_mobs(mob_registry());
+        game.mode = mode;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while game.chunks.light_at(-31, 64, -31).is_none()
+            || game.chunks.light_at(47, 64, 47).is_none()
+        {
+            assert!(Instant::now() < deadline, "light never computed");
+            game.chunks.update(ChunkPos::new(0, 0));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        game
+    }
+
+    #[test]
+    fn zombies_spawn_at_night_far_from_the_player_and_never_by_day() {
+        let mut game = lit_flat_game(GameMode::Survival);
+        game.time = 6000;
+        for _ in 0..200 {
+            game.spawn_monsters();
+        }
+        assert!(game.mobs.is_empty(), "nothing spawns on lit grass at noon");
+        game.time = 18000;
+        for _ in 0..200 {
+            game.spawn_monsters();
+        }
+        assert!(!game.mobs.is_empty(), "zombies at midnight");
+        for zombie in &game.mobs {
+            assert_eq!(game.mob_defs.get(zombie.kind).name, "zombie");
+            assert_eq!(zombie.feet().y, 64.0, "on the ground");
+            assert!(zombie.feet().distance(game.body.position()) >= 24.0);
+        }
+    }
+
+    #[test]
+    fn pigs_appear_on_grass_in_new_chunks_once_and_survive_saving() {
+        let mut game = lit_flat_game(GameMode::Survival);
+        let chunks: Vec<ChunkPos> = (-2..=2)
+            .flat_map(|z| (-2..=2).map(move |x| ChunkPos::new(x, z)))
+            .collect();
+        for _ in 0..20 {
+            game.populated.clear();
+            game.on_chunks_loaded(&chunks);
+        }
+        assert!(!game.mobs.is_empty(), "some pigs");
+        assert!(game.mobs.iter().all(|pig| pig.feet().y == 64.0));
+        let pigs = game.mobs.len();
+        game.on_chunks_loaded(&chunks);
+        assert_eq!(game.mobs.len(), pigs, "a chunk gets its animals once");
+        let saved = game.saved_mobs();
+        assert_eq!(saved.len(), pigs);
+        assert!(
+            saved
+                .iter()
+                .all(|mob| mob.name == "pig" && mob.health == 10)
+        );
+    }
+
+    #[test]
+    fn two_diamond_sword_hits_kill_a_zombie_which_drops_its_loot() {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        let kind = game.mob_defs.find("zombie").unwrap();
+        let zombie = Mob::new(
+            kind,
+            game.mob_defs.get(kind),
+            DVec3::new(0.5, 64.0, -1.5),
+            0.0,
+        );
+        game.mobs.push(zombie);
+        game.inventory.set(0, Some(ItemStack::new(276, 1)));
+        game.camera.pitch = 0.0;
+        game.time = 18000;
+        game.break_clicked = true;
+        game.tick();
+        assert_eq!(game.mobs[0].stats.health, 10, "diamond sword: 10");
+        assert!(game.mobs[0].body.velocity.length() > 0.0, "knocked back");
+        assert_eq!(
+            game.inventory.slot(0).unwrap().damage,
+            1,
+            "a sword wears 1 per hit"
+        );
+        // The hurt cooldown absorbs a second hit straight away.
+        game.break_clicked = true;
+        game.tick();
+        assert_eq!(game.mobs[0].stats.health, 10);
+        for _ in 0..10 {
+            game.tick();
+        }
+        // Knocked back out of reach? Bring it back in front and hit again.
+        let feet = game.body.position() + DVec3::new(0.0, 0.0, -1.5);
+        game.mobs[0].body = crate::player::physics::Body::sized(feet, 0.6, 1.8, 1.53);
+        game.break_clicked = true;
+        game.tick();
+        assert!(game.mobs[0].is_dead());
+        for _ in 0..25 {
+            game.tick();
+        }
+        assert!(game.mobs.is_empty(), "removed after lying dead");
+    }
+
+    #[test]
+    fn a_fully_drawn_bow_shoots_an_arrow_into_a_zombie() {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        let kind = game.mob_defs.find("zombie").unwrap();
+        let zombie = Mob::new(
+            kind,
+            game.mob_defs.get(kind),
+            DVec3::new(0.5, 64.0, -4.5),
+            0.0,
+        );
+        game.mobs.push(zombie);
+        game.inventory.set(0, Some(ItemStack::new(261, 1)));
+        game.inventory.set(5, Some(ItemStack::new(262, 5)));
+        game.camera.pitch = 0.0;
+        game.time = 18000;
+        game.placing = true;
+        for _ in 0..20 {
+            game.tick();
+        }
+        assert!(game.arrows.is_empty(), "drawing, not shot yet");
+        game.placing = false;
+        game.tick();
+        assert_eq!(game.inventory.slot(5).unwrap().count, 4, "one arrow used");
+        assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "the bow wears");
+        for _ in 0..5 {
+            game.tick();
+        }
+        assert!(
+            game.mobs[0].stats.health <= 20 - 6,
+            "hit: {}",
+            game.mobs[0].stats.health
+        );
+
+        // Creative shoots without arrows and its arrows can't be picked up.
+        let mut creative = flat_game(GameMode::Creative);
+        creative.inventory.set(0, Some(ItemStack::new(261, 1)));
+        creative.camera.pitch = 0.0;
+        creative.placing = true;
+        for _ in 0..20 {
+            creative.tick();
+        }
+        creative.placing = false;
+        creative.tick();
+        assert_eq!(creative.arrows.len(), 1);
+        assert!(!creative.arrows[0].pickup);
+    }
+
+    #[test]
+    fn a_zombie_at_night_hurts_a_survival_player_but_ignores_a_creative_one() {
+        for (mode, hurt) in [(GameMode::Survival, true), (GameMode::Creative, false)] {
+            let mut game = flat_game(mode);
+            game.mob_defs = mob_registry();
+            game.time = 18000;
+            let kind = game.mob_defs.find("zombie").unwrap();
+            let zombie = Mob::new(
+                kind,
+                game.mob_defs.get(kind),
+                DVec3::new(0.5, 64.0, -2.5),
+                0.0,
+            );
+            game.mobs.push(zombie);
+            for _ in 0..100 {
+                game.tick();
+            }
+            assert_eq!(
+                game.stats.health < MAX_HEALTH,
+                hurt,
+                "{mode:?}: {}",
+                game.stats.health
+            );
+        }
     }
 }

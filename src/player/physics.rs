@@ -63,23 +63,41 @@ pub struct Body {
     /// Double-tapping jump toggles `flying` (creative).
     pub may_fly: bool,
     pub flying: bool,
+    /// False when too hungry to sprint.
+    pub can_sprint: bool,
+    /// Whether the last tick started a jump.
+    pub jumped: bool,
+    /// The liquid the body was in during the last tick.
+    pub liquid: Option<Fluid>,
     collided_horizontally: bool,
     was_moving_forward: bool,
     sprint_tap_timer: u8,
     was_jumping: bool,
     fly_tap_timer: u8,
+    /// Eye height above the feet when not sneaking.
+    eye: f64,
 }
 
 impl Body {
+    /// The player's body, with its feet at `position`.
     pub fn new(position: DVec3) -> Self {
+        Self::sized(position, PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT)
+    }
+
+    /// A body of any size (mobs), with its feet at `position`.
+    pub fn sized(position: DVec3, width: f64, height: f64, eye_height: f64) -> Self {
         Self {
-            bb: hitbox(position),
+            bb: sized_hitbox(position, width, height),
+            eye: eye_height,
             velocity: DVec3::ZERO,
             on_ground: false,
             sneaking: false,
             sprinting: false,
             may_fly: false,
             flying: false,
+            can_sprint: true,
+            jumped: false,
+            liquid: None,
             collided_horizontally: false,
             was_moving_forward: false,
             sprint_tap_timer: 0,
@@ -90,6 +108,11 @@ impl Body {
 
     pub fn aabb(&self) -> Aabb {
         self.bb
+    }
+
+    /// Whether the last move ran into a wall.
+    pub fn collided_horizontally(&self) -> bool {
+        self.collided_horizontally
     }
 
     /// Feet: the center of the hitbox's bottom face.
@@ -104,15 +127,16 @@ impl Body {
     /// Moves the feet to `feet` without collision, for free flight.
     #[cfg(debug_assertions)]
     pub fn set_position(&mut self, feet: DVec3) {
-        self.bb = hitbox(feet);
+        let size = self.bb.max - self.bb.min;
+        self.bb = sized_hitbox(feet, size.x, size.y);
     }
 
     /// Camera height above the feet.
     pub fn eye_height(&self) -> f64 {
         if self.sneaking {
-            EYE_HEIGHT - SNEAK_EYE_DROP
+            self.eye - SNEAK_EYE_DROP
         } else {
-            EYE_HEIGHT
+            self.eye
         }
     }
 
@@ -130,8 +154,10 @@ impl Body {
         let liquid = if self.flying {
             None
         } else {
-            self.liquid(world)
+            self.find_liquid(world)
         };
+        self.liquid = liquid;
+        self.jumped = false;
 
         let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
         let facing = DVec3::new(sin_yaw, 0.0, -cos_yaw);
@@ -146,6 +172,7 @@ impl Body {
         } else if input.jump && liquid.is_some() {
             self.velocity.y += SWIM_UP;
         } else if input.jump && self.on_ground {
+            self.jumped = true;
             self.velocity.y = JUMP_VELOCITY;
             if self.sprinting {
                 self.velocity += facing * SPRINT_JUMP_BOOST;
@@ -192,7 +219,7 @@ impl Body {
     /// The liquid the body is in: water reaching the hitbox shrunk by 0.4
     /// top and bottom, or lava reaching it also shrunk 0.1 sideways
     /// (1.0.0's `isInWater` and `handleLavaMovement`).
-    fn liquid(&self, world: &impl Collider) -> Option<Fluid> {
+    fn find_liquid(&self, world: &impl Collider) -> Option<Fluid> {
         let shrink = |side: f64| {
             let by = DVec3::new(side, 0.4, side);
             Aabb::new(self.bb.min + by, self.bb.max - by)
@@ -235,7 +262,8 @@ impl Body {
     fn update_sprint(&mut self, forward: f64, sprint_key: bool) {
         self.sprint_tap_timer = self.sprint_tap_timer.saturating_sub(1);
         let moving_forward = forward >= SPRINT_MIN_FORWARD;
-        if self.on_ground && moving_forward && !self.was_moving_forward && !self.sprinting {
+        let can_start = self.on_ground && moving_forward && self.can_sprint;
+        if can_start && !self.was_moving_forward && !self.sprinting {
             if self.sprint_tap_timer == 0 {
                 self.sprint_tap_timer = SPRINT_DOUBLE_TAP_TICKS;
             } else {
@@ -243,10 +271,10 @@ impl Body {
                 self.sprint_tap_timer = 0;
             }
         }
-        if sprint_key && moving_forward {
+        if sprint_key && moving_forward && self.can_sprint {
             self.sprinting = true;
         }
-        if self.sprinting && (!moving_forward || self.collided_horizontally) {
+        if self.sprinting && (!moving_forward || self.collided_horizontally || !self.can_sprint) {
             self.sprinting = false;
         }
         self.was_moving_forward = moving_forward;
@@ -316,11 +344,17 @@ impl Body {
 }
 
 /// The player hitbox with its feet at `feet`.
+#[cfg(test)]
 pub fn hitbox(feet: DVec3) -> Aabb {
-    let half = PLAYER_WIDTH / 2.0;
+    sized_hitbox(feet, PLAYER_WIDTH, PLAYER_HEIGHT)
+}
+
+/// A `width` × `height` hitbox with its feet at `feet`.
+pub fn sized_hitbox(feet: DVec3, width: f64, height: f64) -> Aabb {
+    let half = width / 2.0;
     Aabb::new(
         feet - DVec3::new(half, 0.0, half),
-        feet + DVec3::new(half, PLAYER_HEIGHT, half),
+        feet + DVec3::new(half, height, half),
     )
 }
 

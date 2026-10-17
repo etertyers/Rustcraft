@@ -34,6 +34,38 @@ impl Aabb {
         Self::new(self.min + d.min(DVec3::ZERO), self.max + d.max(DVec3::ZERO))
     }
 
+    /// Whether `point` is inside (or on) the box.
+    pub fn contains(&self, point: DVec3) -> bool {
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
+    }
+
+    /// Grows the box by `by` on every side.
+    pub fn grow(self, by: f64) -> Self {
+        Self::new(self.min - DVec3::splat(by), self.max + DVec3::splat(by))
+    }
+
+    /// Distance along the ray from `origin` in direction `dir` (a unit
+    /// vector) where it enters the box, if within `reach`.
+    pub fn ray_hit(&self, origin: DVec3, dir: DVec3, reach: f64) -> Option<f64> {
+        let (mut near, mut far) = (0.0f64, reach);
+        for axis in 0..3 {
+            if dir[axis].abs() < 1e-12 {
+                if origin[axis] < self.min[axis] || origin[axis] > self.max[axis] {
+                    return None;
+                }
+                continue;
+            }
+            let t1 = (self.min[axis] - origin[axis]) / dir[axis];
+            let t2 = (self.max[axis] - origin[axis]) / dir[axis];
+            near = near.max(t1.min(t2));
+            far = far.min(t1.max(t2));
+            if near > far {
+                return None;
+            }
+        }
+        Some(near)
+    }
+
     /// Overlap with positive volume; touching faces don't count.
     pub fn intersects(&self, other: &Aabb) -> bool {
         self.min.cmplt(other.max).all() && self.max.cmpgt(other.min).all()

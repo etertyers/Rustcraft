@@ -45,6 +45,11 @@ impl GameMode {
         self == GameMode::Creative
     }
 
+    /// Health and hunger matter: damage, hunger and death (survival).
+    pub fn is_vulnerable(self) -> bool {
+        self == GameMode::Survival
+    }
+
     /// Double-tapping jump toggles flight.
     pub fn can_fly(self) -> bool {
         self == GameMode::Creative

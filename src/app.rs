@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use glam::{DVec3, Vec3};
 use log::{error, info, warn};
 use winit::{
@@ -20,6 +20,7 @@ use winit::{
 
 use crate::{
     assets, config,
+    entity::mobs::MobRegistry,
     game::{Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
     inventory::{
@@ -27,17 +28,21 @@ use crate::{
         stack::{ItemStack, Items},
     },
     level::{self, WorldDir},
-    player::mode::GameMode,
+    player::{
+        mode::GameMode,
+        stats::{DamageSource, MAX_AIR},
+    },
     render::{
         Renderer, SkyImages,
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
         entities::item_mesh,
         icons::ItemIcons,
+        models::{add_arrow, add_mob},
     },
     ui::{
         DebugStats, DebugUi, Hud,
-        gui::SlotView,
+        gui::{SlotView, SurvivalHud},
         menu::{Menu, MenuAction},
         screens::{Screen, ScreenAction, ScreenView},
     },
@@ -46,7 +51,7 @@ use crate::{
         block::BlockRegistry,
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
-        mesh::BlockModels,
+        mesh::{BlockModels, Mesh},
         worldgen::{gallery, terrain::Terrain},
     },
 };
@@ -80,6 +85,7 @@ pub struct App {
     world_kind: Option<WorldKind>,
     items: Option<Items>,
     models: Option<Arc<BlockModels>>,
+    mob_defs: Option<Arc<MobRegistry>>,
     icons: Option<Arc<ItemIcons>>,
     /// Exactly one of `menu` and `game` is set once the window is up.
     menu: Option<Menu>,
@@ -107,6 +113,7 @@ impl App {
             world_kind,
             items: None,
             models: None,
+            mob_defs: None,
             icons: None,
             menu: None,
             game: None,
@@ -164,7 +171,20 @@ impl App {
                 BiomeColors::uniform()
             });
         let sky = SkyImages::load(&textures.join("environment"))?;
-        let renderer = Renderer::new(window.clone(), &atlas, &sky)?;
+        let mob_defs = Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?);
+        // Textures for entity models: each mob kind, then the arrow.
+        let mob_textures = mob_defs
+            .iter()
+            .map(|(_, def)| def.texture.as_str())
+            .chain(["arrow.png"])
+            .map(|name| {
+                let path = textures.join("entity").join(name);
+                Ok(image::open(&path)
+                    .with_context(|| format!("loading {}", path.display()))?
+                    .into_rgba8())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -178,6 +198,7 @@ impl App {
         self.icons = Some(Arc::new(icons));
         self.items = Some(items);
         self.models = Some(models);
+        self.mob_defs = Some(mob_defs);
         match self.world_kind.clone() {
             Some(kind) => self.game = Some(self.start_game(kind)?),
             None => self.menu = Some(Menu::new(level::saves_dir())),
@@ -190,6 +211,11 @@ impl App {
     }
 
     fn start_game(&self, kind: WorldKind) -> Result<Game> {
+        let mobs = self.mob_defs.clone().expect("loaded in init");
+        Ok(self.start_world(kind)?.with_mobs(mobs))
+    }
+
+    fn start_world(&self, kind: WorldKind) -> Result<Game> {
         let (items, models) = (
             self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
@@ -301,9 +327,14 @@ impl App {
         }
     }
 
+    /// In a world and alive.
+    fn playing(&self) -> bool {
+        self.game.as_ref().is_some_and(|game| !game.stats.is_dead())
+    }
+
     /// Opens the inventory (or creative item list) and frees the mouse.
     fn open_screen(&mut self) {
-        let Some(game) = &self.game else {
+        let Some(game) = self.game.as_ref().filter(|game| !game.stats.is_dead()) else {
             return;
         };
         self.screen = Some(if game.mode.has_every_item() {
@@ -354,6 +385,10 @@ impl App {
                 game.inventory.set(game.inventory.selected, Some(full));
             }
             ScreenAction::Discard => game.cursor = None,
+            ScreenAction::Respawn => {
+                game.respawn();
+                self.set_cursor_grab(true);
+            }
         }
     }
 
@@ -363,13 +398,15 @@ impl App {
             self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
+        let mobs = self.mob_defs.clone().expect("loaded in init");
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
             MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create { name, seed, mode } => {
                 Game::create(&level::saves_dir(), &name, seed, mode, items, models)
             }
-        };
+        }
+        .map(|game| game.with_mobs(mobs));
         match game {
             Ok(game) => {
                 self.game = Some(game);
@@ -392,6 +429,13 @@ impl App {
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }
+        // Dying closes any screen and frees the mouse for the Respawn button.
+        if !self.playing() {
+            self.screen = None;
+            if self.cursor_grabbed {
+                self.set_cursor_grab(false);
+            }
+        }
         let (Some(window), Some(renderer), Some(debug_ui), Some(game)) = (
             &self.window,
             self.renderer.as_mut(),
@@ -405,6 +449,7 @@ impl App {
         let p = game.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
         let changes = game.chunks.update(ChunkPos::of_block(x, z));
+        game.on_chunks_loaded(&changes.loaded);
         for (pos, mesh) in &changes.meshes {
             renderer.upload_chunk(*pos, mesh);
         }
@@ -426,6 +471,26 @@ impl App {
                 light_at,
             );
             renderer.set_entities(&mesh);
+            let alpha = game.tick_alpha() as f32;
+            let mut meshes: Vec<(usize, Mesh)> = Vec::new();
+            for mob in &game.mobs {
+                let index = match meshes.iter().position(|(kind, _)| *kind == mob.kind) {
+                    Some(index) => index,
+                    None => {
+                        meshes.push((mob.kind, Mesh::default()));
+                        meshes.len() - 1
+                    }
+                };
+                let def = game.mob_defs().get(mob.kind);
+                add_mob(&mut meshes[index].1, mob, def, alpha, light_at(mob.eye()));
+            }
+            // The arrow texture follows the mob textures.
+            let mut arrows = Mesh::default();
+            for arrow in &game.arrows {
+                add_arrow(&mut arrows, arrow, alpha, light_at(arrow.position));
+            }
+            meshes.push((game.mob_defs().iter().count(), arrows));
+            renderer.set_mobs(&meshes);
         }
 
         let chunks = &game.chunks;
@@ -448,6 +513,15 @@ impl App {
                 })
                 .collect(),
             selected: game.inventory.selected,
+            survival: (game.mode.is_vulnerable() && !game.stats.is_dead()).then(|| SurvivalHud {
+                health: game.stats.health,
+                food: game.stats.food,
+                air: (game.stats.air < MAX_AIR).then_some(game.stats.air),
+            }),
+            death: game.stats.is_dead().then(|| {
+                let source = game.stats.last_source.unwrap_or(DamageSource::Mob);
+                format!("Player {}", source.death_message())
+            }),
         };
         let view_of = |stack: &ItemStack| {
             let icons = self.icons.as_ref()?;
@@ -547,7 +621,7 @@ impl ApplicationHandler for App {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if !self.cursor_grabbed && self.game.is_some() && self.screen.is_none() => {
+            } if !self.cursor_grabbed && self.screen.is_none() && self.playing() => {
                 self.set_cursor_grab(true)
             }
             WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {

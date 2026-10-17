@@ -5,6 +5,7 @@ pub mod camera;
 pub mod entities;
 pub mod frustum;
 pub mod icons;
+pub mod models;
 mod outline;
 pub mod vertex;
 
@@ -123,6 +124,11 @@ pub struct Renderer {
     depth_view: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
+    mob_pipeline: wgpu::RenderPipeline,
+    /// One texture per mob kind.
+    mob_bind_groups: Vec<wgpu::BindGroup>,
+    /// This frame's mob meshes, by kind.
+    mobs: Vec<(usize, ChunkBuffers)>,
     sky_pipeline: wgpu::RenderPipeline,
     sun_bind_group: wgpu::BindGroup,
     moon_bind_group: wgpu::BindGroup,
@@ -141,7 +147,12 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>, atlas: &Atlas, sky: &SkyImages) -> Result<Self> {
+    pub fn new(
+        window: Arc<Window>,
+        atlas: &Atlas,
+        sky: &SkyImages,
+        mob_textures: &[RgbaImage],
+    ) -> Result<Self> {
         let size = window.inner_size();
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -217,10 +228,35 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(atlas_layout)],
             immediate_size: 0,
         });
-        let pipeline =
-            create_block_pipeline(&device, &pipeline_layout, &shader, config.format, false);
-        let translucent_pipeline =
-            create_block_pipeline(&device, &pipeline_layout, &shader, config.format, true);
+        let pipeline = create_block_pipeline(
+            &device,
+            &pipeline_layout,
+            &shader,
+            config.format,
+            false,
+            true,
+        );
+        let translucent_pipeline = create_block_pipeline(
+            &device,
+            &pipeline_layout,
+            &shader,
+            config.format,
+            true,
+            true,
+        );
+        // Mob boxes are drawn from both sides, so face winding doesn't matter.
+        let mob_pipeline = create_block_pipeline(
+            &device,
+            &pipeline_layout,
+            &shader,
+            config.format,
+            false,
+            false,
+        );
+        let mob_bind_groups = mob_textures
+            .iter()
+            .map(|image| create_texture_bind_group(&device, &queue, &texture_layout, "mob", image))
+            .collect();
 
         let sky_pipeline =
             create_sky_pipeline(&device, &globals_layout, &texture_layout, config.format);
@@ -241,6 +277,9 @@ impl Renderer {
             depth_view,
             pipeline,
             translucent_pipeline,
+            mob_pipeline,
+            mob_bind_groups,
+            mobs: Vec::new(),
             sky_pipeline,
             sun_bind_group,
             moon_bind_group,
@@ -265,6 +304,16 @@ impl Renderer {
         }
         let buffers = self.buffers("chunk", mesh);
         self.chunks.insert(pos, buffers);
+    }
+
+    /// Replaces the mob meshes (one per kind that's present) drawn from
+    /// the next frame on.
+    pub fn set_mobs(&mut self, meshes: &[(usize, Mesh)]) {
+        self.mobs = meshes
+            .iter()
+            .filter(|(_, mesh)| !mesh.is_empty())
+            .map(|(kind, mesh)| (*kind, self.buffers("mob", mesh)))
+            .collect();
     }
 
     /// Replaces the dropped-item mesh drawn from the next frame on.
@@ -442,6 +491,14 @@ impl Renderer {
             if let Some(entities) = &self.entities {
                 draw_range(&mut pass, entities, 0..entities.opaque);
             }
+            if !self.mobs.is_empty() {
+                pass.set_pipeline(&self.mob_pipeline);
+                for (kind, mesh) in &self.mobs {
+                    pass.set_bind_group(1, &self.mob_bind_groups[*kind], &[]);
+                    draw_range(&mut pass, mesh, 0..mesh.opaque);
+                }
+                pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            }
             // Clouds and water both blend: draw whichever is farther first.
             let above_clouds = camera.position.y > environment.cloud_height;
             if above_clouds {
@@ -616,6 +673,7 @@ fn create_block_pipeline(
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
     translucent: bool,
+    cull_back: bool,
 ) -> wgpu::RenderPipeline {
     let (label, entry, blend) = if translucent {
         (
@@ -636,7 +694,7 @@ fn create_block_pipeline(
             buffers: &[Some(vertex::Vertex::layout())],
         },
         primitive: wgpu::PrimitiveState {
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode: cull_back.then_some(wgpu::Face::Back),
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {

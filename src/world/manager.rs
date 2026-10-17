@@ -91,6 +91,8 @@ enum Done {
 pub struct Changes {
     pub meshes: Vec<(ChunkPos, Mesh)>,
     pub unloaded: Vec<ChunkPos>,
+    /// Chunks that entered the world (generated, loaded or brought back).
+    pub loaded: Vec<ChunkPos>,
 }
 
 pub struct ChunkManager {
@@ -244,6 +246,7 @@ impl ChunkManager {
         let mut changes = Changes {
             meshes: std::mem::take(&mut self.remeshed),
             unloaded: Vec::new(),
+            loaded: Vec::new(),
         };
 
         for _ in 0..MAX_RESULTS_PER_FRAME {
@@ -251,6 +254,7 @@ impl ChunkManager {
                 Ok(Done::Generated(chunk)) => {
                     self.generating.remove(&chunk.pos);
                     if Self::distance(chunk.pos, center) <= self.radius + 1 {
+                        changes.loaded.push(chunk.pos);
                         self.world.insert(*chunk);
                     }
                 }
@@ -312,6 +316,7 @@ impl ChunkManager {
             let pos = center.offset(dx, dz);
             if self.world.get(pos).is_none() {
                 if let Some(chunk) = self.unloaded_edits.remove(&pos) {
+                    changes.loaded.push(pos);
                     self.world.insert_shared(chunk);
                 } else if self.generating.insert(pos) {
                     let _ = jobs.send(Job::Generate(pos));
