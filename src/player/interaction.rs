@@ -42,10 +42,11 @@ pub fn break_block(world: &World, blocks: &BlockRegistry, at: IVec3) -> Vec<Edit
             let Some(state) = world.block(neighbor.x, neighbor.y, neighbor.z) else {
                 continue;
             };
-            let held = blocks
-                .get(state.id())
-                .and_then(|def| def.support(state.data()))
-                .is_some_and(|offset| neighbor + offset == removed);
+            let held = blocks.get(state.id()).is_some_and(|def| {
+                def.held_by(state.data())
+                    .iter()
+                    .any(|&offset| neighbor + offset == removed)
+            });
             if held && !edits.iter().any(|&(p, _)| p == neighbor) {
                 edits.push((neighbor, BlockState::AIR));
             }
@@ -83,8 +84,8 @@ pub fn place_block(
     }
     let data = match new.placement {
         // Turned toward the player by `facing_data`, or made into two
-        // halves by `place_bed`, afterwards.
-        Placement::Plain | Placement::Facing | Placement::Bed => block.data(),
+        // halves by `place_bed` or `place_door`, afterwards.
+        Placement::Plain | Placement::Facing | Placement::Bed | Placement::Door => block.data(),
         Placement::Torch => match hit.face? {
             Face::Top => 5,
             Face::East => 1,
@@ -94,14 +95,16 @@ pub fn place_block(
             Face::Bottom => return None,
         },
     };
-    if new.placement != Placement::Bed
+    if !matches!(new.placement, Placement::Bed | Placement::Door)
         && let Some(offset) = new.support(data)
     {
         let support = def_at(world, blocks, at + offset)?;
         // Torches need a full solid block; plants just need ground.
         let holds = match new.placement {
             Placement::Torch => support.is_opaque_cube(),
-            Placement::Plain | Placement::Facing | Placement::Bed => !support.replaceable,
+            Placement::Plain | Placement::Facing | Placement::Bed | Placement::Door => {
+                !support.replaceable
+            }
         };
         if !holds {
             return None;
@@ -141,6 +144,55 @@ pub fn place_bed(
     Some([
         (foot, BlockState::new(bed.id(), dir)),
         (head, BlockState::new(bed.id(), dir | 8)),
+    ])
+}
+
+/// A door's two halves for `lower` (from `place_block`) and a player
+/// looking along `yaw`: only on top of a full block, into two replaceable
+/// cells clear of the player. Its hinge goes beside the solid side, or
+/// beside a door already there, so pairs open apart (1.0.0's
+/// `ItemDoor.placeDoorBlock`).
+pub fn place_door(
+    world: &World,
+    blocks: &BlockRegistry,
+    hit: &Hit,
+    (lower, door): Edit,
+    yaw: f32,
+    player: &Aabb,
+) -> Option<[Edit; 2]> {
+    if hit.face != Some(Face::Top) || lower.y + 1 >= WORLD_HEIGHT as i32 {
+        return None;
+    }
+    let upper = lower + IVec3::Y;
+    if !def_at(world, blocks, lower - IVec3::Y)?.is_opaque_cube()
+        || !def_at(world, blocks, upper)?.replaceable
+        || Aabb::block(upper.x, upper.y, upper.z).intersects(player)
+    {
+        return None;
+    }
+    let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
+    // Looking north, east, south, west gives direction 3, 0, 1, 2.
+    let mut dir = (quarter + 3).rem_euclid(4) as u8;
+    let side = [IVec3::Z, IVec3::NEG_X, IVec3::NEG_Z, IVec3::X][dir as usize];
+    let count = |offset: IVec3, test: &dyn Fn(BlockState) -> bool| {
+        [lower, upper]
+            .iter()
+            .filter(|&&cell| {
+                let at = cell + offset;
+                world.block(at.x, at.y, at.z).is_some_and(test)
+            })
+            .count()
+    };
+    let solid = |block: BlockState| blocks.get(block.id()).is_some_and(BlockDef::is_opaque_cube);
+    let is_door = |block: BlockState| block.id() == door.id();
+    let (door_left, door_right) = (count(-side, &is_door) > 0, count(side, &is_door) > 0);
+    if (door_left && !door_right) || count(side, &solid) > count(-side, &solid) {
+        // Hinged on the other side: turned back a quarter and "open".
+        dir = ((dir + 3) & 3) | 4;
+    }
+    Some([
+        (lower, BlockState::new(door.id(), dir)),
+        (upper, BlockState::new(door.id(), dir | 8)),
     ])
 }
 
@@ -255,6 +307,51 @@ mod tests {
         }
         let broken = break_block(&world, &blocks, IVec3::new(6, 64, 5));
         assert_eq!(broken.len(), 2);
+    }
+
+    #[test]
+    fn doors_stand_on_full_blocks_and_hinge_against_walls() {
+        const DOOR: BlockState = BlockState::new(64, 0);
+        let mut world = world_with(&[(IVec3::new(4, 64, 8), STONE), (IVec3::new(4, 65, 8), STONE)]);
+        let blocks = blocks();
+        let place = |world: &World, x: i32, yaw: f32| {
+            let on_top = hit(IVec3::new(x, 63, 8), Face::Top);
+            let lower = place_block(world, &blocks, &on_top, DOOR, &far_player())?;
+            place_door(world, &blocks, &on_top, lower, yaw, &far_player())
+        };
+        // Looking north: direction 3, the upper half adding 8.
+        assert_eq!(
+            place(&world, 8, 0.0),
+            Some([
+                (IVec3::new(8, 64, 8), BlockState::new(64, 3)),
+                (IVec3::new(8, 65, 8), BlockState::new(64, 3 | 8)),
+            ])
+        );
+        // With a wall to the east (on its right), it hinges the other way:
+        // a quarter back and marked open.
+        let [(_, lower), _] = place(&world, 3, 0.0).unwrap();
+        assert_eq!(lower, BlockState::new(64, 2 | 4));
+        // Breaking the ground takes both halves; so does breaking either.
+        let [(at, lower), (above, upper)] = place(&world, 8, 0.0).unwrap();
+        for (cell, block) in [(at, lower), (above, upper)] {
+            let pos = ChunkPos::of_block(cell.x, cell.z);
+            world.get_mut(pos).unwrap().set(
+                cell.x as usize,
+                cell.y as usize,
+                cell.z as usize,
+                block,
+            );
+        }
+        assert_eq!(break_block(&world, &blocks, at - IVec3::Y).len(), 3);
+        assert_eq!(break_block(&world, &blocks, above).len(), 2);
+        assert_eq!(break_block(&world, &blocks, at).len(), 2);
+        // No room under the world's ceiling or on a side face.
+        let side = hit(IVec3::new(4, 64, 8), Face::East);
+        let lower = place_block(&world, &blocks, &side, DOOR, &far_player()).unwrap();
+        assert_eq!(
+            place_door(&world, &blocks, &side, lower, 0.0, &far_player()),
+            None
+        );
     }
 
     #[test]

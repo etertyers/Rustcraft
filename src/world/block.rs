@@ -196,6 +196,9 @@ pub enum Placement {
     /// placed and the head one block further the way the player looks.
     /// Data 0–3 is that way (south, west, north, east); the head adds 8.
     Bed,
+    /// A two-block door on top of a full block (1.0.0's `ItemDoor`): data
+    /// 0–3 is its direction, 4 is open and 8 the upper half.
+    Door,
 }
 
 /// The way from a bed's foot to its head for direction `dir` (0–3: south,
@@ -206,6 +209,31 @@ pub fn bed_direction(dir: u8) -> IVec3 {
         1 => IVec3::NEG_X,
         2 => IVec3::NEG_Z,
         _ => IVec3::X,
+    }
+}
+
+/// A door's thickness (1.0.0's 0.1875).
+const DOOR_THICKNESS: f32 = 3.0 / 16.0;
+
+/// Which side of its cell a door covers, 0–3 (1.0.0's `getState`): its
+/// direction less one while closed, its direction while open.
+pub fn door_side(data: u8) -> u8 {
+    if data & 4 == 0 {
+        (data + 3) & 3
+    } else {
+        data & 3
+    }
+}
+
+/// A door's slab within its cell, as (min, max) (1.0.0's
+/// `setDoorRotation`): along the north, east, south or west side.
+pub fn door_box(data: u8) -> ([f32; 3], [f32; 3]) {
+    let t = DOOR_THICKNESS;
+    match door_side(data) {
+        0 => ([0.0, 0.0, 0.0], [1.0, 1.0, t]),
+        1 => ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        2 => ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]),
+        _ => ([0.0, 0.0, 0.0], [t, 1.0, 1.0]),
     }
 }
 
@@ -220,6 +248,8 @@ pub enum Activate {
     Furnace,
     /// Sleeps in it.
     Bed,
+    /// Opens or closes it.
+    Door,
 }
 
 /// The liquid a block is (flowing or still).
@@ -350,6 +380,8 @@ impl BlockDef {
                 _ => IVec3::NEG_Y,
             }),
             Placement::Plain | Placement::Facing => self.needs_ground.then_some(IVec3::NEG_Y),
+            // The lower half stands on the ground, the upper on the lower.
+            Placement::Door => Some(IVec3::NEG_Y),
             // Each half goes with the other.
             Placement::Bed => {
                 let toward_head = bed_direction(data & 3);
@@ -360,6 +392,30 @@ impl BlockDef {
                 })
             }
         }
+    }
+
+    /// Every neighbor whose removal takes this block with it: what holds
+    /// it up, plus a door's upper half for its lower half.
+    pub fn held_by(&self, data: u8) -> Vec<IVec3> {
+        let mut by: Vec<IVec3> = self.support(data).into_iter().collect();
+        if self.placement == Placement::Door && data & 8 == 0 {
+            by.push(IVec3::Y);
+        }
+        by
+    }
+
+    /// The part of its cell entities bump into, as (min, max) within the
+    /// cell, or `None` if they pass through (1.0.0's collision bounds; a
+    /// bed is 9/16 tall and a door a 3/16 slab on one side).
+    pub fn collision_box(&self, data: u8) -> Option<([f32; 3], [f32; 3])> {
+        if !self.solid {
+            return None;
+        }
+        Some(match self.shape {
+            Shape::Bed => ([0.0; 3], [1.0, 9.0 / 16.0, 1.0]),
+            Shape::Door => door_box(data),
+            _ => ([0.0; 3], [1.0; 3]),
+        })
     }
 
     /// The face its front texture is on, for blocks placed facing the player.
@@ -582,6 +638,24 @@ mod tests {
         assert!(!block(37).solid, "flowers have no collision");
         assert_eq!(block(37).shape, Shape::Cross);
         assert_eq!(block(0).shape, Shape::None);
+    }
+
+    #[test]
+    fn doors_cover_one_side_and_swing_a_quarter_when_opened() {
+        let t = 3.0 / 16.0;
+        // Direction 3 (placed looking north) closes along the south side.
+        assert_eq!(door_box(3), ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]));
+        // Open, it swings to the west side; the upper half matches.
+        assert_eq!(door_box(3 | 4), ([0.0; 3], [t, 1.0, 1.0]));
+        assert_eq!(door_box(3 | 4 | 8), door_box(3 | 4));
+        let blocks = real_registry();
+        let door = blocks.get(64).unwrap();
+        assert_eq!(door.collision_box(0), Some(door_box(0)));
+        let bed = blocks.get(26).unwrap();
+        assert_eq!(bed.collision_box(8).unwrap().1[1], 9.0 / 16.0);
+        assert_eq!(blocks.get(37).unwrap().collision_box(0), None);
+        assert_eq!(door.held_by(0), [IVec3::NEG_Y, IVec3::Y]);
+        assert_eq!(door.held_by(8), [IVec3::NEG_Y]);
     }
 
     #[test]

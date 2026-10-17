@@ -18,10 +18,12 @@
 //   tool      tool that mines it fast: Pickaxe, Shovel or Axe
 //   harvest   tool needed to drop anything: (tools: [...], tier: Wood)
 //   placement Plain (default), Torch (attaches to the clicked face),
-//             Facing (front toward the player, data 2-5) or Bed (two
-//             halves, data 0-3 the direction and 8 the head)
+//             Facing (front toward the player, data 2-5), Bed (two
+//             halves, data 0-3 the direction and 8 the head) or Door (two
+//             halves, data 0-3 the direction, 4 open and 8 the upper)
 //   activate  what right-clicking it does: Crafting (opens a 3×3 grid),
-//             Chest or Furnace (opens its slots), Bed (sleeps)
+//             Chest or Furnace (opens its slots), Bed (sleeps) or Door
+//             (opens and closes; iron doors have none, needing redstone)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
 //   drops     Itself (default; keeps the data value if it has variants),
 //             Nothing, All([...]) every drop that rolls, or OneOf([...]) the
@@ -168,7 +170,7 @@
     // No block texture in the pack; signs are drawn from entity/sign.png later.
     (id: 63, name: "standing_sign", hardness: 1.0, drops: All([(item: 323)]), needs_ground: true, shape: Sign, solid: false, textures: (all: "sign")),
     // Data 0-7 is the lower half, 8+ the upper half.
-    (id: 64, name: "wooden_door", hardness: 3.0, drops: All([(item: 324)]), shape: Door, layer: Cutout, textures: (all: "door_wood_lower"),
+    (id: 64, name: "wooden_door", hardness: 3.0, drops: All([(item: 324, max_data: 7)]), placement: Door, activate: Door, shape: Door, layer: Cutout, textures: (all: "door_wood_lower"),
         variants: {
             8: (name: "upper", textures: (all: "door_wood_upper")),
         }),
@@ -178,7 +180,7 @@
     (id: 68, name: "wall_sign", hardness: 1.0, drops: All([(item: 323)]), shape: Sign, solid: false, textures: (all: "sign")),
     (id: 69, name: "lever", hardness: 0.5, shape: Lever, layer: Cutout, solid: false, textures: (all: "lever")),
     (id: 70, name: "stone_pressure_plate", hardness: 0.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: PressurePlate, solid: false, textures: (all: "stone")),
-    (id: 71, name: "iron_door", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 330)]), shape: Door, layer: Cutout, textures: (all: "door_iron_lower"),
+    (id: 71, name: "iron_door", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 330, max_data: 7)]), placement: Door, shape: Door, layer: Cutout, textures: (all: "door_iron_lower"),
         variants: {
             8: (name: "upper", textures: (all: "door_iron_upper")),
         }),

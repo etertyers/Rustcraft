@@ -5,7 +5,10 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
-    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape, bed_direction},
+    block::{
+        BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape, bed_direction,
+        door_box, door_side,
+    },
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     light::ChunkLight,
 };
@@ -397,6 +400,10 @@ fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
     ]
 }
 
+/// One face of a shaped block: the face it shows (for culling and shade),
+/// its block-relative corners and its uv rect.
+type Quad = (Face, [[f32; 3]; 4], [f32; 4]);
+
 /// Height of a bed's top, and of the planks under it (1.0.0's
 /// `renderBlockBed`).
 const BED_TOP: f32 = 9.0 / 16.0;
@@ -408,7 +415,7 @@ const BED_BOTTOM: f32 = 3.0 / 16.0;
 /// `model` holds the half's textures (`blocks.ron` puts the foot's end on
 /// south and the head's on north); `data` is the direction plus 8 for the
 /// head.
-fn bed_quads(data: u8, model: &BlockModel) -> Vec<(Face, [[f32; 3]; 4], [f32; 4])> {
+fn bed_quads(data: u8, model: &BlockModel) -> Vec<Quad> {
     let head = data & 8 != 0;
     let toward_head = bed_direction(data & 3);
     let along = [
@@ -451,6 +458,68 @@ fn bed_quads(data: u8, model: &BlockModel) -> Vec<(Face, [[f32; 3]; 4], [f32; 4]
         }
     }
     quads
+}
+
+/// A door half's six faces, block-relative: its slab (`door_box`) with
+/// each face's texture cut to the part of the slab it covers, and the
+/// wide faces mirrored as 1.0.0's `BlockDoor.getBlockTexture` does so the
+/// handle sits away from the hinge.
+fn door_quads(data: u8, model: &BlockModel) -> [Quad; 6] {
+    let (min, max) = door_box(data);
+    let side = door_side(data);
+    Face::ALL.map(|face| {
+        let corners = face_corners(face)
+            .map(|c| [0, 1, 2].map(|axis| if c[axis] > 0.5 { max[axis] } else { min[axis] }));
+        // Where along the texture each corner falls: u from the face's
+        // first corner toward its second, v down from the top.
+        let (u_axis, u_flip, v_axis, v_flip) = match face {
+            Face::Top => (0, false, 2, false),
+            Face::Bottom => (0, false, 2, true),
+            Face::North => (0, true, 1, true),
+            Face::South => (0, false, 1, true),
+            Face::East => (2, true, 1, true),
+            Face::West => (2, false, 1, true),
+        };
+        let along = |flip: bool, value: f32| if flip { 1.0 - value } else { value };
+        let (a, b) = (
+            along(u_flip, corners[0][u_axis]),
+            along(u_flip, corners[1][u_axis]),
+        );
+        let (c, d) = (
+            along(v_flip, corners[3][v_axis]),
+            along(v_flip, corners[0][v_axis]),
+        );
+        let [u0, v0, u1, v1] = model.faces[face.index()].uv;
+        let lerp = |from: f32, to: f32, t: f32| from + (to - from) * t;
+        let mut uv = [
+            lerp(u0, u1, a),
+            lerp(v0, v1, c),
+            lerp(u0, u1, b),
+            lerp(v0, v1, d),
+        ];
+        if door_mirrored(data, side, face) {
+            uv.swap(0, 2);
+        }
+        (face, corners, uv)
+    })
+}
+
+/// Whether a door face's texture is drawn mirrored (1.0.0's negative
+/// texture index for the wide faces).
+fn door_mirrored(data: u8, side: u8, face: Face) -> bool {
+    let mc_side = match face {
+        Face::North => 2,
+        Face::South => 3,
+        Face::West => 4,
+        Face::East => 5,
+        Face::Top | Face::Bottom => return false,
+    };
+    // Only the wide faces: north and south for a door along x.
+    if (side == 0 || side == 2) != (mc_side <= 3) {
+        return false;
+    }
+    let turn = side / 2 + ((mc_side & 1) ^ side) + (data & 4) / 4;
+    turn & 1 != 0
 }
 
 /// Height of a block's top: 1, or for a liquid with no liquid of its kind
@@ -562,6 +631,20 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 if !inset && !face_visible(models, block, model, neighbor) {
                                     continue;
                                 }
+                                let color = side_color.map(|c| c * face.shade());
+                                mesh.quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    [color; 4],
+                                    [own_light; 4],
+                                );
+                            }
+                        }
+                        Shape::Door => {
+                            // Both halves share their textures with data 0
+                            // or 8.
+                            let half = BlockState::new(block.id(), block.data() & 8);
+                            for (face, corners, uv) in door_quads(block.data(), models.get(half)) {
                                 let color = side_color.map(|c| c * face.shade());
                                 mesh.quad(
                                     translate(corners, origin),
@@ -742,6 +825,32 @@ mod tests {
         let [u0, _, u1, _] = uv(Face::East);
         assert_eq!(side(Face::North), [u1, 0.0, u0, 1.0]);
         assert_eq!(side(Face::South), [u0, 0.0, u1, 1.0]);
+    }
+
+    #[test]
+    fn door_faces_cut_their_texture_and_mirror_when_open() {
+        let model = bed_model();
+        let uv = |face: Face| {
+            let i = face.index() as f32;
+            [i, 0.0, i + 1.0, 1.0]
+        };
+        let mirrored = |[u0, v0, u1, v1]: [f32; 4]| [u1, v0, u0, v1];
+        let find = |quads: &[Quad], face: Face| quads.iter().find(|q| q.0 == face).unwrap().2;
+        // Closed along the south side (direction 3): the wide faces show the
+        // whole texture, the north one mirrored, and the thin ones a strip.
+        let closed = door_quads(3, &model);
+        assert_eq!(find(&closed, Face::South), uv(Face::South));
+        assert_eq!(find(&closed, Face::North), mirrored(uv(Face::North)));
+        let [u0, _, u1, _] = find(&closed, Face::East);
+        assert!(((u1 - u0) - 3.0 / 16.0).abs() < 1e-6, "{u0} {u1}");
+        // Open, it lies along the west side; now the west face is mirrored.
+        let open = door_quads(3 | 4, &model);
+        assert!(
+            open.iter()
+                .all(|(_, corners, _)| corners.iter().all(|c| c[0] <= 3.0 / 16.0))
+        );
+        assert_eq!(find(&open, Face::East), uv(Face::East));
+        assert_eq!(find(&open, Face::West), mirrored(uv(Face::West)));
     }
 
     #[test]

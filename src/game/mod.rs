@@ -824,6 +824,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_closed_door_blocks_the_way_until_right_clicked_open() {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(324, 1)));
+        game.camera.pitch = -0.7;
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        let door = |game: &Game, y| game.chunks.world().block(0, y, -2);
+        assert_eq!(door(&game, 64), Some(BlockState::new(64, 3)));
+        assert_eq!(door(&game, 65), Some(BlockState::new(64, 3 | 8)));
+        // Walking north stops against the door's slab on the cell's south side.
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..40 {
+            game.tick();
+        }
+        let front = game.body.position().z;
+        assert!((front - (-1.0 + 0.3)).abs() < 0.01, "stopped at {front}");
+        // Right-clicking the upper half opens both.
+        game.keys.set_key(KeyCode::KeyW, false);
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        assert_eq!(door(&game, 64), Some(BlockState::new(64, 3 | 4)));
+        assert_eq!(door(&game, 65), Some(BlockState::new(64, 3 | 4 | 8)));
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..40 {
+            game.tick();
+        }
+        assert!(game.body.position().z < -3.0, "walked through");
+    }
+
+    #[test]
     fn creative_breaks_instantly_without_drops_and_keeps_placed_items() {
         let mut game = flat_game(GameMode::Creative);
         game.inventory.set(0, Some(ItemStack::new(1, 1)));

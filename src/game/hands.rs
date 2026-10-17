@@ -382,8 +382,31 @@ impl Game {
             Activate::Chest => self.open_chest(cell),
             Activate::Furnace => self.open_furnace(cell),
             Activate::Bed => self.use_bed(cell),
+            Activate::Door => self.toggle_door(cell),
         }
         true
+    }
+
+    /// Opens or closes the door at `cell`, both halves (1.0.0's
+    /// `BlockDoor.blockActivated`).
+    fn toggle_door(&mut self, cell: IVec3) {
+        let world = self.chunks.world();
+        let Some(block) = world.block(cell.x, cell.y, cell.z) else {
+            return;
+        };
+        let lower = if block.data() & 8 == 0 {
+            cell
+        } else {
+            cell - IVec3::Y
+        };
+        let edits: Vec<_> = [lower, lower + IVec3::Y]
+            .into_iter()
+            .filter_map(|at| {
+                let half = world.block(at.x, at.y, at.z)?;
+                (half.id() == block.id()).then(|| (at, BlockState::new(half.id(), half.data() ^ 4)))
+            })
+            .collect();
+        self.chunks.set_blocks(&edits);
     }
 
     /// Places the selected stack's block against the clicked face.
@@ -413,6 +436,13 @@ impl Game {
             Some(Placement::Bed) => {
                 let blocks = &self.items.blocks;
                 match interaction::place_bed(world, blocks, hit, (at, placed), yaw, &player) {
+                    Some(halves) => halves.to_vec(),
+                    None => return,
+                }
+            }
+            Some(Placement::Door) => {
+                let blocks = &self.items.blocks;
+                match interaction::place_door(world, blocks, hit, (at, placed), yaw, &player) {
                     Some(halves) => halves.to_vec(),
                     None => return,
                 }
