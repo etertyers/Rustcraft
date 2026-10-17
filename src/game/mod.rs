@@ -6,6 +6,8 @@ mod containers;
 pub mod environment;
 mod hands;
 mod mobs;
+#[cfg(test)]
+mod progression;
 mod sleep;
 
 use std::{
