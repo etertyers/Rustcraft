@@ -6,6 +6,7 @@ mod containers;
 pub mod environment;
 mod hands;
 mod mobs;
+mod sleep;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -102,6 +103,12 @@ pub struct Game {
     pub cursor: Option<ItemStack>,
     /// The crafting grid, chest or furnace open, if any.
     pub container: Option<Container>,
+    /// Lying in a bed.
+    sleep: Option<sleep::Sleep>,
+    /// The head of the bed the player last slept in, where they respawn.
+    bed: Option<glam::IVec3>,
+    /// A notice on screen and the ticks it has left (1.0.0's chat lines).
+    pub message: Option<(String, u32)>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     pub arrows: Vec<Arrow>,
@@ -171,6 +178,9 @@ impl Game {
             stats: Stats::default(),
             cursor: None,
             container: None,
+            sleep: None,
+            bed: None,
+            message: None,
             entities: Vec::new(),
             arrows: Vec::new(),
             drawing: None,
@@ -222,6 +232,7 @@ impl Game {
         game.time = level.time;
         game.inventory = player.inventory.clone();
         game.stats = player.stats.clone();
+        game.bed = player.bed.map(glam::IVec3::from_array);
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
@@ -265,9 +276,9 @@ impl Game {
         self.ticks_since_save = 0;
         let mobs = self.saved_mobs();
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
-        let Some(saved) = self.saved.as_mut() else {
+        if self.saved.is_none() {
             return Ok(());
-        };
+        }
         let chunks = self.chunks.save()?;
         // A stack held in an open inventory screen, and the crafting grid,
         // go back in the inventory rather than being lost.
@@ -279,13 +290,18 @@ impl Game {
         for held in self.cursor.into_iter().chain(grid.into_iter().flatten()) {
             inventory.add(held, &self.items);
         }
+        let feet = self.standing_feet();
+        let Some(saved) = self.saved.as_mut() else {
+            return Ok(());
+        };
         saved.level.player = PlayerData {
-            position: self.body.position().to_array(),
+            position: feet.to_array(),
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
             inventory,
             flying: self.body.flying,
             stats: self.stats.clone(),
+            bed: self.bed.map(|bed| bed.to_array()),
         };
         saved.level.time = self.time;
         saved.level.mobs = mobs;
@@ -413,7 +429,9 @@ impl Game {
         }
         let alpha = (self.tick_time / TICK) as f64;
         let feet = self.prev_feet.lerp(self.body.position(), alpha);
-        let eye = feet + DVec3::Y * self.body.eye_height();
+        let eye = self
+            .lying_eye()
+            .unwrap_or(feet + DVec3::Y * self.body.eye_height());
         self.camera.position = eye.as_vec3();
         self.target = self.find_target(eye);
     }
@@ -422,9 +440,26 @@ impl Game {
     fn tick(&mut self) {
         self.prev_feet = self.body.position();
         if !self.stats.is_dead() {
-            self.move_player();
+            if self.is_sleeping() {
+                self.tick_sleep();
+            } else {
+                self.move_player();
+            }
+            let health = self.stats.health;
             self.tick_stats();
-            self.use_hands();
+            // Getting hurt wakes a sleeping player (1.0.0).
+            if self.stats.health < health {
+                self.wake();
+            }
+            if !self.is_sleeping() {
+                self.use_hands();
+            }
+        }
+        if let Some((_, ticks)) = &mut self.message {
+            *ticks = ticks.saturating_sub(1);
+            if *ticks == 0 {
+                self.message = None;
+            }
         }
         self.tick_items();
         self.tick_arrows();
@@ -545,10 +580,12 @@ impl Game {
         }
     }
 
-    /// Back to the world spawn with full health and food (1.0.0's respawn).
+    /// Back beside the bed last slept in, or the world spawn, with full
+    /// health and food (1.0.0's respawn).
     pub fn respawn(&mut self) {
-        self.body = Body::new(self.spawn);
-        self.prev_feet = self.spawn;
+        let feet = self.respawn_point();
+        self.body = Body::new(feet);
+        self.prev_feet = feet;
         self.stats = Stats::default();
         self.mining = None;
         self.release_input();
@@ -678,6 +715,7 @@ pub(crate) mod tests {
         game.inventory.selected = 3;
         game.cursor = Some(ItemStack::new(50, 7));
         game.body.flying = true;
+        game.bed = Some(IVec3::new(3, 70, -9));
         game.save().unwrap();
         drop(game);
 
@@ -700,6 +738,7 @@ pub(crate) mod tests {
         // The held torches went back into the first free slot.
         assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(50, 7)));
         assert!(game.body.flying);
+        assert_eq!(game.bed, Some(IVec3::new(3, 70, -9)));
         load_player_chunk(&mut game);
         assert_eq!(game.chunks.world().block(at.x, at.y, at.z), Some(bricks));
     }
@@ -917,7 +956,7 @@ pub(crate) mod tests {
         assert_eq!(creative.inventory.slot(0), Some(&ItemStack::new(320, 1)));
     }
 
-    fn mob_registry() -> Arc<MobRegistry> {
+    pub(crate) fn mob_registry() -> Arc<MobRegistry> {
         Arc::new(MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap())
     }
 

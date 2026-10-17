@@ -41,6 +41,8 @@ pub enum ScreenAction {
     Discard,
     /// The death screen's Respawn button.
     Respawn,
+    /// The sleep screen's Leave Bed button.
+    LeaveBed,
 }
 
 /// Everything a screen shows.

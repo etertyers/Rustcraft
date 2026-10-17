@@ -47,6 +47,10 @@ pub struct Hud {
     pub survival: Option<SurvivalHud>,
     /// Set while dead: how the player died.
     pub death: Option<String>,
+    /// Set while in bed: how far asleep, 0–1.
+    pub sleep: Option<f32>,
+    /// A notice shown above the hotbar.
+    pub message: Option<String>,
 }
 
 pub struct DebugUi {
@@ -127,10 +131,18 @@ impl DebugUi {
             if let Some((screen, view)) = &mut screen {
                 actions = screens::show(ui.ctx(), screen, view, textures);
             }
+            if let Some(message) = &hud.message {
+                paint_message(ui.painter(), full, message);
+            }
             if let Some(message) = &hud.death
                 && show_death_screen(ui.ctx(), message)
             {
                 actions.push(screens::ScreenAction::Respawn);
+            }
+            if let Some(asleep) = hud.sleep
+                && show_sleep_screen(ui.ctx(), asleep)
+            {
+                actions.push(screens::ScreenAction::LeaveBed);
             }
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
@@ -255,6 +267,43 @@ fn show_death_screen(ctx: &egui::Context, message: &str) -> bool {
             });
         });
     respawn
+}
+
+/// 1.0.0's GuiSleepMP: the screen darkens as the player falls asleep,
+/// with a Leave Bed button. Returns true when it's clicked.
+fn show_sleep_screen(ctx: &egui::Context, asleep: f32) -> bool {
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::unique("sleep"),
+    ));
+    let alpha = (220.0 * asleep) as u8;
+    painter.rect_filled(
+        full,
+        0.0,
+        Color32::from_rgba_unmultiplied(16, 16, 32, alpha),
+    );
+    let scale = gui::gui_scale(full);
+    let mut leave = false;
+    egui::Area::new(egui::Id::unique("sleep-screen"))
+        .anchor(Align2::CENTER_BOTTOM, [0.0, -20.0 * scale])
+        .show(ctx, |ui| {
+            let button = egui::Button::new(RichText::new("Leave Bed").size(8.0 * scale))
+                .min_size(egui::vec2(200.0, 20.0) * scale);
+            leave = ui.add(button).clicked();
+        });
+    leave
+}
+
+/// A notice above the hotbar, where 1.0.0's chat shows (bottom left).
+fn paint_message(painter: &egui::Painter, full: egui::Rect, text: &str) {
+    let scale = gui::gui_scale(full);
+    let font = egui::FontId::proportional(8.0 * scale);
+    let galley = painter.layout_no_wrap(text.to_owned(), font, Color32::WHITE);
+    let at = egui::pos2(full.left() + 2.0 * scale, full.bottom() - 48.0 * scale);
+    let rect = egui::Rect::from_min_size(at, galley.size()).expand(scale);
+    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(128));
+    painter.galley(at, galley, Color32::WHITE);
 }
 
 fn show_overlay(ctx: &egui::Context, text: &str) {

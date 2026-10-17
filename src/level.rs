@@ -69,6 +69,10 @@ pub struct PlayerData {
     /// Health, hunger, air and fire (added in M9).
     #[serde(default)]
     pub stats: Stats,
+    /// The head of the bed the player last slept in, where they respawn
+    /// (added in M10).
+    #[serde(default)]
+    pub bed: Option<[i32; 3]>,
 }
 
 impl Level {
@@ -86,6 +90,7 @@ impl Level {
                 inventory: Inventory::default(),
                 flying: false,
                 stats: Stats::default(),
+                bed: None,
             },
             time: 0,
             last_played: now(),
@@ -278,6 +283,7 @@ mod tests {
             position: [10.25, 64.0, -3.5],
             yaw: 1.5,
             pitch: -0.25,
+            bed: Some([3, 64, -7]),
             ..first.player
         };
         first.time = 12345;

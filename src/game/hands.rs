@@ -381,6 +381,7 @@ impl Game {
             Activate::Crafting => self.open_crafting_table(),
             Activate::Chest => self.open_chest(cell),
             Activate::Furnace => self.open_furnace(cell),
+            Activate::Bed => self.use_bed(cell),
         }
         true
     }

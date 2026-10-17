@@ -94,6 +94,8 @@ pub struct App {
     game: Option<Game>,
     /// An inventory screen open over the game.
     screen: Option<Screen>,
+    /// Whether the player was in bed last frame.
+    sleeping: bool,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
     cursor_grabbed: bool,
@@ -120,6 +122,7 @@ impl App {
             menu: None,
             game: None,
             screen: None,
+            sleeping: false,
             catalog: Vec::new(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
@@ -311,11 +314,21 @@ impl App {
             return;
         };
         let pressed = event.state == ElementState::Pressed;
-        if key == KeyCode::Escape && pressed && self.screen.is_some() {
+        let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
+        if key == KeyCode::Escape && pressed && sleeping {
+            if let Some(game) = self.game.as_mut() {
+                game.wake();
+            }
+        } else if key == KeyCode::Escape && pressed && self.screen.is_some() {
             self.close_screen();
         } else if key == KeyCode::Escape && pressed {
             self.set_cursor_grab(false);
-        } else if key == KeyCode::KeyE && pressed && !event.repeat && self.game.is_some() {
+        } else if key == KeyCode::KeyE
+            && pressed
+            && !event.repeat
+            && self.game.is_some()
+            && !sleeping
+        {
             if self.screen.is_some() {
                 self.close_screen();
             } else {
@@ -410,6 +423,7 @@ impl App {
                 game.respawn();
                 self.set_cursor_grab(true);
             }
+            ScreenAction::LeaveBed => game.wake(),
         }
     }
 
@@ -451,6 +465,13 @@ impl App {
             return self.redraw_menu(event_loop, now);
         }
         self.show_opened_container();
+        // Lying in bed frees the mouse for the Leave Bed button; getting up
+        // takes it back.
+        let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
+        if sleeping != self.sleeping {
+            self.sleeping = sleeping;
+            self.set_cursor_grab(!sleeping);
+        }
         // Dying closes any screen and frees the mouse for the Respawn button.
         if !self.playing() {
             self.screen = None;
@@ -544,6 +565,8 @@ impl App {
                 let source = game.stats.last_source.unwrap_or(DamageSource::Mob);
                 format!("Player {}", source.death_message())
             }),
+            sleep: game.sleep_fade(),
+            message: game.message.as_ref().map(|(text, _)| text.clone()),
         };
         let view_of = |stack: &ItemStack| {
             let icons = self.icons.as_ref()?;
@@ -641,7 +664,11 @@ impl ApplicationHandler for App {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if !self.cursor_grabbed && self.screen.is_none() && self.playing() => {
+            } if !self.cursor_grabbed
+                && self.screen.is_none()
+                && self.playing()
+                && !self.sleeping =>
+            {
                 self.set_cursor_grab(true)
             }
             WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {

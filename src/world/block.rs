@@ -218,6 +218,8 @@ pub enum Activate {
     Chest,
     /// Opens its input, fuel and output slots.
     Furnace,
+    /// Sleeps in it.
+    Bed,
 }
 
 /// The liquid a block is (flowing or still).
