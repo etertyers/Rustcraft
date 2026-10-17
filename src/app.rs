@@ -20,7 +20,12 @@ use winit::{
 use crate::{
     assets, config,
     inventory::item::ItemRegistry,
-    player::{collision::WorldCollider, input::MoveKeys, physics::Body},
+    player::{
+        collision::WorldCollider,
+        input::MoveKeys,
+        physics::Body,
+        raycast::{self, Hit},
+    },
     render::{
         Renderer,
         atlas::{Atlas, MISSING_TILE},
@@ -79,6 +84,8 @@ pub struct App {
     prev_feet: DVec3,
     spawn: DVec3,
     keys: MoveKeys,
+    /// The block under the crosshair this frame.
+    target: Option<Hit>,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
     tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
@@ -123,6 +130,7 @@ impl App {
             prev_feet: spawn,
             spawn,
             keys: MoveKeys::default(),
+            target: None,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
             flying: false,
@@ -261,6 +269,19 @@ impl App {
         }
     }
 
+    /// The block the crosshair points at from `eye`, within reach.
+    fn find_target(&self, eye: DVec3) -> Option<Hit> {
+        let (chunks, blocks) = (self.chunks.as_ref()?, self.blocks.as_ref()?);
+        let world = chunks.world();
+        let dir = self.camera.forward().as_dvec3();
+        raycast::raycast(eye, dir, config::REACH, |cell| {
+            world
+                .block(cell.x, cell.y, cell.z)
+                .and_then(|block| blocks.get(block.id()))
+                .is_some_and(|def| def.is_targetable())
+        })
+    }
+
     /// One game tick: player physics.
     fn tick(&mut self) {
         self.prev_feet = self.body.position;
@@ -304,7 +325,9 @@ impl App {
         }
         let alpha = (self.tick_time / TICK) as f64;
         let feet = self.prev_feet.lerp(self.body.position, alpha);
-        self.camera.position = (feet + DVec3::Y * self.body.eye_height()).as_vec3();
+        let eye = feet + DVec3::Y * self.body.eye_height();
+        self.camera.position = eye.as_vec3();
+        self.target = self.find_target(eye);
 
         let (Some(window), Some(renderer), Some(debug_ui), Some(chunks)) = (
             &self.window,
@@ -323,6 +346,7 @@ impl App {
         for pos in changes.unloaded {
             renderer.remove_chunk(pos);
         }
+        renderer.set_outline(self.target.map(|hit| hit.block));
 
         let stats = DebugStats {
             chunks_drawn: renderer.chunks_drawn(),
@@ -330,7 +354,7 @@ impl App {
             biome: chunks.world().biome_at(x, z),
             seed: chunks.seed(),
         };
-        let ui = debug_ui.frame(window, &self.camera, &stats);
+        let ui = debug_ui.frame(window, &self.camera, &stats, self.cursor_grabbed);
         match renderer.render(&self.camera, ui) {
             Ok(presented) => {
                 self.frame_skipped = !presented;

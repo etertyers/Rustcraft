@@ -240,6 +240,11 @@ impl BlockDef {
             .unwrap_or(self.tint)
     }
 
+    /// Whether the crosshair can select it (everything but air and fluids).
+    pub fn is_targetable(&self) -> bool {
+        !matches!(self.shape, Shape::None | Shape::Liquid)
+    }
+
     /// A full opaque cube hides the faces of whatever touches it.
     pub fn is_opaque_cube(&self) -> bool {
         self.shape == Shape::Cube && self.layer == RenderLayer::Opaque

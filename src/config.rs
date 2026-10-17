@@ -44,6 +44,8 @@ pub const EYE_HEIGHT: f64 = 1.62;
 /// The camera drops this much while sneaking.
 pub const SNEAK_EYE_DROP: f64 = 0.08;
 pub const STEP_HEIGHT: f64 = 0.5;
+/// Block reach in survival, from the eye.
+pub const REACH: f64 = 5.0;
 
 /// Free-fly dev camera speed in blocks/s (Minecraft's creative flying speed).
 #[cfg(any(debug_assertions, test))]

@@ -3,12 +3,13 @@
 pub mod atlas;
 pub mod camera;
 pub mod frustum;
+mod outline;
 pub mod vertex;
 
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result, bail};
-use glam::Vec3;
+use glam::{IVec3, Vec3};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
@@ -19,6 +20,7 @@ use crate::{
 use atlas::Atlas;
 use camera::Camera;
 use frustum::Frustum;
+use outline::Outline;
 
 /// One frame of tessellated UI from egui, drawn over the world.
 pub struct UiPaint {
@@ -55,6 +57,7 @@ pub struct Renderer {
     chunks: HashMap<ChunkPos, ChunkBuffers>,
     /// Chunks that passed frustum culling in the last frame.
     chunks_drawn: usize,
+    outline: Outline,
     egui_renderer: egui_wgpu::Renderer,
 }
 
@@ -157,6 +160,7 @@ impl Renderer {
             cache: None,
         });
 
+        let outline = Outline::new(&device, &globals_layout, config.format, DEPTH_FORMAT);
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             config.format.remove_srgb_suffix(),
@@ -175,6 +179,7 @@ impl Renderer {
             atlas_bind_group,
             chunks: HashMap::new(),
             chunks_drawn: 0,
+            outline,
             egui_renderer,
         })
     }
@@ -207,6 +212,11 @@ impl Renderer {
                 index_count: mesh.indices.len() as u32,
             },
         );
+    }
+
+    /// Outlines `block` from the next frame on, or nothing.
+    pub fn set_outline(&mut self, block: Option<IVec3>) {
+        self.outline.set_target(block);
     }
 
     pub fn remove_chunk(&mut self, pos: ChunkPos) {
@@ -277,6 +287,7 @@ impl Renderer {
         };
         self.queue
             .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        let outline = self.outline.prepare(&self.queue);
 
         let mut encoder = self
             .device
@@ -319,6 +330,9 @@ impl Renderer {
                 pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..chunk.index_count, 0, 0..1);
                 self.chunks_drawn += 1;
+            }
+            if outline {
+                self.outline.draw(&mut pass);
             }
         }
 
