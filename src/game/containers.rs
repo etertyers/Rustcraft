@@ -277,6 +277,129 @@ impl Game {
         }
     }
 
+    /// Whether `slot` is on the open screen and takes items put into it
+    /// (not a result or a furnace's output).
+    fn takes_items(&self, slot: SlotRef) -> bool {
+        match slot {
+            SlotRef::Inventory(index) => index < SLOTS,
+            SlotRef::Grid(index) => {
+                matches!(&self.container, Some(Container::Crafting { grid, .. }) if index < grid.len())
+            }
+            SlotRef::Result => false,
+            SlotRef::Block(index) => {
+                let output = matches!(self.container, Some(Container::Furnace(_)))
+                    && index == furnace::OUTPUT;
+                !output && self.block_slots().is_some_and(|slots| index < slots.len())
+            }
+        }
+    }
+
+    /// Puts `stack` in a slot that `takes_items`.
+    fn set_slot(&mut self, slot: SlotRef, stack: Option<ItemStack>) {
+        match slot {
+            SlotRef::Inventory(index) => self.inventory.set(index, stack),
+            SlotRef::Grid(index) => {
+                if let Some(Container::Crafting { grid, .. }) = &mut self.container {
+                    grid[index] = stack;
+                }
+            }
+            SlotRef::Block(index) => {
+                if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
+                    *cell = stack;
+                }
+            }
+            SlotRef::Result => {}
+        }
+    }
+
+    /// Drops the held stack across `slots` as a modern Minecraft drag: a
+    /// left drag shares it evenly, a right drag puts one in each. Slots
+    /// holding something else, or full, are skipped, and no more slots are
+    /// used than there are items; what's left stays held.
+    pub fn drag_across(&mut self, slots: &[SlotRef], click: Click) {
+        let Some(held) = self.cursor else {
+            return;
+        };
+        let max = self.items.max_stack(held.id);
+        let mut targets: Vec<SlotRef> = Vec::new();
+        for &slot in slots {
+            let fits = self.takes_items(slot)
+                && self
+                    .slot_stack(slot)
+                    .is_none_or(|stack| stack.stacks_with(&held) && stack.count < max);
+            if fits && !targets.contains(&slot) && targets.len() < held.count as usize {
+                targets.push(slot);
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+        let each = match click {
+            Click::Right => 1,
+            _ => held.count / targets.len() as u8,
+        };
+        let mut left = held.count;
+        for slot in targets {
+            let there = self.slot_stack(slot).map_or(0, |stack| stack.count);
+            let put = each.min(max - there);
+            self.set_slot(
+                slot,
+                Some(ItemStack {
+                    count: there + put,
+                    ..held
+                }),
+            );
+            left -= put;
+        }
+        self.cursor = (left > 0).then_some(ItemStack {
+            count: left,
+            ..held
+        });
+    }
+
+    /// Double-click: fills the held stack from matching stacks on the open
+    /// screen, part stacks first (modern Minecraft's pick-up-all). Results
+    /// aren't taken from.
+    pub fn collect_onto_cursor(&mut self) {
+        let Some(mut held) = self.cursor else {
+            return;
+        };
+        let max = self.items.max_stack(held.id);
+        let mut slots: Vec<SlotRef> = match &self.container {
+            Some(Container::Crafting { grid, .. }) => (0..grid.len()).map(SlotRef::Grid).collect(),
+            Some(Container::Chest(_) | Container::Furnace(_)) => {
+                let count = self.block_slots().map_or(0, <[_]>::len);
+                (0..count).map(SlotRef::Block).collect()
+            }
+            None => Vec::new(),
+        };
+        slots.extend((0..SLOTS).map(SlotRef::Inventory));
+        for full_stacks in [false, true] {
+            for &slot in &slots {
+                if held.count >= max {
+                    break;
+                }
+                let Some(stack) = self.slot_stack(slot) else {
+                    continue;
+                };
+                if !stack.stacks_with(&held) || (stack.count >= max) != full_stacks {
+                    continue;
+                }
+                let taken = stack.count.min(max - held.count);
+                held.count += taken;
+                let rest = stack.count - taken;
+                self.set_slot(
+                    slot,
+                    (rest > 0).then_some(ItemStack {
+                        count: rest,
+                        ..stack
+                    }),
+                );
+            }
+        }
+        self.cursor = Some(held);
+    }
+
     /// Takes one item from every filled grid cell after crafting.
     fn use_up_grid(&mut self) {
         let Some(Container::Crafting { grid, .. }) = &mut self.container else {
@@ -540,6 +663,72 @@ mod tests {
         );
         game.click_slot(SlotRef::Block(furnace::OUTPUT), Click::Shift);
         assert_eq!(game.inventory.slot(8), Some(&ItemStack::new(265, 1)));
+    }
+
+    #[test]
+    fn dragging_shares_a_stack_evenly_or_one_each() {
+        let mut game = flat_game(GameMode::Survival);
+        game.open_inventory();
+        game.inventory.set(9, Some(ItemStack::new(4, 62)));
+        game.inventory.set(11, Some(ItemStack::new(3, 1)));
+        game.cursor = Some(ItemStack::new(4, 10));
+        // Left across four slots: dirt's slot is skipped, so 10 / 3 each.
+        let slots = [9, 10, 11, 12].map(SlotRef::Inventory);
+        game.drag_across(&slots, Click::Left);
+        assert_eq!(
+            game.inventory.slot(9),
+            Some(&ItemStack::new(4, 64)),
+            "capped at 64"
+        );
+        assert_eq!(game.inventory.slot(10), Some(&ItemStack::new(4, 3)));
+        assert_eq!(game.inventory.slot(12), Some(&ItemStack::new(4, 3)));
+        assert_eq!(
+            game.cursor,
+            Some(ItemStack::new(4, 2)),
+            "the rest stays held"
+        );
+        // Right across three slots, holding only two: one each in two.
+        let slots = [
+            SlotRef::Grid(0),
+            SlotRef::Grid(1),
+            SlotRef::Result,
+            SlotRef::Grid(2),
+        ];
+        game.drag_across(&slots, Click::Right);
+        assert_eq!(
+            game.slot_stack(SlotRef::Grid(0)),
+            Some(ItemStack::new(4, 1))
+        );
+        assert_eq!(
+            game.slot_stack(SlotRef::Grid(1)),
+            Some(ItemStack::new(4, 1))
+        );
+        assert_eq!(game.slot_stack(SlotRef::Grid(2)), None);
+        assert_eq!(game.cursor, None);
+    }
+
+    #[test]
+    fn double_clicking_gathers_part_stacks_first() {
+        let mut game = flat_game(GameMode::Survival);
+        game.open_inventory();
+        game.cursor = Some(ItemStack::new(5, 10));
+        game.inventory.set(0, Some(ItemStack::new(5, 64)));
+        game.inventory.set(20, Some(ItemStack::new(5, 30)));
+        game.inventory.set(21, Some(ItemStack::new(3, 30)));
+        game.container = Some(Container::Crafting {
+            size: 2,
+            grid: vec![Some(ItemStack::new(5, 5)), None, None, None],
+        });
+        game.collect_onto_cursor();
+        assert_eq!(game.cursor, Some(ItemStack::new(5, 64)));
+        assert_eq!(game.slot_stack(SlotRef::Grid(0)), None);
+        assert_eq!(game.inventory.slot(20), None);
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(5, 45)),
+            "full stack last"
+        );
+        assert_eq!(game.inventory.slot(21), Some(&ItemStack::new(3, 30)));
     }
 
     #[test]

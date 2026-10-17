@@ -28,9 +28,18 @@ pub enum Screen {
 }
 
 /// What the player did on a screen this frame.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ScreenAction {
     Click(SlotRef, Click),
+    /// Dragged the held stack across these slots with the button down:
+    /// spread evenly (left) or one in each (right), as modern Minecraft
+    /// does.
+    Drag {
+        slots: Vec<SlotRef>,
+        click: Click,
+    },
+    /// Double-clicked a slot: gather matching items onto the mouse.
+    Collect(SlotRef),
     /// Clicked outside the panel: throw the held stack (all, or one).
     Throw {
         all: bool,
@@ -56,6 +65,17 @@ pub struct ScreenView<'a> {
     /// Creative: every block and item, with how it looks and its name.
     pub catalog: &'a [(ItemStack, SlotView, String)],
 }
+
+/// A drag across slots in progress: the button held and the slots crossed.
+#[derive(Debug, Clone, PartialEq)]
+struct Drag {
+    click: Click,
+    slots: Vec<SlotRef>,
+}
+
+/// A second left press on the same slot within this many seconds is a
+/// double-click.
+const DOUBLE_CLICK: f64 = 0.25;
 
 /// Creative grid size.
 const COLUMNS: usize = 9;
@@ -196,6 +216,12 @@ pub fn show(
             wheel_rows(i, scale),
         )
     });
+    let (now, left_down, right_down) =
+        ctx.input(|i| (i.time, i.pointer.primary_down(), i.pointer.secondary_down()));
+    let drag_id = egui::Id::unique("screen-drag");
+    let last_press_id = egui::Id::unique("screen-last-press");
+    let mut drag: Option<Drag> = ctx.data(|d| d.get_temp(drag_id));
+    let last_press: Option<(SlotRef, f64)> = ctx.data(|d| d.get_temp(last_press_id));
     let click = if shift && left {
         Some(Click::Shift)
     } else if left {
@@ -312,20 +338,57 @@ pub fn show(
         }
     }
 
+    let mut hovered = None;
     for (slot, at) in layout(screen) {
         let rect = slot_rect(at);
         let shown = (view.slot)(slot);
         if let Some((stack, _)) = &shown {
             gui::paint_slot(&painter, rect.min, stack, scale, textures.atlas.id());
         }
+        let dragged = drag.as_ref().is_some_and(|drag| drag.slots.contains(&slot));
         if pointer.is_some_and(|pos| rect.contains(pos)) {
-            painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
+            hovered = Some(slot);
             tooltip = shown.map(|(_, name)| name);
-            if let Some(click) = click {
-                actions.push(ScreenAction::Click(slot, click));
-            }
+        }
+        if dragged || hovered == Some(slot) {
+            painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
         }
     }
+    slot_input(
+        &mut actions,
+        &mut drag,
+        hovered,
+        click,
+        view.cursor.is_some(),
+        last_press,
+        now,
+    );
+    if let Some(started) = &drag {
+        let down = match started.click {
+            Click::Right => right_down,
+            _ => left_down,
+        };
+        if !down {
+            // Released: one slot is an ordinary click, more a spread.
+            actions.push(match started.slots.as_slice() {
+                &[slot] => ScreenAction::Click(slot, started.click),
+                slots => ScreenAction::Drag {
+                    slots: slots.to_vec(),
+                    click: started.click,
+                },
+            });
+            drag = None;
+        }
+    }
+    if left && let Some(slot) = hovered {
+        ctx.data_mut(|d| d.insert_temp(last_press_id, (slot, now)));
+    }
+    ctx.data_mut(|d| match drag {
+        Some(drag) => {
+            d.insert_temp(drag_id, drag);
+        }
+        None => d.remove::<Drag>(drag_id),
+    });
 
     if let Some(pos) = pointer {
         if click.is_some() && !panel.contains(pos) && view.cursor.is_some() {
@@ -344,6 +407,47 @@ pub fn show(
         }
     }
     actions
+}
+
+/// Turns a press or drag over the slot under the mouse into actions
+/// (modern Minecraft's rules): with a stack held, a left or right press
+/// starts a drag that collects the slots crossed until release, and a
+/// second left press on the same slot is a double-click; with nothing
+/// held, and for shift-clicks, a press clicks at once.
+fn slot_input(
+    actions: &mut Vec<ScreenAction>,
+    drag: &mut Option<Drag>,
+    hovered: Option<SlotRef>,
+    click: Option<Click>,
+    holding: bool,
+    last_press: Option<(SlotRef, f64)>,
+    now: f64,
+) {
+    let Some(slot) = hovered else {
+        return;
+    };
+    if let Some(drag) = drag {
+        if !drag.slots.contains(&slot) && slot != SlotRef::Result {
+            drag.slots.push(slot);
+        }
+        return;
+    }
+    match click {
+        Some(Click::Left)
+            if holding
+                && last_press.is_some_and(|(last, at)| last == slot && now - at < DOUBLE_CLICK) =>
+        {
+            actions.push(ScreenAction::Collect(slot));
+        }
+        Some(click @ (Click::Left | Click::Right)) if holding && slot != SlotRef::Result => {
+            *drag = Some(Drag {
+                click,
+                slots: vec![slot],
+            });
+        }
+        Some(click) => actions.push(ScreenAction::Click(slot, click)),
+        None => {}
+    }
 }
 
 /// The furnace's flame, shrinking as the fuel burns, and its arrow, growing
@@ -422,6 +526,67 @@ mod tests {
         let inventory = layout(&Screen::Inventory);
         assert!(inventory.contains(&(SlotRef::Grid(3), [106.0, 44.0])));
         assert!(inventory.contains(&(SlotRef::Result, [144.0, 36.0])));
+    }
+
+    #[test]
+    fn holding_a_stack_a_press_drags_and_a_quick_second_press_collects() {
+        let (a, b) = (SlotRef::Inventory(9), SlotRef::Inventory(10));
+        let mut actions = Vec::new();
+        let mut drag = None;
+        // With nothing held, a press clicks at once.
+        slot_input(
+            &mut actions,
+            &mut drag,
+            Some(a),
+            Some(Click::Left),
+            false,
+            None,
+            0.0,
+        );
+        assert_eq!(actions, [ScreenAction::Click(a, Click::Left)]);
+        // A quick second press on the same slot, now holding the stack.
+        actions.clear();
+        let last = Some((a, 0.0));
+        slot_input(
+            &mut actions,
+            &mut drag,
+            Some(a),
+            Some(Click::Left),
+            true,
+            last,
+            0.1,
+        );
+        assert_eq!(actions, [ScreenAction::Collect(a)]);
+        // A slower press starts a drag that picks up slots as it crosses them.
+        actions.clear();
+        slot_input(
+            &mut actions,
+            &mut drag,
+            Some(a),
+            Some(Click::Right),
+            true,
+            last,
+            1.0,
+        );
+        slot_input(&mut actions, &mut drag, Some(b), None, true, last, 1.1);
+        slot_input(
+            &mut actions,
+            &mut drag,
+            Some(SlotRef::Result),
+            None,
+            true,
+            last,
+            1.2,
+        );
+        slot_input(&mut actions, &mut drag, Some(a), None, true, last, 1.3);
+        assert!(actions.is_empty());
+        assert_eq!(
+            drag,
+            Some(Drag {
+                click: Click::Right,
+                slots: vec![a, b]
+            })
+        );
     }
 
     #[test]

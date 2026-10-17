@@ -399,6 +399,8 @@ impl App {
         let items = game.items().clone();
         match action {
             ScreenAction::Click(slot, click) => game.click_slot(slot, click),
+            ScreenAction::Drag { slots, click } => game.drag_across(&slots, click),
+            ScreenAction::Collect(_) => game.collect_onto_cursor(),
             ScreenAction::Throw { all } => {
                 let Some(held) = game.cursor.as_mut() else {
                     return;
