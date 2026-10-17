@@ -5,6 +5,8 @@
 //! so any chunk can be generated on its own, in any order, on any thread, and
 //! features near a chunk border can ask about columns in the next chunk.
 
+use std::collections::HashMap;
+
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::rng::{Rng, mix};
@@ -247,12 +249,26 @@ impl Terrain {
     /// surface, z). Searches outward in rings, like 1.0.0's spawn search.
     pub fn spawn_point(&self) -> (i32, i32, i32) {
         const STEP: i32 = 8;
+        let mut chunks: HashMap<ChunkPos, Chunk> = HashMap::new();
         for ring in 0..256 {
             for i in -ring..=ring {
                 for (x, z) in [(i, -ring), (i, ring), (-ring, i), (ring, i)] {
                     let (x, z) = (x * STEP, z * STEP);
                     let column = self.column(x, z);
-                    if column.biome != Biome::Ocean && column.height >= SEA_LEVEL {
+                    if column.biome == Biome::Ocean || column.height < SEA_LEVEL {
+                        continue;
+                    }
+                    // Check the generated column too: a cave can carve the
+                    // surface away, and a tree or plant can stand on it.
+                    let chunk = chunks
+                        .entry(ChunkPos::of_block(x, z))
+                        .or_insert_with_key(|&pos| self.generate(pos));
+                    let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+                    let y = column.height as usize;
+                    if chunk.get(lx, y, lz) == column.top
+                        && chunk.get(lx, y + 1, lz).is_air()
+                        && chunk.get(lx, y + 2, lz).is_air()
+                    {
                         return (x, column.height + 1, z);
                     }
                 }
@@ -424,14 +440,21 @@ mod tests {
     }
 
     #[test]
-    fn spawn_is_on_dry_land() {
-        for seed in 0..10 {
+    fn spawn_is_on_open_dry_land() {
+        // Seed 42 used to spawn where a cave had carved away the surface.
+        for seed in (0..10).chain([42]) {
             let terrain = Terrain::new(seed);
             let (x, y, z) = terrain.spawn_point();
             let column = terrain.column(x, z);
             assert_ne!(column.biome, Biome::Ocean);
             assert_eq!(y, column.height + 1);
             assert!(column.height >= SEA_LEVEL);
+            let chunk = terrain.generate(ChunkPos::of_block(x, z));
+            let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+            let y = y as usize;
+            assert_eq!(chunk.get(lx, y - 1, lz), column.top, "seed {seed}");
+            assert!(chunk.get(lx, y, lz).is_air(), "seed {seed}");
+            assert!(chunk.get(lx, y + 1, lz).is_air(), "seed {seed}");
         }
     }
 
