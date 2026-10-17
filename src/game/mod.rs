@@ -4,8 +4,13 @@
 
 pub mod environment;
 mod hands;
+mod mobs;
 
-use std::{path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use glam::DVec3;
@@ -17,7 +22,7 @@ use winit::{
 
 use crate::{
     config,
-    entity::item::ItemEntity,
+    entity::{item::ItemEntity, mob::Mob, mobs::MobRegistry},
     inventory::{
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
@@ -34,6 +39,7 @@ use crate::{
     render::camera::Camera,
     world::{
         block::Fluid,
+        chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -93,6 +99,12 @@ pub struct Game {
     pub cursor: Option<ItemStack>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    mob_defs: Arc<MobRegistry>,
+    pub mobs: Vec<Mob>,
+    /// Animals in unloaded chunks, waiting for their chunk to come back.
+    stashed_mobs: HashMap<ChunkPos, Vec<Mob>>,
+    /// Chunks that have had their animals placed (once per chunk).
+    populated: HashSet<ChunkPos>,
     /// The hotbar slot being eaten from and for how many ticks.
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
@@ -151,6 +163,10 @@ impl Game {
             stats: Stats::default(),
             cursor: None,
             entities: Vec::new(),
+            mob_defs: Arc::new(MobRegistry::empty()),
+            mobs: Vec::new(),
+            stashed_mobs: HashMap::new(),
+            populated: HashSet::new(),
             mining: None,
             eating: None,
             rng: Rng::new(level_random_seed()),
@@ -198,8 +214,23 @@ impl Game {
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
+        game.populated = level
+            .populated
+            .iter()
+            .map(|&(x, z)| ChunkPos::new(x, z))
+            .collect();
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
+    }
+
+    /// Gives the game its mob kinds, and brings back saved animals.
+    pub fn with_mobs(mut self, mobs: Arc<MobRegistry>) -> Self {
+        self.mob_defs = mobs;
+        if let Some(saved) = &self.saved {
+            let animals = saved.level.mobs.clone();
+            self.restore_mobs(&animals);
+        }
+        self
     }
 
     /// Creates a world in a new folder under `saves` and opens it.
@@ -221,6 +252,8 @@ impl Game {
     /// aren't saved.
     pub fn save(&mut self) -> Result<()> {
         self.ticks_since_save = 0;
+        let mobs = self.saved_mobs();
+        let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
         let Some(saved) = self.saved.as_mut() else {
             return Ok(());
         };
@@ -240,6 +273,8 @@ impl Game {
             stats: self.stats.clone(),
         };
         saved.level.time = self.time;
+        saved.level.mobs = mobs;
+        saved.level.populated = populated;
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -373,6 +408,7 @@ impl Game {
             self.use_hands();
         }
         self.tick_items();
+        self.tick_mobs();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -545,6 +581,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        entity::mobs::MobRegistry,
         inventory::{item::ItemRegistry, stack::ItemStack},
         player::stats::MAX_HEALTH,
         world::{
@@ -830,5 +867,71 @@ mod tests {
             creative.tick();
         }
         assert_eq!(creative.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+    }
+
+    fn mob_registry() -> Arc<MobRegistry> {
+        Arc::new(MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap())
+    }
+
+    /// A flat world 5×5 chunks around the origin with light computed.
+    fn lit_flat_game(mode: GameMode) -> Game {
+        let (items, models) = registries();
+        let chunks = ChunkManager::new(ChunkSource::Flat, models, 2, 4);
+        let feet = DVec3::new(0.5, 64.0, 0.5);
+        let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).with_mobs(mob_registry());
+        game.mode = mode;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while game.chunks.light_at(-31, 64, -31).is_none()
+            || game.chunks.light_at(47, 64, 47).is_none()
+        {
+            assert!(Instant::now() < deadline, "light never computed");
+            game.chunks.update(ChunkPos::new(0, 0));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        game
+    }
+
+    #[test]
+    fn zombies_spawn_at_night_far_from_the_player_and_never_by_day() {
+        let mut game = lit_flat_game(GameMode::Survival);
+        game.time = 6000;
+        for _ in 0..200 {
+            game.spawn_monsters();
+        }
+        assert!(game.mobs.is_empty(), "nothing spawns on lit grass at noon");
+        game.time = 18000;
+        for _ in 0..200 {
+            game.spawn_monsters();
+        }
+        assert!(!game.mobs.is_empty(), "zombies at midnight");
+        for zombie in &game.mobs {
+            assert_eq!(game.mob_defs.get(zombie.kind).name, "zombie");
+            assert_eq!(zombie.feet().y, 64.0, "on the ground");
+            assert!(zombie.feet().distance(game.body.position()) >= 24.0);
+        }
+    }
+
+    #[test]
+    fn pigs_appear_on_grass_in_new_chunks_once_and_survive_saving() {
+        let mut game = lit_flat_game(GameMode::Survival);
+        let chunks: Vec<ChunkPos> = (-2..=2)
+            .flat_map(|z| (-2..=2).map(move |x| ChunkPos::new(x, z)))
+            .collect();
+        for _ in 0..20 {
+            game.populated.clear();
+            game.on_chunks_loaded(&chunks);
+        }
+        assert!(!game.mobs.is_empty(), "some pigs");
+        assert!(game.mobs.iter().all(|pig| pig.feet().y == 64.0));
+        let pigs = game.mobs.len();
+        game.on_chunks_loaded(&chunks);
+        assert_eq!(game.mobs.len(), pigs, "a chunk gets its animals once");
+        let saved = game.saved_mobs();
+        assert_eq!(saved.len(), pigs);
+        assert!(
+            saved
+                .iter()
+                .all(|mob| mob.name == "pig" && mob.health == 10)
+        );
     }
 }

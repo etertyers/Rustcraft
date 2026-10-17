@@ -45,6 +45,10 @@ pub enum DamageSource {
     Fire,
     Starving,
     Mob,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "combat and mob rendering come next")
+    )]
     Arrow,
 }
 

@@ -42,29 +42,17 @@ pub fn sun_brightness(angle: f32) -> f32 {
 
 /// Sky light lost to the time of day: 0 by day, 11 at night (1.0.0's
 /// `skylightSubtracted`). Mob spawning and burning use the reduced level.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "mob spawning and burning use this next")
-)]
 pub fn sky_light_subtracted(angle: f32) -> u8 {
     let dark = (1.0 - ((angle * TAU).cos() * 2.0 + 0.5)).clamp(0.0, 1.0);
     (dark * 11.0) as u8
 }
 
 /// 1.0.0's day: while the sky is losing less than 4 light levels.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "mob spawning and burning use this next")
-)]
 pub fn is_daytime(angle: f32) -> bool {
     sky_light_subtracted(angle) < 4
 }
 
 /// 1.0.0's light level to brightness table (0.0 dark to 1.0 bright).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "mob spawning and burning use this next")
-)]
 pub fn brightness(level: u8) -> f32 {
     let dark = 1.0 - level.min(15) as f32 / 15.0;
     (1.0 - dark) / (dark * 3.0 + 1.0)

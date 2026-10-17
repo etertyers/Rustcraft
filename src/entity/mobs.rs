@@ -122,6 +122,11 @@ pub struct MobRegistry {
 }
 
 impl MobRegistry {
+    /// No mobs, for test worlds.
+    pub fn empty() -> Self {
+        Self { mobs: Vec::new() }
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;

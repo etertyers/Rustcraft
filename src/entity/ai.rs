@@ -41,6 +41,10 @@ pub struct AiState {
 }
 
 impl AiState {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "combat and mob rendering come next")
+    )]
     pub fn on_hurt(&mut self) {
         self.hurt = true;
     }

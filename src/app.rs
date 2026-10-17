@@ -20,6 +20,7 @@ use winit::{
 
 use crate::{
     assets, config,
+    entity::mobs::MobRegistry,
     game::{Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
     inventory::{
@@ -83,6 +84,7 @@ pub struct App {
     world_kind: Option<WorldKind>,
     items: Option<Items>,
     models: Option<Arc<BlockModels>>,
+    mob_defs: Option<Arc<MobRegistry>>,
     icons: Option<Arc<ItemIcons>>,
     /// Exactly one of `menu` and `game` is set once the window is up.
     menu: Option<Menu>,
@@ -110,6 +112,7 @@ impl App {
             world_kind,
             items: None,
             models: None,
+            mob_defs: None,
             icons: None,
             menu: None,
             game: None,
@@ -181,6 +184,7 @@ impl App {
         self.icons = Some(Arc::new(icons));
         self.items = Some(items);
         self.models = Some(models);
+        self.mob_defs = Some(Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?));
         match self.world_kind.clone() {
             Some(kind) => self.game = Some(self.start_game(kind)?),
             None => self.menu = Some(Menu::new(level::saves_dir())),
@@ -193,6 +197,11 @@ impl App {
     }
 
     fn start_game(&self, kind: WorldKind) -> Result<Game> {
+        let mobs = self.mob_defs.clone().expect("loaded in init");
+        Ok(self.start_world(kind)?.with_mobs(mobs))
+    }
+
+    fn start_world(&self, kind: WorldKind) -> Result<Game> {
         let (items, models) = (
             self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
@@ -375,13 +384,15 @@ impl App {
             self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
+        let mobs = self.mob_defs.clone().expect("loaded in init");
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
             MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create { name, seed, mode } => {
                 Game::create(&level::saves_dir(), &name, seed, mode, items, models)
             }
-        };
+        }
+        .map(|game| game.with_mobs(mobs));
         match game {
             Ok(game) => {
                 self.game = Some(game);
@@ -424,6 +435,7 @@ impl App {
         let p = game.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
         let changes = game.chunks.update(ChunkPos::of_block(x, z));
+        game.on_chunks_loaded(&changes.loaded);
         for (pos, mesh) in &changes.meshes {
             renderer.upload_chunk(*pos, mesh);
         }

@@ -37,6 +37,21 @@ pub struct Level {
     pub time: u64,
     /// Unix seconds when last saved, for sorting the world list.
     pub last_played: u64,
+    /// Animals (added in M9).
+    #[serde(default)]
+    pub mobs: Vec<SavedMob>,
+    /// Chunks whose animals have been placed (added in M9).
+    #[serde(default)]
+    pub populated: Vec<(i32, i32)>,
+}
+
+/// A mob as saved in level.ron.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedMob {
+    pub name: String,
+    pub position: [f64; 3],
+    pub yaw: f32,
+    pub health: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +89,8 @@ impl Level {
             },
             time: 0,
             last_played: now(),
+            mobs: Vec::new(),
+            populated: Vec::new(),
         }
     }
 }

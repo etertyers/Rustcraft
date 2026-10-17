@@ -19,6 +19,10 @@ use crate::{
 };
 
 /// Ticks a hit makes a mob flash red (1.0.0's `maxHurtTime`).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "combat and mob rendering come next")
+)]
 const HURT_FLASH: u32 = 10;
 /// Ticks a dead mob lies on its side before it's removed.
 pub const DEATH_TICKS: u32 = 20;
@@ -37,6 +41,10 @@ pub struct Mob {
     prev_yaw: f32,
     /// Where the head looks, radians (absolute yaw and pitch).
     pub head_yaw: f32,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "combat and mob rendering come next")
+    )]
     pub pitch: f32,
     pub stats: Stats,
     /// Ticks left flashing red after a hit.
@@ -97,6 +105,10 @@ impl Mob {
     }
 
     /// Feet, facing and leg swing `alpha` of the way from the last tick.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "combat and mob rendering come next")
+    )]
     pub fn pose(&self, alpha: f32) -> (DVec3, f32, f32) {
         let feet = self.prev_feet.lerp(self.feet(), alpha as f64);
         let yaw = self.prev_yaw + angle_difference(self.yaw, self.prev_yaw) * alpha;
@@ -106,6 +118,10 @@ impl Mob {
 
     /// Hits the mob for `amount` from `attacker` (a position, for
     /// knockback). Returns true for a fresh hit; the AI reacts to it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "combat and mob rendering come next")
+    )]
     pub fn hurt(&mut self, amount: i32, attacker: Option<DVec3>, source: DamageSource) -> bool {
         if self.is_dead() {
             return false;
@@ -122,6 +138,10 @@ impl Mob {
     }
 
     /// 1.0.0's `knockBack`: half the speed, then pushed away and up.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "combat and mob rendering come next")
+    )]
     pub fn knock_back(&mut self, from: DVec3) {
         knock_back(&mut self.body, from);
     }
