@@ -11,7 +11,12 @@ use anyhow::{Context, Result, bail};
 use glam::IVec3;
 use serde::Deserialize;
 
-use super::{Face, biome::rgb};
+use super::{
+    Face,
+    biome::rgb,
+    harvest::{Drops, Harvest},
+};
+use crate::inventory::item::ToolKind;
 
 pub type BlockId = u16;
 
@@ -244,6 +249,15 @@ pub struct BlockDef {
     pub needs_ground: bool,
     #[serde(default)]
     pub placement: Placement,
+    /// The tool that mines it fast (1.0.0's effective tool lists and
+    /// materials).
+    #[serde(default)]
+    pub tool: Option<ToolKind>,
+    /// The tool it needs to drop anything; `None` drops for anything.
+    #[serde(default)]
+    pub harvest: Option<Harvest>,
+    #[serde(default)]
+    pub drops: Drops,
     #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
