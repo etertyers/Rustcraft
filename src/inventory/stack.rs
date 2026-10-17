@@ -106,6 +106,10 @@ impl Items {
     }
 
     /// Display name, e.g. "stone" or "lapis_lazuli".
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the inventory screens come next")
+    )]
     pub fn name(&self, stack: &ItemStack) -> String {
         if stack.id < FIRST_ITEM_ID {
             return self

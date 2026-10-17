@@ -22,7 +22,7 @@ use crate::{
     assets, config,
     game::{Game, chunk_workers},
     inventory::item::ItemRegistry,
-    inventory::stack::Items,
+    inventory::{player::HOTBAR_SLOTS, stack::Items},
     level::{self, WorldDir},
     player::mode::GameMode,
     render::{
@@ -34,6 +34,7 @@ use crate::{
     },
     ui::{
         DebugStats, DebugUi, Hud,
+        gui::SlotView,
         menu::{Menu, MenuAction},
     },
     world::{
@@ -168,7 +169,7 @@ impl App {
             None => self.menu = Some(Menu::new(level::saves_dir())),
         }
         self.renderer = Some(renderer);
-        self.debug_ui = Some(DebugUi::new(&window));
+        self.debug_ui = Some(DebugUi::new(&window, atlas.image())?);
         window.request_redraw();
         self.window = Some(window);
         Ok(())
@@ -358,20 +359,16 @@ impl App {
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
         };
-        let slot = game.inventory.selected;
         let hud = Hud {
             crosshair: self.cursor_grabbed,
-            selected: game.inventory.selected_stack().map_or_else(
-                || format!("{}: empty", slot + 1),
-                |stack| {
-                    format!(
-                        "{}: {} ×{}",
-                        slot + 1,
-                        game.items().name(stack),
-                        stack.count
-                    )
-                },
-            ),
+            hotbar: (0..HOTBAR_SLOTS)
+                .map(|i| {
+                    let stack = game.inventory.slot(i)?;
+                    let icons = self.icons.as_ref()?;
+                    Some(SlotView::of(stack, icons, game.items()))
+                })
+                .collect(),
+            selected: game.inventory.selected,
         };
         let ui = debug_ui.frame(window, &game.camera, &stats, &hud);
         let result = renderer.render(&game.camera, ui);
