@@ -74,12 +74,21 @@ pub struct Body {
     sprint_tap_timer: u8,
     was_jumping: bool,
     fly_tap_timer: u8,
+    /// Eye height above the feet when not sneaking.
+    eye: f64,
 }
 
 impl Body {
+    /// The player's body, with its feet at `position`.
     pub fn new(position: DVec3) -> Self {
+        Self::sized(position, PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT)
+    }
+
+    /// A body of any size (mobs), with its feet at `position`.
+    pub fn sized(position: DVec3, width: f64, height: f64, eye_height: f64) -> Self {
         Self {
-            bb: hitbox(position),
+            bb: sized_hitbox(position, width, height),
+            eye: eye_height,
             velocity: DVec3::ZERO,
             on_ground: false,
             sneaking: false,
@@ -113,15 +122,16 @@ impl Body {
     /// Moves the feet to `feet` without collision, for free flight.
     #[cfg(debug_assertions)]
     pub fn set_position(&mut self, feet: DVec3) {
-        self.bb = hitbox(feet);
+        let size = self.bb.max - self.bb.min;
+        self.bb = sized_hitbox(feet, size.x, size.y);
     }
 
     /// Camera height above the feet.
     pub fn eye_height(&self) -> f64 {
         if self.sneaking {
-            EYE_HEIGHT - SNEAK_EYE_DROP
+            self.eye - SNEAK_EYE_DROP
         } else {
-            EYE_HEIGHT
+            self.eye
         }
     }
 
@@ -329,11 +339,17 @@ impl Body {
 }
 
 /// The player hitbox with its feet at `feet`.
+#[cfg(test)]
 pub fn hitbox(feet: DVec3) -> Aabb {
-    let half = PLAYER_WIDTH / 2.0;
+    sized_hitbox(feet, PLAYER_WIDTH, PLAYER_HEIGHT)
+}
+
+/// A `width` × `height` hitbox with its feet at `feet`.
+pub fn sized_hitbox(feet: DVec3, width: f64, height: f64) -> Aabb {
+    let half = width / 2.0;
     Aabb::new(
         feet - DVec3::new(half, 0.0, half),
-        feet + DVec3::new(half, PLAYER_HEIGHT, half),
+        feet + DVec3::new(half, height, half),
     )
 }
 

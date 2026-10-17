@@ -1,0 +1,68 @@
+// Mobs, with 1.0.0's values. Adding one is an entry here plus, if it
+// behaves differently, an AI module in src/entity/ai.rs.
+//
+// Fields:
+//   name, texture (under assets/textures/entity/), health
+//   width, height    hitbox in blocks (1.0.0's setSize)
+//   speed            walking speed as a fraction of the player's (moveSpeed)
+//   ai               Passive (wanders, flees when hurt) or
+//                    Hostile(attack: damage) (chases and hits the player)
+//   burns_in_daylight
+//   drops            (item, min, max, cooked: item dropped instead while burning)
+//   spawn            Ground(blocks, min_light, chance, group): at world generation
+//                    on these blocks, in groups;
+//                    Dark(max_light, group): at night or underground, near the player
+//   model            texture_size and parts in Minecraft model coordinates (pixels,
+//                    y down, feet at 24): uv offset, box from and size, pivot,
+//                    rest rotation (radians around x) and animation role:
+//                    None, Head, LegA/LegB (swing opposite), ArmA/ArmB, Reaching
+//                    (zombie arms), mirrored for left limbs.
+#![enable(implicit_some)]
+[
+    (
+        name: "pig",
+        texture: "pig/pig.png",
+        health: 10,
+        width: 0.9,
+        height: 0.9,
+        speed: 0.7,
+        ai: Passive,
+        drops: [(item: 319, min: 0, max: 2, cooked: 320)],
+        spawn: Ground(blocks: [2], min_light: 9, chance: 0.1, group: 4),
+        model: (
+            texture_size: (64, 32),
+            parts: [
+                (uv: (0, 0), from: (-4, -4, -8), size: (8, 8, 8), pivot: (0, 12, -6), role: Head,
+                    extra: [(uv: (16, 16), from: (-2, 0, -9), size: (4, 3, 1))]),
+                (uv: (28, 8), from: (-5, -10, -7), size: (10, 16, 8), pivot: (0, 11, 2), rest: 1.5707964),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 6, 4), pivot: (-3, 18, 7), role: LegA),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 6, 4), pivot: (3, 18, 7), role: LegB),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 6, 4), pivot: (-3, 18, -5), role: LegB),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 6, 4), pivot: (3, 18, -5), role: LegA),
+            ],
+        ),
+    ),
+    (
+        name: "zombie",
+        texture: "zombie/zombie.png",
+        health: 20,
+        width: 0.6,
+        height: 1.8,
+        speed: 0.5,
+        ai: Hostile(attack: 4),
+        burns_in_daylight: true,
+        drops: [(item: 367, min: 0, max: 2)],
+        spawn: Dark(max_light: 7, group: 4),
+        model: (
+            texture_size: (64, 64),
+            parts: [
+                (uv: (0, 0), from: (-4, -8, -4), size: (8, 8, 8), pivot: (0, 0, 0), role: Head),
+                (uv: (16, 16), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0)),
+                (uv: (40, 16), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: Reaching),
+                (uv: (40, 16), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: Reaching, mirror: true),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB, mirror: true),
+            ],
+        ),
+    ),
+]
