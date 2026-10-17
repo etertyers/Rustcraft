@@ -495,8 +495,9 @@ impl Game {
         }
     }
 
-    /// A dev tool for debug builds (F6), until crafting exists in M10: one
-    /// pickaxe of each tier, iron shovel, axe and sword, shears and torches.
+    /// A dev tool for debug builds (F6), a shortcut past crafting for
+    /// testing: one pickaxe of each tier, iron shovel, axe and sword,
+    /// shears and torches.
     #[cfg(debug_assertions)]
     pub fn give_dev_kit(&mut self) {
         const KIT: [(u16, u8); 10] = [
