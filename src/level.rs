@@ -12,7 +12,11 @@ use anyhow::{Context, Result};
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use crate::{inventory::player::Inventory, player::mode::GameMode, world::save::RegionStore};
+use crate::{
+    inventory::player::Inventory,
+    player::{mode::GameMode, stats::Stats},
+    world::save::RegionStore,
+};
 
 const LEVEL_FILE: &str = "level.ron";
 const LEVEL_VERSION: u32 = 1;
@@ -47,6 +51,9 @@ pub struct PlayerData {
     /// Creative flight (added in M7).
     #[serde(default)]
     pub flying: bool,
+    /// Health, hunger, air and fire (added in M9).
+    #[serde(default)]
+    pub stats: Stats,
 }
 
 impl Level {
@@ -63,6 +70,7 @@ impl Level {
                 pitch: 0.0,
                 inventory: Inventory::default(),
                 flying: false,
+                stats: Stats::default(),
             },
             time: 0,
             last_played: now(),

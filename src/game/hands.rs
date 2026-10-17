@@ -15,6 +15,9 @@ use crate::{
     world::{block::Fluid, harvest},
 };
 
+/// Exhaustion per block broken (1.0.0's `harvestBlock`).
+const BREAK_EXHAUSTION: f32 = 0.025;
+
 impl Game {
     /// The tool in the selected slot, if it's a tool.
     fn selected_tool(&self) -> Option<&Tool> {
@@ -116,6 +119,9 @@ impl Game {
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
             }
+        }
+        if self.mode.is_vulnerable() {
+            self.stats.add_exhaustion(BREAK_EXHAUSTION);
         }
         if self.mode.wears_tools()
             && let Some(wear) = self.selected_tool().map(|tool| tool.wear)

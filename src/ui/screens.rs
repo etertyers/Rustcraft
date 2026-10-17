@@ -31,6 +31,8 @@ pub enum ScreenAction {
     Take(ItemStack),
     /// Creative: clicked the item grid while holding something.
     Discard,
+    /// The death screen's Respawn button.
+    Respawn,
 }
 
 /// Everything a screen shows.

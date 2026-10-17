@@ -43,6 +43,7 @@ pub struct GuiTextures {
     pub inventory: TextureHandle,
     pub creative: TextureHandle,
     pub tabs: TextureHandle,
+    pub icons: TextureHandle,
 }
 
 /// GUI images are 256×256 sheets.
@@ -68,6 +69,7 @@ impl GuiTextures {
             inventory: file("container/inventory.png")?,
             creative: file("container/creative_inventory/tab_items.png")?,
             tabs: file("container/creative_inventory/tabs.png")?,
+            icons: file("icons.png")?,
         })
     }
 }
@@ -194,6 +196,55 @@ pub fn paint_slot(painter: &Painter, at: Pos2, slot: &SlotView, scale: f32, atla
             font,
             Color32::WHITE,
         );
+    }
+}
+
+/// Survival numbers for the HUD.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurvivalHud {
+    pub health: i32,
+    pub food: i32,
+    /// Air while the eyes are under water.
+    pub air: Option<i32>,
+}
+
+/// Hearts, drumsticks and air bubbles above the hotbar, from icons.png,
+/// as in 1.0.0's `GuiIngame`: each icon is two points, full or half.
+pub fn paint_survival(painter: &Painter, screen: Rect, hud: &SurvivalHud, textures: &GuiTextures) {
+    let scale = gui_scale(screen);
+    let icons = textures.icons.id();
+    let left = screen.center().x - 91.0 * scale;
+    let right = screen.center().x + 91.0 * scale;
+    let row = screen.bottom() - 39.0 * scale;
+    let icon = |from: [f32; 2], x: f32, y: f32| {
+        sheet_image(painter, icons, from, [9.0, 9.0], pos2(x, y), scale);
+    };
+    for i in 0..10 {
+        let points = i * 2;
+        // Hearts fill from the left, drumsticks from the right.
+        let heart_x = left + i as f32 * 8.0 * scale;
+        icon([16.0, 0.0], heart_x, row);
+        if hud.health > points + 1 {
+            icon([52.0, 0.0], heart_x, row);
+        } else if hud.health == points + 1 {
+            icon([61.0, 0.0], heart_x, row);
+        }
+        let food_x = right - (i as f32 * 8.0 + 9.0) * scale;
+        icon([16.0, 27.0], food_x, row);
+        if hud.food > points + 1 {
+            icon([52.0, 27.0], food_x, row);
+        } else if hud.food == points + 1 {
+            icon([61.0, 27.0], food_x, row);
+        }
+    }
+    if let Some(air) = hud.air {
+        let full = ((air - 2) as f32 * 10.0 / 300.0).ceil().max(0.0) as i32;
+        let popping = (air as f32 * 10.0 / 300.0).ceil() as i32 - full;
+        for i in 0..full + popping {
+            let x = right - (i as f32 * 8.0 + 9.0) * scale;
+            let from = if i < full { [16.0, 18.0] } else { [25.0, 18.0] };
+            icon(from, x, row - 10.0 * scale);
+        }
     }
 }
 

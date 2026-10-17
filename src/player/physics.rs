@@ -63,6 +63,12 @@ pub struct Body {
     /// Double-tapping jump toggles `flying` (creative).
     pub may_fly: bool,
     pub flying: bool,
+    /// False when too hungry to sprint.
+    pub can_sprint: bool,
+    /// Whether the last tick started a jump.
+    pub jumped: bool,
+    /// The liquid the body was in during the last tick.
+    pub liquid: Option<Fluid>,
     collided_horizontally: bool,
     was_moving_forward: bool,
     sprint_tap_timer: u8,
@@ -80,6 +86,9 @@ impl Body {
             sprinting: false,
             may_fly: false,
             flying: false,
+            can_sprint: true,
+            jumped: false,
+            liquid: None,
             collided_horizontally: false,
             was_moving_forward: false,
             sprint_tap_timer: 0,
@@ -130,8 +139,10 @@ impl Body {
         let liquid = if self.flying {
             None
         } else {
-            self.liquid(world)
+            self.find_liquid(world)
         };
+        self.liquid = liquid;
+        self.jumped = false;
 
         let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
         let facing = DVec3::new(sin_yaw, 0.0, -cos_yaw);
@@ -146,6 +157,7 @@ impl Body {
         } else if input.jump && liquid.is_some() {
             self.velocity.y += SWIM_UP;
         } else if input.jump && self.on_ground {
+            self.jumped = true;
             self.velocity.y = JUMP_VELOCITY;
             if self.sprinting {
                 self.velocity += facing * SPRINT_JUMP_BOOST;
@@ -192,7 +204,7 @@ impl Body {
     /// The liquid the body is in: water reaching the hitbox shrunk by 0.4
     /// top and bottom, or lava reaching it also shrunk 0.1 sideways
     /// (1.0.0's `isInWater` and `handleLavaMovement`).
-    fn liquid(&self, world: &impl Collider) -> Option<Fluid> {
+    fn find_liquid(&self, world: &impl Collider) -> Option<Fluid> {
         let shrink = |side: f64| {
             let by = DVec3::new(side, 0.4, side);
             Aabb::new(self.bb.min + by, self.bb.max - by)
@@ -235,7 +247,8 @@ impl Body {
     fn update_sprint(&mut self, forward: f64, sprint_key: bool) {
         self.sprint_tap_timer = self.sprint_tap_timer.saturating_sub(1);
         let moving_forward = forward >= SPRINT_MIN_FORWARD;
-        if self.on_ground && moving_forward && !self.was_moving_forward && !self.sprinting {
+        let can_start = self.on_ground && moving_forward && self.can_sprint;
+        if can_start && !self.was_moving_forward && !self.sprinting {
             if self.sprint_tap_timer == 0 {
                 self.sprint_tap_timer = SPRINT_DOUBLE_TAP_TICKS;
             } else {
@@ -243,10 +256,10 @@ impl Body {
                 self.sprint_tap_timer = 0;
             }
         }
-        if sprint_key && moving_forward {
+        if sprint_key && moving_forward && self.can_sprint {
             self.sprinting = true;
         }
-        if self.sprinting && (!moving_forward || self.collided_horizontally) {
+        if self.sprinting && (!moving_forward || self.collided_horizontally || !self.can_sprint) {
             self.sprinting = false;
         }
         self.was_moving_forward = moving_forward;

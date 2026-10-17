@@ -101,6 +101,22 @@ impl ItemEntity {
         item
     }
 
+    /// Dropped at death: tossed from the eyes in a random direction
+    /// (1.0.0's `dropPlayerItemWithRandomChoice` with random choice).
+    pub fn scattered(stack: ItemStack, eye: DVec3, random: &mut impl FnMut() -> f32) -> Self {
+        let speed = random() as f64 * 0.5;
+        let angle = random() as f64 * std::f64::consts::TAU;
+        let velocity = DVec3::new(-angle.sin() * speed, 0.2, angle.cos() * speed);
+        let mut item = Self::new(
+            stack,
+            eye - DVec3::Y * 0.3,
+            velocity,
+            random() * std::f32::consts::TAU,
+        );
+        item.pickup_delay = THROW_DELAY;
+        item
+    }
+
     pub fn center(&self) -> DVec3 {
         (self.bb.min + self.bb.max) / 2.0
     }

@@ -27,7 +27,10 @@ use crate::{
         stack::{ItemStack, Items},
     },
     level::{self, WorldDir},
-    player::mode::GameMode,
+    player::{
+        mode::GameMode,
+        stats::{DamageSource, MAX_AIR},
+    },
     render::{
         Renderer, SkyImages,
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
@@ -37,7 +40,7 @@ use crate::{
     },
     ui::{
         DebugStats, DebugUi, Hud,
-        gui::SlotView,
+        gui::{SlotView, SurvivalHud},
         menu::{Menu, MenuAction},
         screens::{Screen, ScreenAction, ScreenView},
     },
@@ -301,9 +304,14 @@ impl App {
         }
     }
 
+    /// In a world and alive.
+    fn playing(&self) -> bool {
+        self.game.as_ref().is_some_and(|game| !game.stats.is_dead())
+    }
+
     /// Opens the inventory (or creative item list) and frees the mouse.
     fn open_screen(&mut self) {
-        let Some(game) = &self.game else {
+        let Some(game) = self.game.as_ref().filter(|game| !game.stats.is_dead()) else {
             return;
         };
         self.screen = Some(if game.mode.has_every_item() {
@@ -354,6 +362,10 @@ impl App {
                 game.inventory.set(game.inventory.selected, Some(full));
             }
             ScreenAction::Discard => game.cursor = None,
+            ScreenAction::Respawn => {
+                game.respawn();
+                self.set_cursor_grab(true);
+            }
         }
     }
 
@@ -391,6 +403,13 @@ impl App {
         self.last_frame = now;
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
+        }
+        // Dying closes any screen and frees the mouse for the Respawn button.
+        if !self.playing() {
+            self.screen = None;
+            if self.cursor_grabbed {
+                self.set_cursor_grab(false);
+            }
         }
         let (Some(window), Some(renderer), Some(debug_ui), Some(game)) = (
             &self.window,
@@ -448,6 +467,15 @@ impl App {
                 })
                 .collect(),
             selected: game.inventory.selected,
+            survival: (game.mode.is_vulnerable() && !game.stats.is_dead()).then(|| SurvivalHud {
+                health: game.stats.health,
+                food: game.stats.food,
+                air: (game.stats.air < MAX_AIR).then_some(game.stats.air),
+            }),
+            death: game.stats.is_dead().then(|| {
+                let source = game.stats.last_source.unwrap_or(DamageSource::Mob);
+                format!("Player {}", source.death_message())
+            }),
         };
         let view_of = |stack: &ItemStack| {
             let icons = self.icons.as_ref()?;
@@ -547,7 +575,7 @@ impl ApplicationHandler for App {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if !self.cursor_grabbed && self.game.is_some() && self.screen.is_none() => {
+            } if !self.cursor_grabbed && self.screen.is_none() && self.playing() => {
                 self.set_cursor_grab(true)
             }
             WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {

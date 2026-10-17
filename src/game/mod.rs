@@ -29,9 +29,11 @@ use crate::{
         mode::GameMode,
         physics::Body,
         raycast::{self, Hit},
+        stats::{DamageSource, Stats, Surroundings},
     },
     render::camera::Camera,
     world::{
+        block::Fluid,
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -52,8 +54,17 @@ const MAX_CATCH_UP: f32 = 10.0 * TICK;
 /// Trackpad scrolling this many pixels moves one hotbar slot.
 const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
 
-/// Falling below this returns the player to spawn (until health exists in M9).
+/// Falling below this hurts 4 a tick, as 1.0.0's void does.
 const VOID_Y: f64 = -64.0;
+const VOID_DAMAGE: i32 = 4;
+
+/// 1.0.0's exhaustion for moving: per block walked, sprinted or swum, and
+/// per jump.
+const WALK_EXHAUSTION: f32 = 0.01;
+const SPRINT_EXHAUSTION: f32 = 0.1;
+const SWIM_EXHAUSTION: f32 = 0.015;
+const JUMP_EXHAUSTION: f32 = 0.2;
+const SPRINT_JUMP_EXHAUSTION: f32 = 0.8;
 
 pub struct Game {
     pub chunks: ChunkManager,
@@ -77,6 +88,7 @@ pub struct Game {
     break_cooldown: u8,
     place_cooldown: u8,
     pub inventory: Inventory,
+    pub stats: Stats,
     /// The stack held on the mouse in an inventory screen.
     pub cursor: Option<ItemStack>,
     /// Dropped items lying around.
@@ -134,6 +146,7 @@ impl Game {
             break_cooldown: 0,
             place_cooldown: 0,
             inventory: Inventory::default(),
+            stats: Stats::default(),
             cursor: None,
             entities: Vec::new(),
             mining: None,
@@ -178,6 +191,7 @@ impl Game {
         game.mode = level.game_mode;
         game.time = level.time;
         game.inventory = player.inventory.clone();
+        game.stats = player.stats.clone();
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
@@ -220,6 +234,7 @@ impl Game {
             pitch: self.camera.pitch,
             inventory,
             flying: self.body.flying,
+            stats: self.stats.clone(),
         };
         saved.level.time = self.time;
         saved.dir.save_level(&saved.level)?;
@@ -349,8 +364,11 @@ impl Game {
     /// One game tick: player physics, then breaking and placing.
     fn tick(&mut self) {
         self.prev_feet = self.body.position();
-        self.move_player();
-        self.use_hands();
+        if !self.stats.is_dead() {
+            self.move_player();
+            self.tick_stats();
+            self.use_hands();
+        }
         self.tick_items();
         self.time += 1;
         self.ticks_since_save += 1;
@@ -378,9 +396,96 @@ impl Game {
         self.body
             .tick(&self.keys.move_input(), self.camera.yaw, &collider);
         if self.body.position().y < VOID_Y {
-            self.body = Body::new(self.spawn);
-            self.prev_feet = self.spawn;
+            if self.mode.is_vulnerable() {
+                self.stats.damage(VOID_DAMAGE, DamageSource::Fall);
+            } else {
+                // Creative players can't die, so the void sends them home.
+                self.body = Body::new(self.spawn);
+                self.prev_feet = self.spawn;
+            }
         }
+    }
+
+    /// The liquid at `point`, if any.
+    fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
+        let p = point.floor().as_ivec3();
+        let block = self.chunks.world().block(p.x, p.y, p.z)?;
+        self.items.blocks.get(block.id())?.fluid
+    }
+
+    /// Exhaustion from moving, then a tick of health, hunger, air and fire
+    /// (1.0.0's `addMovementStat` and `onEntityUpdate`). Dying drops the
+    /// whole inventory.
+    fn tick_stats(&mut self) {
+        let vulnerable = self.mode.is_vulnerable();
+        let moved = self.body.position() - self.prev_feet;
+        let horizontal = moved.x.hypot(moved.z) as f32;
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let eyes_in_water = self.fluid_at(eye) == Some(Fluid::Water);
+        let liquid = self.body.liquid;
+        if vulnerable {
+            if self.body.jumped {
+                let cost = if self.body.sprinting {
+                    SPRINT_JUMP_EXHAUSTION
+                } else {
+                    JUMP_EXHAUSTION
+                };
+                self.stats.add_exhaustion(cost);
+            }
+            if eyes_in_water {
+                self.stats
+                    .add_exhaustion(SWIM_EXHAUSTION * moved.length() as f32);
+            } else if liquid == Some(Fluid::Water) {
+                self.stats.add_exhaustion(SWIM_EXHAUSTION * horizontal);
+            } else if self.body.on_ground {
+                let per_block = if self.body.sprinting {
+                    SPRINT_EXHAUSTION
+                } else {
+                    WALK_EXHAUSTION
+                };
+                self.stats.add_exhaustion(per_block * horizontal);
+            }
+        }
+        let around = Surroundings {
+            on_ground: self.body.on_ground,
+            fell: -moved.y as f32,
+            in_water: liquid == Some(Fluid::Water),
+            in_lava: liquid == Some(Fluid::Lava),
+            eyes_in_water,
+            flying: self.body.flying,
+        };
+        self.stats.tick(&around, vulnerable);
+        self.body.can_sprint = !vulnerable || self.stats.can_sprint();
+        if self.stats.is_dead() {
+            self.drop_everything();
+        }
+    }
+
+    /// Scatters every stack in the inventory (and the mouse) around the player.
+    fn drop_everything(&mut self) {
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
+        for slot in 0..crate::inventory::player::SLOTS {
+            if let Some(stack) = self.inventory.slot(slot).copied() {
+                self.inventory.set(slot, None);
+                stacks.push(stack);
+            }
+        }
+        let rng = &mut self.rng;
+        let mut random = || rng.next_f64() as f32;
+        for stack in stacks {
+            self.entities
+                .push(ItemEntity::scattered(stack, eye, &mut random));
+        }
+    }
+
+    /// Back to the world spawn with full health and food (1.0.0's respawn).
+    pub fn respawn(&mut self) {
+        self.body = Body::new(self.spawn);
+        self.prev_feet = self.spawn;
+        self.stats = Stats::default();
+        self.mining = None;
+        self.release_input();
     }
 
     /// The block the crosshair points at from `eye`, within reach.
@@ -435,6 +540,7 @@ mod tests {
     use super::*;
     use crate::{
         inventory::{item::ItemRegistry, stack::ItemStack},
+        player::stats::MAX_HEALTH,
         world::{
             biome::BiomeColors,
             block::{BlockRegistry, BlockState},
@@ -640,5 +746,36 @@ mod tests {
         }
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
         assert!(game.entities.is_empty());
+    }
+
+    #[test]
+    fn a_ten_block_fall_hurts_7_in_survival_and_nothing_in_creative() {
+        for (mode, hurt) in [(GameMode::Survival, 7), (GameMode::Creative, 0)] {
+            let mut game = flat_game(mode);
+            game.body = Body::new(DVec3::new(0.5, 74.0, 0.5));
+            for _ in 0..60 {
+                game.tick();
+            }
+            assert_eq!(game.body.position().y, 64.0);
+            assert_eq!(MAX_HEALTH - game.stats.health, hurt, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn dying_scatters_the_inventory_and_respawning_starts_fresh() {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(4, 30)));
+        game.inventory.set(20, Some(ItemStack::new(270, 1)));
+        game.body = Body::new(DVec3::new(0.5, 100.0, 0.5));
+        for _ in 0..100 {
+            game.tick();
+        }
+        assert!(game.stats.is_dead());
+        assert_eq!(game.stats.last_source, Some(DamageSource::Fall));
+        assert_eq!(game.inventory.slot(0), None);
+        assert_eq!(game.entities.len(), 2, "both stacks dropped");
+        game.respawn();
+        assert_eq!(game.stats, Stats::default());
+        assert_eq!(game.body.position(), game.spawn);
     }
 }

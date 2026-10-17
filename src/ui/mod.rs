@@ -16,7 +16,7 @@ use crate::{
     world::{biome::Biome, daytime},
 };
 use fps::FpsCounter;
-use gui::{GuiTextures, SlotView};
+use gui::{GuiTextures, SlotView, SurvivalHud};
 use menu::{Menu, MenuAction};
 
 /// World and renderer numbers shown in the F3 overlay.
@@ -43,6 +43,10 @@ pub struct Hud {
     pub crosshair: bool,
     pub hotbar: Vec<Option<SlotView>>,
     pub selected: usize,
+    /// Hearts and food, in survival.
+    pub survival: Option<SurvivalHud>,
+    /// Set while dead: how the player died.
+    pub death: Option<String>,
 }
 
 pub struct DebugUi {
@@ -114,11 +118,19 @@ impl DebugUi {
             }
             let full = ui.ctx().content_rect();
             gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
+            if let Some(survival) = &hud.survival {
+                gui::paint_survival(ui.painter(), full, survival, textures);
+            }
             if visible {
                 show_overlay(ui.ctx(), &text);
             }
             if let Some((screen, view)) = &mut screen {
                 actions = screens::show(ui.ctx(), screen, view, textures);
+            }
+            if let Some(message) = &hud.death
+                && show_death_screen(ui.ctx(), message)
+            {
+                actions.push(screens::ScreenAction::Respawn);
             }
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
@@ -208,6 +220,41 @@ fn draw_crosshair(ui: &egui::Ui) {
             stroke,
         );
     }
+}
+
+/// 1.0.0's death screen: the world tinted red, "You died!" and a Respawn
+/// button. Returns true when Respawn is clicked.
+fn show_death_screen(ctx: &egui::Context, message: &str) -> bool {
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::unique("death"),
+    ));
+    painter.rect_filled(full, 0.0, Color32::from_rgba_unmultiplied(128, 0, 0, 110));
+    let scale = gui::gui_scale(full);
+    let mut respawn = false;
+    egui::Area::new(egui::Id::unique("death-screen"))
+        .anchor(Align2::CENTER_CENTER, [0.0, -20.0 * scale])
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("You died!")
+                        .size(20.0 * scale)
+                        .color(Color32::WHITE),
+                );
+                ui.add_space(4.0 * scale);
+                ui.label(
+                    RichText::new(message)
+                        .size(7.0 * scale)
+                        .color(Color32::from_gray(220)),
+                );
+                ui.add_space(16.0 * scale);
+                let button = egui::Button::new(RichText::new("Respawn").size(8.0 * scale))
+                    .min_size(egui::vec2(200.0, 20.0) * scale);
+                respawn = ui.add(button).clicked();
+            });
+        });
+    respawn
 }
 
 fn show_overlay(ctx: &egui::Context, text: &str) {
