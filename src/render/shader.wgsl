@@ -34,5 +34,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if texel.a < 0.5 {
         discard;
     }
-    return vec4<f32>(texel.rgb * in.color, 1.0);
+    // The vertex color is sRGB like Minecraft's tint and shade factors; the
+    // texel is already linear, so linearize the color before multiplying.
+    return vec4<f32>(texel.rgb * pow(in.color, vec3<f32>(2.2)), 1.0);
 }

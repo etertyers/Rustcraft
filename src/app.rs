@@ -2,9 +2,9 @@
 
 use std::{sync::Arc, time::Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use glam::Vec3;
-use log::{error, warn};
+use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -16,14 +16,19 @@ use winit::{
 
 use crate::{
     assets, config,
+    inventory::item::ItemRegistry,
     player::fly::{self, FlyInput},
     render::{
         Renderer,
-        atlas::Atlas,
+        atlas::{Atlas, MISSING_TILE},
         camera::Camera,
         cube::{self, FaceTexture},
     },
+    world::block::{BlockId, BlockRegistry},
 };
+
+/// The block shown as M1's test cube.
+const GRASS: BlockId = 2;
 
 /// Longest frame step applied to movement, so a stall doesn't teleport the camera.
 const MAX_FRAME_DT: f32 = 0.1;
@@ -73,12 +78,34 @@ impl App {
                 config::WINDOW_HEIGHT,
             ));
         let window = Arc::new(event_loop.create_window(attrs)?);
-        let atlas = Atlas::load(&assets::dir().join("textures/blocks"))?;
-        let stone = FaceTexture {
-            uv: atlas.uv_rect(atlas.tile_or_missing("stone")),
-            tint: [1.0; 3],
-        };
-        let mesh = cube::cube_mesh([0.0; 3], |_| stone);
+        let assets = assets::dir();
+        let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
+        let items = ItemRegistry::load(&assets.join("data/items.ron"))?;
+        let atlas = Atlas::load(&assets.join("textures/blocks"))?;
+        let item_dir = assets.join("textures/items");
+        let missing_blocks = blocks.missing_textures(|name| atlas.get(name).is_some());
+        let missing_items =
+            items.missing_textures(|name| item_dir.join(format!("{name}.png")).is_file());
+        info!(
+            "loaded {} blocks and {} items",
+            blocks.iter().count(),
+            items.len()
+        );
+        if !missing_blocks.is_empty() || !missing_items.is_empty() {
+            warn!("missing block textures: {missing_blocks:?}, item textures: {missing_items:?}");
+        }
+
+        let grass = blocks.get(GRASS).context("grass block not defined")?;
+        let mesh = cube::cube_mesh([0.0; 3], |face| FaceTexture {
+            uv: atlas.uv_rect(
+                grass
+                    .textures
+                    .as_ref()
+                    .and_then(|t| t.get(face))
+                    .map_or(MISSING_TILE, |name| atlas.tile_or_missing(name)),
+            ),
+            tint: grass.tint.color(face),
+        });
         self.renderer = Some(Renderer::new(window.clone(), &atlas, &mesh)?);
         window.request_redraw();
         self.window = Some(window);

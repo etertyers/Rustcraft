@@ -2,12 +2,14 @@
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::world::Face;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
-    /// Tint × face shade, multiplied with the texture color.
+    /// Tint × face shade in sRGB space, multiplied with the texture color.
     pub color: [f32; 3],
 }
 
@@ -24,48 +26,16 @@ impl Vertex {
     }
 }
 
-/// A cube face: its outward normal and corners, counter-clockwise seen from outside.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Face {
-    Top,
-    Bottom,
-    North,
-    South,
-    East,
-    West,
-}
-
-impl Face {
-    pub const ALL: [Face; 6] = [
-        Face::Top,
-        Face::Bottom,
-        Face::North,
-        Face::South,
-        Face::East,
-        Face::West,
-    ];
-
-    /// Corners of the unit cube face, counter-clockwise from outside,
-    /// starting at the texture's bottom-left.
-    fn corners(self) -> [[f32; 3]; 4] {
-        match self {
-            Face::Top => [[0., 1., 1.], [1., 1., 1.], [1., 1., 0.], [0., 1., 0.]],
-            Face::Bottom => [[0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.]],
-            Face::North => [[1., 0., 0.], [0., 0., 0.], [0., 1., 0.], [1., 1., 0.]],
-            Face::South => [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]],
-            Face::East => [[1., 0., 1.], [1., 0., 0.], [1., 1., 0.], [1., 1., 1.]],
-            Face::West => [[0., 0., 0.], [0., 0., 1.], [0., 1., 1.], [0., 1., 0.]],
-        }
-    }
-
-    /// Minecraft's fixed directional shading: top 1.0, bottom 0.5, Z faces 0.8, X faces 0.6.
-    pub fn shade(self) -> f32 {
-        match self {
-            Face::Top => 1.0,
-            Face::Bottom => 0.5,
-            Face::North | Face::South => 0.8,
-            Face::East | Face::West => 0.6,
-        }
+/// Corners of a unit cube face, counter-clockwise seen from outside,
+/// starting at the texture's bottom-left.
+fn corners(face: Face) -> [[f32; 3]; 4] {
+    match face {
+        Face::Top => [[0., 1., 1.], [1., 1., 1.], [1., 1., 0.], [0., 1., 0.]],
+        Face::Bottom => [[0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.]],
+        Face::North => [[1., 0., 0.], [0., 0., 0.], [0., 1., 0.], [1., 1., 0.]],
+        Face::South => [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]],
+        Face::East => [[1., 0., 1.], [1., 0., 0.], [1., 1., 0.], [1., 1., 1.]],
+        Face::West => [[0., 0., 0.], [0., 0., 1.], [0., 1., 1.], [0., 1., 0.]],
     }
 }
 
@@ -74,7 +44,7 @@ impl Face {
 pub struct FaceTexture {
     /// Atlas UV rect `[u0, v0, u1, v1]`, v0 at the top.
     pub uv: [f32; 4],
-    /// Color multiplied with the texture (white for none).
+    /// sRGB color multiplied with the texture (white for none).
     pub tint: [f32; 3],
 }
 
@@ -96,7 +66,7 @@ pub fn cube_mesh(origin: [f32; 3], texture: impl Fn(Face) -> FaceTexture) -> Mes
         } = texture(face);
         let color = tint.map(|c| c * face.shade());
         let uvs = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
-        for (corner, uv) in face.corners().into_iter().zip(uvs) {
+        for (corner, uv) in corners(face).into_iter().zip(uvs) {
             vertices.push(Vertex {
                 position: [
                     origin[0] + corner[0],

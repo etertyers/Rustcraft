@@ -1,8 +1,10 @@
 mod app;
 mod assets;
 mod config;
+mod inventory;
 mod player;
 mod render;
+mod world;
 
 use anyhow::Result;
 use winit::event_loop::EventLoop;
