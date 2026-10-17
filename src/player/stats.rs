@@ -33,6 +33,8 @@ const LAVA_DAMAGE: i32 = 4;
 const LAVA_FIRE_TICKS: i32 = 300;
 /// Burning hurts this much once a second.
 const FIRE_DAMAGE: i32 = 1;
+/// Exhaustion each healed point costs, so healing uses up food.
+const HEAL_EXHAUSTION: f32 = 3.0;
 /// Exhaustion added by taking damage (1.0.0's `DamageSource.hungerDamage`).
 const DAMAGE_EXHAUSTION: f32 = 0.3;
 
@@ -242,6 +244,7 @@ impl Stats {
             self.food_timer += 1;
             if self.food_timer >= FOOD_TIMER_TICKS {
                 self.heal(1);
+                self.add_exhaustion(HEAL_EXHAUSTION);
                 self.food_timer = 0;
             }
         } else if self.food <= 0 {
@@ -400,6 +403,7 @@ mod tests {
             stats.tick_food();
         }
         assert_eq!(stats.health, 11, "one point per 4 seconds at 18+ food");
+        assert_eq!(stats.exhaustion, HEAL_EXHAUSTION, "healing costs food");
 
         let mut starving = Stats {
             food: 0,
@@ -440,5 +444,22 @@ mod tests {
             }
             .can_sprint()
         );
+    }
+
+    #[test]
+    fn healing_ten_points_after_a_fall_costs_visible_food() {
+        let mut stats = Stats {
+            health: 10,
+            ..Stats::default()
+        };
+        // Ten heals, then a few ticks for the last one's exhaustion to drain.
+        for _ in 0..FOOD_TIMER_TICKS * 10 + 5 {
+            stats.tick(&GROUND, true);
+            stats.tick_food();
+        }
+        assert_eq!(stats.health, MAX_HEALTH);
+        // 30 exhaustion: all 5 saturation, then 2 food points.
+        assert_eq!(stats.saturation, 0.0);
+        assert_eq!(stats.food, 18);
     }
 }
