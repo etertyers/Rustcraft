@@ -17,6 +17,8 @@ use crate::{
 
 /// Exhaustion per block broken (1.0.0's `harvestBlock`).
 const BREAK_EXHAUSTION: f32 = 0.025;
+/// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
+const EAT_TICKS: u32 = 32;
 
 impl Game {
     /// The tool in the selected slot, if it's a tool.
@@ -30,7 +32,15 @@ impl Game {
         self.break_cooldown = self.break_cooldown.saturating_sub(1);
         self.place_cooldown = self.place_cooldown.saturating_sub(1);
         let wants_break = self.breaking || self.break_clicked;
-        let wants_place = (self.placing || self.place_clicked) && self.place_cooldown == 0;
+        let using = self.placing || self.place_clicked;
+        if using && !wants_break && self.keep_eating() {
+            self.break_clicked = false;
+            self.place_clicked = false;
+            self.mining = None;
+            return;
+        }
+        self.eating = None;
+        let wants_place = using && self.place_cooldown == 0;
         self.break_clicked = false;
         self.place_clicked = false;
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
@@ -129,6 +139,42 @@ impl Game {
             self.inventory.damage_selected(wear, &self.items);
         }
         self.chunks.set_blocks(&edits);
+    }
+
+    /// A tick of eating the selected food while right-click is held.
+    /// Returns false if the selected item can't be eaten now.
+    fn keep_eating(&mut self) -> bool {
+        let slot = self.inventory.selected;
+        let Some(stack) = self.inventory.selected_stack().copied() else {
+            return false;
+        };
+        let Some(food) = self.items.item(stack.id).and_then(|item| item.food) else {
+            return false;
+        };
+        let hungry = food.always_edible || self.stats.can_eat();
+        if !self.mode.is_vulnerable() || !hungry {
+            return false;
+        }
+        let ticks = match self.eating {
+            Some((eating_slot, ticks)) if eating_slot == slot => ticks + 1,
+            _ => 1,
+        };
+        if ticks < EAT_TICKS {
+            self.eating = Some((slot, ticks));
+            return true;
+        }
+        self.eating = None;
+        self.inventory.take(slot, 1);
+        self.stats.eat(food.hunger, food.saturation);
+        if let Some(leftover) = self.items.item(stack.id).and_then(|item| item.leftover) {
+            let bowl = ItemStack::with_damage(leftover, 1, 0);
+            if self.inventory.slot(slot).is_none() {
+                self.inventory.set(slot, Some(bowl));
+            } else if let Some(rest) = self.inventory.add(bowl, &self.items) {
+                self.throw(rest);
+            }
+        }
+        true
     }
 
     /// Places the selected stack's block against the clicked face.
@@ -243,9 +289,12 @@ impl Game {
             blocks: &self.items.blocks,
         };
         let player = self.body.aabb();
+        let alive = !self.stats.is_dead();
         for item in &mut self.entities {
             item.tick(&collider);
-            item.pick_up(&player, &mut self.inventory, &self.items);
+            if alive {
+                item.pick_up(&player, &mut self.inventory, &self.items);
+            }
         }
         self.entities.retain(|item| !item.expired());
     }

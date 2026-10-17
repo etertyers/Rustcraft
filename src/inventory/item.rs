@@ -36,6 +36,23 @@ pub struct ItemDef {
     pub places: Option<BlockId>,
     #[serde(default)]
     pub variants: BTreeMap<u8, ItemVariant>,
+    #[serde(default)]
+    pub food: Option<Food>,
+    /// Item left in the hand after using this one (stew leaves a bowl).
+    #[serde(default)]
+    pub leftover: Option<ItemId>,
+}
+
+/// What eating restores (1.0.0's `ItemFood`).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Food {
+    pub hunger: i32,
+    /// Saturation gained is hunger × this × 2.
+    pub saturation: f32,
+    /// Can be eaten with a full hunger bar (golden apples).
+    #[serde(default)]
+    pub always_edible: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

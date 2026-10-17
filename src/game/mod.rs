@@ -93,6 +93,8 @@ pub struct Game {
     pub cursor: Option<ItemStack>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    /// The hotbar slot being eaten from and for how many ticks.
+    eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
     mining: Option<(glam::IVec3, f32)>,
     /// For drops and throws.
@@ -150,6 +152,7 @@ impl Game {
             cursor: None,
             entities: Vec::new(),
             mining: None,
+            eating: None,
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             tick_time: 0.0,
@@ -777,5 +780,52 @@ mod tests {
         game.respawn();
         assert_eq!(game.stats, Stats::default());
         assert_eq!(game.body.position(), game.spawn);
+    }
+
+    #[test]
+    fn holding_right_click_for_32_ticks_eats_a_porkchop() {
+        let mut game = flat_game(GameMode::Survival);
+        game.stats.food = 10;
+        game.stats.saturation = 0.0;
+        game.inventory.set(0, Some(ItemStack::new(320, 2)));
+        game.camera.pitch = 1.5;
+        game.advance(0.0);
+        game.placing = true;
+        for _ in 0..31 {
+            game.tick();
+        }
+        assert_eq!(game.stats.food, 10, "still chewing");
+        game.tick();
+        assert_eq!(game.stats.food, 18);
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+        // Full: no more eating.
+        game.stats.food = 20;
+        for _ in 0..40 {
+            game.tick();
+        }
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+    }
+
+    #[test]
+    fn stew_leaves_its_bowl_and_creative_doesnt_eat() {
+        let mut game = flat_game(GameMode::Survival);
+        game.stats.food = 5;
+        game.inventory.set(0, Some(ItemStack::new(282, 1)));
+        game.camera.pitch = 1.5;
+        game.placing = true;
+        for _ in 0..32 {
+            game.tick();
+        }
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(281, 1)));
+
+        let mut creative = flat_game(GameMode::Creative);
+        creative.stats.food = 5;
+        creative.inventory.set(0, Some(ItemStack::new(320, 1)));
+        creative.camera.pitch = 1.5;
+        creative.placing = true;
+        for _ in 0..40 {
+            creative.tick();
+        }
+        assert_eq!(creative.inventory.slot(0), Some(&ItemStack::new(320, 1)));
     }
 }
