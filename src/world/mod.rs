@@ -6,13 +6,6 @@ pub mod chunk;
 pub mod light;
 pub mod manager;
 pub mod mesh;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the chunk manager starts saving in the next commits"
-    )
-)]
 pub mod save;
 pub mod worldgen;
 
