@@ -193,7 +193,8 @@ impl Renderer {
         self.depth_view = create_depth_view(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, camera: &Camera, mut ui: UiPaint) -> Result<()> {
+    /// Draws a frame. Returns false if the surface wasn't ready and the frame was skipped.
+    pub fn render(&mut self, camera: &Camera, mut ui: UiPaint) -> Result<bool> {
         // Upload new egui textures (e.g. the font atlas) even if this frame is skipped.
         for (id, deltas) in &ui.textures.set {
             for delta in deltas {
@@ -209,16 +210,16 @@ impl Renderer {
         result
     }
 
-    fn draw(&mut self, camera: &Camera, ui: &UiPaint) -> Result<()> {
+    fn draw(&mut self, camera: &Camera, ui: &UiPaint) -> Result<bool> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                return Ok(false);
             }
             wgpu::CurrentSurfaceTexture::Validation => bail!("surface validation error"),
         };
@@ -302,7 +303,7 @@ impl Renderer {
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
         self.queue.present(frame);
-        Ok(())
+        Ok(true)
     }
 }
 

@@ -47,9 +47,13 @@ impl DebugUi {
         self.visible = !self.visible;
     }
 
-    /// Records a frame and builds this frame's UI.
-    pub fn frame(&mut self, window: &Window, now: Instant, camera: &Camera) -> UiPaint {
+    /// Counts a frame that reached the screen, for the FPS readout.
+    pub fn frame_presented(&mut self, now: Instant) {
         self.fps.tick(now);
+    }
+
+    /// Builds this frame's UI.
+    pub fn frame(&mut self, window: &Window, camera: &Camera) -> UiPaint {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
         let text = debug_text(self.fps.fps(), camera);

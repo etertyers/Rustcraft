@@ -1,6 +1,9 @@
 //! winit event loop: owns the window, renderer and input state.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use glam::Vec3;
@@ -8,8 +11,8 @@ use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, WindowEvent},
-    event_loop::ActiveEventLoop,
+    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, StartCause, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
 };
@@ -34,6 +37,9 @@ const GRASS: BlockId = 2;
 /// Longest frame step applied to movement, so a stall doesn't teleport the camera.
 const MAX_FRAME_DT: f32 = 0.1;
 
+/// Wait before retrying after the surface skipped a frame, instead of spinning.
+const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
+
 pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -42,6 +48,10 @@ pub struct App {
     fly_input: FlyInput,
     cursor_grabbed: bool,
     last_frame: Instant,
+    /// The window is fully hidden; don't draw until it's visible again.
+    occluded: bool,
+    /// The last frame was skipped by the surface; retry after a short wait.
+    frame_skipped: bool,
     /// First fatal error; the event loop exits and `main` returns it.
     error: Option<anyhow::Error>,
 }
@@ -57,6 +67,8 @@ impl Default for App {
             fly_input: FlyInput::default(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
+            occluded: false,
+            frame_skipped: false,
             error: None,
         }
     }
@@ -167,14 +179,27 @@ impl App {
         else {
             return;
         };
-        let ui = debug_ui.frame(window, now, &self.camera);
-        if let Err(err) = renderer.render(&self.camera, ui) {
-            self.fail(event_loop, err);
+        let ui = debug_ui.frame(window, &self.camera);
+        match renderer.render(&self.camera, ui) {
+            Ok(presented) => {
+                self.frame_skipped = !presented;
+                if presented {
+                    debug_ui.frame_presented(now);
+                }
+            }
+            Err(err) => self.fail(event_loop, err),
         }
     }
 }
 
 impl ApplicationHandler for App {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let StartCause::ResumeTimeReached { .. } = cause
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
+        }
+    }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -196,6 +221,12 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => self.set_cursor_grab(false),
+            WindowEvent::Occluded(occluded) => {
+                self.occluded = occluded;
+                if !occluded && let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -216,8 +247,15 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.occluded {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        } else if self.frame_skipped {
+            // new_events requests the redraw when the wait ends.
+            event_loop
+                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + SKIPPED_FRAME_RETRY));
+        } else if let Some(window) = &self.window {
+            event_loop.set_control_flow(ControlFlow::Wait);
             window.request_redraw();
         }
     }
