@@ -151,27 +151,27 @@ docs(m4): mark milestone 4 complete in CLAUDE.md
 
 Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-off.
 
-### - [ ] M0 — Project scaffold
+### - [x] M0 — Project scaffold
 - `cargo init --name rustcraft` in the project root `~/code/rustcraft` (see §0; don't create a nested project folder), crate list from §2 pinned, `.gitignore`, dev profile tweaks, `docs/DECISIONS.md`, `docs/blocks-and-items.md` and `docs/sounds.md` (copied from the planning folder), `assets/textures/` with Kenzo's PNGs (copied from the planning folder's `assets/`).
 - GitHub remote set up; `main` pushed.
 - Empty winit window that opens, clears to sky blue via wgpu, and closes cleanly.
 - **Done when:** `cargo run` shows a blue window; clippy/fmt/test pass; tagged `m0`.
 
-### - [ ] M1 — Render a cube, fly around
+### - [x] M1 — Render a cube, fly around
 - wgpu pipeline, WGSL shader, depth buffer, window resize handling.
 - Free-fly camera: WASD + mouse look, cursor grab (Esc releases), Space/Shift up/down.
 - Texture atlas built from `assets/textures/`; texture-to-block mapping table; a single textured cube.
 - F3 debug overlay (egui): FPS, position, direction.
 - **Done when:** a textured cube renders correctly from all angles at 60+ FPS.
 
-### - [ ] M2 — Chunks, meshing, and the full block registry
+### - [x] M2 — Chunks, meshing, and the full block registry
 - `blocks.ron` with **every block from `docs/blocks-and-items.md`** (IDs 0–122): properties, hardness, per-face textures, transparency, light emission.
 - `Chunk` storage and a flat test world of several chunks.
 - Mesher with face culling (only faces bordering transparent blocks) and per-face textures (grass top/side/bottom). Non-cube shapes (torches, flowers, slabs, stairs, fences, doors, cross-shaped plants) can render as simple placeholders at first, but each must be listed in `DECISIONS.md` as pending.
 - Cross-chunk neighbor lookup so borders don't render hidden faces. Frustum culling of chunks.
 - **Done when:** a flat world renders at 60+ FPS; a debug "block gallery" world shows every block; unit tests cover face counts.
 
-### - [ ] M3 — Infinite world generation (4 biomes)
+### - [x] M3 — Infinite world generation (4 biomes)
 - Seeded noise terrain with world height 128 and sea level 63.
 - Biomes: **ocean, plains, forest, desert**, with blended borders. Oceans are filled with still water (ID 9) that doesn't flow yet.
 - Caves (3D noise), ores at 1.0.0 depths (coal, iron, gold, lapis, redstone, diamond), oak and birch trees, flowers and tall grass, sand and sandstone in deserts, cactus and sugar cane, bedrock floor.
@@ -179,14 +179,14 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Upgrade to greedy meshing if vertex counts or FPS demand it.
 - **Done when:** flying in one direction for 2 minutes shows all four biomes with continuous terrain and no stalls; the same seed gives the same world.
 
-### - [ ] M4 — Player physics and block interaction
+### - [x] M4 — Player physics and block interaction
 - Walking with Minecraft constants from §4: gravity, jump, AABB collision, step-up, sprint, sneak (no falling off edges). The M1 free-fly camera stays as a dev tool in debug builds only (`cfg(debug_assertions)`). Player flying in release builds comes with creative mode in M7.
 - DDA voxel raycast (reach 5) for the target block, wireframe highlight outline.
 - Left-click breaks (instant for now), right-click places the selected block; can't place inside the player.
 - Remesh only affected chunks (and neighbors on borders).
 - **Done when:** you can walk, jump, dig a staircase down, and build a house without clipping; movement speeds match §4 in unit tests.
 
-### - [ ] M5 — Lighting
+### - [x] M5 — Lighting
 - Sky light (sunlight propagation from top) and block light (torches, glowstone, lava, jack o'lanterns, etc. at their 1.0.0 levels) using BFS flood fill, including removal.
 - Smooth lighting / ambient occlusion per vertex.
 - **Done when:** caves are dark, torches light them, and breaking/placing blocks updates light correctly across chunk borders.
