@@ -205,6 +205,9 @@ pub struct BlockDef {
     /// Hide faces between two blocks of this type (glass, water, ice).
     #[serde(default)]
     pub cull_same: bool,
+    /// Ground friction: 0.6 for most blocks, 0.98 for ice (1.0.0 values).
+    #[serde(default = "default_slipperiness")]
+    pub slipperiness: f32,
     #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
@@ -216,6 +219,10 @@ pub struct BlockDef {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_slipperiness() -> f32 {
+    0.6
 }
 
 impl BlockDef {

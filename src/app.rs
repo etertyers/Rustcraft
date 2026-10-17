@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use glam::Vec3;
+use glam::DVec3;
 use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
@@ -20,7 +20,7 @@ use winit::{
 use crate::{
     assets, config,
     inventory::item::ItemRegistry,
-    player::fly::{self, FlyInput},
+    player::{collision::WorldCollider, input::MoveKeys, physics::Body},
     render::{
         Renderer,
         atlas::{Atlas, MISSING_TILE},
@@ -48,8 +48,19 @@ pub enum WorldKind {
     Gallery,
 }
 
-/// Longest frame step applied to movement, so a stall doesn't teleport the camera.
+/// Longest frame step applied to free flight, so a stall doesn't teleport the camera.
+#[cfg(debug_assertions)]
 const MAX_FRAME_DT: f32 = 0.1;
+
+/// Seconds per game tick.
+const TICK: f32 = 1.0 / config::TICKS_PER_SECOND as f32;
+
+/// Most game time simulated in one frame; after a longer stall the game
+/// slows down instead of running a burst of ticks.
+const MAX_CATCH_UP: f32 = 10.0 * TICK;
+
+/// Falling below this returns the player to spawn (until health exists in M9).
+const VOID_Y: f64 = -64.0;
 
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
@@ -60,8 +71,19 @@ pub struct App {
     debug_ui: Option<DebugUi>,
     world_kind: WorldKind,
     chunks: Option<ChunkManager>,
+    blocks: Option<Arc<BlockRegistry>>,
+    /// Look direction comes from the mouse; position follows `body` each frame.
     camera: Camera,
-    fly_input: FlyInput,
+    body: Body,
+    /// Feet position at the previous tick, for interpolating the camera.
+    prev_feet: DVec3,
+    spawn: DVec3,
+    keys: MoveKeys,
+    /// Game time not yet simulated, in seconds (less than one tick after a frame).
+    tick_time: f32,
+    /// Free flight, a dev tool toggled with F4 in debug builds.
+    #[cfg(debug_assertions)]
+    flying: bool,
     cursor_grabbed: bool,
     last_frame: Instant,
     /// The window is fully hidden; don't draw until it's visible again.
@@ -74,27 +96,20 @@ pub struct App {
 
 impl App {
     pub fn new(world_kind: WorldKind) -> Self {
-        let camera = match world_kind {
+        let ground = config::SEA_LEVEL as f64 + 1.0;
+        let (spawn, yaw, pitch) = match world_kind {
             WorldKind::Generated { seed } => {
                 let (x, y, z) = Terrain::new(seed).spawn_point();
-                Camera::new(
-                    Vec3::new(x as f32 + 0.5, y as f32 + 1.62, z as f32 + 0.5),
+                (
+                    DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5),
                     0.0,
                     0.0,
                 )
             }
-            // Standing height above the grass at the origin.
-            WorldKind::Flat => Camera::new(
-                Vec3::new(0.5, config::SEA_LEVEL as f32 + 2.62, 0.5),
-                0.0,
-                0.0,
-            ),
-            // In front of the first gallery row, looking south over it and down.
-            WorldKind::Gallery => Camera::new(
-                Vec3::new(22.5, config::SEA_LEVEL as f32 + 12.0, -10.0),
-                std::f32::consts::PI,
-                -0.6,
-            ),
+            // On the grass at the origin.
+            WorldKind::Flat => (DVec3::new(0.5, ground, 0.5), 0.0, 0.0),
+            // In front of the first gallery row, looking south along it.
+            WorldKind::Gallery => (DVec3::new(22.5, ground, -4.0), std::f32::consts::PI, -0.3),
         };
         Self {
             window: None,
@@ -102,8 +117,15 @@ impl App {
             debug_ui: None,
             world_kind,
             chunks: None,
-            camera,
-            fly_input: FlyInput::default(),
+            blocks: None,
+            camera: Camera::new(spawn.as_vec3(), yaw, pitch),
+            body: Body::new(spawn),
+            prev_feet: spawn,
+            spawn,
+            keys: MoveKeys::default(),
+            tick_time: 0.0,
+            #[cfg(debug_assertions)]
+            flying: false,
             cursor_grabbed: false,
             last_frame: Instant::now(),
             occluded: false,
@@ -184,6 +206,7 @@ impl App {
             config::RENDER_DISTANCE,
             workers,
         ));
+        self.blocks = Some(Arc::new(blocks));
         self.renderer = Some(renderer);
         self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
@@ -211,7 +234,7 @@ impl App {
         window.set_cursor_visible(!grab);
         self.cursor_grabbed = grab;
         if !grab {
-            self.fly_input.clear();
+            self.keys.clear();
         }
     }
 
@@ -226,16 +249,62 @@ impl App {
             if let Some(debug_ui) = self.debug_ui.as_mut() {
                 debug_ui.toggle();
             }
+        } else if key == KeyCode::F4 && pressed && !event.repeat {
+            #[cfg(debug_assertions)]
+            {
+                self.flying = !self.flying;
+                self.body.velocity = DVec3::ZERO;
+                info!("flying {}", if self.flying { "on" } else { "off" });
+            }
         } else if self.cursor_grabbed {
-            self.fly_input.set_key(key, pressed);
+            self.keys.set_key(key, pressed);
+        }
+    }
+
+    /// One game tick: player physics.
+    fn tick(&mut self) {
+        self.prev_feet = self.body.position;
+        #[cfg(debug_assertions)]
+        if self.flying {
+            return;
+        }
+        let (Some(chunks), Some(blocks)) = (&self.chunks, &self.blocks) else {
+            return;
+        };
+        let collider = WorldCollider {
+            world: chunks.world(),
+            blocks,
+        };
+        // Wait for the chunks around the player to load before moving them.
+        if !collider.is_loaded(&self.body.aabb()) {
+            return;
+        }
+        self.body
+            .tick(&self.keys.move_input(), self.camera.yaw, &collider);
+        if self.body.position.y < VOID_Y {
+            self.body = Body::new(self.spawn);
+            self.prev_feet = self.spawn;
         }
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32().min(MAX_FRAME_DT);
+        let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
-        fly::fly(&mut self.camera, &self.fly_input, dt);
+        #[cfg(debug_assertions)]
+        if self.flying {
+            let position = &mut self.body.position;
+            crate::player::fly::fly(position, self.camera.yaw, &self.keys, dt.min(MAX_FRAME_DT));
+            self.prev_feet = *position;
+        }
+        self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
+        while self.tick_time >= TICK {
+            self.tick();
+            self.tick_time -= TICK;
+        }
+        let alpha = (self.tick_time / TICK) as f64;
+        let feet = self.prev_feet.lerp(self.body.position, alpha);
+        self.camera.position = (feet + DVec3::Y * self.body.eye_height()).as_vec3();
 
         let (Some(window), Some(renderer), Some(debug_ui), Some(chunks)) = (
             &self.window,

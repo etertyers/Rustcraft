@@ -176,7 +176,7 @@
     (id: 76, name: "redstone_torch", hardness: 0.0, shape: Torch, layer: Cutout, solid: false, light: 7, textures: (all: "redstone_torch_on")),
     (id: 77, name: "stone_button", hardness: 0.5, shape: Button, solid: false, textures: (all: "stone")),
     (id: 78, name: "snow_layer", hardness: 0.1, shape: SnowLayer, solid: false, textures: (all: "snow")),
-    (id: 79, name: "ice", hardness: 0.5, layer: Translucent, cull_same: true, textures: (all: "ice")),
+    (id: 79, name: "ice", hardness: 0.5, layer: Translucent, cull_same: true, slipperiness: 0.98, textures: (all: "ice")),
     (id: 80, name: "snow", hardness: 0.2, textures: (all: "snow")),
     (id: 81, name: "cactus", hardness: 0.4, shape: Cactus, layer: Cutout, textures: (top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side")),
     (id: 82, name: "clay", hardness: 0.6, textures: (all: "clay")),

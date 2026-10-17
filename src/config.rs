@@ -17,7 +17,36 @@ pub const FOV_Y_DEGREES: f32 = 70.0;
 pub const Z_NEAR: f32 = 0.05;
 pub const Z_FAR: f32 = 1000.0;
 
+/// Game logic rate, like Minecraft.
+pub const TICKS_PER_SECOND: u32 = 20;
+
+/// Player physics, in Minecraft's units (blocks, ticks) from 1.0.0.
+pub const GRAVITY: f64 = 0.08;
+/// Vertical velocity kept each tick (air drag).
+pub const VERTICAL_DRAG: f64 = 0.98;
+pub const JUMP_VELOCITY: f64 = 0.42;
+/// Extra horizontal push of a sprint jump.
+pub const SPRINT_JUMP_BOOST: f64 = 0.2;
+/// Ground acceleration per tick at full input (`landMovementFactor`).
+pub const WALK_ACCELERATION: f64 = 0.1;
+/// Air acceleration per tick at full input (`jumpMovementFactor`).
+pub const AIR_ACCELERATION: f64 = 0.02;
+/// Acceleration multiplier while sprinting.
+pub const SPRINT_FACTOR: f64 = 1.3;
+/// Input multiplier while sneaking.
+pub const SNEAK_FACTOR: f64 = 0.3;
+/// Horizontal velocity kept each tick in the air; on the ground it's this
+/// times the block's slipperiness.
+pub const AIR_FRICTION: f64 = 0.91;
+pub const PLAYER_WIDTH: f64 = 0.6;
+pub const PLAYER_HEIGHT: f64 = 1.8;
+pub const EYE_HEIGHT: f64 = 1.62;
+/// The camera drops this much while sneaking.
+pub const SNEAK_EYE_DROP: f64 = 0.08;
+pub const STEP_HEIGHT: f64 = 0.5;
+
 /// Free-fly dev camera speed in blocks/s (Minecraft's creative flying speed).
+#[cfg(any(debug_assertions, test))]
 pub const FLY_SPEED: f32 = 10.92;
 
 /// Mouse look in radians per pixel of mouse movement.
