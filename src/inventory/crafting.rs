@@ -101,15 +101,7 @@ struct Shaped {
 pub struct Recipes {
     shaped: Vec<Shaped>,
     shapeless: Vec<(Vec<Ingredient>, Output)>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "furnaces use this later in M10")
-    )]
     smelting: Vec<Smelting>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "furnaces use this later in M10")
-    )]
     fuels: Vec<Fuel>,
 }
 
@@ -206,10 +198,6 @@ impl Recipes {
     }
 
     /// What smelting `stack` makes, if it can be smelted.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "furnaces use this later in M10")
-    )]
     pub fn smelt(&self, stack: &ItemStack) -> Option<ItemStack> {
         self.smelting
             .iter()
@@ -218,10 +206,6 @@ impl Recipes {
     }
 
     /// Ticks one `item` burns in a furnace (0 if it isn't a fuel).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "furnaces use this later in M10")
-    )]
     pub fn burn_ticks(&self, item: ItemId) -> u32 {
         self.fuels
             .iter()

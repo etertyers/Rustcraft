@@ -1,20 +1,26 @@
 //! Screens with slots beyond the inventory, following 1.0.0's
-//! `ContainerPlayer`, `ContainerWorkbench` and `ContainerChest`: the
-//! inventory's 2×2 crafting grid and the crafting table's 3×3, whose items
-//! are thrown out when the screen closes, and chests, whose slots are kept
-//! in the world.
+//! `ContainerPlayer`, `ContainerWorkbench`, `ContainerChest` and
+//! `ContainerFurnace`: the inventory's 2×2 crafting grid and the crafting
+//! table's 3×3, whose items are thrown out when the screen closes, and
+//! chests and furnaces, whose slots are kept in the world. Furnaces burn on
+//! in every loaded chunk.
 
 use glam::IVec3;
 
 use super::Game;
 use crate::{
     inventory::{
+        furnace::{self, Furnace},
         player::{HOTBAR_SLOTS, SLOTS},
         slots::{self, Click, SlotRef},
         stack::ItemStack,
     },
-    world::block_entity::BlockEntity,
+    world::{block::BlockState, block_entity::BlockEntity},
 };
+
+/// The furnace block, unlit and lit.
+const FURNACE: u16 = 61;
+const LIT_FURNACE: u16 = 62;
 
 /// What's open besides the inventory.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +33,8 @@ pub enum Container {
     },
     /// The chest at this block.
     Chest(IVec3),
+    /// The furnace at this block.
+    Furnace(IVec3),
 }
 
 impl Container {
@@ -76,6 +84,64 @@ impl Game {
         self.release_input();
     }
 
+    /// Opens the furnace at `at`, giving it its slots the first time.
+    pub(super) fn open_furnace(&mut self, at: IVec3) {
+        if !matches!(self.chunks.block_entity(at), Some(BlockEntity::Furnace(_))) {
+            let furnace = BlockEntity::Furnace(Furnace::default());
+            self.chunks.set_block_entity(at, Some(furnace));
+        }
+        self.container = Some(Container::Furnace(at));
+        self.release_input();
+    }
+
+    /// The open furnace's fuel left and cooking progress (each 0–1).
+    pub fn furnace_progress(&self) -> Option<(f32, f32)> {
+        let Some(Container::Furnace(at)) = self.container else {
+            return None;
+        };
+        match self.chunks.block_entity(at)? {
+            BlockEntity::Furnace(furnace) => Some((furnace.fuel_left(), furnace.progress())),
+            BlockEntity::Chest(_) => None,
+        }
+    }
+
+    /// Runs a tick of every furnace in the loaded chunks that has something
+    /// to do, lighting or putting out its block.
+    pub(super) fn tick_furnaces(&mut self) {
+        let world = self.chunks.world();
+        let mut active = Vec::new();
+        for pos in world.positions() {
+            let Some(chunk) = world.get(pos) else {
+                continue;
+            };
+            let (min_x, min_z) = pos.min_block();
+            for ([x, y, z], entity) in chunk.block_entities() {
+                if let BlockEntity::Furnace(furnace) = entity
+                    && !furnace.is_idle(&self.items)
+                {
+                    active.push(IVec3::new(min_x + x as i32, y as i32, min_z + z as i32));
+                }
+            }
+        }
+        for at in active {
+            let Some(BlockEntity::Furnace(furnace)) = self.chunks.block_entity_mut(at) else {
+                continue;
+            };
+            if !furnace.tick(&self.items) {
+                continue;
+            }
+            let lit = furnace.is_burning();
+            let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
+                continue;
+            };
+            if matches!(block.id(), FURNACE | LIT_FURNACE) {
+                let id = if lit { LIT_FURNACE } else { FURNACE };
+                self.chunks
+                    .set_blocks(&[(at, BlockState::new(id, block.data()))]);
+            }
+        }
+    }
+
     /// Closes whatever is open, throwing out the crafting grid and the
     /// stack held on the mouse (1.0.0's `onCraftGuiClosed`).
     pub fn close_container(&mut self) {
@@ -96,18 +162,21 @@ impl Game {
         self.items.recipes.craft(grid, *size)
     }
 
-    /// The open block's slots (a chest's).
+    /// The block whose slots are open (a chest or furnace).
+    fn open_block(&self) -> Option<IVec3> {
+        match self.container {
+            Some(Container::Chest(at) | Container::Furnace(at)) => Some(at),
+            _ => None,
+        }
+    }
+
     fn block_slots(&self) -> Option<&[Option<ItemStack>]> {
-        let Some(Container::Chest(at)) = self.container else {
-            return None;
-        };
+        let at = self.open_block()?;
         self.chunks.block_entity(at).map(BlockEntity::slots)
     }
 
     fn block_slots_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
-        let Some(Container::Chest(at)) = self.container else {
-            return None;
-        };
+        let at = self.open_block()?;
         self.chunks.block_entity_mut(at).map(BlockEntity::slots_mut)
     }
 
@@ -173,22 +242,35 @@ impl Game {
                 }
             }
             SlotRef::Block(index) if click == Click::Shift => {
-                // Into the inventory, hotbar end first (1.0.0).
                 let Some(stack) = self
                     .block_slots_mut()
                     .and_then(|s| s.get_mut(index)?.take())
                 else {
                     return;
                 };
-                let rest = self.inventory.merge(stack, player_slots().rev(), &items);
+                // Into the inventory: a furnace's input and fuel from the top
+                // row, anything else hotbar end first (1.0.0).
+                let from_furnace_input = matches!(self.container, Some(Container::Furnace(_)))
+                    && index != furnace::OUTPUT;
+                let rest = if from_furnace_input {
+                    self.inventory.merge(stack, player_slots(), &items)
+                } else {
+                    self.inventory.merge(stack, player_slots().rev(), &items)
+                };
                 if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
                     *cell = rest;
                 }
             }
             SlotRef::Block(index) => {
+                let output = matches!(self.container, Some(Container::Furnace(_)))
+                    && index == furnace::OUTPUT;
                 let mut cursor = self.cursor.take();
                 if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
-                    slots::click(cell, click, &mut cursor, &items);
+                    if output {
+                        slots::click_take_only(cell, click, &mut cursor, &items);
+                    } else {
+                        slots::click(cell, click, &mut cursor, &items);
+                    }
                 }
                 self.cursor = cursor;
             }
@@ -211,7 +293,8 @@ impl Game {
     }
 
     /// Shift-click on the player's slots: into an open chest, or else
-    /// between the hotbar and the rest.
+    /// between the hotbar and the rest (1.0.0's furnace doesn't sort items
+    /// into its slots).
     fn transfer_from_inventory(&mut self, index: usize) {
         let items = self.items.clone();
         if let Some(Container::Chest(_)) = self.container {
@@ -415,6 +498,48 @@ mod tests {
             Some(Container::Chest(at)),
             "a torch is fine"
         );
+    }
+
+    #[test]
+    fn a_furnace_lights_smelts_with_its_screen_closed_and_goes_out() {
+        let mut game = flat_game(GameMode::Survival);
+        let at = glam::IVec3::new(2, 64, 0);
+        let block = |game: &Game| game.chunks.world().block(at.x, at.y, at.z).unwrap();
+        game.chunks.set_blocks(&[(at, BlockState::new(FURNACE, 4))]);
+        game.open_furnace(at);
+        game.inventory.set(0, Some(ItemStack::new(15, 2)));
+        game.inventory.set(1, Some(ItemStack::new(5, 1)));
+        game.click_slot(SlotRef::Inventory(0), Click::Left);
+        game.click_slot(SlotRef::Block(furnace::INPUT), Click::Left);
+        game.click_slot(SlotRef::Inventory(1), Click::Left);
+        // The output only gives.
+        game.click_slot(SlotRef::Block(furnace::OUTPUT), Click::Left);
+        assert_eq!(game.slot_stack(SlotRef::Block(furnace::OUTPUT)), None);
+        game.click_slot(SlotRef::Block(furnace::FUEL), Click::Left);
+        game.close_container();
+        game.tick();
+        assert_eq!(
+            block(&game),
+            BlockState::new(LIT_FURNACE, 4),
+            "lit, facing kept"
+        );
+        // A plank burns 300 ticks: one ingot, most of a second, then out.
+        for _ in 0..300 {
+            game.tick();
+        }
+        assert_eq!(block(&game), BlockState::new(FURNACE, 4));
+        game.open_furnace(at);
+        assert_eq!(
+            game.slot_stack(SlotRef::Block(furnace::OUTPUT)),
+            Some(ItemStack::new(265, 1))
+        );
+        assert_eq!(
+            game.furnace_progress(),
+            Some((0.0, 0.0)),
+            "half-done ore starts over"
+        );
+        game.click_slot(SlotRef::Block(furnace::OUTPUT), Click::Shift);
+        assert_eq!(game.inventory.slot(8), Some(&ItemStack::new(265, 1)));
     }
 
     #[test]

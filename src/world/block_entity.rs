@@ -1,9 +1,9 @@
-//! Blocks that hold items (1.0.0's tile entities): a chest's slots, kept in
-//! their chunk and saved with it.
+//! Blocks that hold items (1.0.0's tile entities): chests and furnaces,
+//! kept in their chunk and saved with it.
 
 use serde::{Deserialize, Serialize};
 
-use crate::inventory::stack::ItemStack;
+use crate::inventory::{furnace::Furnace, stack::ItemStack};
 
 /// Slots in a chest.
 pub const CHEST_SLOTS: usize = 27;
@@ -12,6 +12,7 @@ pub const CHEST_SLOTS: usize = 27;
 pub enum BlockEntity {
     /// A chest's `CHEST_SLOTS` slots, row by row.
     Chest(Vec<Option<ItemStack>>),
+    Furnace(Furnace),
 }
 
 impl BlockEntity {
@@ -22,12 +23,14 @@ impl BlockEntity {
     pub fn slots(&self) -> &[Option<ItemStack>] {
         match self {
             Self::Chest(slots) => slots,
+            Self::Furnace(furnace) => &furnace.slots,
         }
     }
 
     pub fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
         match self {
             Self::Chest(slots) => slots,
+            Self::Furnace(furnace) => &mut furnace.slots,
         }
     }
 

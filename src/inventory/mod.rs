@@ -1,6 +1,7 @@
-//! Items, stacks, the player's inventory and crafting.
+//! Items, stacks, the player's inventory, crafting and furnaces.
 
 pub mod crafting;
+pub mod furnace;
 pub mod item;
 pub mod player;
 pub mod slots;

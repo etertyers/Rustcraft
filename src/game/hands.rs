@@ -166,7 +166,7 @@ impl Game {
                 }
             }
         }
-        // A chest spills what it held, in every game mode (1.0.0).
+        // A chest or furnace spills what it held, in every game mode (1.0.0).
         for &(at, _) in &edits {
             let Some(entity) = self.chunks.set_block_entity(at, None) else {
                 continue;
@@ -380,6 +380,7 @@ impl Game {
         match action {
             Activate::Crafting => self.open_crafting_table(),
             Activate::Chest => self.open_chest(cell),
+            Activate::Furnace => self.open_furnace(cell),
         }
         true
     }

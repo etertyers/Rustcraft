@@ -201,6 +201,8 @@ pub enum Activate {
     Crafting,
     /// Opens its 27 slots, unless a solid block sits on top.
     Chest,
+    /// Opens its input, fuel and output slots.
+    Furnace,
 }
 
 /// The liquid a block is (flowing or still).

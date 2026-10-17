@@ -429,6 +429,7 @@ impl Game {
         self.tick_items();
         self.tick_arrows();
         self.tick_mobs();
+        self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS

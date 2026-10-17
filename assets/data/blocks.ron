@@ -20,7 +20,7 @@
 //   placement Plain (default), Torch (attaches to the clicked face) or
 //             Facing (front toward the player, data 2-5)
 //   activate  what right-clicking it does: Crafting (opens a 3×3 grid),
-//             Chest (opens its slots)
+//             Chest or Furnace (opens its slots)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
 //   drops     Itself (default; keeps the data value if it has variants),
 //             Nothing, All([...]) every drop that rolls, or OneOf([...]) the
@@ -162,8 +162,8 @@
         variants: {
             7: (name: "wet", textures: (all: "dirt", top: "farmland_wet")),
         }),
-    (id: 61, name: "furnace", hardness: 3.5, placement: Facing, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_off")),
-    (id: 62, name: "lit_furnace", hardness: 3.5, placement: Facing, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 61)]), light: 13, textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_on")),
+    (id: 61, name: "furnace", hardness: 3.5, placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_off")),
+    (id: 62, name: "lit_furnace", hardness: 3.5, placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 61)]), light: 13, textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_on")),
     // No block texture in the pack; signs are drawn from entity/sign.png later.
     (id: 63, name: "standing_sign", hardness: 1.0, drops: All([(item: 323)]), needs_ground: true, shape: Sign, solid: false, textures: (all: "sign")),
     // Data 0-7 is the lower half, 8+ the upper half.

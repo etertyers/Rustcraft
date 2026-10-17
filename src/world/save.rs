@@ -350,8 +350,7 @@ mod tests {
         let mut chunk = Chunk::new(ChunkPos::new(1, 1));
         chunk.set(2, 70, 3, BlockState::new(54, 3));
         let mut chest = BlockEntity::chest();
-        let BlockEntity::Chest(slots) = &mut chest;
-        slots[26] = Some(crate::inventory::stack::ItemStack::with_damage(278, 1, 40));
+        chest.slots_mut()[26] = Some(crate::inventory::stack::ItemStack::with_damage(278, 1, 40));
         chunk.set_block_entity([2, 70, 3], Some(chest));
         assert_same_chunk(&decode_chunk(&encode_chunk(&chunk)).unwrap(), &chunk);
 

@@ -362,7 +362,7 @@ impl App {
     }
 
     /// Shows the screen for a container the game opened (a right-clicked
-    /// crafting table).
+    /// crafting table, chest or furnace).
     fn show_opened_container(&mut self) {
         if self.screen.is_some() {
             return;
@@ -374,6 +374,7 @@ impl App {
             Container::Crafting { size: 2, .. } => Screen::Inventory,
             Container::Crafting { .. } => Screen::Crafting,
             Container::Chest(_) => Screen::Chest,
+            Container::Furnace(_) => Screen::Furnace,
         });
         self.set_cursor_grab(false);
     }
@@ -554,6 +555,7 @@ impl App {
         };
         let view = ScreenView {
             slot: &slot,
+            furnace: game.furnace_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
         };

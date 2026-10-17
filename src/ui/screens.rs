@@ -1,11 +1,12 @@
 //! Screens with slots: the inventory opened with E (survival's, with its
 //! 2×2 crafting grid, or creative's list of every block and item), the
-//! crafting table's and the chest's, laid out as in 1.0.0.
+//! crafting table's, the chest's and the furnace's, laid out as in 1.0.0.
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
+    furnace,
     player::{HOTBAR_SLOTS, SLOTS},
     slots::{Click, SlotRef},
     stack::ItemStack,
@@ -23,6 +24,7 @@ pub enum Screen {
     /// A crafting table's 3×3 grid.
     Crafting,
     Chest,
+    Furnace,
 }
 
 /// What the player did on a screen this frame.
@@ -45,6 +47,8 @@ pub enum ScreenAction {
 pub struct ScreenView<'a> {
     /// What a slot holds, with its name for the hover tooltip.
     pub slot: &'a dyn Fn(SlotRef) -> Option<(SlotView, String)>,
+    /// A furnace's fuel left and cooking progress, each 0–1.
+    pub furnace: Option<(f32, f32)>,
     /// The stack held on the mouse.
     pub cursor: Option<SlotView>,
     /// Creative: every block and item, with how it looks and its name.
@@ -94,7 +98,7 @@ fn inventory_slot(index: usize) -> [f32; 2] {
 /// Panel size in GUI pixels.
 fn panel_size(screen: &Screen) -> [f32; 2] {
     match screen {
-        Screen::Inventory | Screen::Crafting => [176.0, 166.0],
+        Screen::Inventory | Screen::Crafting | Screen::Furnace => [176.0, 166.0],
         Screen::Creative { .. } => [195.0, 136.0],
         // 1.0.0's GuiChest: 114 plus 18 per row.
         Screen::Chest => [176.0, 114.0 + CHEST_ROWS as f32 * 18.0],
@@ -137,6 +141,14 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         Screen::Creative { .. } => (0..HOTBAR_SLOTS)
             .map(|i| (SlotRef::Inventory(i), [9.0 + i as f32 * 18.0, 112.0]))
             .collect(),
+        Screen::Furnace => [
+            (SlotRef::Block(furnace::INPUT), [56.0, 17.0]),
+            (SlotRef::Block(furnace::FUEL), [56.0, 53.0]),
+            (SlotRef::Block(furnace::OUTPUT), [116.0, 35.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
         Screen::Chest => (0..CHEST_ROWS * 9)
             .map(|i| {
                 let (column, row) = ((i % 9) as f32, (i / 9) as f32);
@@ -154,6 +166,7 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
         Screen::Crafting => &[("Crafting", [28.0, 6.0]), ("Inventory", [8.0, 72.0])],
         Screen::Creative { .. } => &[],
         Screen::Chest => &[("Chest", [8.0, 6.0]), ("Inventory", [8.0, 74.0])],
+        Screen::Furnace => &[("Furnace", [60.0, 6.0]), ("Inventory", [8.0, 72.0])],
     }
 }
 
@@ -208,6 +221,7 @@ pub fn show(
         Screen::Crafting => &textures.crafting,
         Screen::Creative { .. } => &textures.creative,
         Screen::Chest => &textures.chest,
+        Screen::Furnace => &textures.furnace,
     };
     if *screen == Screen::Chest {
         // The chest rows, then the inventory part from the bottom of the
@@ -238,6 +252,9 @@ pub fn show(
             origin,
             scale,
         );
+    }
+    if let (Screen::Furnace, Some((fuel, cooked))) = (*screen, view.furnace) {
+        paint_furnace_progress(&painter, background.id(), origin, scale, fuel, cooked);
     }
     for &(text, at) in labels(screen) {
         painter.text(
@@ -327,6 +344,38 @@ pub fn show(
     actions
 }
 
+/// The furnace's flame, shrinking as the fuel burns, and its arrow, growing
+/// as the input cooks (1.0.0's GuiFurnace, with the pack's 14×14 flame).
+fn paint_furnace_progress(
+    painter: &Painter,
+    texture: egui::TextureId,
+    origin: Pos2,
+    scale: f32,
+    fuel: f32,
+    cooked: f32,
+) {
+    if fuel > 0.0 {
+        let flame = (fuel * 13.0).floor();
+        gui::sheet_image(
+            painter,
+            texture,
+            [176.0, 12.0 - flame],
+            [14.0, flame + 1.0],
+            origin + vec2(56.0, 36.0 + 12.0 - flame) * scale,
+            scale,
+        );
+    }
+    let arrow = (cooked * 24.0).floor();
+    gui::sheet_image(
+        painter,
+        texture,
+        [176.0, 14.0],
+        [arrow + 1.0, 16.0],
+        origin + vec2(79.0, 34.0) * scale,
+        scale,
+    );
+}
+
 /// 1.0.0's item name tooltip: white text on a dark box above-right of the mouse.
 fn paint_tooltip(painter: &Painter, pointer: Pos2, name: &str, scale: f32) {
     let font = egui::FontId::proportional(8.0 * scale);
@@ -362,6 +411,8 @@ mod tests {
         assert!(table.contains(&(SlotRef::Grid(0), [30.0, 17.0])));
         assert!(table.contains(&(SlotRef::Grid(8), [66.0, 53.0])));
         assert!(table.contains(&(SlotRef::Result, [124.0, 35.0])));
+        let furnace = layout(&Screen::Furnace);
+        assert!(furnace.contains(&(SlotRef::Block(furnace::OUTPUT), [116.0, 35.0])));
         let chest = layout(&Screen::Chest);
         assert!(chest.contains(&(SlotRef::Block(26), [152.0, 54.0])));
         assert!(chest.contains(&(SlotRef::Inventory(9), [8.0, 85.0])));

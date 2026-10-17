@@ -13,7 +13,7 @@ pub enum SlotRef {
     Grid(usize),
     /// The crafting result.
     Result,
-    /// A slot of the open chest.
+    /// A slot of the open chest or furnace.
     Block(usize),
 }
 
@@ -67,6 +67,30 @@ pub fn click(
         }
         // Different items swap.
         (Some(_), Some(_)) => std::mem::swap(slot, cursor),
+    }
+}
+
+/// A click on a slot items can only be taken from (a furnace's output):
+/// pick up all or half, or with a matching stack held, take the whole slot
+/// if it fits on the cursor.
+pub fn click_take_only(
+    slot: &mut Option<ItemStack>,
+    click: Click,
+    cursor: &mut Option<ItemStack>,
+    items: &Items,
+) {
+    let Some(stack) = *slot else {
+        return;
+    };
+    match cursor {
+        None => pick_up(slot, click, cursor),
+        Some(held) if held.stacks_with(&stack) => {
+            if held.count + stack.count <= items.max_stack(held.id) {
+                held.count += stack.count;
+                *slot = None;
+            }
+        }
+        Some(_) => {}
     }
 }
 
