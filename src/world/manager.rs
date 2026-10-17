@@ -138,7 +138,7 @@ impl ChunkManager {
                                 }
                                 Job::Mesh(pos, area, revision) => {
                                     let light = light_chunk(&models, &area);
-                                    let mesh = mesh_chunk(&models, &area);
+                                    let mesh = mesh_chunk(&models, &area, &light);
                                     Done::Meshed(pos, mesh, light, revision)
                                 }
                             };
@@ -341,7 +341,8 @@ impl ChunkManager {
                 && let Some(area) = self.world.area(pos)
             {
                 let light = light_chunk(&self.models, &area);
-                self.remeshed.push((pos, mesh_chunk(&self.models, &area)));
+                self.remeshed
+                    .push((pos, mesh_chunk(&self.models, &area, &light)));
                 self.lights.insert(pos, light);
                 self.relight.remove(&pos);
             }
@@ -546,7 +547,7 @@ mod tests {
         }
         // Only the requeued job's mesh, with the new block, reached the renderer.
         let area = manager.world().area(center).unwrap();
-        let fresh = mesh_chunk(&manager.models, &area);
+        let fresh = mesh_chunk(&manager.models, &area, &light_chunk(&manager.models, &area));
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].1, fresh);
     }
