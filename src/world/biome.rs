@@ -39,6 +39,15 @@ impl Biome {
     fn index(self) -> usize {
         self as usize
     }
+
+    /// Stable number for saving: the position in `ALL`.
+    pub fn id(self) -> u8 {
+        self.index() as u8
+    }
+
+    pub fn from_id(id: u8) -> Option<Self> {
+        Self::ALL.get(id as usize).copied()
+    }
 }
 
 /// sRGB grass and foliage colors for each biome.

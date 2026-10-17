@@ -7,7 +7,7 @@ use super::{biome::Biome, block::BlockState};
 /// Edge length of a section (and width of a chunk).
 pub const SECTION_SIZE: usize = CHUNK_SIZE;
 pub const SECTION_COUNT: usize = WORLD_HEIGHT / SECTION_SIZE;
-const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
+pub const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
 
 /// Chunk coordinates: block coordinates divided by 16, rounding down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -107,6 +107,18 @@ impl Chunk {
     /// Whether section `index` (0 = bottom) holds no blocks at all.
     pub fn section_is_empty(&self, index: usize) -> bool {
         self.sections[index].is_none()
+    }
+
+    /// Section `index`'s blocks in `y, z, x` order, or `None` if it's all air.
+    pub fn section(&self, index: usize) -> Option<&[BlockState]> {
+        self.sections[index].as_deref().map(|blocks| &blocks[..])
+    }
+
+    /// Replaces section `index` with `blocks` in `y, z, x` order. Panics
+    /// unless there are exactly `SECTION_VOLUME` blocks.
+    pub fn set_section(&mut self, index: usize, blocks: &[BlockState]) {
+        let blocks: &Section = blocks.try_into().expect("a whole section");
+        self.sections[index] = Some(Box::new(*blocks));
     }
 }
 
