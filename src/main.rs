@@ -13,7 +13,12 @@ use winit::event_loop::EventLoop;
 fn main() -> Result<()> {
     env_logger::init();
     let event_loop = EventLoop::new()?;
-    let mut app = app::App::default();
+    let world = if std::env::args().any(|arg| arg == "--gallery") {
+        app::WorldKind::Gallery
+    } else {
+        app::WorldKind::Flat
+    };
+    let mut app = app::App::new(world);
     event_loop.run_app(&mut app)?;
     app.into_result()
 }

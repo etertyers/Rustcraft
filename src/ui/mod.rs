@@ -10,6 +10,13 @@ use winit::{event::WindowEvent, window::Window};
 use crate::render::{UiPaint, camera::Camera};
 use fps::FpsCounter;
 
+/// World and renderer numbers shown in the F3 overlay.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DebugStats {
+    pub chunks_drawn: usize,
+    pub chunks_loaded: usize,
+}
+
 pub struct DebugUi {
     ctx: egui::Context,
     state: egui_winit::State,
@@ -53,10 +60,10 @@ impl DebugUi {
     }
 
     /// Builds this frame's UI.
-    pub fn frame(&mut self, window: &Window, camera: &Camera) -> UiPaint {
+    pub fn frame(&mut self, window: &Window, camera: &Camera, stats: &DebugStats) -> UiPaint {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
-        let text = debug_text(self.fps.fps(), camera);
+        let text = debug_text(self.fps.fps(), camera, stats);
         let output = self.ctx.run_ui(input, |ui| {
             if visible {
                 show_overlay(ui.ctx(), &text);
@@ -72,15 +79,17 @@ impl DebugUi {
     }
 }
 
-fn debug_text(fps: f32, camera: &Camera) -> String {
+fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
     let p = camera.position;
     let block = p.floor();
     format!(
         "Rustcraft\n\
-         {fps:.0} fps\n\
+         {fps:.0} fps, chunks {}/{} drawn\n\
          XYZ: {:.3} / {:.3} / {:.3}\n\
          Block: {} {} {}\n\
          Facing: {} ({:.1} / {:.1})",
+        stats.chunks_drawn,
+        stats.chunks_loaded,
         p.x,
         p.y,
         p.z,
@@ -115,8 +124,12 @@ mod tests {
     #[test]
     fn debug_text_shows_position_block_and_facing() {
         let camera = Camera::new(Vec3::new(-0.5, 64.25, 3.0), 0.0, 0.0);
-        let text = debug_text(59.6, &camera);
-        assert!(text.contains("60 fps"), "{text}");
+        let stats = DebugStats {
+            chunks_drawn: 12,
+            chunks_loaded: 81,
+        };
+        let text = debug_text(59.6, &camera, &stats);
+        assert!(text.contains("60 fps, chunks 12/81 drawn"), "{text}");
         assert!(text.contains("XYZ: -0.500 / 64.250 / 3.000"), "{text}");
         assert!(text.contains("Block: -1 64 3"), "{text}");
         assert!(

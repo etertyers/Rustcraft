@@ -80,11 +80,6 @@ impl Atlas {
         self.tiles.get(name).copied()
     }
 
-    /// Tile index for a texture name, or the missing-texture tile.
-    pub fn tile_or_missing(&self, name: &str) -> u32 {
-        self.get(name).unwrap_or(MISSING_TILE)
-    }
-
     /// UV rect `[u0, v0, u1, v1]` of a tile, with v0 at the top.
     pub fn uv_rect(&self, tile: u32) -> [f32; 4] {
         let (width, height) = self.image.dimensions();
@@ -141,7 +136,7 @@ mod tests {
         assert_eq!(image.get_pixel(0, 0).0, [248, 0, 248, 255]);
         assert_eq!(image.get_pixel(8, 0).0, [0, 0, 0, 255]);
         assert_eq!(image.get_pixel(8, 8).0, [248, 0, 248, 255]);
-        assert_eq!(atlas.tile_or_missing("nope"), MISSING_TILE);
+        assert_eq!(atlas.get("nope"), None);
     }
 
     #[test]
