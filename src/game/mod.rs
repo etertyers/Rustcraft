@@ -938,4 +938,47 @@ mod tests {
                 .all(|mob| mob.name == "pig" && mob.health == 10)
         );
     }
+
+    #[test]
+    fn two_diamond_sword_hits_kill_a_zombie_which_drops_its_loot() {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        let kind = game.mob_defs.find("zombie").unwrap();
+        let zombie = Mob::new(
+            kind,
+            game.mob_defs.get(kind),
+            DVec3::new(0.5, 64.0, -1.5),
+            0.0,
+        );
+        game.mobs.push(zombie);
+        game.inventory.set(0, Some(ItemStack::new(276, 1)));
+        game.camera.pitch = 0.0;
+        game.time = 18000;
+        game.break_clicked = true;
+        game.tick();
+        assert_eq!(game.mobs[0].stats.health, 10, "diamond sword: 10");
+        assert!(game.mobs[0].body.velocity.length() > 0.0, "knocked back");
+        assert_eq!(
+            game.inventory.slot(0).unwrap().damage,
+            1,
+            "a sword wears 1 per hit"
+        );
+        // The hurt cooldown absorbs a second hit straight away.
+        game.break_clicked = true;
+        game.tick();
+        assert_eq!(game.mobs[0].stats.health, 10);
+        for _ in 0..10 {
+            game.tick();
+        }
+        // Knocked back out of reach? Bring it back in front and hit again.
+        let feet = game.body.position() + DVec3::new(0.0, 0.0, -1.5);
+        game.mobs[0].body = crate::player::physics::Body::sized(feet, 0.6, 1.8, 1.53);
+        game.break_clicked = true;
+        game.tick();
+        assert!(game.mobs[0].is_dead());
+        for _ in 0..25 {
+            game.tick();
+        }
+        assert!(game.mobs.is_empty(), "removed after lying dead");
+    }
 }

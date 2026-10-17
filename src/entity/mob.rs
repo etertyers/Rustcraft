@@ -19,10 +19,6 @@ use crate::{
 };
 
 /// Ticks a hit makes a mob flash red (1.0.0's `maxHurtTime`).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "combat and mob rendering come next")
-)]
 const HURT_FLASH: u32 = 10;
 /// Ticks a dead mob lies on its side before it's removed.
 pub const DEATH_TICKS: u32 = 20;
@@ -110,10 +106,6 @@ impl Mob {
 
     /// Hits the mob for `amount` from `attacker` (a position, for
     /// knockback). Returns true for a fresh hit; the AI reacts to it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "combat and mob rendering come next")
-    )]
     pub fn hurt(&mut self, amount: i32, attacker: Option<DVec3>, source: DamageSource) -> bool {
         if self.is_dead() {
             return false;
@@ -130,10 +122,6 @@ impl Mob {
     }
 
     /// 1.0.0's `knockBack`: half the speed, then pushed away and up.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "combat and mob rendering come next")
-    )]
     pub fn knock_back(&mut self, from: DVec3) {
         knock_back(&mut self.body, from);
     }

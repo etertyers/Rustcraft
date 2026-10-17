@@ -78,6 +78,20 @@ pub struct Tool {
     /// Durability lost per block broken.
     #[serde(default = "default_wear")]
     pub wear: u16,
+    /// Damage dealt hitting a mob (1.0.0's `getDamageVsEntity`).
+    #[serde(default = "default_attack")]
+    pub attack: i32,
+    /// Durability lost per hit (1.0.0: swords 1, other tools 2).
+    #[serde(default = "default_hit_wear")]
+    pub hit_wear: u16,
+}
+
+fn default_attack() -> i32 {
+    1
+}
+
+fn default_hit_wear() -> u16 {
+    2
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

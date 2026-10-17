@@ -11,6 +11,7 @@ use crate::{
     player::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
         raycast::Hit,
+        stats::DamageSource,
     },
     world::{block::Fluid, harvest},
 };
@@ -19,6 +20,15 @@ use crate::{
 const BREAK_EXHAUSTION: f32 = 0.025;
 /// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
 const EAT_TICKS: u32 = 32;
+/// Mobs can be hit this far away (1.0.0 limits entity reach to 3).
+const ATTACK_REACH: f64 = 3.0;
+/// Mob hitboxes grow by this for aiming (1.0.0's `getCollisionBorderSize`).
+const TARGET_BORDER: f64 = 0.1;
+/// Exhaustion per attack (1.0.0).
+const ATTACK_EXHAUSTION: f32 = 0.3;
+/// Extra push and lift of a sprinting hit (1.0.0's knockback bonus).
+const SPRINT_KNOCKBACK: f64 = 0.5;
+const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
 
 impl Game {
     /// The tool in the selected slot, if it's a tool.
@@ -41,10 +51,21 @@ impl Game {
         }
         self.eating = None;
         let wants_place = using && self.place_cooldown == 0;
+        let clicked = self.break_clicked;
         self.break_clicked = false;
         self.place_clicked = false;
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let hit = self.find_target(eye);
+        // A mob in front of the targeted block is hit instead, once per click.
+        if let Some(mob) = self.target_mob(eye, hit.as_ref())
+            && (wants_break || self.mining.is_none())
+        {
+            self.mining = None;
+            if clicked {
+                self.attack(mob);
+            }
+            return;
+        }
         if !wants_break || hit.is_none() {
             // Letting go or looking away starts the block over (1.0.0).
             self.mining = None;
@@ -175,6 +196,66 @@ impl Game {
             }
         }
         true
+    }
+
+    /// The living mob under the crosshair within reach, if it's nearer
+    /// than the targeted block.
+    fn target_mob(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
+        let dir = self.camera.forward().as_dvec3();
+        let block_distance = block.map_or(f64::MAX, |hit| {
+            (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5
+        });
+        self.mobs
+            .iter()
+            .enumerate()
+            .filter(|(_, mob)| !mob.is_dead())
+            .filter_map(|(i, mob)| {
+                let distance =
+                    mob.body
+                        .aabb()
+                        .grow(TARGET_BORDER)
+                        .ray_hit(eye, dir, ATTACK_REACH)?;
+                Some((i, distance))
+            })
+            .filter(|&(_, distance)| distance < block_distance)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    /// Hits mob `index` with the selected item (1.0.0's
+    /// `attackTargetEntityWithCurrentItem`): its attack damage (or 1 bare
+    /// handed), a critical bonus while falling, knockback (more when
+    /// sprinting), weapon wear and exhaustion.
+    fn attack(&mut self, index: usize) {
+        let tool = self.selected_tool().cloned();
+        let mut damage = tool.as_ref().map_or(1, |tool| tool.attack);
+        let falling =
+            self.stats.fall_distance > 0.0 && !self.body.on_ground && self.body.liquid.is_none();
+        if falling {
+            damage += (self.rng.next_f64() * (damage / 2 + 2) as f64) as i32;
+        }
+        let from = self.body.position();
+        let sprinting = self.body.sprinting;
+        let yaw = self.camera.yaw as f64;
+        let mob = &mut self.mobs[index];
+        if mob.hurt(damage, Some(from), DamageSource::Mob) && sprinting {
+            mob.body.velocity += DVec3::new(
+                yaw.sin() * SPRINT_KNOCKBACK,
+                SPRINT_KNOCKBACK_LIFT,
+                -yaw.cos() * SPRINT_KNOCKBACK,
+            );
+            self.body.velocity.x *= 0.6;
+            self.body.velocity.z *= 0.6;
+            self.body.sprinting = false;
+        }
+        if self.mode.is_vulnerable() {
+            self.stats.add_exhaustion(ATTACK_EXHAUSTION);
+        }
+        if self.mode.wears_tools()
+            && let Some(tool) = tool
+        {
+            self.inventory.damage_selected(tool.hit_wear, &self.items);
+        }
     }
 
     /// Places the selected stack's block against the clicked face.
