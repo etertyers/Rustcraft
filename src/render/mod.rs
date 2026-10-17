@@ -209,9 +209,8 @@ impl Renderer {
         );
     }
 
-    /// Chunk meshes on the GPU.
-    pub fn chunks_loaded(&self) -> usize {
-        self.chunks.len()
+    pub fn remove_chunk(&mut self, pos: ChunkPos) {
+        self.chunks.remove(&pos);
     }
 
     /// Chunk meshes drawn in the last frame, after frustum culling.

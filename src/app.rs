@@ -28,12 +28,12 @@ use crate::{
     },
     ui::{DebugStats, DebugUi},
     world::{
-        World,
         biome::BiomeColors,
         block::BlockRegistry,
         chunk::ChunkPos,
-        mesh::{self, BlockModels},
-        worldgen::{flat, gallery, terrain::Terrain},
+        manager::{ChunkManager, ChunkSource},
+        mesh::BlockModels,
+        worldgen::{gallery, terrain::Terrain},
     },
 };
 
@@ -42,15 +42,11 @@ use crate::{
 pub enum WorldKind {
     /// Generated terrain from a seed (the default).
     Generated { seed: u64 },
-    /// Flat grass plain, `FLAT_RADIUS` chunks in each direction.
+    /// Endless flat grass plain (`--flat`).
     Flat,
     /// Every block and variant on display (`--gallery`).
     Gallery,
 }
-
-/// Chunks generated in each direction around the origin for the flat world,
-/// and around spawn for generated terrain.
-const FLAT_RADIUS: i32 = 4;
 
 /// Longest frame step applied to movement, so a stall doesn't teleport the camera.
 const MAX_FRAME_DT: f32 = 0.1;
@@ -63,8 +59,7 @@ pub struct App {
     renderer: Option<Renderer>,
     debug_ui: Option<DebugUi>,
     world_kind: WorldKind,
-    world: World,
-    terrain: Option<Terrain>,
+    chunks: Option<ChunkManager>,
     camera: Camera,
     fly_input: FlyInput,
     cursor_grabbed: bool,
@@ -79,12 +74,9 @@ pub struct App {
 
 impl App {
     pub fn new(world_kind: WorldKind) -> Self {
-        let mut terrain = None;
         let camera = match world_kind {
             WorldKind::Generated { seed } => {
-                let generator = Terrain::new(seed);
-                let (x, y, z) = generator.spawn_point();
-                terrain = Some(generator);
+                let (x, y, z) = Terrain::new(seed).spawn_point();
                 Camera::new(
                     Vec3::new(x as f32 + 0.5, y as f32 + 1.62, z as f32 + 0.5),
                     0.0,
@@ -109,8 +101,7 @@ impl App {
             renderer: None,
             debug_ui: None,
             world_kind,
-            world: World::default(),
-            terrain,
+            chunks: None,
             camera,
             fly_input: FlyInput::default(),
             cursor_grabbed: false,
@@ -161,7 +152,7 @@ impl App {
                 warn!("{err:#}; using default biome colors");
                 BiomeColors::uniform()
             });
-        let mut renderer = Renderer::new(window.clone(), &atlas)?;
+        let renderer = Renderer::new(window.clone(), &atlas)?;
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -169,49 +160,30 @@ impl App {
             biome_colors,
         );
 
-        let started = Instant::now();
-        match self.world_kind {
+        let source = match self.world_kind {
             WorldKind::Generated { seed } => {
                 info!("world seed {seed}");
-                let terrain = self
-                    .terrain
-                    .as_ref()
-                    .expect("terrain is set for generated worlds");
-                let center = ChunkPos::of_block(
-                    self.camera.position.x as i32,
-                    self.camera.position.z as i32,
-                );
-                for z in -FLAT_RADIUS..=FLAT_RADIUS {
-                    for x in -FLAT_RADIUS..=FLAT_RADIUS {
-                        self.world.insert(terrain.generate(center.offset(x, z)));
-                    }
-                }
+                ChunkSource::Terrain(Box::new(Terrain::new(seed)))
             }
-            WorldKind::Flat => {
-                for z in -FLAT_RADIUS..=FLAT_RADIUS {
-                    for x in -FLAT_RADIUS..=FLAT_RADIUS {
-                        self.world.insert(flat::flat_chunk(ChunkPos::new(x, z)));
-                    }
-                }
-            }
-            WorldKind::Gallery => {
-                for chunk in gallery::gallery_chunks(&blocks) {
-                    self.world.insert(chunk);
-                }
-            }
-        }
-        let positions: Vec<ChunkPos> = self.world.positions().collect();
-        for pos in positions {
-            if let Some(area) = self.world.area(pos) {
-                renderer.upload_chunk(pos, &mesh::mesh_chunk(&models, &area));
-            }
-        }
-        info!(
-            "built {} chunks of the {:?} world in {:.0?}",
-            self.world.len(),
-            self.world_kind,
-            started.elapsed()
-        );
+            WorldKind::Flat => ChunkSource::Flat,
+            WorldKind::Gallery => ChunkSource::Fixed(
+                gallery::gallery_chunks(&blocks)
+                    .into_iter()
+                    .map(|chunk| (chunk.pos, chunk))
+                    .collect(),
+            ),
+        };
+        // Leave one core for the main thread.
+        let workers = std::thread::available_parallelism()
+            .map_or(2, |n| n.get().saturating_sub(1))
+            .max(1);
+        info!("{workers} chunk worker threads");
+        self.chunks = Some(ChunkManager::new(
+            source,
+            Arc::new(models),
+            config::RENDER_DISTANCE,
+            workers,
+        ));
         self.renderer = Some(renderer);
         self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
@@ -265,27 +237,29 @@ impl App {
         self.last_frame = now;
         fly::fly(&mut self.camera, &self.fly_input, dt);
 
-        let (Some(window), Some(renderer), Some(debug_ui)) =
-            (&self.window, self.renderer.as_mut(), self.debug_ui.as_mut())
-        else {
+        let (Some(window), Some(renderer), Some(debug_ui), Some(chunks)) = (
+            &self.window,
+            self.renderer.as_mut(),
+            self.debug_ui.as_mut(),
+            self.chunks.as_mut(),
+        ) else {
             return;
         };
         let p = self.camera.position;
-        let column = (p.x.floor() as i32, p.z.floor() as i32);
-        let biome = self
-            .world
-            .get(ChunkPos::of_block(column.0, column.1))
-            .map(|chunk| {
-                chunk.biome(
-                    column.0.rem_euclid(16) as usize,
-                    column.1.rem_euclid(16) as usize,
-                )
-            });
+        let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
+        let changes = chunks.update(ChunkPos::of_block(x, z));
+        for (pos, mesh) in &changes.meshes {
+            renderer.upload_chunk(*pos, mesh);
+        }
+        for pos in changes.unloaded {
+            renderer.remove_chunk(pos);
+        }
+
         let stats = DebugStats {
             chunks_drawn: renderer.chunks_drawn(),
-            chunks_loaded: renderer.chunks_loaded(),
-            biome,
-            seed: self.terrain.as_ref().map(Terrain::seed),
+            chunks_loaded: chunks.world().len(),
+            biome: chunks.world().biome_at(x, z),
+            seed: chunks.seed(),
         };
         let ui = debug_ui.frame(window, &self.camera, &stats);
         match renderer.render(&self.camera, ui) {
@@ -372,6 +346,8 @@ impl ApplicationHandler for App {
         // Drop the GPU surface before the window it points to.
         self.debug_ui = None;
         self.renderer = None;
+        // Joins the chunk workers.
+        self.chunks = None;
         self.window = None;
     }
 }

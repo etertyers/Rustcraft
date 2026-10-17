@@ -31,3 +31,6 @@ pub const WORLD_HEIGHT: usize = 128;
 
 /// Sea level, as in 1.0.0.
 pub const SEA_LEVEL: i32 = 63;
+
+/// Chunks drawn in each direction around the player.
+pub const RENDER_DISTANCE: i32 = 9;
