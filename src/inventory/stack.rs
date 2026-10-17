@@ -18,10 +18,8 @@ pub struct ItemStack {
 }
 
 impl ItemStack {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "saving the inventory comes next")
-    )]
+    /// Undamaged, data value 0 (used by the debug dev kit and tests).
+    #[cfg(any(debug_assertions, test))]
     pub fn new(id: ItemId, count: u8) -> Self {
         Self {
             id,

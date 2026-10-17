@@ -194,6 +194,30 @@ impl Game {
         }
     }
 
+    /// A dev tool for debug builds (F6), until crafting exists in M10: one
+    /// pickaxe of each tier, iron shovel, axe and sword, shears and torches.
+    #[cfg(debug_assertions)]
+    pub fn give_dev_kit(&mut self) {
+        const KIT: [(u16, u8); 10] = [
+            (270, 1),
+            (274, 1),
+            (257, 1),
+            (285, 1),
+            (278, 1),
+            (256, 1),
+            (258, 1),
+            (267, 1),
+            (359, 1),
+            (50, 64),
+        ];
+        for (id, count) in KIT {
+            if let Some(rest) = self.inventory.add(ItemStack::new(id, count), &self.items) {
+                self.throw(rest);
+            }
+        }
+        log::info!("dev kit given");
+    }
+
     /// Throws one of the selected item forward (1.0.0's Q).
     pub fn throw_selected(&mut self) {
         let Some(stack) = self.inventory.take(self.inventory.selected, 1) else {

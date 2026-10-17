@@ -238,6 +238,11 @@ impl Game {
     /// Number keys, Q to throw, the F4 dev flight toggle and, while the
     /// cursor is grabbed, movement keys.
     pub fn on_key(&mut self, key: KeyCode, pressed: bool, repeat: bool, grabbed: bool) {
+        #[cfg(debug_assertions)]
+        if key == KeyCode::F6 && pressed && !repeat {
+            self.give_dev_kit();
+            return;
+        }
         if key == KeyCode::F4 && pressed && !repeat {
             #[cfg(debug_assertions)]
             {
