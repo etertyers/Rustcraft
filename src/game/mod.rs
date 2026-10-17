@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+pub mod environment;
 mod hands;
 
 use std::{path::Path, sync::Arc};

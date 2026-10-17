@@ -27,7 +27,8 @@ pub fn celestial_angle(time: u64, partial: f32) -> f32 {
 }
 
 /// Unit vector toward the sun: up at noon, west (−X) at sunset, east at
-/// sunrise. The moon is opposite.
+/// sunrise. The moon is opposite. (sky.wgsl computes the same.)
+#[cfg(test)]
 pub fn sun_direction(angle: f32) -> Vec3 {
     let a = angle * TAU;
     Vec3::new(-a.sin(), a.cos(), 0.0)

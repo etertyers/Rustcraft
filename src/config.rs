@@ -20,6 +20,9 @@ pub const Z_FAR: f32 = 1000.0;
 /// Game logic rate, like Minecraft.
 pub const TICKS_PER_SECOND: u32 = 20;
 
+/// Height of the cloud layer (1.0.0's `getCloudHeight` plus its 0.33 offset).
+pub const CLOUD_HEIGHT: f32 = 108.33;
+
 /// Ticks between autosaves: 5 minutes, as CLAUDE.md asks for "every few
 /// minutes" (1.0.0 itself saved a few changed chunks every 40 ticks).
 pub const AUTOSAVE_TICKS: u32 = 5 * 60 * TICKS_PER_SECOND;
