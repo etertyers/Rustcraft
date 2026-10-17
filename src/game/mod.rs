@@ -34,6 +34,7 @@ use crate::{
         stack::{ItemStack, Items},
     },
     level::{Level, PlayerData, WorldDir},
+    options::Options,
     player::{
         collision::WorldCollider,
         input::MoveKeys,
@@ -130,6 +131,8 @@ pub struct Game {
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
     scroll_pixels: f64,
+    /// Mouse look speed, 1 for the default.
+    sensitivity: f32,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
     tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
@@ -194,6 +197,7 @@ impl Game {
             eating: None,
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
+            sensitivity: 1.0,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
             flying: false,
@@ -376,8 +380,16 @@ impl Game {
         self.place_clicked = false;
     }
 
+    /// Applies the player's settings: render distance, field of view and
+    /// mouse sensitivity.
+    pub fn apply_options(&mut self, options: &Options) {
+        self.chunks.set_radius(options.render_distance);
+        self.camera.fov = options.fov;
+        self.sensitivity = options.sensitivity;
+    }
+
     pub fn look(&mut self, dx: f64, dy: f64) {
-        let s = config::MOUSE_SENSITIVITY;
+        let s = config::MOUSE_SENSITIVITY * self.sensitivity;
         self.camera.rotate(dx as f32 * s, -dy as f32 * s);
     }
 

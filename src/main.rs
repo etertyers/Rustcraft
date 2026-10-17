@@ -5,6 +5,7 @@ mod entity;
 mod game;
 mod inventory;
 mod level;
+mod options;
 mod player;
 mod render;
 mod ui;

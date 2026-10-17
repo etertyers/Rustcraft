@@ -3,6 +3,7 @@
 mod fps;
 pub mod gui;
 pub mod menu;
+pub mod pause;
 pub mod screens;
 
 use std::time::Instant;
@@ -11,6 +12,7 @@ use egui::{Align2, Color32, Frame, RichText};
 use winit::{event::WindowEvent, window::Window};
 
 use crate::{
+    options::Options,
     player::mode::GameMode,
     render::{UiPaint, camera::Camera},
     world::{biome::Biome, daytime},
@@ -109,6 +111,7 @@ impl DebugUi {
         stats: &DebugStats,
         hud: &Hud,
         screen: Option<(&mut screens::Screen, &screens::ScreenView)>,
+        pause: Option<(&mut pause::PauseMenu, &mut Options)>,
     ) -> (UiPaint, Vec<screens::ScreenAction>) {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
@@ -116,6 +119,7 @@ impl DebugUi {
         let textures = &self.textures;
         let mut actions = Vec::new();
         let mut screen = screen;
+        let mut pause = pause;
         let output = self.ctx.run_ui(input, |ui| {
             if hud.crosshair {
                 draw_crosshair(ui);
@@ -139,6 +143,11 @@ impl DebugUi {
             {
                 actions.push(screens::ScreenAction::Respawn);
             }
+            if let Some((menu, options)) = &mut pause
+                && let Some(action) = menu.show(ui.ctx(), options)
+            {
+                actions.push(screens::ScreenAction::Pause(action));
+            }
             if let Some(asleep) = hud.sleep
                 && show_sleep_screen(ui.ctx(), asleep)
             {
@@ -155,10 +164,11 @@ impl DebugUi {
         &mut self,
         window: &Window,
         menu: &mut Menu,
+        options: &mut Options,
     ) -> (UiPaint, Option<MenuAction>) {
         let input = self.state.take_egui_input(window);
         let mut action = None;
-        let output = self.ctx.run_ui(input, |ui| action = menu.show(ui));
+        let output = self.ctx.run_ui(input, |ui| action = menu.show(ui, options));
         // The cursor is free in the menu, so let egui set it and use the clipboard.
         self.state
             .handle_platform_output(window, output.platform_output.clone());

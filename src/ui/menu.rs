@@ -11,6 +11,7 @@ use egui::{Align, Button, Color32, Frame, Layout, RichText};
 
 use crate::{
     level::{self, Level, WorldDir},
+    options::Options,
     player::mode::GameMode,
 };
 
@@ -27,6 +28,7 @@ pub enum MenuAction {
 
 enum Screen {
     Title,
+    Options,
     SelectWorld,
     CreateWorld,
 }
@@ -61,7 +63,7 @@ impl Menu {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
+    pub fn show(&mut self, ui: &mut egui::Ui, options: &mut Options) -> Option<MenuAction> {
         let mut action = None;
         egui::CentralPanel::default()
             .frame(Frame::new().fill(BACKGROUND).inner_margin(24.0))
@@ -69,6 +71,12 @@ impl Menu {
                 ui.vertical_centered(|ui| {
                     action = match self.screen {
                         Screen::Title => self.title(ui),
+                        Screen::Options => {
+                            if super::pause::options_page(ui, options) {
+                                self.screen = Screen::Title;
+                            }
+                            None
+                        }
                         Screen::SelectWorld => self.select_world(ui),
                         Screen::CreateWorld => self.create_world(ui),
                     };
@@ -97,6 +105,10 @@ impl Menu {
             self.worlds = level::list_worlds(&self.saves);
             self.selected = None;
             self.screen = Screen::SelectWorld;
+        }
+        ui.add_space(8.0);
+        if ui.add_sized(BUTTON, Button::new("Options...")).clicked() {
+            self.screen = Screen::Options;
         }
         ui.add_space(8.0);
         ui.add_sized(BUTTON, Button::new("Quit Game"))

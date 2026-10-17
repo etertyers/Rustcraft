@@ -30,6 +30,7 @@ use crate::{
         stack::{ItemStack, Items},
     },
     level::{self, WorldDir},
+    options::Options,
     player::{
         mode::GameMode,
         stats::{DamageSource, MAX_AIR},
@@ -46,6 +47,7 @@ use crate::{
         DebugStats, DebugUi, Hud,
         gui::{SlotView, SurvivalHud},
         menu::{Menu, MenuAction},
+        pause::{PauseAction, PauseMenu},
         screens::{Screen, ScreenAction, ScreenView},
     },
     world::{
@@ -96,6 +98,10 @@ pub struct App {
     screen: Option<Screen>,
     /// Whether the player was in bed last frame.
     sleeping: bool,
+    /// The player's settings, from `options.ron`.
+    options: Options,
+    /// The pause menu, open over a stopped game.
+    pause: Option<PauseMenu>,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
     cursor_grabbed: bool,
@@ -123,6 +129,8 @@ impl App {
             game: None,
             screen: None,
             sleeping: false,
+            options: Options::load(&Options::path()),
+            pause: None,
             catalog: Vec::new(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
@@ -189,7 +197,8 @@ impl App {
                     .into_rgba8())
             })
             .collect::<Result<Vec<_>>>()?;
-        let renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
+        let mut renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
+        renderer.set_vsync(self.options.vsync);
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -218,7 +227,9 @@ impl App {
 
     fn start_game(&self, kind: WorldKind) -> Result<Game> {
         let mobs = self.mob_defs.clone().expect("loaded in init");
-        Ok(self.start_world(kind)?.with_mobs(mobs))
+        let mut game = self.start_world(kind)?.with_mobs(mobs);
+        game.apply_options(&self.options);
+        Ok(game)
     }
 
     fn start_world(&self, kind: WorldKind) -> Result<Game> {
@@ -321,12 +332,19 @@ impl App {
             }
         } else if key == KeyCode::Escape && pressed && self.screen.is_some() {
             self.close_screen();
+        } else if key == KeyCode::Escape && pressed && !event.repeat && self.pause.is_some() {
+            if self.pause.as_mut().and_then(PauseMenu::back) == Some(PauseAction::Resume) {
+                self.resume();
+            }
+        } else if key == KeyCode::Escape && pressed && !event.repeat && self.game.is_some() {
+            self.pause_game();
         } else if key == KeyCode::Escape && pressed {
             self.set_cursor_grab(false);
         } else if key == KeyCode::KeyE
             && pressed
             && !event.repeat
             && self.game.is_some()
+            && self.pause.is_none()
             && !sleeping
         {
             if self.screen.is_some() {
@@ -340,6 +358,51 @@ impl App {
             }
         } else if let Some(game) = self.game.as_mut() {
             game.on_key(key, pressed, event.repeat, self.cursor_grabbed);
+        }
+    }
+
+    /// Opens the pause menu over a world being played (not over a screen,
+    /// the death screen or a bed), freeing the mouse. The game stops.
+    fn pause_game(&mut self) {
+        if self.playing() && self.screen.is_none() && !self.sleeping && self.pause.is_none() {
+            self.pause = Some(PauseMenu::default());
+            self.set_cursor_grab(false);
+        }
+    }
+
+    fn resume(&mut self) {
+        self.pause = None;
+        self.set_cursor_grab(true);
+    }
+
+    /// Saves the world and goes back to the title screen.
+    fn quit_to_title(&mut self) {
+        if let Some(mut game) = self.game.take()
+            && let Err(err) = game.save()
+        {
+            error!("saving on quitting to the title failed: {err:#}");
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.clear_world();
+        }
+        self.pause = None;
+        self.screen = None;
+        self.sleeping = false;
+        self.menu = Some(Menu::new(level::saves_dir()));
+        self.set_cursor_grab(false);
+    }
+
+    /// Applies settings changed on the Options screen and saves them.
+    fn options_changed(&mut self) {
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_vsync(self.options.vsync);
+        }
+        if let Some(game) = self.game.as_mut() {
+            game.apply_options(&self.options);
+        }
+        let path = Options::path();
+        if let Err(err) = self.options.save(&path) {
+            error!("{err:#}");
         }
     }
 
@@ -426,6 +489,8 @@ impl App {
                 self.set_cursor_grab(true);
             }
             ScreenAction::LeaveBed => game.wake(),
+            ScreenAction::Pause(PauseAction::Resume) => self.resume(),
+            ScreenAction::Pause(PauseAction::SaveAndQuit) => self.quit_to_title(),
         }
     }
 
@@ -445,7 +510,8 @@ impl App {
         }
         .map(|game| game.with_mobs(mobs));
         match game {
-            Ok(game) => {
+            Ok(mut game) => {
+                game.apply_options(&self.options);
                 self.game = Some(game);
                 self.menu = None;
                 self.set_cursor_grab(true);
@@ -489,7 +555,8 @@ impl App {
         ) else {
             return;
         };
-        game.advance(dt);
+        // The pause menu stops the game; the camera still follows it.
+        game.advance(if self.pause.is_some() { 0.0 } else { dt });
 
         let p = game.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
@@ -585,9 +652,14 @@ impl App {
             catalog: &self.catalog,
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
-        let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen);
+        let options_before = self.options.clone();
+        let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
+        let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
         let result = renderer.render(&game.camera, &game.environment(), ui);
         self.finish_frame(event_loop, now, result);
+        if self.options != options_before {
+            self.options_changed();
+        }
         for action in actions {
             self.on_screen_action(action);
         }
@@ -603,11 +675,15 @@ impl App {
         ) else {
             return;
         };
-        let (ui, action) = debug_ui.menu_frame(window, menu);
+        let options_before = self.options.clone();
+        let (ui, action) = debug_ui.menu_frame(window, menu, &mut self.options);
         // A noon sky behind the menu.
         let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
         let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), &noon, ui);
         self.finish_frame(event_loop, now, result);
+        if self.options != options_before {
+            self.options_changed();
+        }
         if let Some(action) = action {
             self.on_menu_action(event_loop, action);
         }
@@ -655,7 +731,11 @@ impl ApplicationHandler for App {
                     renderer.resize(size);
                 }
             }
-            WindowEvent::Focused(false) => self.set_cursor_grab(false),
+            // Like 1.0.0, leaving the window pauses the game.
+            WindowEvent::Focused(false) => {
+                self.set_cursor_grab(false);
+                self.pause_game();
+            }
             WindowEvent::Occluded(occluded) => {
                 self.occluded = occluded;
                 if !occluded && let Some(window) = &self.window {
@@ -668,6 +748,7 @@ impl ApplicationHandler for App {
                 ..
             } if !self.cursor_grabbed
                 && self.screen.is_none()
+                && self.pause.is_none()
                 && self.playing()
                 && !self.sleeping =>
             {

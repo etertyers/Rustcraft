@@ -128,6 +128,17 @@ pub struct ChunkManager {
     lights: HashMap<ChunkPos, ChunkLight>,
 }
 
+/// Offsets within `radius + 1` chunks (one ring more is generated so the
+/// border can be meshed), nearest first.
+fn offsets(radius: i32) -> Vec<(i32, i32)> {
+    let reach = radius + 1;
+    let mut offsets: Vec<(i32, i32)> = (-reach..=reach)
+        .flat_map(|dz| (-reach..=reach).map(move |dx| (dx, dz)))
+        .collect();
+    offsets.sort_by_key(|&(dx, dz)| dx * dx + dz * dz);
+    offsets
+}
+
 /// The chunk holding block `at` and its position there, if `at` is inside
 /// the world's height.
 fn local_pos(at: IVec3) -> Option<(ChunkPos, LocalPos)> {
@@ -207,12 +218,7 @@ impl ChunkManager {
             })
             .collect::<Vec<_>>();
 
-        let reach = radius + 1;
-        let mut offsets: Vec<(i32, i32)> = (-reach..=reach)
-            .flat_map(|dz| (-reach..=reach).map(move |dx| (dx, dz)))
-            .collect();
-        offsets.sort_by_key(|&(dx, dz)| dx * dx + dz * dz);
-
+        let offsets = offsets(radius);
         Self {
             world: World::default(),
             source,
@@ -348,6 +354,18 @@ impl ChunkManager {
 
     fn revision(&self, pos: ChunkPos) -> u32 {
         self.revisions.get(&pos).copied().unwrap_or(0)
+    }
+
+    /// Chunks drawn in each direction.
+    pub fn radius(&self) -> i32 {
+        self.radius
+    }
+
+    /// Changes the render distance; chunks beyond it are dropped by the
+    /// next `update` and new ones loaded.
+    pub fn set_radius(&mut self, radius: i32) {
+        self.radius = radius;
+        self.offsets = offsets(radius);
     }
 
     /// (sky, block) light at a world position, if its chunk is drawn.

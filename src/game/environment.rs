@@ -31,13 +31,18 @@ impl Game {
     pub fn environment(&self) -> Environment {
         let p = self.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();
-        environment(
+        let mut environment = environment(
             self.time,
             self.tick_alpha() as f32,
             biome,
             self.camera.forward(),
             self.eye_in(),
-        )
+        );
+        // Fog ends at the chosen render distance.
+        let fog_end = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
+        environment.fog_start *= fog_end / environment.fog_end;
+        environment.fog_end = fog_end;
+        environment
     }
 }
 

@@ -374,6 +374,24 @@ impl Renderer {
         self.config.width as f32 / self.config.height as f32
     }
 
+    /// Forgets the world's chunks, items and mobs (leaving a world).
+    pub fn clear_world(&mut self) {
+        self.chunks.clear();
+        self.entities = None;
+        self.mobs.clear();
+        self.outline.set_target(None);
+    }
+
+    /// Waits for the display's refresh (vsync) or not.
+    pub fn set_vsync(&mut self, vsync: bool) {
+        self.config.present_mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        self.surface.configure(&self.device, &self.config);
+    }
+
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
             return;
