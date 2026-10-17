@@ -593,4 +593,36 @@ mod tests {
         );
         assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(1, 1)));
     }
+
+    #[test]
+    fn stone_mined_with_a_pickaxe_gives_cobblestone_and_wears_it() {
+        let mut game = flat_game(GameMode::Survival);
+        let stone = BlockState::new(1, 0);
+        game.chunks.set_blocks(&[(IVec3::new(0, 63, 0), stone)]);
+        game.inventory.set(0, Some(ItemStack::new(270, 1)));
+        game.breaking = true;
+        // Wooden pickaxe on stone: 2 / 1.5 / 30 per tick, so 23 ticks.
+        for _ in 0..22 {
+            game.tick();
+        }
+        assert_eq!(game.chunks.world().block(0, 63, 0), Some(stone));
+        game.tick();
+        assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
+        assert_eq!(game.entities[0].stack, ItemStack::new(4, 1), "cobblestone");
+        assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "one use worn");
+    }
+
+    #[test]
+    fn stone_mined_by_hand_drops_nothing() {
+        let mut game = flat_game(GameMode::Survival);
+        game.chunks
+            .set_blocks(&[(IVec3::new(0, 63, 0), BlockState::new(1, 0))]);
+        game.breaking = true;
+        // 1 / 1.5 / 100 per tick, summed in f32 as 1.0.0 does: 151 ticks.
+        for _ in 0..151 {
+            game.tick();
+        }
+        assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
+        assert!(game.entities.is_empty());
+    }
 }
