@@ -1,6 +1,7 @@
 mod app;
 mod assets;
 mod config;
+mod game;
 mod inventory;
 #[cfg_attr(
     not(test),
