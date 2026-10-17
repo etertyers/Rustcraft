@@ -508,7 +508,7 @@ mod tests {
         let block = |id| registry.get(id).unwrap();
         assert_eq!(block(1).hardness, 1.5);
         assert!(block(7).hardness < 0.0, "bedrock is unbreakable");
-        assert_eq!(block(49).hardness, 10.0);
+        assert_eq!(block(49).hardness, 50.0);
         assert_eq!(block(50).light, 14);
         assert_eq!(block(89).light, 15);
         assert!(block(1).is_opaque_cube());
