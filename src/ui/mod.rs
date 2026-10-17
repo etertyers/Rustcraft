@@ -13,7 +13,7 @@ use winit::{event::WindowEvent, window::Window};
 use crate::{
     player::mode::GameMode,
     render::{UiPaint, camera::Camera},
-    world::biome::Biome,
+    world::{biome::Biome, daytime},
 };
 use fps::FpsCounter;
 use gui::{GuiTextures, SlotView};
@@ -33,6 +33,8 @@ pub struct DebugStats {
     /// (sky, block) light where the player stands, once its chunk is drawn.
     pub light: Option<(u8, u8)>,
     pub mode: GameMode,
+    /// Game time in ticks.
+    pub time: u64,
 }
 
 /// Always-on HUD pieces.
@@ -160,7 +162,8 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          Biome: {}\n\
          Light: {}\n\
          Seed: {}\n\
-         Mode: {}",
+         Mode: {}\n\
+         Time: {}",
         stats.chunks_drawn,
         stats.chunks_loaded,
         p.x,
@@ -179,6 +182,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         ),
         stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
         stats.mode.name(),
+        daytime::clock(stats.time),
     )
 }
 
@@ -235,6 +239,7 @@ mod tests {
             seed: Some(42),
             light: Some((4, 11)),
             mode: GameMode::Creative,
+            time: 6000,
         };
         let text = debug_text(59.6, &camera, &stats);
         assert!(
@@ -251,5 +256,6 @@ mod tests {
         assert!(text.contains("Light: 11 (4 sky, 11 block)"), "{text}");
         assert!(text.contains("Seed: 42"), "{text}");
         assert!(text.contains("Mode: Creative"), "{text}");
+        assert!(text.contains("Time: day 1, 12:00"), "{text}");
     }
 }

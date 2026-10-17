@@ -10,6 +10,7 @@ use crate::config::{
     FLY_VERTICAL_SPEED, GRAVITY, JUMP_VELOCITY, PLAYER_HEIGHT, PLAYER_WIDTH, SNEAK_EYE_DROP,
     SNEAK_FACTOR, SPRINT_FACTOR, SPRINT_JUMP_BOOST, STEP_HEIGHT, VERTICAL_DRAG, WALK_ACCELERATION,
 };
+use crate::world::block::Fluid;
 
 /// Movement intent for one tick.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -26,6 +27,16 @@ pub struct MoveInput {
 
 /// A second forward press within this many ticks starts sprinting.
 const SPRINT_DOUBLE_TAP_TICKS: u8 = 7;
+/// Acceleration at full input in water or lava (1.0.0's `moveFlying` 0.02).
+const SWIM_ACCELERATION: f64 = 0.02;
+/// Velocity kept per tick in water and in lava.
+const WATER_DRAG: f64 = 0.8;
+const LAVA_DRAG: f64 = 0.5;
+/// Sinking per tick in a liquid, and rising per tick holding jump.
+const SWIM_SINK: f64 = 0.02;
+const SWIM_UP: f64 = 0.04;
+/// Upward speed when swimming into a ledge with room above it.
+const LEDGE_HOP: f64 = 0.3;
 /// A second jump press within this many ticks toggles creative flight.
 const FLY_DOUBLE_TAP_TICKS: u8 = 7;
 /// Forward input needed to start or keep sprinting.
@@ -116,6 +127,11 @@ impl Body {
         }
         self.update_sprint(forward, input.sprint);
         self.update_flight(input.jump);
+        let liquid = if self.flying {
+            None
+        } else {
+            self.liquid(world)
+        };
 
         let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
         let facing = DVec3::new(sin_yaw, 0.0, -cos_yaw);
@@ -127,6 +143,8 @@ impl Body {
             if input.jump {
                 self.velocity.y += FLY_VERTICAL_SPEED;
             }
+        } else if input.jump && liquid.is_some() {
+            self.velocity.y += SWIM_UP;
         } else if input.jump && self.on_ground {
             self.velocity.y = JUMP_VELOCITY;
             if self.sprinting {
@@ -138,6 +156,8 @@ impl Body {
         let sprint = if self.sprinting { SPRINT_FACTOR } else { 1.0 };
         let acceleration = if self.flying {
             FLY_ACCELERATION
+        } else if liquid.is_some() {
+            SWIM_ACCELERATION
         } else if self.on_ground {
             WALK_ACCELERATION * sprint * GROUND_ACCELERATION_SCALE / friction.powi(3)
         } else {
@@ -150,6 +170,10 @@ impl Body {
             self.velocity += (facing * forward + right * strafe) * scale;
         }
 
+        if let Some(fluid) = liquid {
+            self.swim(fluid, world);
+            return;
+        }
         let vertical = self.velocity.y;
         self.move_by(self.velocity, world);
         if self.flying {
@@ -163,6 +187,47 @@ impl Body {
         }
         self.velocity.x *= friction;
         self.velocity.z *= friction;
+    }
+
+    /// The liquid the body is in: water reaching the hitbox shrunk by 0.4
+    /// top and bottom, or lava reaching it also shrunk 0.1 sideways
+    /// (1.0.0's `isInWater` and `handleLavaMovement`).
+    fn liquid(&self, world: &impl Collider) -> Option<Fluid> {
+        let shrink = |side: f64| {
+            let by = DVec3::new(side, 0.4, side);
+            Aabb::new(self.bb.min + by, self.bb.max - by)
+        };
+        match world.liquid(&shrink(0.001)) {
+            Some(Fluid::Water) => Some(Fluid::Water),
+            _ => world
+                .liquid(&shrink(0.1))
+                .filter(|&fluid| fluid == Fluid::Lava),
+        }
+    }
+
+    /// Moves through water or lava: thick drag, slow sinking, and a hop out
+    /// onto a ledge when swimming into it (1.0.0's
+    /// `moveEntityWithHeading` liquid branch).
+    fn swim(&mut self, fluid: Fluid, world: &impl Collider) {
+        let start_y = self.bb.min.y;
+        self.move_by(self.velocity, world);
+        let drag = match fluid {
+            Fluid::Water => WATER_DRAG,
+            Fluid::Lava => LAVA_DRAG,
+        };
+        self.velocity *= drag;
+        self.velocity.y -= SWIM_SINK;
+        let climbed = self.bb.min.y - start_y;
+        let ledge = DVec3::new(
+            self.velocity.x,
+            self.velocity.y + 0.6 - climbed,
+            self.velocity.z,
+        );
+        let above = self.bb.offset(ledge);
+        if self.collided_horizontally && !collides(&above, world) && world.liquid(&above).is_none()
+        {
+            self.velocity.y = LEDGE_HOP;
+        }
     }
 
     /// Double-tap forward to sprint (1.0.0), or hold the sprint key. Sprinting
@@ -328,6 +393,7 @@ mod tests {
         Full,
         Half,
         Ice,
+        Water,
     }
 
     impl TestWorld {
@@ -351,7 +417,7 @@ mod tests {
         fn boxes(&self, region: &Aabb, out: &mut Vec<Aabb>) {
             let (min, max) = (region.min.floor().as_ivec3(), region.max.floor().as_ivec3());
             for (pos, &kind) in &self.blocks {
-                if pos.cmpge(min).all() && pos.cmple(max).all() {
+                if kind != Kind::Water && pos.cmpge(min).all() && pos.cmple(max).all() {
                     let mut bb = Aabb::block(pos.x, pos.y, pos.z);
                     if kind == Kind::Half {
                         bb.max.y -= 0.5;
@@ -366,6 +432,19 @@ mod tests {
                 Some(Kind::Ice) => 0.98,
                 _ => 0.6,
             }
+        }
+
+        fn liquid(&self, region: &Aabb) -> Option<Fluid> {
+            let (min, max) = (region.min.floor().as_ivec3(), region.max.floor().as_ivec3());
+            self.blocks
+                .iter()
+                .any(|(pos, &kind)| {
+                    kind == Kind::Water
+                        && pos.cmpge(min).all()
+                        && pos.cmple(max).all()
+                        && region.max.y >= pos.y as f64 + 8.0 / 9.0
+                })
+                .then_some(Fluid::Water)
         }
     }
 
@@ -732,5 +811,83 @@ mod tests {
         }
         assert!(!body.flying);
         assert_eq!(body.position().y, 64.0);
+    }
+
+    /// A pool of water 10 deep (y 54–63) over a stone floor at y 53.
+    fn pool() -> TestWorld {
+        let mut world = TestWorld::default();
+        for z in -20..20 {
+            for x in -20..20 {
+                world.set(x, 53, z, Kind::Full);
+                for y in 54..64 {
+                    world.set(x, y, z, Kind::Water);
+                }
+            }
+        }
+        world
+    }
+
+    fn vertical_speed_after(world: &TestWorld, input: MoveInput, ticks: u32) -> f64 {
+        let mut body = Body::new(DVec3::new(0.5, 58.0, 0.5));
+        for _ in 0..ticks {
+            body.tick(&input, 0.0, world);
+        }
+        body.velocity.y
+    }
+
+    #[test]
+    fn sinking_and_swimming_up_match_1_0_0() {
+        let world = pool();
+        // 1.0.0: ×0.8 then −0.02 per tick settles at −0.1; holding jump
+        // adds 0.04 first and settles at +0.06.
+        let sinking = vertical_speed_after(&world, MoveInput::default(), 30);
+        assert!((sinking + 0.1).abs() < 1e-3, "{sinking}");
+        let rising = vertical_speed_after(&world, JUMP, 30);
+        assert!((rising - 0.06).abs() < 1e-3, "{rising}");
+    }
+
+    #[test]
+    fn swimming_speed_matches_1_0_0() {
+        let world = pool();
+        let mut body = Body::new(DVec3::new(0.5, 58.0, 0.5));
+        let mut start = body.position();
+        for tick in 0..100 {
+            if tick == 50 {
+                start = body.position();
+            }
+            body.tick(&FORWARD, 0.0, &world);
+        }
+        let speed = (start.z - body.position().z) / 50.0 * TICKS_PER_SECOND as f64;
+        // 0.02 × 0.98 / (1 − 0.8) blocks per tick.
+        assert!((speed - 1.96).abs() < 0.01, "{speed}");
+    }
+
+    #[test]
+    fn treading_water_stays_at_the_surface_and_a_ledge_lifts_you_out() {
+        let mut world = pool();
+        // A stone bank north of the pool, level with the water.
+        for x in -20..20 {
+            for z in -100..-20 {
+                world.set(x, 63, z, Kind::Full);
+            }
+        }
+        let mut body = Body::new(DVec3::new(0.5, 62.0, -15.0));
+        let swim_north = MoveInput {
+            jump: true,
+            ..FORWARD
+        };
+        for _ in 0..200 {
+            body.tick(&swim_north, 0.0, &world);
+        }
+        assert!(
+            body.position().y >= 64.0,
+            "climbed out: {}",
+            body.position()
+        );
+        assert!(
+            body.position().z < -20.0,
+            "onto the bank: {}",
+            body.position()
+        );
     }
 }

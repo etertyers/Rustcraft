@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+pub mod environment;
 mod hands;
 
 use std::{path::Path, sync::Arc};
@@ -230,6 +231,11 @@ impl Game {
         &self.items
     }
 
+    /// Game time in ticks since the world was created.
+    pub fn time(&self) -> u64 {
+        self.time
+    }
+
     /// How far the frame is between the last two ticks, 0–1.
     pub fn tick_alpha(&self) -> f64 {
         (self.tick_time / TICK) as f64
@@ -241,6 +247,16 @@ impl Game {
         #[cfg(debug_assertions)]
         if key == KeyCode::F6 && pressed && !repeat {
             self.give_dev_kit();
+            return;
+        }
+        // A dev tool for checking the day cycle: skip an hour ahead.
+        #[cfg(debug_assertions)]
+        if key == KeyCode::F7 && pressed {
+            self.time += 1000;
+            info!(
+                "time skipped to {}",
+                crate::world::daytime::clock(self.time)
+            );
             return;
         }
         if key == KeyCode::F4 && pressed && !repeat {

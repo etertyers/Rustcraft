@@ -204,7 +204,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - **Creative mode** (1.0.0 behavior): blocks break instantly with no drops; placing doesn't use up items; tools take no durability; double-tap Space toggles flying (Space up, Shift down, faster horizontal speed); the E key opens a scrollable creative inventory containing every registered block and item, and clicking one puts a stack in the hotbar. Keep game-mode checks in one place (e.g. a `GameMode` on the player) rather than scattered `if creative` checks.
 - **Done when:** in survival you can mine stone with a pickaxe, get cobblestone, and see tool durability drop; in a creative world you can fly, break blocks instantly, and pull any block from the creative inventory.
 
-### - [ ] M8 — Environment
+### - [x] M8 — Environment
 - Day/night cycle (20-minute day), sun and moon, sky color gradient, sky light level tied to time.
 - Transparent render pass for water, ice and glass; swimming and buoyancy in still water; underwater fog tint.
 - Fog at render distance edge; clouds.

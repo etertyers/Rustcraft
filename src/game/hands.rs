@@ -12,11 +12,8 @@ use crate::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
         raycast::Hit,
     },
-    world::harvest,
+    world::{block::Fluid, harvest},
 };
-
-/// Water blocks, which slow mining when the player's eyes are in them.
-const WATER: [u16; 2] = [8, 9];
 
 impl Game {
     /// The tool in the selected slot, if it's a tool.
@@ -43,14 +40,14 @@ impl Game {
             return;
         };
         if wants_break {
-            self.mine(hit.block, eye);
+            self.mine(hit.block);
         } else if wants_place {
             self.place(&hit);
         }
     }
 
     /// One tick of mining `cell`; breaks it once the progress reaches 1.
-    fn mine(&mut self, cell: IVec3, eye: DVec3) {
+    fn mine(&mut self, cell: IVec3) {
         if self.break_cooldown > 0 {
             return;
         }
@@ -64,10 +61,7 @@ impl Game {
         let progress = if self.mode.breaks_instantly() {
             1.0
         } else {
-            let eye_cell = eye.floor();
-            let in_water = world
-                .block(eye_cell.x as i32, eye_cell.y as i32, eye_cell.z as i32)
-                .is_some_and(|block| WATER.contains(&block.id()));
+            let in_water = self.eye_in() == Some(Fluid::Water);
             let per_tick = harvest::progress_per_tick(
                 def,
                 self.selected_tool(),

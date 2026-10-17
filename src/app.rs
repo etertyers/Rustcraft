@@ -20,7 +20,7 @@ use winit::{
 
 use crate::{
     assets, config,
-    game::{Game, chunk_workers},
+    game::{Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
     inventory::{
         player::{HOTBAR_SLOTS, SLOTS},
@@ -29,7 +29,7 @@ use crate::{
     level::{self, WorldDir},
     player::mode::GameMode,
     render::{
-        Renderer,
+        Renderer, SkyImages,
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
         entities::item_mesh,
@@ -42,7 +42,7 @@ use crate::{
         screens::{Screen, ScreenAction, ScreenView},
     },
     world::{
-        biome::BiomeColors,
+        biome::{Biome, BiomeColors},
         block::BlockRegistry,
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
@@ -163,7 +163,8 @@ impl App {
                 warn!("{err:#}; using default biome colors");
                 BiomeColors::uniform()
             });
-        let renderer = Renderer::new(window.clone(), &atlas)?;
+        let sky = SkyImages::load(&textures.join("environment"))?;
+        let renderer = Renderer::new(window.clone(), &atlas, &sky)?;
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -435,6 +436,7 @@ impl App {
             seed: chunks.seed(),
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
+            time: game.time(),
         };
         let hud = Hud {
             crosshair: self.cursor_grabbed,
@@ -465,7 +467,7 @@ impl App {
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen);
-        let result = renderer.render(&game.camera, ui);
+        let result = renderer.render(&game.camera, &game.environment(), ui);
         self.finish_frame(event_loop, now, result);
         for action in actions {
             self.on_screen_action(action);
@@ -483,7 +485,9 @@ impl App {
             return;
         };
         let (ui, action) = debug_ui.menu_frame(window, menu);
-        let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), ui);
+        // A noon sky behind the menu.
+        let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
+        let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), &noon, ui);
         self.finish_frame(event_loop, now, result);
         if let Some(action) = action {
             self.on_menu_action(event_loop, action);
