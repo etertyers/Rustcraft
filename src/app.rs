@@ -10,7 +10,8 @@ use glam::DVec3;
 use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalPosition},
+    error::ExternalError,
     event::{
         DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause,
         WindowEvent,
@@ -96,6 +97,9 @@ pub struct App {
     /// Mouse buttons held for breaking and placing.
     breaking: bool,
     placing: bool,
+    /// Presses not yet handled by a tick, so a click shorter than a tick still counts.
+    break_clicked: bool,
+    place_clicked: bool,
     /// Ticks until a held button acts again.
     break_cooldown: u8,
     place_cooldown: u8,
@@ -150,6 +154,8 @@ impl App {
             target: None,
             breaking: false,
             placing: false,
+            break_clicked: false,
+            place_clicked: false,
             break_cooldown: 0,
             place_cooldown: 0,
             slot: 0,
@@ -245,16 +251,36 @@ impl App {
         Ok(())
     }
 
+    /// macOS sometimes stops pinning a locked cursor, and the hidden cursor
+    /// then wanders out of the window. If it drifts away from the middle,
+    /// put it back.
+    fn recenter_cursor(&self, position: PhysicalPosition<f64>) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let size = window.inner_size();
+        let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+        if (position.x - center.x).abs() < center.x / 2.0
+            && (position.y - center.y).abs() < center.y / 2.0
+        {
+            return;
+        }
+        // Moving the cursor unlocks it on macOS, so lock it again.
+        if let Err(err) = window
+            .set_cursor_position(center)
+            .and_then(|()| lock_cursor(window))
+        {
+            warn!("recentering the cursor failed: {err}");
+        }
+    }
+
     /// Locks and hides the cursor for mouse look, or releases it.
     fn set_cursor_grab(&mut self, grab: bool) {
         let Some(window) = &self.window else {
             return;
         };
         let result = if grab {
-            // macOS supports only Locked; other platforms may only support Confined.
-            window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
+            lock_cursor(window)
         } else {
             window.set_cursor_grab(CursorGrabMode::None)
         };
@@ -268,6 +294,8 @@ impl App {
             self.keys.clear();
             self.breaking = false;
             self.placing = false;
+            self.break_clicked = false;
+            self.place_clicked = false;
         }
     }
 
@@ -316,10 +344,12 @@ impl App {
         match button {
             MouseButton::Left => {
                 self.breaking = pressed;
+                self.break_clicked |= pressed;
                 self.break_cooldown = 0;
             }
             MouseButton::Right => {
                 self.placing = pressed;
+                self.place_clicked |= pressed;
                 self.place_cooldown = 0;
             }
             _ => {}
@@ -374,8 +404,10 @@ impl App {
     fn use_hands(&mut self) {
         self.break_cooldown = self.break_cooldown.saturating_sub(1);
         self.place_cooldown = self.place_cooldown.saturating_sub(1);
-        let wants_break = self.breaking && self.break_cooldown == 0;
-        let wants_place = self.placing && self.place_cooldown == 0;
+        let wants_break = (self.breaking || self.break_clicked) && self.break_cooldown == 0;
+        let wants_place = (self.placing || self.place_clicked) && self.place_cooldown == 0;
+        self.break_clicked = false;
+        self.place_clicked = false;
         if !wants_break && !wants_place {
             return;
         }
@@ -450,6 +482,7 @@ impl App {
             chunks_loaded: chunks.world().len(),
             biome: chunks.world().biome_at(x, z),
             seed: chunks.seed(),
+            light: chunks.light_at(x, p.y.floor() as i32, z),
         };
         let selected = HOTBAR[self.slot];
         let hud = Hud {
@@ -515,6 +548,9 @@ impl ApplicationHandler for App {
                 self.on_mouse_button(button, state == ElementState::Pressed);
             }
             WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed => self.on_scroll(delta),
+            WindowEvent::CursorMoved { position, .. } if self.cursor_grabbed => {
+                self.recenter_cursor(position);
+            }
             WindowEvent::KeyboardInput { event, .. } => self.on_key(&event),
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
@@ -567,4 +603,12 @@ fn hotbar_slot(key: KeyCode) -> Option<usize> {
         KeyCode::Digit9,
     ];
     KEYS.iter().position(|&k| k == key)
+}
+
+/// Pins the cursor in place. macOS supports only Locked; other platforms may
+/// only support Confined.
+fn lock_cursor(window: &Window) -> Result<(), ExternalError> {
+    window
+        .set_cursor_grab(CursorGrabMode::Locked)
+        .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
 }

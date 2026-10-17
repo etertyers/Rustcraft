@@ -7,6 +7,7 @@ use super::{
     biome::{Biome, BiomeColors},
     block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, Shape},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
+    light::ChunkLight,
 };
 use crate::{
     config::{CHUNK_SIZE, WORLD_HEIGHT},
@@ -29,6 +30,10 @@ pub struct BlockModel {
     pub opaque_cube: bool,
     /// Hides faces between two blocks with the same ID.
     pub cull_same: bool,
+    /// Light lost passing through it, 0–15.
+    pub opacity: u8,
+    /// Light it gives off, 0–15.
+    pub emission: u8,
     /// Indexed by `Face::index`.
     pub faces: [FaceTexture; 6],
 }
@@ -54,6 +59,8 @@ impl BlockModels {
             shape: Shape::Cube,
             opaque_cube: true,
             cull_same: false,
+            opacity: 15,
+            emission: 0,
             faces: [FaceTexture {
                 uv: missing_uv,
                 tint: FaceTint::None,
@@ -80,6 +87,8 @@ impl BlockModels {
                     shape: def.shape,
                     opaque_cube: def.is_opaque_cube(),
                     cull_same: def.cull_same,
+                    opacity: def.light_opacity(),
+                    emission: def.light,
                     faces,
                 });
             }
@@ -162,28 +171,114 @@ impl Mesh {
     }
 
     /// Adds a quad from corners ordered bottom-left, bottom-right, top-right,
-    /// top-left as seen from its front (counter-clockwise).
-    fn quad(&mut self, corners: [[f32; 3]; 4], uv: [f32; 4], color: [f32; 3]) {
+    /// top-left as seen from its front (counter-clockwise), with a color and
+    /// (sky, block) light per corner.
+    fn quad(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uv: [f32; 4],
+        colors: [[f32; 3]; 4],
+        lights: [[f32; 2]; 4],
+    ) {
         let [u0, v0, u1, v1] = uv;
         let uvs = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
         let base = self.vertices.len() as u32;
-        for (position, uv) in corners.into_iter().zip(uvs) {
+        for i in 0..4 {
             self.vertices.push(Vertex {
-                position,
-                uv,
-                color,
+                position: corners[i],
+                uv: uvs[i],
+                color: colors[i],
+                light: lights[i],
             });
         }
-        self.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        // Split along the brighter diagonal so a single dark corner doesn't
+        // smear across the whole face.
+        let weight =
+            |i: usize| colors[i][0] + colors[i][1] + colors[i][2] + lights[i][0].max(lights[i][1]);
+        let order = if weight(0) + weight(2) < weight(1) + weight(3) {
+            [1, 2, 3, 1, 3, 0]
+        } else {
+            [0, 1, 2, 0, 2, 3]
+        };
+        self.indices.extend(order.map(|i| base + i));
     }
 
-    /// Adds a quad visible from both sides.
-    fn double_sided_quad(&mut self, corners: [[f32; 3]; 4], uv: [f32; 4], color: [f32; 3]) {
+    /// Adds an evenly colored and lit quad visible from both sides.
+    fn double_sided_quad(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uv: [f32; 4],
+        color: [f32; 3],
+        light: [f32; 2],
+    ) {
         let [a, b, c, d] = corners;
-        self.quad(corners, uv, color);
-        self.quad([b, a, d, c], uv, color);
+        self.quad(corners, uv, [color; 4], [light; 4]);
+        self.quad([b, a, d, c], uv, [color; 4], [light; 4]);
     }
+}
+
+/// 1.0.0's ambient occlusion value for a block next to a vertex.
+fn occlusion(opaque: bool) -> f32 {
+    if opaque { 0.2 } else { 1.0 }
+}
+
+/// Smooth lighting for one face of the block at chunk-local `cell`, like
+/// 1.0.0: each corner averages the light of the four blocks touching it on
+/// the face's outer side (dark solid blocks take the face neighbor's light)
+/// and darkens by how many of them are opaque. Returns (occlusion, [sky,
+/// block]) per corner of `face_corners(face)`.
+fn smooth_face(
+    models: &BlockModels,
+    area: &ChunkArea,
+    light: &ChunkLight,
+    cell: [i32; 3],
+    face: Face,
+) -> [(f32, [f32; 2]); 4] {
+    let normal = face.normal();
+    let front = [
+        cell[0] + normal[0],
+        cell[1] + normal[1],
+        cell[2] + normal[2],
+    ];
+    let [a1, a2] = match face {
+        Face::Top | Face::Bottom => [0, 2],
+        Face::North | Face::South => [0, 1],
+        Face::East | Face::West => [1, 2],
+    };
+    let opaque = |p: [i32; 3]| {
+        area.get(p[0], p[1], p[2])
+            .is_some_and(|b| !b.is_air() && models.get(b).opaque_cube)
+    };
+    let light_at = |p: [i32; 3]| light.get(p[0], p[1], p[2]);
+    let front_light = light_at(front);
+    face_corners(face).map(|corner| {
+        let step = |p: [i32; 3], axis: usize| {
+            let mut p = p;
+            p[axis] += if corner[axis] > 0.5 { 1 } else { -1 };
+            p
+        };
+        let side1 = step(front, a1);
+        let side2 = step(front, a2);
+        let diagonal = step(side1, a2);
+        let (o1, o2) = (opaque(side1), opaque(side2));
+        // With both sides solid the diagonal is hidden; 1.0.0 uses a side instead.
+        let (oc, diagonal) = if o1 && o2 {
+            (o1, side1)
+        } else {
+            (opaque(diagonal), diagonal)
+        };
+        let ao = (1.0 + occlusion(o1) + occlusion(o2) + occlusion(oc)) / 4.0;
+        let mut sum = [front_light.0 as f32, front_light.1 as f32];
+        for p in [side1, side2, diagonal] {
+            let mut l = light_at(p);
+            if l == (0, 0) {
+                l = front_light;
+            }
+            sum[0] += l.0 as f32;
+            sum[1] += l.1 as f32;
+        }
+        (ao, sum.map(|v| v / 4.0))
+    })
 }
 
 /// Unit cube face corners, counter-clockwise from outside, starting at the
@@ -233,6 +328,51 @@ const CROP_PLANES: [[[f32; 3]; 4]; 4] = [
     ],
 ];
 
+/// 1.0.0's torch (`RenderBlocks.renderTorchAtAngle`): four planes cut from
+/// the full texture 1/16 either side of the center, which leaves a 2×2-pixel
+/// stick, plus a small cap at 10/16. Wall torches (data 1–4, see
+/// `Placement::Torch`) sit 0.2 higher, shifted 0.1 and leaning 0.4 at the
+/// base toward their wall. Returns (corners, uv) per quad, block-relative.
+fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
+    const HALF: f32 = 1.0 / 16.0;
+    const CAP: f32 = 0.625;
+    let (shift, lean) = match data {
+        1 => ([-0.1, 0.2, 0.0], [-0.4, 0.0]),
+        2 => ([0.1, 0.2, 0.0], [0.4, 0.0]),
+        3 => ([0.0, 0.2, -0.1], [0.0, -0.4]),
+        4 => ([0.0, 0.2, 0.1], [0.0, 0.4]),
+        _ => ([0.0; 3], [0.0; 2]),
+    };
+    let place = |c: [f32; 3], lean_by: f32| {
+        [
+            c[0] + shift[0] + lean[0] * lean_by,
+            c[1] + shift[1],
+            c[2] + shift[2] + lean[1] * lean_by,
+        ]
+    };
+    // Sides: move the face plane in to 7/16 or 9/16, then lean the base.
+    let side = |face: Face, axis: usize| {
+        face_corners(face).map(|mut c| {
+            c[axis] = 0.5 + if c[axis] > 0.5 { HALF } else { -HALF };
+            place(c, if c[1] == 0.0 { 1.0 } else { 0.0 })
+        })
+    };
+    let cap = face_corners(Face::Top).map(|c| {
+        let squeeze = |v: f32| 0.5 + if v > 0.5 { HALF } else { -HALF };
+        place([squeeze(c[0]), CAP, squeeze(c[2])], 1.0 - CAP)
+    });
+    let [u0, v0, u1, v1] = uv;
+    let (du, dv) = ((u1 - u0) / 16.0, (v1 - v0) / 16.0);
+    let cap_uv = [u0 + 7.0 * du, v0 + 6.0 * dv, u0 + 9.0 * du, v0 + 8.0 * dv];
+    [
+        (side(Face::West, 0), uv),
+        (side(Face::East, 0), uv),
+        (side(Face::North, 2), uv),
+        (side(Face::South, 2), uv),
+        (cap, cap_uv),
+    ]
+}
+
 fn translate(corners: [[f32; 3]; 4], origin: [f32; 3]) -> [[f32; 3]; 4] {
     corners.map(|c| [c[0] + origin[0], c[1] + origin[1], c[2] + origin[2]])
 }
@@ -258,8 +398,9 @@ fn face_visible(
     !(model.cull_same && neighbor.id() == block.id())
 }
 
-/// Builds the mesh for the center chunk of `area`, in world coordinates.
-pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
+/// Builds the mesh for the center chunk of `area`, lit by `light` (from
+/// `light::light_chunk` on the same area).
+pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) -> Mesh {
     let mut mesh = Mesh::default();
     let chunk = area.center();
     let (min_x, min_z) = chunk.pos.min_block();
@@ -280,6 +421,9 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                     let biome = chunk.biome(x, z);
                     let side = model.faces[Face::North.index()];
                     let side_color = models.tint_color(side.tint, biome);
+                    // Plants take the light of their own cell.
+                    let own = light.get(x as i32, y as i32, z as i32);
+                    let own_light = [own.0 as f32, own.1 as f32];
                     match model.shape {
                         Shape::None => {}
                         Shape::Cross => {
@@ -288,6 +432,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                                     translate(plane, origin),
                                     side.uv,
                                     side_color,
+                                    own_light,
                                 );
                             }
                         }
@@ -297,6 +442,17 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                                     translate(plane, origin),
                                     side.uv,
                                     side_color,
+                                    own_light,
+                                );
+                            }
+                        }
+                        Shape::Torch => {
+                            for (corners, uv) in torch_quads(block.data(), side.uv) {
+                                mesh.quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    [side_color; 4],
+                                    [own_light; 4],
                                 );
                             }
                         }
@@ -313,7 +469,14 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                                 let color = models
                                     .tint_color(texture.tint, biome)
                                     .map(|c| c * face.shade());
-                                mesh.quad(translate(face_corners(face), origin), texture.uv, color);
+                                let cell = [x as i32, y as i32, z as i32];
+                                let lit = smooth_face(models, area, light, cell, face);
+                                mesh.quad(
+                                    translate(face_corners(face), origin),
+                                    texture.uv,
+                                    lit.map(|(ao, _)| color.map(|c| c * ao)),
+                                    lit.map(|(_, l)| l),
+                                );
                             }
                         }
                     }
@@ -327,6 +490,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::light::light_chunk;
     use glam::Vec3;
 
     const STONE: BlockState = BlockState::new(1, 0);
@@ -335,6 +499,7 @@ mod tests {
     const FLOWER: BlockState = BlockState::new(37, 0);
     const WHEAT: BlockState = BlockState::new(59, 0);
     const TORCH: BlockState = BlockState::new(50, 0);
+    const FENCE: BlockState = BlockState::new(85, 0);
 
     fn models() -> BlockModels {
         let ron = r#"[
@@ -343,8 +508,9 @@ mod tests {
             (id: 18, name: "leaves", hardness: 0.2, layer: Cutout),
             (id: 20, name: "glass", hardness: 0.3, layer: Cutout, cull_same: true),
             (id: 37, name: "flower", hardness: 0.0, shape: Cross, layer: Cutout),
-            (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout),
+            (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout, light: 14),
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
+            (id: 85, name: "fence", hardness: 2.0, shape: Fence),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
         BlockModels::new(
@@ -382,7 +548,8 @@ mod tests {
             chunks.into_iter().map(|(p, c)| (p, Arc::new(c))).collect();
         let center = chunks.remove(&ChunkPos::new(0, 0)).unwrap();
         let area = ChunkArea::new(center, |pos| chunks.get(&pos).cloned());
-        mesh_chunk(&models(), &area)
+        let models = models();
+        mesh_chunk(&models, &area, &light_chunk(&models, &area))
     }
 
     fn quads(mesh: &Mesh) -> usize {
@@ -460,8 +627,101 @@ mod tests {
 
     #[test]
     fn placeholder_shapes_draw_as_cubes_without_hiding_neighbors() {
-        let mesh = mesh_with(&[(5, 64, 5, STONE), (5, 65, 5, TORCH)], true);
+        let mesh = mesh_with(&[(5, 64, 5, STONE), (5, 65, 5, FENCE)], true);
         assert_eq!(quads(&mesh), 6 + 5);
+    }
+
+    #[test]
+    fn torches_are_a_thin_stick_that_leans_off_walls() {
+        const WEST_PLANE: f32 = 5.5 - 1.0 / 16.0;
+        let floor = mesh_with(&[(5, 64, 5, BlockState::new(50, 5))], true);
+        assert_eq!(quads(&floor), 5);
+        let upright = floor
+            .vertices
+            .iter()
+            .filter(|v| v.position[0] == WEST_PLANE)
+            .count();
+        // The west plane's four corners plus the cap's west edge.
+        assert_eq!(upright, 6, "the west plane stands straight at 7/16");
+        // Attached to a wall to the west: raised 0.2, shifted 0.1 west, and
+        // the base leans another 0.4 west.
+        let wall = mesh_with(&[(5, 64, 5, BlockState::new(50, 1))], true);
+        // The first quad is the west plane.
+        for v in &wall.vertices[..4] {
+            let expected = if v.position[1] > 65.0 {
+                WEST_PLANE - 0.1
+            } else {
+                WEST_PLANE - 0.5
+            };
+            assert!((v.position[0] - expected).abs() < 1e-5, "{v:?}");
+        }
+    }
+
+    /// Vertices of the top face of the block at (x, y, z) in chunk (0, 0).
+    fn top_vertices(mesh: &Mesh, x: f32, y: f32, z: f32) -> Vec<Vertex> {
+        let top = y + 1.0;
+        let on_top = |v: &&Vertex| {
+            v.position[1] == top
+                && (x..=x + 1.0).contains(&v.position[0])
+                && (z..=z + 1.0).contains(&v.position[2])
+        };
+        // Top faces are the quads whose four corners all sit at `top`.
+        mesh.vertices
+            .chunks(4)
+            .filter(|quad| quad.iter().filter(on_top).count() == 4)
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn open_faces_are_fully_sky_lit_without_occlusion() {
+        let mesh = mesh_with(&[(5, 64, 5, STONE)], true);
+        let top = top_vertices(&mesh, 5.0, 64.0, 5.0);
+        assert_eq!(top.len(), 4);
+        for v in top {
+            assert_eq!(v.light, [15.0, 0.0]);
+            assert_eq!(v.color, [1.0; 3]);
+        }
+    }
+
+    #[test]
+    fn corners_against_walls_are_darkened_like_1_0_0() {
+        // A floor block with walls on its north (z - 1) and west (x - 1) sides.
+        let mesh = mesh_with(
+            &[
+                (5, 64, 5, STONE),
+                (5, 65, 4, STONE),
+                (4, 65, 5, STONE),
+                (4, 65, 4, STONE),
+            ],
+            true,
+        );
+        let ao_at = |x: f32, z: f32| {
+            top_vertices(&mesh, 5.0, 64.0, 5.0)
+                .iter()
+                .find(|v| v.position[0] == x && v.position[2] == z)
+                .unwrap()
+                .color[0]
+        };
+        assert!((ao_at(6.0, 6.0) - 1.0).abs() < 1e-6);
+        // One wall: (1 + 0.2 + 1 + 1) / 4.
+        assert!((ao_at(6.0, 5.0) - 0.8).abs() < 1e-6);
+        assert!((ao_at(5.0, 6.0) - 0.8).abs() < 1e-6);
+        // Both walls hide the corner: (1 + 0.2 + 0.2 + 0.2) / 4.
+        assert!((ao_at(5.0, 5.0) - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn faces_near_a_torch_get_block_light() {
+        let mesh = mesh_with(&[(5, 64, 5, STONE), (5, 65, 5, TORCH)], true);
+        // The torch's placeholder cube sits on the stone, hiding its top; the
+        // stone's east face sees the torch's light one block away.
+        let east = mesh
+            .vertices
+            .iter()
+            .find(|v| v.position == [6.0, 65.0, 5.0] && v.light[1] > 0.0);
+        assert!(east.is_some());
     }
 
     #[test]
@@ -495,7 +755,12 @@ mod tests {
         // The texture's top edge (v0) must be on each side face's top edge.
         let mut uv_mesh = Mesh::default();
         for face in [Face::North, Face::South, Face::East, Face::West] {
-            uv_mesh.quad(face_corners(face), [0.0, 0.0, 1.0, 1.0], [1.0; 3]);
+            uv_mesh.quad(
+                face_corners(face),
+                [0.0, 0.0, 1.0, 1.0],
+                [[1.0; 3]; 4],
+                [[15.0, 0.0]; 4],
+            );
         }
         for v in &uv_mesh.vertices {
             assert_eq!(v.uv[1] == 0.0, v.position[1] == 1.0, "{v:?}");
@@ -539,7 +804,8 @@ mod tests {
         chunk.set(0, 64, 0, BlockState::new(2, 0));
         chunk.set(5, 64, 0, BlockState::new(2, 0));
         chunk.set_biome(5, 0, Biome::Desert);
-        let mesh = mesh_chunk(&models, &ChunkArea::new(Arc::new(chunk), |_| None));
+        let area = ChunkArea::new(Arc::new(chunk), |_| None);
+        let mesh = mesh_chunk(&models, &area, &light_chunk(&models, &area));
         let top_color = |x: f32| {
             mesh.vertices
                 .iter()

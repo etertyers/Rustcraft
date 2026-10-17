@@ -1,0 +1,322 @@
+//! Sky light and block light, computed by BFS flood fill.
+//!
+//! Light reaches at most 14 blocks from its source, less than a chunk's
+//! width, so a chunk's light depends only on its 3×3 neighborhood. Each mesh
+//! job recomputes the center chunk's light from scratch over that area, which
+//! makes removal (breaking a torch, opening a roof) and chunk borders correct
+//! by construction: there's no stored light to undo or to stitch together.
+
+use std::collections::VecDeque;
+
+use super::{block::BlockState, mesh::BlockModels, mesh::ChunkArea};
+use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+
+pub const MAX_LIGHT: u8 = 15;
+
+/// The area spans the center chunk and one chunk on each side.
+const AREA: usize = CHUNK_SIZE * 3;
+const AREA_OFFSET: i32 = CHUNK_SIZE as i32;
+/// The result keeps a one-block border around the chunk for face lighting.
+const BORDER: usize = CHUNK_SIZE + 2;
+
+/// Light for one chunk plus a one-block border, as `sky << 4 | block`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkLight {
+    cells: Vec<u8>,
+}
+
+impl ChunkLight {
+    /// (sky, block) light at chunk-local coordinates, with x and z in
+    /// -1..=16. Above the world is full sky light; below it is dark.
+    pub fn get(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        if y >= WORLD_HEIGHT as i32 {
+            return (MAX_LIGHT, 0);
+        }
+        if y < 0 {
+            return (0, 0);
+        }
+        debug_assert!(
+            (-1..=CHUNK_SIZE as i32).contains(&x) && (-1..=CHUNK_SIZE as i32).contains(&z)
+        );
+        let i = (y as usize * BORDER + (z + 1) as usize) * BORDER + (x + 1) as usize;
+        let cell = self.cells[i];
+        (cell >> 4, cell & 0xF)
+    }
+}
+
+fn area_index(x: usize, y: usize, z: usize) -> usize {
+    (y * AREA + z) * AREA + x
+}
+
+/// Computes light for the center chunk of `area`. Missing neighbor chunks
+/// count as empty.
+pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
+    let volume = AREA * AREA * WORLD_HEIGHT;
+    let mut opacity = vec![0u8; volume];
+    let mut sky = vec![0u8; volume];
+    let mut block = vec![0u8; volume];
+    // Lowest Y of each column's open sky (above the topmost block that dims light).
+    let mut open_from = vec![0usize; AREA * AREA];
+    let mut sky_queue = VecDeque::new();
+    let mut block_queue = VecDeque::new();
+
+    for z in 0..AREA {
+        for x in 0..AREA {
+            let (ax, az) = (x as i32 - AREA_OFFSET, z as i32 - AREA_OFFSET);
+            // Sunlight goes straight down undimmed until something absorbs it.
+            let mut level = MAX_LIGHT;
+            let mut open = true;
+            for y in (0..WORLD_HEIGHT).rev() {
+                let state = area.get(ax, y as i32, az).unwrap_or(BlockState::AIR);
+                if state.is_air() {
+                    sky[area_index(x, y, z)] = level;
+                    continue;
+                }
+                let model = models.get(state);
+                let i = area_index(x, y, z);
+                opacity[i] = model.opacity;
+                level = level.saturating_sub(model.opacity);
+                sky[i] = level;
+                if open && model.opacity > 0 {
+                    open = false;
+                    open_from[z * AREA + x] = y + 1;
+                }
+                if model.emission > 0 {
+                    block[i] = model.emission;
+                    block_queue.push_back(i as u32);
+                }
+            }
+        }
+    }
+
+    // Sunlit cells next to shade (a neighbor column's surface is higher, or
+    // this column is dimmed below) start the sideways spread.
+    for z in 0..AREA {
+        for x in 0..AREA {
+            let mut top = open_from[z * AREA + x];
+            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let (nx, nz) = (x as i32 + dx, z as i32 + dz);
+                if (0..AREA as i32).contains(&nx) && (0..AREA as i32).contains(&nz) {
+                    top = top.max(open_from[nz as usize * AREA + nx as usize]);
+                }
+            }
+            for y in 0..top.min(WORLD_HEIGHT) {
+                let i = area_index(x, y, z);
+                if sky[i] > 1 {
+                    sky_queue.push_back(i as u32);
+                }
+            }
+        }
+    }
+
+    spread(&mut sky, &opacity, sky_queue);
+    spread(&mut block, &opacity, block_queue);
+
+    let mut cells = vec![0u8; BORDER * BORDER * WORLD_HEIGHT];
+    for y in 0..WORLD_HEIGHT {
+        for z in 0..BORDER {
+            for x in 0..BORDER {
+                // Border cell 0 is area cell CHUNK_SIZE - 1.
+                let i = area_index(x + CHUNK_SIZE - 1, y, z + CHUNK_SIZE - 1);
+                cells[(y * BORDER + z) * BORDER + x] = sky[i] << 4 | block[i];
+            }
+        }
+    }
+    ChunkLight { cells }
+}
+
+/// Floods light outward from the queued cells: each step loses 1, or the
+/// entered block's opacity if that's more.
+fn spread(levels: &mut [u8], opacity: &[u8], mut queue: VecDeque<u32>) {
+    const STEPS: [(i32, i32, i32); 6] = [
+        (1, 0, 0),
+        (-1, 0, 0),
+        (0, 1, 0),
+        (0, -1, 0),
+        (0, 0, 1),
+        (0, 0, -1),
+    ];
+    let (w, h) = (AREA as i32, WORLD_HEIGHT as i32);
+    while let Some(i) = queue.pop_front() {
+        let i = i as usize;
+        let level = levels[i];
+        if level <= 1 {
+            continue;
+        }
+        let x = (i % AREA) as i32;
+        let z = ((i / AREA) % AREA) as i32;
+        let y = (i / (AREA * AREA)) as i32;
+        for (dx, dy, dz) in STEPS {
+            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+            if nx < 0 || nx >= w || nz < 0 || nz >= w || ny < 0 || ny >= h {
+                continue;
+            }
+            let n = area_index(nx as usize, ny as usize, nz as usize);
+            let next = level.saturating_sub(opacity[n].max(1));
+            if next > levels[n] {
+                levels[n] = next;
+                queue.push_back(n as u32);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::{
+        biome::BiomeColors,
+        block::BlockRegistry,
+        chunk::{Chunk, ChunkPos},
+    };
+    use std::{collections::HashMap, sync::Arc};
+
+    const STONE: BlockState = BlockState::new(1, 0);
+    const GLOWSTONE: BlockState = BlockState::new(89, 0);
+    const TORCH: BlockState = BlockState::new(50, 0);
+    const LEAVES: BlockState = BlockState::new(18, 0);
+    const WATER: BlockState = BlockState::new(9, 0);
+    const GLASS: BlockState = BlockState::new(20, 0);
+
+    fn models() -> BlockModels {
+        let registry = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        BlockModels::new(&registry, |_| None, [0.0; 4], BiomeColors::uniform())
+    }
+
+    /// A 3×3 chunk area centered on chunk (0, 0), with `fill` choosing each
+    /// block by world coordinates.
+    fn area(fill: impl Fn(i32, i32, i32) -> BlockState) -> ChunkArea {
+        let mut chunks = HashMap::new();
+        for cz in -1..=1 {
+            for cx in -1..=1 {
+                let pos = ChunkPos::new(cx, cz);
+                let mut chunk = Chunk::new(pos);
+                let (min_x, min_z) = pos.min_block();
+                for y in 0..WORLD_HEIGHT {
+                    for z in 0..CHUNK_SIZE {
+                        for x in 0..CHUNK_SIZE {
+                            let block = fill(min_x + x as i32, y as i32, min_z + z as i32);
+                            chunk.set(x, y, z, block);
+                        }
+                    }
+                }
+                chunks.insert(pos, Arc::new(chunk));
+            }
+        }
+        let center = chunks.remove(&ChunkPos::new(0, 0)).unwrap();
+        ChunkArea::new(center, |pos| chunks.get(&pos).cloned())
+    }
+
+    /// Stone up to y 63, with `extra` overriding single blocks.
+    fn ground(extra: &[(i32, i32, i32, BlockState)]) -> ChunkArea {
+        let extra = extra.to_vec();
+        area(move |x, y, z| {
+            if let Some(&(.., b)) = extra
+                .iter()
+                .find(|&&(ex, ey, ez, _)| (ex, ey, ez) == (x, y, z))
+            {
+                b
+            } else if y <= 63 {
+                STONE
+            } else {
+                BlockState::AIR
+            }
+        })
+    }
+
+    #[test]
+    fn open_sky_is_full_and_solid_ground_is_dark() {
+        let light = light_chunk(&models(), &ground(&[]));
+        assert_eq!(light.get(5, 64, 5), (15, 0));
+        assert_eq!(light.get(5, 127, 5), (15, 0));
+        assert_eq!(light.get(5, 63, 5), (0, 0));
+        assert_eq!(light.get(5, 128, 5), (15, 0));
+    }
+
+    #[test]
+    fn a_sealed_cave_is_dark() {
+        // A pocket of air deep underground.
+        let cave: Vec<_> = (3..8).map(|x| (x, 30, 5, BlockState::AIR)).collect();
+        let light = light_chunk(&models(), &ground(&cave));
+        for x in 3..8 {
+            assert_eq!(light.get(x, 30, 5), (0, 0));
+        }
+    }
+
+    #[test]
+    fn sky_light_spreads_sideways_under_an_overhang_losing_one_per_block() {
+        // A shaft down from the surface at x = 0 into a roofed tunnel at y 60.
+        let mut edits: Vec<_> = (60..=63).map(|y| (0, y, 5, BlockState::AIR)).collect();
+        edits.extend((1..10).map(|x| (x, 60, 5, BlockState::AIR)));
+        let light = light_chunk(&models(), &ground(&edits));
+        // The shaft is open to the sky; each block into the tunnel loses one.
+        assert_eq!(light.get(0, 60, 5).0, 15);
+        for x in 1..10 {
+            assert_eq!(light.get(x, 60, 5).0, 15 - x as u8, "x = {x}");
+        }
+    }
+
+    #[test]
+    fn a_torch_lights_a_cave_and_fades_with_distance() {
+        let mut cave: Vec<_> = (0..16).map(|x| (x, 30, 5, BlockState::AIR)).collect();
+        cave[2] = (2, 30, 5, TORCH);
+        let light = light_chunk(&models(), &ground(&cave));
+        assert_eq!(light.get(2, 30, 5), (0, 14));
+        assert_eq!(light.get(3, 30, 5), (0, 13));
+        assert_eq!(light.get(15, 30, 5), (0, 1));
+        // The stone around the tunnel is dark.
+        assert_eq!(light.get(3, 31, 5), (0, 0));
+    }
+
+    #[test]
+    fn opaque_emitters_light_their_neighbors() {
+        let light = light_chunk(&models(), &ground(&[(4, 64, 4, GLOWSTONE)]));
+        assert_eq!(light.get(4, 64, 4).1, 15);
+        assert_eq!(light.get(5, 64, 4).1, 14);
+        assert_eq!(light.get(4, 65, 4).1, 14);
+    }
+
+    #[test]
+    fn light_crosses_chunk_borders() {
+        // A torch in the west neighbor, 3 blocks from the border.
+        let mut cave: Vec<_> = (-8..8).map(|x| (x, 30, 5, BlockState::AIR)).collect();
+        cave[5] = (-3, 30, 5, TORCH);
+        let light = light_chunk(&models(), &ground(&cave));
+        assert_eq!(light.get(-1, 30, 5).1, 12);
+        assert_eq!(light.get(0, 30, 5).1, 11);
+        assert_eq!(light.get(7, 30, 5).1, 4);
+    }
+
+    #[test]
+    fn leaves_and_water_dim_sky_light() {
+        let light = light_chunk(
+            &models(),
+            &ground(&[
+                (3, 66, 3, LEAVES),
+                (3, 65, 3, LEAVES),
+                (8, 63, 8, WATER),
+                (8, 62, 8, WATER),
+                (12, 64, 12, GLASS),
+            ]),
+        );
+        // Two leaves dim the column to 13, but open air beside it gives 14.
+        assert_eq!(light.get(3, 64, 3).0, 14);
+        assert_eq!(light.get(3, 65, 3).0, 14);
+        // Water absorbs 3 per block.
+        assert_eq!(light.get(8, 63, 8).0, 12);
+        assert_eq!(light.get(8, 62, 8).0, 9);
+        // Glass is clear.
+        assert_eq!(light.get(12, 64, 12).0, 15);
+    }
+
+    #[test]
+    fn removing_a_torch_leaves_no_light_behind() {
+        let mut cave: Vec<_> = (0..8).map(|x| (x, 30, 5, BlockState::AIR)).collect();
+        let models = models();
+        cave[3] = (3, 30, 5, TORCH);
+        assert!(light_chunk(&models, &ground(&cave)).get(4, 30, 5).1 > 0);
+        cave[3] = (3, 30, 5, BlockState::AIR);
+        let light = light_chunk(&models, &ground(&cave));
+        assert!((0..8).all(|x| light.get(x, 30, 5) == (0, 0)));
+    }
+}

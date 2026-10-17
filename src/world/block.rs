@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use glam::IVec3;
 use serde::Deserialize;
 
 use super::{Face, biome::rgb};
@@ -164,6 +165,18 @@ pub enum Shape {
     DragonEgg,
 }
 
+/// How placing a block sets its data value.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Placement {
+    /// Keeps the data value it was placed with.
+    #[default]
+    Plain,
+    /// Attaches to the clicked face like a 1.0.0 torch: data 1–4 for walls
+    /// (attached to the block to the west, east, north, south), 5 for floors.
+    /// Can't hang from ceilings.
+    Torch,
+}
+
 /// How a block's pixels are drawn.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum RenderLayer {
@@ -202,6 +215,10 @@ pub struct BlockDef {
     /// Light emitted, 0–15.
     #[serde(default)]
     pub light: u8,
+    /// Light lost passing through, 0–15 (1.0.0's `lightOpacity`, with 255 as
+    /// 15). Defaults to 15 for opaque cubes and 0 for everything else.
+    #[serde(default)]
+    pub opacity: Option<u8>,
     /// Hide faces between two blocks of this type (glass, water, ice).
     #[serde(default)]
     pub cull_same: bool,
@@ -216,6 +233,8 @@ pub struct BlockDef {
     /// pressure plates, redstone, snow layers, standing signs).
     #[serde(default)]
     pub needs_ground: bool,
+    #[serde(default)]
+    pub placement: Placement,
     #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
@@ -248,6 +267,25 @@ impl BlockDef {
             .unwrap_or(self.tint)
     }
 
+    pub fn light_opacity(&self) -> u8 {
+        self.opacity
+            .unwrap_or(if self.is_opaque_cube() { 15 } else { 0 })
+    }
+
+    /// Offset to the block holding this one up, if it pops off without it.
+    pub fn support(&self, data: u8) -> Option<IVec3> {
+        match self.placement {
+            Placement::Torch => Some(match data {
+                1 => IVec3::NEG_X,
+                2 => IVec3::X,
+                3 => IVec3::NEG_Z,
+                4 => IVec3::Z,
+                _ => IVec3::NEG_Y,
+            }),
+            Placement::Plain => self.needs_ground.then_some(IVec3::NEG_Y),
+        }
+    }
+
     /// Whether the crosshair can select it (everything but air and fluids).
     pub fn is_targetable(&self) -> bool {
         !matches!(self.shape, Shape::None | Shape::Liquid)
@@ -278,6 +316,9 @@ impl BlockRegistry {
             let index = def.id as usize;
             if let Some(&data) = def.variants.keys().find(|&&d| d as usize >= DATA_VALUES) {
                 bail!("block {} has out-of-range data value {data}", def.name);
+            }
+            if def.opacity.is_some_and(|o| o > 15) {
+                bail!("block {} has opacity above 15", def.name);
             }
             if def.light > 15 {
                 bail!("block {} has light level {} above 15", def.name, def.light);

@@ -6,8 +6,8 @@ use super::{collision::Aabb, raycast::Hit};
 use crate::{
     config::WORLD_HEIGHT,
     world::{
-        World,
-        block::{BlockDef, BlockRegistry, BlockState},
+        Face, World,
+        block::{BlockDef, BlockRegistry, BlockState, Placement},
     },
 };
 
@@ -21,7 +21,7 @@ pub const HOTBAR: [BlockState; 9] = [
     BlockState::new(20, 0), // glass
     BlockState::new(45, 0), // bricks
     BlockState::new(98, 0), // stone bricks
-    BlockState::new(35, 0), // white wool
+    BlockState::new(50, 0), // torch
 ];
 
 /// Ticks between breaks while the button is held (1.0.0's creative `blockHitDelay`).
@@ -37,8 +37,8 @@ fn def_at<'a>(world: &World, blocks: &'a BlockRegistry, at: IVec3) -> Option<&'a
 }
 
 /// Breaks the block at `at` (instantly, until mining exists in M7), plus
-/// anything standing on it that needs ground, like flowers or a sugar cane
-/// stack. Unbreakable blocks (bedrock) give no edits.
+/// anything it held up: flowers or a sugar cane stack on top, torches on
+/// its sides. Unbreakable blocks (bedrock) give no edits.
 pub fn break_block(world: &World, blocks: &BlockRegistry, at: IVec3) -> Vec<Edit> {
     let Some(def) = def_at(world, blocks, at) else {
         return Vec::new();
@@ -47,10 +47,22 @@ pub fn break_block(world: &World, blocks: &BlockRegistry, at: IVec3) -> Vec<Edit
         return Vec::new();
     }
     let mut edits = vec![(at, BlockState::AIR)];
-    let mut above = at + IVec3::Y;
-    while def_at(world, blocks, above).is_some_and(|def| def.needs_ground) {
-        edits.push((above, BlockState::AIR));
-        above += IVec3::Y;
+    let mut next = 0;
+    while let Some(&(removed, _)) = edits.get(next) {
+        next += 1;
+        for face in Face::ALL {
+            let neighbor = removed + IVec3::from_array(face.normal());
+            let Some(state) = world.block(neighbor.x, neighbor.y, neighbor.z) else {
+                continue;
+            };
+            let held = blocks
+                .get(state.id())
+                .and_then(|def| def.support(state.data()))
+                .is_some_and(|offset| neighbor + offset == removed);
+            if held && !edits.iter().any(|&(p, _)| p == neighbor) {
+                edits.push((neighbor, BlockState::AIR));
+            }
+        }
     }
     edits
 }
@@ -82,12 +94,29 @@ pub fn place_block(
     if new.solid && Aabb::block(at.x, at.y, at.z).intersects(player) {
         return None;
     }
-    if new.needs_ground
-        && def_at(world, blocks, at - IVec3::Y).is_none_or(|below| below.replaceable)
-    {
-        return None;
+    let data = match new.placement {
+        Placement::Plain => block.data(),
+        Placement::Torch => match hit.face? {
+            Face::Top => 5,
+            Face::East => 1,
+            Face::West => 2,
+            Face::South => 3,
+            Face::North => 4,
+            Face::Bottom => return None,
+        },
+    };
+    if let Some(offset) = new.support(data) {
+        let support = def_at(world, blocks, at + offset)?;
+        // Torches need a full solid block; plants just need ground.
+        let holds = match new.placement {
+            Placement::Torch => support.is_opaque_cube(),
+            Placement::Plain => !support.replaceable,
+        };
+        if !holds {
+            return None;
+        }
     }
-    Some((at, block))
+    Some((at, BlockState::new(block.id(), data)))
 }
 
 #[cfg(test)]
@@ -263,11 +292,77 @@ mod tests {
     }
 
     #[test]
-    fn hotbar_blocks_are_solid_full_blocks() {
+    fn hotbar_has_building_blocks_and_a_torch() {
         let blocks = blocks();
-        for block in HOTBAR {
+        for block in &HOTBAR[..8] {
             let def = blocks.get(block.id()).unwrap();
             assert!(def.solid && def.is_targetable(), "{}", def.name);
         }
+        assert_eq!(blocks.get(HOTBAR[8].id()).unwrap().name, "torch");
+    }
+
+    const TORCH: BlockState = BlockState::new(50, 0);
+
+    #[test]
+    fn torches_attach_to_floors_and_walls_like_1_0_0() {
+        let world = world_with(&[(IVec3::new(3, 64, 3), STONE)]);
+        let blocks = blocks();
+        let player = far_player();
+        let place = |face| {
+            place_block(
+                &world,
+                &blocks,
+                &hit(IVec3::new(3, 64, 3), face),
+                TORCH,
+                &player,
+            )
+        };
+        assert_eq!(
+            place(Face::Top),
+            Some((IVec3::new(3, 65, 3), BlockState::new(50, 5)))
+        );
+        assert_eq!(
+            place(Face::East),
+            Some((IVec3::new(4, 64, 3), BlockState::new(50, 1)))
+        );
+        assert_eq!(
+            place(Face::West),
+            Some((IVec3::new(2, 64, 3), BlockState::new(50, 2)))
+        );
+        assert_eq!(
+            place(Face::South),
+            Some((IVec3::new(3, 64, 4), BlockState::new(50, 3)))
+        );
+        assert_eq!(
+            place(Face::North),
+            Some((IVec3::new(3, 64, 2), BlockState::new(50, 4)))
+        );
+        assert_eq!(place(Face::Bottom), None);
+        // Not on glass.
+        let world = world_with(&[(IVec3::new(3, 64, 3), BlockState::new(20, 0))]);
+        let on_glass = hit(IVec3::new(3, 64, 3), Face::Top);
+        assert_eq!(
+            place_block(&world, &blocks, &on_glass, TORCH, &player),
+            None
+        );
+    }
+
+    #[test]
+    fn breaking_a_wall_pops_its_torches_but_not_others() {
+        let world = world_with(&[
+            (IVec3::new(3, 64, 3), STONE),
+            (IVec3::new(4, 64, 3), BlockState::new(50, 1)), // on the wall's east side
+            (IVec3::new(3, 65, 3), BlockState::new(50, 5)), // on top of the wall
+            (IVec3::new(3, 64, 4), BlockState::new(50, 5)), // on the floor beside it
+        ]);
+        let edits = break_block(&world, &blocks(), IVec3::new(3, 64, 3));
+        let mut cells: Vec<IVec3> = edits.iter().map(|(at, _)| *at).collect();
+        cells.sort_by_key(|c| (c.x, c.y, c.z));
+        let expected = [
+            IVec3::new(3, 64, 3),
+            IVec3::new(3, 65, 3),
+            IVec3::new(4, 64, 3),
+        ];
+        assert_eq!(cells, expected);
     }
 }
