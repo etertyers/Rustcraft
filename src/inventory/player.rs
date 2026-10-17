@@ -47,14 +47,16 @@ impl Inventory {
         self.slot(self.selected)
     }
 
-    /// Fixes a save whose slot list has the wrong length.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "saving the inventory comes next")
-    )]
-    pub fn repair(&mut self) {
+    /// Fixes a loaded inventory: the right number of slots, a valid
+    /// selection, and no stacks of items that don't exist or are empty.
+    pub fn repair(&mut self, items: &Items) {
         self.slots.resize(SLOTS, None);
         self.selected = self.selected.min(HOTBAR_SLOTS - 1);
+        for slot in &mut self.slots {
+            if slot.is_some_and(|stack| stack.count == 0 || !items.exists(stack.id)) {
+                *slot = None;
+            }
+        }
     }
 
     /// Picks up `stack`, filling matching stacks first, then empty slots,

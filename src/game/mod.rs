@@ -176,6 +176,10 @@ impl Game {
         );
         game.mode = level.game_mode;
         game.time = level.time;
+        game.inventory = player.inventory.clone();
+        game.inventory.repair(&game.items);
+        game.body.may_fly = game.mode.can_fly();
+        game.body.flying = player.flying && game.body.may_fly;
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -203,10 +207,18 @@ impl Game {
             return Ok(());
         };
         let chunks = self.chunks.save()?;
+        // A stack held in an open inventory screen goes back in the
+        // inventory rather than being lost.
+        let mut inventory = self.inventory.clone();
+        if let Some(held) = self.cursor {
+            inventory.add(held, &self.items);
+        }
         saved.level.player = PlayerData {
             position: self.body.position().to_array(),
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
+            inventory,
+            flying: self.body.flying,
         };
         saved.level.time = self.time;
         saved.dir.save_level(&saved.level)?;
@@ -464,6 +476,13 @@ mod tests {
         game.camera.yaw = 1.25;
         game.camera.pitch = -0.5;
         game.time = 500;
+        game.inventory
+            .set(3, Some(ItemStack::with_damage(270, 1, 12)));
+        game.inventory
+            .set(20, Some(ItemStack::with_damage(35, 40, 14)));
+        game.inventory.selected = 3;
+        game.cursor = Some(ItemStack::new(50, 7));
+        game.body.flying = true;
         game.save().unwrap();
         drop(game);
 
@@ -474,6 +493,18 @@ mod tests {
         assert_eq!(game.time, 500);
         assert_eq!(game.body.position(), feet);
         assert_eq!((game.camera.yaw, game.camera.pitch), (1.25, -0.5));
+        assert_eq!(
+            game.inventory.slot(3),
+            Some(&ItemStack::with_damage(270, 1, 12))
+        );
+        assert_eq!(
+            game.inventory.slot(20),
+            Some(&ItemStack::with_damage(35, 40, 14))
+        );
+        assert_eq!(game.inventory.selected, 3);
+        // The held torches went back into the first free slot.
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(50, 7)));
+        assert!(game.body.flying);
         load_player_chunk(&mut game);
         assert_eq!(game.chunks.world().block(at.x, at.y, at.z), Some(bricks));
     }
