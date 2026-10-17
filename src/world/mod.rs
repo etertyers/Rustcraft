@@ -1,12 +1,15 @@
 //! Blocks, chunks and the loaded world.
 
+pub mod biome;
 pub mod block;
 pub mod chunk;
+pub mod manager;
 pub mod mesh;
 pub mod worldgen;
 
 use std::{collections::HashMap, sync::Arc};
 
+use crate::config;
 use chunk::{Chunk, ChunkPos};
 use mesh::ChunkArea;
 
@@ -19,6 +22,17 @@ pub struct World {
 impl World {
     pub fn insert(&mut self, chunk: Chunk) {
         self.chunks.insert(chunk.pos, Arc::new(chunk));
+    }
+
+    pub fn remove(&mut self, pos: ChunkPos) {
+        self.chunks.remove(&pos);
+    }
+
+    /// Biome of the column at world (x, z), if its chunk is loaded.
+    pub fn biome_at(&self, x: i32, z: i32) -> Option<biome::Biome> {
+        let chunk = self.get(ChunkPos::of_block(x, z))?;
+        let size = config::CHUNK_SIZE as i32;
+        Some(chunk.biome(x.rem_euclid(size) as usize, z.rem_euclid(size) as usize))
     }
 
     pub fn get(&self, pos: ChunkPos) -> Option<&Arc<Chunk>> {

@@ -10,8 +10,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use super::Face;
-use crate::config;
+use super::{Face, biome::rgb};
 
 pub type BlockId = u16;
 
@@ -93,18 +92,28 @@ pub enum Tint {
     Fixed(u32),
 }
 
+/// The tint on one face, before the biome is known.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FaceTint {
+    None,
+    /// The biome's grass color.
+    Grass,
+    /// The biome's foliage color.
+    Foliage,
+    /// A fixed sRGB color.
+    Rgb([f32; 3]),
+}
+
 impl Tint {
-    /// sRGB tint for `face`, white where the tint doesn't apply.
-    /// Biomes arrive in M3; until then every biome uses plains colors.
-    pub fn color(self, face: Face) -> [f32; 3] {
-        let rgb = match self {
-            Tint::None => return [1.0; 3],
-            Tint::GrassTop if face != Face::Top => return [1.0; 3],
-            Tint::GrassTop | Tint::Grass => config::PLAINS_GRASS_COLOR,
-            Tint::Foliage => config::PLAINS_FOLIAGE_COLOR,
-            Tint::Fixed(rgb) => rgb,
-        };
-        [rgb >> 16, rgb >> 8, rgb].map(|c| (c & 0xFF) as f32 / 255.0)
+    /// How `face` is tinted.
+    pub fn for_face(self, face: Face) -> FaceTint {
+        match self {
+            Tint::None => FaceTint::None,
+            Tint::GrassTop if face != Face::Top => FaceTint::None,
+            Tint::GrassTop | Tint::Grass => FaceTint::Grass,
+            Tint::Foliage => FaceTint::Foliage,
+            Tint::Fixed(hex) => FaceTint::Rgb(rgb(hex)),
+        }
     }
 }
 
@@ -323,11 +332,12 @@ mod tests {
 
     #[test]
     fn grass_top_tints_only_the_top() {
-        assert_ne!(Tint::GrassTop.color(Face::Top), [1.0; 3]);
-        assert_eq!(Tint::GrassTop.color(Face::North), [1.0; 3]);
+        assert_eq!(Tint::GrassTop.for_face(Face::Top), FaceTint::Grass);
+        assert_eq!(Tint::GrassTop.for_face(Face::North), FaceTint::None);
+        assert_eq!(Tint::Grass.for_face(Face::North), FaceTint::Grass);
         assert_eq!(
-            Tint::Fixed(0xFF8000).color(Face::East),
-            [1.0, 128.0 / 255.0, 0.0]
+            Tint::Fixed(0xFF8000).for_face(Face::East),
+            FaceTint::Rgb([1.0, 128.0 / 255.0, 0.0])
         );
     }
 

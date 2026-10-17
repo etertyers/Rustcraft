@@ -7,14 +7,23 @@ use std::time::Instant;
 use egui::{Align2, Color32, Frame, RichText};
 use winit::{event::WindowEvent, window::Window};
 
-use crate::render::{UiPaint, camera::Camera};
+use crate::{
+    render::{UiPaint, camera::Camera},
+    world::biome::Biome,
+};
 use fps::FpsCounter;
 
 /// World and renderer numbers shown in the F3 overlay.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DebugStats {
+    /// Chunk meshes drawn after frustum culling.
     pub chunks_drawn: usize,
+    /// Chunks in memory.
     pub chunks_loaded: usize,
+    /// Biome at the camera, if its chunk is loaded.
+    pub biome: Option<Biome>,
+    /// World seed, for generated worlds.
+    pub seed: Option<u64>,
 }
 
 pub struct DebugUi {
@@ -84,10 +93,12 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
     let block = p.floor();
     format!(
         "Rustcraft\n\
-         {fps:.0} fps, chunks {}/{} drawn\n\
+         {fps:.0} fps, chunks: {} drawn, {} loaded\n\
          XYZ: {:.3} / {:.3} / {:.3}\n\
          Block: {} {} {}\n\
-         Facing: {} ({:.1} / {:.1})",
+         Facing: {} ({:.1} / {:.1})\n\
+         Biome: {}\n\
+         Seed: {}",
         stats.chunks_drawn,
         stats.chunks_loaded,
         p.x,
@@ -99,6 +110,8 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         camera.facing().describe(),
         camera.yaw.to_degrees(),
         camera.pitch.to_degrees(),
+        stats.biome.map_or("-", Biome::name),
+        stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
     )
 }
 
@@ -127,14 +140,21 @@ mod tests {
         let stats = DebugStats {
             chunks_drawn: 12,
             chunks_loaded: 81,
+            biome: Some(Biome::Forest),
+            seed: Some(42),
         };
         let text = debug_text(59.6, &camera, &stats);
-        assert!(text.contains("60 fps, chunks 12/81 drawn"), "{text}");
+        assert!(
+            text.contains("60 fps, chunks: 12 drawn, 81 loaded"),
+            "{text}"
+        );
         assert!(text.contains("XYZ: -0.500 / 64.250 / 3.000"), "{text}");
         assert!(text.contains("Block: -1 64 3"), "{text}");
         assert!(
             text.contains("Facing: north (Towards negative Z)"),
             "{text}"
         );
+        assert!(text.contains("Biome: Forest"), "{text}");
+        assert!(text.contains("Seed: 42"), "{text}");
     }
 }
