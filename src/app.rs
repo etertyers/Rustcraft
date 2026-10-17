@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use glam::Vec3;
 use log::error;
 use winit::{
     application::ApplicationHandler,
@@ -12,14 +13,29 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::{config, render::Renderer};
+use crate::{
+    config,
+    render::{Renderer, camera::Camera},
+};
 
-#[derive(Default)]
 pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    camera: Camera,
     /// First fatal error; the event loop exits and `main` returns it.
     error: Option<anyhow::Error>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            window: None,
+            renderer: None,
+            // A few blocks south of the test cube, looking north and slightly down at it.
+            camera: Camera::new(Vec3::new(0.5, 1.8, 3.5), 0.0, -0.2),
+            error: None,
+        }
+    }
 }
 
 impl App {
@@ -66,11 +82,17 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => renderer.resize(size),
             WindowEvent::RedrawRequested => {
-                if let Err(err) = renderer.render() {
+                if let Err(err) = renderer.render(&self.camera) {
                     self.fail(event_loop, err);
                 }
             }
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 
