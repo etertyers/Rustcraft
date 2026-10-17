@@ -25,8 +25,18 @@ impl World {
         self.chunks.insert(chunk.pos, Arc::new(chunk));
     }
 
-    pub fn remove(&mut self, pos: ChunkPos) {
-        self.chunks.remove(&pos);
+    /// Re-adds a chunk kept from an earlier unload.
+    pub fn insert_shared(&mut self, chunk: Arc<Chunk>) {
+        self.chunks.insert(chunk.pos, chunk);
+    }
+
+    pub fn remove(&mut self, pos: ChunkPos) -> Option<Arc<Chunk>> {
+        self.chunks.remove(&pos)
+    }
+
+    /// A loaded chunk for editing; copies it first if a worker still holds it.
+    pub fn get_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.chunks.get_mut(&pos).map(Arc::make_mut)
     }
 
     /// Block at world (x, y, z): `None` if its chunk isn't loaded, air above
@@ -133,5 +143,18 @@ mod tests {
         assert_eq!(world.block(-1, 65, 3), Some(BlockState::AIR));
         assert_eq!(world.block(-1, 500, 3), Some(BlockState::AIR));
         assert_eq!(world.block(0, 64, 3), None);
+    }
+
+    #[test]
+    fn get_mut_copies_a_shared_chunk() {
+        let mut world = World::default();
+        world.insert(Chunk::new(ChunkPos::new(0, 0)));
+        let shared = world.get(ChunkPos::new(0, 0)).unwrap().clone();
+        world
+            .get_mut(ChunkPos::new(0, 0))
+            .unwrap()
+            .set(1, 2, 3, BlockState::new(4, 0));
+        assert!(shared.get(1, 2, 3).is_air());
+        assert_eq!(world.block(1, 2, 3), Some(BlockState::new(4, 0)));
     }
 }

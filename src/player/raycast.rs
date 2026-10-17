@@ -11,6 +11,14 @@ pub struct Hit {
     pub face: Option<Face>,
 }
 
+impl Hit {
+    /// The cell in front of the hit face, where a placed block goes.
+    pub fn adjacent(&self) -> Option<IVec3> {
+        self.face
+            .map(|face| self.block + IVec3::from_array(face.normal()))
+    }
+}
+
 /// Walks the cells along `dir` from `origin` up to `reach` blocks and
 /// returns the first one `is_target` accepts.
 pub fn raycast(
@@ -92,6 +100,7 @@ mod tests {
         let hit = raycast(DVec3::new(0.5, 64.5, 0.5), DVec3::X, 5.0, only(target)).unwrap();
         assert_eq!(hit.block, target);
         assert_eq!(hit.face, Some(Face::West));
+        assert_eq!(hit.adjacent(), Some(IVec3::new(2, 64, 0)));
     }
 
     #[test]
@@ -99,6 +108,7 @@ mod tests {
         let target = IVec3::new(0, 63, 0);
         let hit = raycast(DVec3::new(0.5, 65.62, 0.5), DVec3::NEG_Y, 5.0, only(target)).unwrap();
         assert_eq!(hit.face, Some(Face::Top));
+        assert_eq!(hit.adjacent(), Some(IVec3::new(0, 64, 0)));
     }
 
     #[test]
@@ -130,6 +140,7 @@ mod tests {
         let origin = DVec3::new(-0.5, 10.5, -6.5);
         let hit = raycast(origin, DVec3::NEG_X, 5.0, only(target)).unwrap();
         assert_eq!(hit.face, Some(Face::East));
+        assert_eq!(hit.adjacent(), Some(IVec3::new(-2, 10, -7)));
     }
 
     #[test]
@@ -137,5 +148,6 @@ mod tests {
         let target = IVec3::new(0, 0, 0);
         let hit = raycast(DVec3::splat(0.5), DVec3::Z, 5.0, only(target)).unwrap();
         assert_eq!(hit.face, None);
+        assert_eq!(hit.adjacent(), None);
     }
 }

@@ -11,7 +11,10 @@ use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, StartCause, WindowEvent},
+    event::{
+        DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause,
+        WindowEvent,
+    },
     event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
@@ -23,6 +26,7 @@ use crate::{
     player::{
         collision::WorldCollider,
         input::MoveKeys,
+        interaction::{self, BREAK_REPEAT_TICKS, HOTBAR, PLACE_REPEAT_TICKS},
         physics::Body,
         raycast::{self, Hit},
     },
@@ -31,7 +35,7 @@ use crate::{
         atlas::{Atlas, MISSING_TILE},
         camera::Camera,
     },
-    ui::{DebugStats, DebugUi},
+    ui::{DebugStats, DebugUi, Hud},
     world::{
         biome::BiomeColors,
         block::BlockRegistry,
@@ -64,6 +68,9 @@ const TICK: f32 = 1.0 / config::TICKS_PER_SECOND as f32;
 /// slows down instead of running a burst of ticks.
 const MAX_CATCH_UP: f32 = 10.0 * TICK;
 
+/// Trackpad scrolling this many pixels moves one hotbar slot.
+const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
+
 /// Falling below this returns the player to spawn (until health exists in M9).
 const VOID_Y: f64 = -64.0;
 
@@ -86,6 +93,16 @@ pub struct App {
     keys: MoveKeys,
     /// The block under the crosshair this frame.
     target: Option<Hit>,
+    /// Mouse buttons held for breaking and placing.
+    breaking: bool,
+    placing: bool,
+    /// Ticks until a held button acts again.
+    break_cooldown: u8,
+    place_cooldown: u8,
+    /// Selected `HOTBAR` slot.
+    slot: usize,
+    /// Trackpad scroll not yet turned into slot changes.
+    scroll_pixels: f64,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
     tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
@@ -131,6 +148,12 @@ impl App {
             spawn,
             keys: MoveKeys::default(),
             target: None,
+            breaking: false,
+            placing: false,
+            break_cooldown: 0,
+            place_cooldown: 0,
+            slot: 0,
+            scroll_pixels: 0.0,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
             flying: false,
@@ -243,6 +266,8 @@ impl App {
         self.cursor_grabbed = grab;
         if !grab {
             self.keys.clear();
+            self.breaking = false;
+            self.placing = false;
         }
     }
 
@@ -264,6 +289,10 @@ impl App {
                 self.body.velocity = DVec3::ZERO;
                 info!("flying {}", if self.flying { "on" } else { "off" });
             }
+        } else if let Some(slot) = hotbar_slot(key)
+            && pressed
+        {
+            self.slot = slot;
         } else if self.cursor_grabbed {
             self.keys.set_key(key, pressed);
         }
@@ -282,9 +311,43 @@ impl App {
         })
     }
 
-    /// One game tick: player physics.
+    /// A held button acts on the next tick, then every few ticks.
+    fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        match button {
+            MouseButton::Left => {
+                self.breaking = pressed;
+                self.break_cooldown = 0;
+            }
+            MouseButton::Right => {
+                self.placing = pressed;
+                self.place_cooldown = 0;
+            }
+            _ => {}
+        }
+    }
+
+    /// Scrolling down moves right along the hotbar, like Minecraft.
+    fn on_scroll(&mut self, delta: MouseScrollDelta) {
+        let steps = match delta {
+            MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
+            MouseScrollDelta::PixelDelta(pos) => {
+                self.scroll_pixels -= pos.y;
+                let steps = (self.scroll_pixels / SCROLL_PIXELS_PER_SLOT).trunc();
+                self.scroll_pixels -= steps * SCROLL_PIXELS_PER_SLOT;
+                steps as i32
+            }
+        };
+        self.slot = (self.slot as i32 + steps).rem_euclid(HOTBAR.len() as i32) as usize;
+    }
+
+    /// One game tick: player physics, then breaking and placing.
     fn tick(&mut self) {
-        self.prev_feet = self.body.position;
+        self.prev_feet = self.body.position();
+        self.move_player();
+        self.use_hands();
+    }
+
+    fn move_player(&mut self) {
         #[cfg(debug_assertions)]
         if self.flying {
             return;
@@ -302,9 +365,42 @@ impl App {
         }
         self.body
             .tick(&self.keys.move_input(), self.camera.yaw, &collider);
-        if self.body.position.y < VOID_Y {
+        if self.body.position().y < VOID_Y {
             self.body = Body::new(self.spawn);
             self.prev_feet = self.spawn;
+        }
+    }
+
+    fn use_hands(&mut self) {
+        self.break_cooldown = self.break_cooldown.saturating_sub(1);
+        self.place_cooldown = self.place_cooldown.saturating_sub(1);
+        let wants_break = self.breaking && self.break_cooldown == 0;
+        let wants_place = self.placing && self.place_cooldown == 0;
+        if !wants_break && !wants_place {
+            return;
+        }
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let Some(hit) = self.find_target(eye) else {
+            return;
+        };
+        let (Some(chunks), Some(blocks)) = (self.chunks.as_mut(), &self.blocks) else {
+            return;
+        };
+        if wants_break {
+            let edits = interaction::break_block(chunks.world(), blocks, hit.block);
+            if !edits.is_empty() {
+                chunks.set_blocks(&edits);
+                self.break_cooldown = BREAK_REPEAT_TICKS;
+            }
+        } else if let Some(edit) = interaction::place_block(
+            chunks.world(),
+            blocks,
+            &hit,
+            HOTBAR[self.slot],
+            &self.body.aabb(),
+        ) {
+            chunks.set_blocks(&[edit]);
+            self.place_cooldown = PLACE_REPEAT_TICKS;
         }
     }
 
@@ -314,9 +410,10 @@ impl App {
         self.last_frame = now;
         #[cfg(debug_assertions)]
         if self.flying {
-            let position = &mut self.body.position;
-            crate::player::fly::fly(position, self.camera.yaw, &self.keys, dt.min(MAX_FRAME_DT));
-            self.prev_feet = *position;
+            let mut feet = self.body.position();
+            crate::player::fly::fly(&mut feet, self.camera.yaw, &self.keys, dt.min(MAX_FRAME_DT));
+            self.body.set_position(feet);
+            self.prev_feet = feet;
         }
         self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
         while self.tick_time >= TICK {
@@ -324,7 +421,7 @@ impl App {
             self.tick_time -= TICK;
         }
         let alpha = (self.tick_time / TICK) as f64;
-        let feet = self.prev_feet.lerp(self.body.position, alpha);
+        let feet = self.prev_feet.lerp(self.body.position(), alpha);
         let eye = feet + DVec3::Y * self.body.eye_height();
         self.camera.position = eye.as_vec3();
         self.target = self.find_target(eye);
@@ -354,7 +451,14 @@ impl App {
             biome: chunks.world().biome_at(x, z),
             seed: chunks.seed(),
         };
-        let ui = debug_ui.frame(window, &self.camera, &stats, self.cursor_grabbed);
+        let selected = HOTBAR[self.slot];
+        let hud = Hud {
+            crosshair: self.cursor_grabbed,
+            selected: self.blocks.as_ref().map_or_else(String::new, |blocks| {
+                format!("{}: {}", self.slot + 1, blocks.display_name(selected))
+            }),
+        };
+        let ui = debug_ui.frame(window, &self.camera, &stats, &hud);
         match renderer.render(&self.camera, ui) {
             Ok(presented) => {
                 self.frame_skipped = !presented;
@@ -407,6 +511,10 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } if !self.cursor_grabbed => self.set_cursor_grab(true),
+            WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {
+                self.on_mouse_button(button, state == ElementState::Pressed);
+            }
+            WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed => self.on_scroll(delta),
             WindowEvent::KeyboardInput { event, .. } => self.on_key(&event),
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
@@ -443,4 +551,20 @@ impl ApplicationHandler for App {
         self.chunks = None;
         self.window = None;
     }
+}
+
+/// Number keys 1–9 pick a hotbar slot.
+fn hotbar_slot(key: KeyCode) -> Option<usize> {
+    const KEYS: [KeyCode; 9] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    KEYS.iter().position(|&k| k == key)
 }

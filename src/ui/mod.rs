@@ -26,6 +26,14 @@ pub struct DebugStats {
     pub seed: Option<u64>,
 }
 
+/// Always-on HUD pieces.
+pub struct Hud {
+    /// Shown while the cursor is grabbed for play.
+    pub crosshair: bool,
+    /// The selected hotbar block, shown at the bottom until the real hotbar (M7).
+    pub selected: String,
+}
+
 pub struct DebugUi {
     ctx: egui::Context,
     state: egui_winit::State,
@@ -74,15 +82,16 @@ impl DebugUi {
         window: &Window,
         camera: &Camera,
         stats: &DebugStats,
-        crosshair: bool,
+        hud: &Hud,
     ) -> UiPaint {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
         let text = debug_text(self.fps.fps(), camera, stats);
         let output = self.ctx.run_ui(input, |ui| {
-            if crosshair {
+            if hud.crosshair {
                 draw_crosshair(ui);
             }
+            show_selected(ui.ctx(), &hud.selected);
             if visible {
                 show_overlay(ui.ctx(), &text);
             }
@@ -146,6 +155,20 @@ fn draw_crosshair(ui: &egui::Ui) {
             stroke,
         );
     }
+}
+
+fn show_selected(ctx: &egui::Context, text: &str) {
+    egui::Area::new(egui::Id::unique("selected"))
+        .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            Frame::new()
+                .fill(Color32::from_black_alpha(128))
+                .inner_margin(4.0)
+                .show(ui, |ui| {
+                    ui.label(RichText::new(text).monospace().color(Color32::WHITE));
+                });
+        });
 }
 
 fn show_overlay(ctx: &egui::Context, text: &str) {

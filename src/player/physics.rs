@@ -39,8 +39,9 @@ const SNEAK_EDGE_STEP: f64 = 0.05;
 /// The player's physical body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Body {
-    /// Feet: the center of the hitbox's bottom face.
-    pub position: DVec3,
+    /// The hitbox is the stored state, as in 1.0.0: deriving it from the
+    /// feet position every tick would let rounding push it into a wall.
+    bb: Aabb,
     /// Blocks per tick.
     pub velocity: DVec3,
     pub on_ground: bool,
@@ -54,7 +55,7 @@ pub struct Body {
 impl Body {
     pub fn new(position: DVec3) -> Self {
         Self {
-            position,
+            bb: hitbox(position),
             velocity: DVec3::ZERO,
             on_ground: false,
             sneaking: false,
@@ -66,7 +67,22 @@ impl Body {
     }
 
     pub fn aabb(&self) -> Aabb {
-        hitbox(self.position)
+        self.bb
+    }
+
+    /// Feet: the center of the hitbox's bottom face.
+    pub fn position(&self) -> DVec3 {
+        DVec3::new(
+            (self.bb.min.x + self.bb.max.x) / 2.0,
+            self.bb.min.y,
+            (self.bb.min.z + self.bb.max.z) / 2.0,
+        )
+    }
+
+    /// Moves the feet to `feet` without collision, for free flight.
+    #[cfg(debug_assertions)]
+    pub fn set_position(&mut self, feet: DVec3) {
+        self.bb = hitbox(feet);
     }
 
     /// Camera height above the feet.
@@ -147,8 +163,8 @@ impl Body {
         if !self.on_ground {
             return AIR_FRICTION;
         }
-        let p = self.position.floor().as_ivec3();
-        let below = self.position.y.floor() as i32 - 1;
+        let p = self.position().floor().as_ivec3();
+        let below = self.bb.min.y.floor() as i32 - 1;
         world.slipperiness(p.x, below, p.z) as f64 * AIR_FRICTION
     }
 
@@ -176,11 +192,7 @@ impl Body {
             }
         }
 
-        self.position = DVec3::new(
-            end.min.x + PLAYER_WIDTH / 2.0,
-            end.min.y,
-            end.min.z + PLAYER_WIDTH / 2.0,
-        );
+        self.bb = end;
         self.collided_horizontally = moved.x != wanted.x || moved.z != wanted.z;
         self.on_ground = moved.y != wanted.y && wanted.y < 0.0;
         for axis in 0..3 {
@@ -330,9 +342,9 @@ mod tests {
         for _ in 0..ticks {
             body.tick(&input, 0.0, world);
         }
-        let before = body.position;
+        let before = body.position();
         body.tick(&input, 0.0, world);
-        (body.position - before).length() * TICKS_PER_SECOND as f64
+        (body.position() - before).length() * TICKS_PER_SECOND as f64
     }
 
     #[test]
@@ -380,8 +392,8 @@ mod tests {
         for _ in 0..20 {
             body.tick(&FORWARD, std::f32::consts::FRAC_PI_2, &world);
         }
-        assert!(body.position.x > 3.0, "{}", body.position);
-        assert!((body.position.z - 0.5).abs() < 1e-6);
+        assert!(body.position().x > 3.0, "{}", body.position());
+        assert!((body.position().z - 0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -397,13 +409,13 @@ mod tests {
         let mut ticks = 1;
         while !body.on_ground {
             body.tick(&MoveInput::default(), 0.0, &world);
-            apex = apex.max(body.position.y - 64.0);
+            apex = apex.max(body.position().y - 64.0);
             ticks += 1;
             assert!(ticks < 100);
         }
         assert!((apex - 1.2522).abs() < 0.001, "apex {apex}");
         assert_eq!(ticks, 12);
-        assert_eq!(body.position.y, 64.0);
+        assert_eq!(body.position().y, 64.0);
     }
 
     #[test]
@@ -414,7 +426,7 @@ mod tests {
             body.tick(&MoveInput::default(), 0.0, &world);
         }
         assert!(body.on_ground);
-        assert_eq!(body.position.y, 64.0);
+        assert_eq!(body.position().y, 64.0);
         assert_eq!(body.velocity.y, 0.0 - GRAVITY * VERTICAL_DRAG);
     }
 
@@ -433,9 +445,9 @@ mod tests {
             body.tick(&sprint, 0.0, &world);
         }
         assert!(
-            (body.position.z - (-2.0 + 0.3)).abs() < 1e-9,
+            (body.position().z - (-2.0 + 0.3)).abs() < 1e-9,
             "{}",
-            body.position
+            body.position()
         );
         assert!(!body.sprinting);
     }
@@ -448,7 +460,7 @@ mod tests {
         for _ in 0..30 {
             body.tick(&FORWARD, 0.0, &world);
         }
-        assert!(body.position.z < -3.0, "{}", body.position);
+        assert!(body.position().z < -3.0, "{}", body.position());
 
         let mut world = TestWorld::floor(Kind::Full);
         world.set(0, 64, -3, Kind::Full);
@@ -456,8 +468,8 @@ mod tests {
         for _ in 0..30 {
             body.tick(&FORWARD, 0.0, &world);
         }
-        assert_eq!(body.position.y, 64.0);
-        assert!(body.position.z > -2.0 + 0.29);
+        assert_eq!(body.position().y, 64.0);
+        assert!(body.position().z > -2.0 + 0.29);
     }
 
     #[test]
@@ -475,9 +487,9 @@ mod tests {
             body.tick(&input, 0.0, &world);
         }
         assert!(
-            body.position.z < -1.0 && body.position.y >= 65.0,
+            body.position().z < -1.0 && body.position().y >= 65.0,
             "{}",
-            body.position
+            body.position()
         );
     }
 
@@ -494,10 +506,10 @@ mod tests {
         for _ in 0..100 {
             body.tick(&input, 0.0, &world);
         }
-        assert_eq!(body.position.y, 64.0);
+        assert_eq!(body.position().y, 64.0);
         assert!(body.on_ground);
         // The hitbox still overlaps the block.
-        assert!(body.position.x < 1.0 + 0.3 && body.position.z > -0.3);
+        assert!(body.position().x < 1.0 + 0.3 && body.position().z > -0.3);
         // Without sneaking, the same walk falls off.
         let mut body = standing_at(0.5, 0.5);
         for _ in 0..40 {
@@ -510,7 +522,7 @@ mod tests {
                 &world,
             );
         }
-        assert!(body.position.y < 64.0);
+        assert!(body.position().y < 64.0);
     }
 
     #[test]
@@ -564,11 +576,11 @@ mod tests {
             for _ in 0..40 {
                 body.tick(&FORWARD, 0.0, &world);
             }
-            let released = body.position;
+            let released = body.position();
             for _ in 0..200 {
                 body.tick(&MoveInput::default(), 0.0, &world);
             }
-            (body.position - released).length()
+            (body.position() - released).length()
         };
         let (stone, ice) = (stop_distance(Kind::Full), stop_distance(Kind::Ice));
         assert!(stone < 0.5, "stone {stone}");
