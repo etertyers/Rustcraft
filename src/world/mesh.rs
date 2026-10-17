@@ -328,6 +328,51 @@ const CROP_PLANES: [[[f32; 3]; 4]; 4] = [
     ],
 ];
 
+/// 1.0.0's torch (`RenderBlocks.renderTorchAtAngle`): four planes cut from
+/// the full texture 1/16 either side of the center, which leaves a 2×2-pixel
+/// stick, plus a small cap at 10/16. Wall torches (data 1–4, see
+/// `Placement::Torch`) sit 0.2 higher, shifted 0.1 and leaning 0.4 at the
+/// base toward their wall. Returns (corners, uv) per quad, block-relative.
+fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
+    const HALF: f32 = 1.0 / 16.0;
+    const CAP: f32 = 0.625;
+    let (shift, lean) = match data {
+        1 => ([-0.1, 0.2, 0.0], [-0.4, 0.0]),
+        2 => ([0.1, 0.2, 0.0], [0.4, 0.0]),
+        3 => ([0.0, 0.2, -0.1], [0.0, -0.4]),
+        4 => ([0.0, 0.2, 0.1], [0.0, 0.4]),
+        _ => ([0.0; 3], [0.0; 2]),
+    };
+    let place = |c: [f32; 3], lean_by: f32| {
+        [
+            c[0] + shift[0] + lean[0] * lean_by,
+            c[1] + shift[1],
+            c[2] + shift[2] + lean[1] * lean_by,
+        ]
+    };
+    // Sides: move the face plane in to 7/16 or 9/16, then lean the base.
+    let side = |face: Face, axis: usize| {
+        face_corners(face).map(|mut c| {
+            c[axis] = 0.5 + if c[axis] > 0.5 { HALF } else { -HALF };
+            place(c, if c[1] == 0.0 { 1.0 } else { 0.0 })
+        })
+    };
+    let cap = face_corners(Face::Top).map(|c| {
+        let squeeze = |v: f32| 0.5 + if v > 0.5 { HALF } else { -HALF };
+        place([squeeze(c[0]), CAP, squeeze(c[2])], 1.0 - CAP)
+    });
+    let [u0, v0, u1, v1] = uv;
+    let (du, dv) = ((u1 - u0) / 16.0, (v1 - v0) / 16.0);
+    let cap_uv = [u0 + 7.0 * du, v0 + 6.0 * dv, u0 + 9.0 * du, v0 + 8.0 * dv];
+    [
+        (side(Face::West, 0), uv),
+        (side(Face::East, 0), uv),
+        (side(Face::North, 2), uv),
+        (side(Face::South, 2), uv),
+        (cap, cap_uv),
+    ]
+}
+
 fn translate(corners: [[f32; 3]; 4], origin: [f32; 3]) -> [[f32; 3]; 4] {
     corners.map(|c| [c[0] + origin[0], c[1] + origin[1], c[2] + origin[2]])
 }
@@ -401,6 +446,16 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 );
                             }
                         }
+                        Shape::Torch => {
+                            for (corners, uv) in torch_quads(block.data(), side.uv) {
+                                mesh.quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    [side_color; 4],
+                                    [own_light; 4],
+                                );
+                            }
+                        }
                         // Every other shape is a full cube until its model is built.
                         _ => {
                             for face in Face::ALL {
@@ -444,6 +499,7 @@ mod tests {
     const FLOWER: BlockState = BlockState::new(37, 0);
     const WHEAT: BlockState = BlockState::new(59, 0);
     const TORCH: BlockState = BlockState::new(50, 0);
+    const FENCE: BlockState = BlockState::new(85, 0);
 
     fn models() -> BlockModels {
         let ron = r#"[
@@ -454,6 +510,7 @@ mod tests {
             (id: 37, name: "flower", hardness: 0.0, shape: Cross, layer: Cutout),
             (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout, light: 14),
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
+            (id: 85, name: "fence", hardness: 2.0, shape: Fence),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
         BlockModels::new(
@@ -570,8 +627,34 @@ mod tests {
 
     #[test]
     fn placeholder_shapes_draw_as_cubes_without_hiding_neighbors() {
-        let mesh = mesh_with(&[(5, 64, 5, STONE), (5, 65, 5, TORCH)], true);
+        let mesh = mesh_with(&[(5, 64, 5, STONE), (5, 65, 5, FENCE)], true);
         assert_eq!(quads(&mesh), 6 + 5);
+    }
+
+    #[test]
+    fn torches_are_a_thin_stick_that_leans_off_walls() {
+        const WEST_PLANE: f32 = 5.5 - 1.0 / 16.0;
+        let floor = mesh_with(&[(5, 64, 5, BlockState::new(50, 5))], true);
+        assert_eq!(quads(&floor), 5);
+        let upright = floor
+            .vertices
+            .iter()
+            .filter(|v| v.position[0] == WEST_PLANE)
+            .count();
+        // The west plane's four corners plus the cap's west edge.
+        assert_eq!(upright, 6, "the west plane stands straight at 7/16");
+        // Attached to a wall to the west: raised 0.2, shifted 0.1 west, and
+        // the base leans another 0.4 west.
+        let wall = mesh_with(&[(5, 64, 5, BlockState::new(50, 1))], true);
+        // The first quad is the west plane.
+        for v in &wall.vertices[..4] {
+            let expected = if v.position[1] > 65.0 {
+                WEST_PLANE - 0.1
+            } else {
+                WEST_PLANE - 0.5
+            };
+            assert!((v.position[0] - expected).abs() < 1e-5, "{v:?}");
+        }
     }
 
     /// Vertices of the top face of the block at (x, y, z) in chunk (0, 0).

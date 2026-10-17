@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use glam::IVec3;
 use serde::Deserialize;
 
 use super::{Face, biome::rgb};
@@ -164,6 +165,18 @@ pub enum Shape {
     DragonEgg,
 }
 
+/// How placing a block sets its data value.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Placement {
+    /// Keeps the data value it was placed with.
+    #[default]
+    Plain,
+    /// Attaches to the clicked face like a 1.0.0 torch: data 1–4 for walls
+    /// (attached to the block to the west, east, north, south), 5 for floors.
+    /// Can't hang from ceilings.
+    Torch,
+}
+
 /// How a block's pixels are drawn.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum RenderLayer {
@@ -221,6 +234,8 @@ pub struct BlockDef {
     #[serde(default)]
     pub needs_ground: bool,
     #[serde(default)]
+    pub placement: Placement,
+    #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
     pub tint: Tint,
@@ -255,6 +270,20 @@ impl BlockDef {
     pub fn light_opacity(&self) -> u8 {
         self.opacity
             .unwrap_or(if self.is_opaque_cube() { 15 } else { 0 })
+    }
+
+    /// Offset to the block holding this one up, if it pops off without it.
+    pub fn support(&self, data: u8) -> Option<IVec3> {
+        match self.placement {
+            Placement::Torch => Some(match data {
+                1 => IVec3::NEG_X,
+                2 => IVec3::X,
+                3 => IVec3::NEG_Z,
+                4 => IVec3::Z,
+                _ => IVec3::NEG_Y,
+            }),
+            Placement::Plain => self.needs_ground.then_some(IVec3::NEG_Y),
+        }
     }
 
     /// Whether the crosshair can select it (everything but air and fluids).
