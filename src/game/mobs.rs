@@ -37,6 +37,26 @@ const DESPAWN_FAR: f64 = 128.0;
 const DESPAWN_NEAR: f64 = 32.0;
 const DESPAWN_AGE: u32 = 600;
 const DESPAWN_CHANCE: f32 = 1.0 / 800.0;
+/// Bodies this close sideways push each other (1.0.0's `expand(0.2, 0, 0.2)`).
+const PUSH_REACH: f64 = 0.2;
+/// Strength of that push.
+const PUSH: f64 = 0.05;
+
+/// The push `a` gets away from `b` (and `b` gets the opposite), after
+/// 1.0.0's `applyEntityCollision`.
+fn push_between(a: DVec3, b: DVec3) -> DVec3 {
+    let (mut dx, mut dz) = (a.x - b.x, a.z - b.z);
+    let mut d = dx.abs().max(dz.abs());
+    if d < 0.01 {
+        return DVec3::ZERO;
+    }
+    d = d.sqrt();
+    dx /= d;
+    dz /= d;
+    let f = (1.0 / d).min(1.0);
+    DVec3::new(dx * f * PUSH, 0.0, dz * f * PUSH)
+}
+
 /// Ticks of fire daylight gives a zombie (1.0.0's `setFire(8)`).
 const DAYLIGHT_FIRE: i32 = 160;
 
@@ -142,6 +162,7 @@ impl Game {
                 self.drop_loot(mob);
             }
         }
+        self.push_apart(&mut mobs);
         // Despawn far monsters; stash animals whose chunk unloaded.
         mobs.retain_mut(|mob| {
             let def = defs.get(mob.kind);
@@ -170,6 +191,33 @@ impl Game {
         });
         self.mobs = mobs;
         self.spawn_monsters();
+    }
+
+    /// 1.0.0's `applyEntityCollision`: overlapping living bodies (mobs and
+    /// the player) nudge each other apart.
+    fn push_apart(&mut self, mobs: &mut [Mob]) {
+        let reach = DVec3::new(PUSH_REACH, 0.0, PUSH_REACH);
+        for i in 0..mobs.len() {
+            if mobs[i].is_dead() {
+                continue;
+            }
+            let near = |bb: crate::player::collision::Aabb| {
+                crate::player::collision::Aabb::new(bb.min - reach, bb.max + reach)
+            };
+            if !self.body.flying && near(mobs[i].body.aabb()).intersects(&self.body.aabb()) {
+                let push = push_between(mobs[i].feet(), self.body.position());
+                mobs[i].body.velocity += push;
+                self.body.velocity -= push;
+            }
+            for j in i + 1..mobs.len() {
+                if !mobs[j].is_dead() && near(mobs[i].body.aabb()).intersects(&mobs[j].body.aabb())
+                {
+                    let push = push_between(mobs[i].feet(), mobs[j].feet());
+                    mobs[i].body.velocity += push;
+                    mobs[j].body.velocity -= push;
+                }
+            }
+        }
     }
 
     /// How much a mob likes `cell` to wander to: animals like the ground
