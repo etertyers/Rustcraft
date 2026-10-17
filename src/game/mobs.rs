@@ -128,7 +128,6 @@ impl Game {
                 blocks: &self.items.blocks,
             };
             let eyes = self.fluid_at(mob.eye()) == Some(Fluid::Water);
-            let was_dead = mob.is_dead();
             mob.tick(&intent.input, &collider, eyes);
             if def.burns_in_daylight && daytime && mob.body.liquid.is_none() {
                 self.maybe_ignite(mob);
@@ -138,7 +137,8 @@ impl Game {
             {
                 knock_back(&mut self.body, mob.feet());
             }
-            if mob.is_dead() && !was_dead {
+            if mob.is_dead() && !mob.looted {
+                mob.looted = true;
                 self.drop_loot(mob);
             }
         }

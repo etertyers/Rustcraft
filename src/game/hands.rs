@@ -6,7 +6,10 @@ use glam::{DVec3, IVec3};
 
 use super::Game;
 use crate::{
-    entity::item::ItemEntity,
+    entity::{
+        arrow::{self, Arrow, ArrowEvent},
+        item::ItemEntity,
+    },
     inventory::{item::Tool, player::HOTBAR_SLOTS, stack::ItemStack},
     player::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
@@ -15,6 +18,9 @@ use crate::{
     },
     world::{block::Fluid, harvest},
 };
+
+/// The arrow item, given back when a stuck arrow is picked up.
+const ARROW: u16 = 262;
 
 /// Exhaustion per block broken (1.0.0's `harvestBlock`).
 const BREAK_EXHAUSTION: f32 = 0.025;
@@ -43,6 +49,12 @@ impl Game {
         self.place_cooldown = self.place_cooldown.saturating_sub(1);
         let wants_break = self.breaking || self.break_clicked;
         let using = self.placing || self.place_clicked;
+        if self.keep_drawing(using && !wants_break) {
+            self.break_clicked = false;
+            self.place_clicked = false;
+            self.mining = None;
+            return;
+        }
         if using && !wants_break && self.keep_eating() {
             self.break_clicked = false;
             self.place_clicked = false;
@@ -160,6 +172,82 @@ impl Game {
             self.inventory.damage_selected(wear, &self.items);
         }
         self.chunks.set_blocks(&edits);
+    }
+
+    /// Draws a bow while `using` (right-click held) with ammunition, and
+    /// shoots on release. Returns true while drawing.
+    fn keep_drawing(&mut self, using: bool) -> bool {
+        let ammo = self
+            .inventory
+            .selected_stack()
+            .and_then(|stack| self.items.item(stack.id))
+            .and_then(|item| item.shoots);
+        let Some(ammo) = ammo else {
+            self.drawing = None;
+            return false;
+        };
+        let has_ammo = !self.mode.uses_up_items() || self.inventory.find(ammo).is_some();
+        if using && has_ammo {
+            self.drawing = Some(self.drawing.map_or(1, |ticks| ticks + 1));
+            return true;
+        }
+        if let Some(ticks) = self.drawing.take()
+            && let Some(power) = arrow::bow_power(ticks)
+        {
+            let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+            let forward = self.camera.forward().as_dvec3();
+            let pickup = self.mode.uses_up_items();
+            self.arrows.push(Arrow::shoot(eye, forward, power, pickup));
+            if pickup && let Some(slot) = self.inventory.find(ammo) {
+                self.inventory.take(slot, 1);
+            }
+            if self.mode.wears_tools() {
+                self.inventory.damage_selected(1, &self.items);
+            }
+        }
+        false
+    }
+
+    /// Moves arrows: hits on mobs, sticking in blocks, picking them up.
+    pub(super) fn tick_arrows(&mut self) {
+        let mut arrows = std::mem::take(&mut self.arrows);
+        let player = self.body.aabb();
+        for arrow in &mut arrows {
+            let world = self.chunks.world();
+            let blocks = &self.items.blocks;
+            let solid = |cell: glam::IVec3| {
+                world
+                    .block(cell.x, cell.y, cell.z)
+                    .and_then(|block| blocks.get(block.id()))
+                    .is_none_or(|def| def.solid)
+            };
+            let block_hit = |from: DVec3, dir: DVec3, reach: f64| {
+                let hit = crate::player::raycast::raycast(from, dir, reach, solid)?;
+                crate::player::collision::Aabb::block(hit.block.x, hit.block.y, hit.block.z)
+                    .ray_hit(from, dir, reach)
+            };
+            let in_water = self.fluid_at(arrow.position) == Some(Fluid::Water);
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            let from = arrow.position;
+            if let Some(ArrowEvent::HitMob { index, damage }) =
+                arrow.tick(block_hit, in_water, &self.mobs, &mut random)
+            {
+                self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+            }
+        }
+        arrows.retain(|arrow| {
+            if arrow.can_pick_up(&player)
+                && self
+                    .inventory
+                    .add(ItemStack::with_damage(ARROW, 1, 0), &self.items)
+                    .is_none()
+            {
+                return false;
+            }
+            !arrow.expired()
+        });
+        self.arrows = arrows;
     }
 
     /// A tick of eating the selected food while right-click is held.

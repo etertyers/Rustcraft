@@ -41,6 +41,9 @@ pub struct ItemDef {
     /// Item left in the hand after using this one (stew leaves a bowl).
     #[serde(default)]
     pub leftover: Option<ItemId>,
+    /// Ammunition this shoots, drawn by holding right-click (a bow).
+    #[serde(default)]
+    pub shoots: Option<ItemId>,
 }
 
 /// What eating restores (1.0.0's `ItemFood`).

@@ -38,7 +38,7 @@ use crate::{
         camera::Camera,
         entities::item_mesh,
         icons::ItemIcons,
-        models::add_mob,
+        models::{add_arrow, add_mob},
     },
     ui::{
         DebugStats, DebugUi, Hud,
@@ -172,10 +172,13 @@ impl App {
             });
         let sky = SkyImages::load(&textures.join("environment"))?;
         let mob_defs = Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?);
+        // Textures for entity models: each mob kind, then the arrow.
         let mob_textures = mob_defs
             .iter()
-            .map(|(_, def)| {
-                let path = textures.join("entity").join(&def.texture);
+            .map(|(_, def)| def.texture.as_str())
+            .chain(["arrow.png"])
+            .map(|name| {
+                let path = textures.join("entity").join(name);
                 Ok(image::open(&path)
                     .with_context(|| format!("loading {}", path.display()))?
                     .into_rgba8())
@@ -481,6 +484,12 @@ impl App {
                 let def = game.mob_defs().get(mob.kind);
                 add_mob(&mut meshes[index].1, mob, def, alpha, light_at(mob.eye()));
             }
+            // The arrow texture follows the mob textures.
+            let mut arrows = Mesh::default();
+            for arrow in &game.arrows {
+                add_arrow(&mut arrows, arrow, alpha, light_at(arrow.position));
+            }
+            meshes.push((game.mob_defs().iter().count(), arrows));
             renderer.set_mobs(&meshes);
         }
 

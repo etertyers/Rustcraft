@@ -116,6 +116,13 @@ impl Inventory {
         Some(stack)
     }
 
+    /// The first slot holding item `id`, if any.
+    pub fn find(&self, id: u16) -> Option<usize> {
+        self.slots
+            .iter()
+            .position(|slot| slot.is_some_and(|stack| stack.id == id))
+    }
+
     /// Wears the selected item by `amount`. Returns true if it broke.
     pub fn damage_selected(&mut self, amount: u16, items: &Items) -> bool {
         let Some(stack) = self.slots[self.selected].as_mut() else {

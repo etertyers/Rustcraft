@@ -16,6 +16,7 @@
 //   food        (hunger, saturation, always_edible): eaten by holding
 //               right-click for 32 ticks (1.0.0's ItemFood values)
 //   leftover    item left in the hand after use (stew → bowl)
+//   shoots      ammunition used up by drawing and releasing (bow → arrow)
 #![enable(implicit_some)]
 [
     (id: 256, name: "iron_shovel", texture: "iron_shovel", max_stack: 1, tool: (kind: Shovel, tier: Iron, attack: 3)),
@@ -23,7 +24,7 @@
     (id: 258, name: "iron_axe", texture: "iron_axe", max_stack: 1, tool: (kind: Axe, tier: Iron, attack: 5)),
     (id: 259, name: "flint_and_steel", texture: "flint_and_steel", max_stack: 1, durability: 64),
     (id: 260, name: "apple", texture: "apple", food: (hunger: 4, saturation: 0.3)),
-    (id: 261, name: "bow", texture: "bow_standby", max_stack: 1, durability: 384),
+    (id: 261, name: "bow", texture: "bow_standby", max_stack: 1, durability: 384, shoots: 262),
     (id: 262, name: "arrow", texture: "arrow"),
     (id: 263, name: "coal", texture: "coal", variants: {1: (name: "charcoal", texture: "charcoal")}),
     (id: 264, name: "diamond", texture: "diamond"),

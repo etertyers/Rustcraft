@@ -34,6 +34,11 @@ impl Aabb {
         Self::new(self.min + d.min(DVec3::ZERO), self.max + d.max(DVec3::ZERO))
     }
 
+    /// Whether `point` is inside (or on) the box.
+    pub fn contains(&self, point: DVec3) -> bool {
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
+    }
+
     /// Grows the box by `by` on every side.
     pub fn grow(self, by: f64) -> Self {
         Self::new(self.min - DVec3::splat(by), self.max + DVec3::splat(by))

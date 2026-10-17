@@ -50,6 +50,8 @@ pub struct Mob {
     pub limb_amount: f32,
     prev_limb_amount: f32,
     pub ai: AiState,
+    /// Its drops have been dropped (once, however it died).
+    pub looted: bool,
 }
 
 impl Mob {
@@ -71,6 +73,7 @@ impl Mob {
             limb_amount: 0.0,
             prev_limb_amount: 0.0,
             ai: AiState::default(),
+            looted: false,
         }
     }
 

@@ -8,6 +8,7 @@ use glam::{Mat3, Vec3};
 
 use crate::{
     entity::{
+        arrow::Arrow,
         mob::{DEATH_TICKS, Mob, angle_difference},
         mobs::{MobDef, Model, Part, PartBox, Role},
     },
@@ -71,6 +72,65 @@ pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8,
             );
         }
     }
+}
+
+/// Arrow size: 1.0.0 draws 16 model pixels at 0.05625 blocks each.
+const ARROW_SCALE: f32 = 0.05625;
+
+/// Adds an arrow (1.0.0's `RenderArrow`): two crossed shaft planes and a
+/// crossed tail, from arrow.png.
+pub fn add_arrow(mesh: &mut Mesh, arrow: &Arrow, alpha: f32, light: (u8, u8)) {
+    let center = arrow.position_between_ticks(alpha as f64).as_vec3();
+    let forward = arrow.heading.as_vec3().normalize_or(Vec3::NEG_Z);
+    let helper = if forward.y.abs() > 0.9 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let side = forward.cross(helper).normalize();
+    let up = side.cross(forward);
+    let place = |x: f32, y: f32, z: f32| {
+        (center + (forward * x + up * y + side * z) * ARROW_SCALE).to_array()
+    };
+    let light = [light.0 as f32, light.1 as f32];
+    let color = [1.0; 3];
+    let shaft = [0.0, 0.0, 0.5, 5.0 / 32.0];
+    let tail = [0.0, 5.0 / 32.0, 5.0 / 32.0, 10.0 / 32.0];
+    // The shaft in two crossed planes along the arrow, then the fletching
+    // across its back end.
+    mesh.quad(
+        [
+            place(-8.0, -2.0, 0.0),
+            place(8.0, -2.0, 0.0),
+            place(8.0, 2.0, 0.0),
+            place(-8.0, 2.0, 0.0),
+        ],
+        shaft,
+        [color; 4],
+        [light; 4],
+    );
+    mesh.quad(
+        [
+            place(-8.0, 0.0, -2.0),
+            place(8.0, 0.0, -2.0),
+            place(8.0, 0.0, 2.0),
+            place(-8.0, 0.0, 2.0),
+        ],
+        shaft,
+        [color; 4],
+        [light; 4],
+    );
+    mesh.quad(
+        [
+            place(-7.0, -2.0, -2.0),
+            place(-7.0, -2.0, 2.0),
+            place(-7.0, 2.0, 2.0),
+            place(-7.0, 2.0, -2.0),
+        ],
+        tail,
+        [color; 4],
+        [light; 4],
+    );
 }
 
 /// A part's rotation this frame about x and y (1.0.0's

@@ -22,7 +22,7 @@ use winit::{
 
 use crate::{
     config,
-    entity::{item::ItemEntity, mob::Mob, mobs::MobRegistry},
+    entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry},
     inventory::{
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
@@ -99,6 +99,9 @@ pub struct Game {
     pub cursor: Option<ItemStack>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    pub arrows: Vec<Arrow>,
+    /// Ticks the bow has been drawn.
+    drawing: Option<u32>,
     mob_defs: Arc<MobRegistry>,
     pub mobs: Vec<Mob>,
     /// Animals in unloaded chunks, waiting for their chunk to come back.
@@ -163,6 +166,8 @@ impl Game {
             stats: Stats::default(),
             cursor: None,
             entities: Vec::new(),
+            arrows: Vec::new(),
+            drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
             mobs: Vec::new(),
             stashed_mobs: HashMap::new(),
@@ -412,6 +417,7 @@ impl Game {
             self.use_hands();
         }
         self.tick_items();
+        self.tick_arrows();
         self.tick_mobs();
         self.time += 1;
         self.ticks_since_save += 1;
@@ -980,5 +986,53 @@ mod tests {
             game.tick();
         }
         assert!(game.mobs.is_empty(), "removed after lying dead");
+    }
+
+    #[test]
+    fn a_fully_drawn_bow_shoots_an_arrow_into_a_zombie() {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        let kind = game.mob_defs.find("zombie").unwrap();
+        let zombie = Mob::new(
+            kind,
+            game.mob_defs.get(kind),
+            DVec3::new(0.5, 64.0, -4.5),
+            0.0,
+        );
+        game.mobs.push(zombie);
+        game.inventory.set(0, Some(ItemStack::new(261, 1)));
+        game.inventory.set(5, Some(ItemStack::new(262, 5)));
+        game.camera.pitch = 0.0;
+        game.time = 18000;
+        game.placing = true;
+        for _ in 0..20 {
+            game.tick();
+        }
+        assert!(game.arrows.is_empty(), "drawing, not shot yet");
+        game.placing = false;
+        game.tick();
+        assert_eq!(game.inventory.slot(5).unwrap().count, 4, "one arrow used");
+        assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "the bow wears");
+        for _ in 0..5 {
+            game.tick();
+        }
+        assert!(
+            game.mobs[0].stats.health <= 20 - 6,
+            "hit: {}",
+            game.mobs[0].stats.health
+        );
+
+        // Creative shoots without arrows and its arrows can't be picked up.
+        let mut creative = flat_game(GameMode::Creative);
+        creative.inventory.set(0, Some(ItemStack::new(261, 1)));
+        creative.camera.pitch = 0.0;
+        creative.placing = true;
+        for _ in 0..20 {
+            creative.tick();
+        }
+        creative.placing = false;
+        creative.tick();
+        assert_eq!(creative.arrows.len(), 1);
+        assert!(!creative.arrows[0].pickup);
     }
 }
