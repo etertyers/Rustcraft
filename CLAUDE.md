@@ -197,7 +197,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Main menu: create world (name + seed + **game mode: Survival or Creative**, default Survival), load world (list shows each world's mode), quit. The mode is fixed for the life of the world, as in 1.0.0.
 - **Done when:** edits survive quit-and-relaunch; a creative world reloads as creative; round-trip tests pass.
 
-### - [ ] M7 — Items, inventory, survival mining, and creative mode
+### - [x] M7 — Items, inventory, survival mining, and creative mode
 - `items.ron` with every item from `docs/blocks-and-items.md`; stacks (64, or 1/16 where 1.0.0 differs); dropped item entities with pickup.
 - Hotbar (1–9, scroll wheel), full inventory screen (E) with click and drag stack moving.
 - Mining time from 1.0.0 hardness × tool type/tier (wood/stone/iron/gold/diamond), tool durability, correct-tool requirements for drops, 1.0.0 drop rules.
