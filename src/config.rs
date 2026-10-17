@@ -23,11 +23,6 @@ pub const FLY_SPEED: f32 = 10.92;
 /// Mouse look in radians per pixel of mouse movement.
 pub const MOUSE_SENSITIVITY: f32 = 0.0025;
 
-/// Plains biome colors (0xRRGGBB) from 1.0.0's grass and foliage color maps.
-/// Used for every biome until biomes exist (M3).
-pub const PLAINS_GRASS_COLOR: u32 = 0x91BD59;
-pub const PLAINS_FOLIAGE_COLOR: u32 = 0x77AB2F;
-
 /// Chunk width and depth in blocks; chunks are columns of 16³ sections.
 pub const CHUNK_SIZE: usize = 16;
 

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use super::{
     Face,
-    block::{BlockRegistry, BlockState, DATA_VALUES, Shape},
+    biome::{Biome, BiomeColors},
+    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, Shape},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
 };
 use crate::{
@@ -17,8 +18,7 @@ use crate::{
 pub struct FaceTexture {
     /// Atlas UV rect `[u0, v0, u1, v1]`, v0 at the top.
     pub uv: [f32; 4],
-    /// sRGB color multiplied with the texture (white for none).
-    pub tint: [f32; 3],
+    pub tint: FaceTint,
 }
 
 /// Everything the mesher needs to know about one (ID, data) pair.
@@ -38,6 +38,7 @@ pub struct BlockModels {
     models: Vec<BlockModel>,
     /// Used for IDs the registry doesn't define.
     unknown: BlockModel,
+    colors: BiomeColors,
 }
 
 impl BlockModels {
@@ -47,6 +48,7 @@ impl BlockModels {
         registry: &BlockRegistry,
         uv: impl Fn(&str) -> Option<[f32; 4]>,
         missing_uv: [f32; 4],
+        colors: BiomeColors,
     ) -> Self {
         let unknown = BlockModel {
             shape: Shape::Cube,
@@ -54,7 +56,7 @@ impl BlockModels {
             cull_same: false,
             faces: [FaceTexture {
                 uv: missing_uv,
-                tint: [1.0; 3],
+                tint: FaceTint::None,
             }; 6],
         };
         let max_id = registry.iter().map(|def| def.id).max().unwrap_or(0) as usize;
@@ -72,7 +74,7 @@ impl BlockModels {
                         .and_then(|t| t.get(face))
                         .and_then(&uv)
                         .unwrap_or(missing_uv),
-                    tint: tint.color(face),
+                    tint: tint.for_face(face),
                 });
                 models.push(BlockModel {
                     shape: def.shape,
@@ -82,7 +84,21 @@ impl BlockModels {
                 });
             }
         }
-        Self { models, unknown }
+        Self {
+            models,
+            unknown,
+            colors,
+        }
+    }
+
+    /// sRGB color for a face tint in `biome`.
+    fn tint_color(&self, tint: FaceTint, biome: Biome) -> [f32; 3] {
+        match tint {
+            FaceTint::None => [1.0; 3],
+            FaceTint::Grass => self.colors.grass(biome),
+            FaceTint::Foliage => self.colors.foliage(biome),
+            FaceTint::Rgb(rgb) => rgb,
+        }
     }
 
     pub fn get(&self, block: BlockState) -> &BlockModel {
@@ -233,6 +249,9 @@ fn face_visible(
     let Some(neighbor) = neighbor else {
         return false;
     };
+    if neighbor.is_air() {
+        return true;
+    }
     if models.get(neighbor).opaque_cube {
         return false;
     }
@@ -258,7 +277,9 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                         y as f32,
                         (min_z + z as i32) as f32,
                     ];
+                    let biome = chunk.biome(x, z);
                     let side = model.faces[Face::North.index()];
+                    let side_color = models.tint_color(side.tint, biome);
                     match model.shape {
                         Shape::None => {}
                         Shape::Cross => {
@@ -266,7 +287,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                                 mesh.double_sided_quad(
                                     translate(plane, origin),
                                     side.uv,
-                                    side.tint,
+                                    side_color,
                                 );
                             }
                         }
@@ -275,7 +296,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                                 mesh.double_sided_quad(
                                     translate(plane, origin),
                                     side.uv,
-                                    side.tint,
+                                    side_color,
                                 );
                             }
                         }
@@ -289,7 +310,9 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea) -> Mesh {
                                     continue;
                                 }
                                 let texture = model.faces[face.index()];
-                                let color = texture.tint.map(|c| c * face.shade());
+                                let color = models
+                                    .tint_color(texture.tint, biome)
+                                    .map(|c| c * face.shade());
                                 mesh.quad(translate(face_corners(face), origin), texture.uv, color);
                             }
                         }
@@ -324,7 +347,12 @@ mod tests {
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
-        BlockModels::new(&registry, |_| None, [0.0, 0.0, 1.0, 1.0])
+        BlockModels::new(
+            &registry,
+            |_| None,
+            [0.0, 0.0, 1.0, 1.0],
+            BiomeColors::uniform(),
+        )
     }
 
     /// Meshes chunk (0, 0) after placing `blocks`; `neighbors` adds stone-free
@@ -475,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn faces_get_their_texture_and_shaded_tint() {
+    fn faces_get_their_texture_and_biome_tint() {
         let ron = r#"#![enable(implicit_some)]
             [(id: 2, name: "grass", hardness: 0.6, textures: (all: "dirt", top: "grass_top"), tint: GrassTop)]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
@@ -486,13 +514,40 @@ mod tests {
                 [0.0; 4]
             })
         };
-        let models = BlockModels::new(&registry, uv, [9.0; 4]);
+        let models = BlockModels::new(&registry, uv, [9.0; 4], BiomeColors::uniform());
         let model = models.get(BlockState::new(2, 0));
         assert_eq!(model.faces[Face::Top.index()].uv, [0.5, 0.0, 1.0, 0.5]);
         assert_eq!(model.faces[Face::Bottom.index()].uv, [0.0; 4]);
-        assert_ne!(model.faces[Face::Top.index()].tint, [1.0; 3]);
-        assert_eq!(model.faces[Face::East.index()].tint, [1.0; 3]);
+        assert_eq!(model.faces[Face::Top.index()].tint, FaceTint::Grass);
+        assert_eq!(model.faces[Face::East.index()].tint, FaceTint::None);
         // Undefined IDs get the missing texture.
         assert_eq!(models.get(BlockState::new(300, 0)).faces[0].uv, [9.0; 4]);
+    }
+
+    #[test]
+    fn grass_takes_the_color_of_its_column_biome() {
+        let ron = r#"#![enable(implicit_some)]
+            [(id: 2, name: "grass", hardness: 0.6, textures: (all: "x"), tint: GrassTop)]"#;
+        let registry = BlockRegistry::from_ron(ron).unwrap();
+        let mut map = image::RgbaImage::new(256, 256);
+        map.put_pixel(0, 255, image::Rgba([200, 0, 0, 255])); // desert
+        map.put_pixel(50, 173, image::Rgba([0, 200, 0, 255])); // plains
+        let colors = BiomeColors::from_colormaps(&map, &map);
+        let models = BlockModels::new(&registry, |_| None, [0.0; 4], colors);
+
+        let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+        chunk.set(0, 64, 0, BlockState::new(2, 0));
+        chunk.set(5, 64, 0, BlockState::new(2, 0));
+        chunk.set_biome(5, 0, Biome::Desert);
+        let mesh = mesh_chunk(&models, &ChunkArea::new(Arc::new(chunk), |_| None));
+        let top_color = |x: f32| {
+            mesh.vertices
+                .iter()
+                .find(|v| v.position == [x, 65.0, 0.0])
+                .unwrap()
+                .color
+        };
+        assert_eq!(top_color(0.0), [0.0, 200.0 / 255.0, 0.0]);
+        assert_eq!(top_color(5.0), [200.0 / 255.0, 0.0, 0.0]);
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
-use super::block::BlockState;
+use super::{biome::Biome, block::BlockState};
 
 /// Edge length of a section (and width of a chunk).
 pub const SECTION_SIZE: usize = CHUNK_SIZE;
@@ -45,6 +45,8 @@ type Section = [BlockState; SECTION_VOLUME];
 pub struct Chunk {
     pub pos: ChunkPos,
     sections: [Option<Box<Section>>; SECTION_COUNT],
+    /// Biome of each column, indexed `z * 16 + x`.
+    biomes: [Biome; CHUNK_SIZE * CHUNK_SIZE],
 }
 
 impl Chunk {
@@ -52,7 +54,16 @@ impl Chunk {
         Self {
             pos,
             sections: Default::default(),
+            biomes: [Biome::default(); CHUNK_SIZE * CHUNK_SIZE],
         }
+    }
+
+    pub fn biome(&self, x: usize, z: usize) -> Biome {
+        self.biomes[z * CHUNK_SIZE + x]
+    }
+
+    pub fn set_biome(&mut self, x: usize, z: usize, biome: Biome) {
+        self.biomes[z * CHUNK_SIZE + x] = biome;
     }
 
     fn index(x: usize, y: usize, z: usize) -> (usize, usize) {
@@ -138,6 +149,15 @@ mod tests {
         chunk.set(0, 40, 0, BlockState::new(1, 0));
         assert!(!chunk.section_is_empty(2));
         assert!(chunk.section_is_empty(1));
+    }
+
+    #[test]
+    fn biomes_default_to_plains_and_are_per_column() {
+        let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+        assert_eq!(chunk.biome(5, 9), Biome::Plains);
+        chunk.set_biome(5, 9, Biome::Desert);
+        assert_eq!(chunk.biome(5, 9), Biome::Desert);
+        assert_eq!(chunk.biome(9, 5), Biome::Plains);
     }
 
     #[test]

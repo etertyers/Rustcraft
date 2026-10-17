@@ -29,23 +29,27 @@ use crate::{
     ui::{DebugStats, DebugUi},
     world::{
         World,
+        biome::BiomeColors,
         block::BlockRegistry,
         chunk::ChunkPos,
         mesh::{self, BlockModels},
-        worldgen::{flat, gallery},
+        worldgen::{flat, gallery, terrain::Terrain},
     },
 };
 
 /// Which test world to build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorldKind {
+    /// Generated terrain from a seed (the default).
+    Generated { seed: u64 },
     /// Flat grass plain, `FLAT_RADIUS` chunks in each direction.
     Flat,
     /// Every block and variant on display (`--gallery`).
     Gallery,
 }
 
-/// Chunks generated in each direction around the origin for the flat world.
+/// Chunks generated in each direction around the origin for the flat world,
+/// and around spawn for generated terrain.
 const FLAT_RADIUS: i32 = 4;
 
 /// Longest frame step applied to movement, so a stall doesn't teleport the camera.
@@ -60,6 +64,7 @@ pub struct App {
     debug_ui: Option<DebugUi>,
     world_kind: WorldKind,
     world: World,
+    terrain: Option<Terrain>,
     camera: Camera,
     fly_input: FlyInput,
     cursor_grabbed: bool,
@@ -74,7 +79,18 @@ pub struct App {
 
 impl App {
     pub fn new(world_kind: WorldKind) -> Self {
+        let mut terrain = None;
         let camera = match world_kind {
+            WorldKind::Generated { seed } => {
+                let generator = Terrain::new(seed);
+                let (x, y, z) = generator.spawn_point();
+                terrain = Some(generator);
+                Camera::new(
+                    Vec3::new(x as f32 + 0.5, y as f32 + 1.62, z as f32 + 0.5),
+                    0.0,
+                    0.0,
+                )
+            }
             // Standing height above the grass at the origin.
             WorldKind::Flat => Camera::new(
                 Vec3::new(0.5, config::SEA_LEVEL as f32 + 2.62, 0.5),
@@ -94,6 +110,7 @@ impl App {
             debug_ui: None,
             world_kind,
             world: World::default(),
+            terrain,
             camera,
             fly_input: FlyInput::default(),
             cursor_grabbed: false,
@@ -139,15 +156,37 @@ impl App {
             warn!("missing block textures: {missing_blocks:?}, item textures: {missing_items:?}");
         }
 
+        let biome_colors =
+            BiomeColors::load(&assets.join("textures/colormap")).unwrap_or_else(|err| {
+                warn!("{err:#}; using default biome colors");
+                BiomeColors::uniform()
+            });
         let mut renderer = Renderer::new(window.clone(), &atlas)?;
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
             atlas.uv_rect(MISSING_TILE),
+            biome_colors,
         );
 
         let started = Instant::now();
         match self.world_kind {
+            WorldKind::Generated { seed } => {
+                info!("world seed {seed}");
+                let terrain = self
+                    .terrain
+                    .as_ref()
+                    .expect("terrain is set for generated worlds");
+                let center = ChunkPos::of_block(
+                    self.camera.position.x as i32,
+                    self.camera.position.z as i32,
+                );
+                for z in -FLAT_RADIUS..=FLAT_RADIUS {
+                    for x in -FLAT_RADIUS..=FLAT_RADIUS {
+                        self.world.insert(terrain.generate(center.offset(x, z)));
+                    }
+                }
+            }
             WorldKind::Flat => {
                 for z in -FLAT_RADIUS..=FLAT_RADIUS {
                     for x in -FLAT_RADIUS..=FLAT_RADIUS {
@@ -231,9 +270,22 @@ impl App {
         else {
             return;
         };
+        let p = self.camera.position;
+        let column = (p.x.floor() as i32, p.z.floor() as i32);
+        let biome = self
+            .world
+            .get(ChunkPos::of_block(column.0, column.1))
+            .map(|chunk| {
+                chunk.biome(
+                    column.0.rem_euclid(16) as usize,
+                    column.1.rem_euclid(16) as usize,
+                )
+            });
         let stats = DebugStats {
             chunks_drawn: renderer.chunks_drawn(),
             chunks_loaded: renderer.chunks_loaded(),
+            biome,
+            seed: self.terrain.as_ref().map(Terrain::seed),
         };
         let ui = debug_ui.frame(window, &self.camera, &stats);
         match renderer.render(&self.camera, ui) {
