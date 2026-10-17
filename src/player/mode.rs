@@ -39,8 +39,14 @@ impl GameMode {
         self == GameMode::Survival
     }
 
-    /// E opens the creative item list instead of the inventory.
-    pub fn has_creative_inventory(self) -> bool {
+    /// Every block and item is to hand: E opens the creative item list,
+    /// and middle-click puts the targeted block in the hotbar.
+    pub fn has_every_item(self) -> bool {
+        self == GameMode::Creative
+    }
+
+    /// Double-tapping jump toggles flight.
+    pub fn can_fly(self) -> bool {
         self == GameMode::Creative
     }
 

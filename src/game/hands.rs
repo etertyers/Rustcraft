@@ -7,7 +7,7 @@ use glam::{DVec3, IVec3};
 use super::Game;
 use crate::{
     entity::item::ItemEntity,
-    inventory::{item::Tool, stack::ItemStack},
+    inventory::{item::Tool, player::HOTBAR_SLOTS, stack::ItemStack},
     player::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
         raycast::Hit,
@@ -153,6 +153,45 @@ impl Game {
             self.inventory.take(self.inventory.selected, 1);
         }
         self.place_cooldown = PLACE_REPEAT_TICKS;
+    }
+
+    /// Middle click (1.0.0's pick block): selects the hotbar slot holding
+    /// the targeted block, or with every item to hand, puts a stack of it
+    /// in the selected slot.
+    pub fn pick_block(&mut self) {
+        let Some(hit) = self.target else {
+            return;
+        };
+        let Some(block) = self
+            .chunks
+            .world()
+            .block(hit.block.x, hit.block.y, hit.block.z)
+        else {
+            return;
+        };
+        let Some(def) = self.items.blocks.get(block.id()) else {
+            return;
+        };
+        let data = if def.variants.is_empty() {
+            0
+        } else {
+            block.data()
+        };
+        let stack = ItemStack::with_damage(block.id(), 1, data as u16);
+        let in_hotbar = (0..HOTBAR_SLOTS).find(|&i| {
+            self.inventory
+                .slot(i)
+                .is_some_and(|held| held.stacks_with(&stack))
+        });
+        if let Some(slot) = in_hotbar {
+            self.inventory.selected = slot;
+        } else if self.mode.has_every_item() {
+            let full = ItemStack {
+                count: self.items.max_stack(stack.id),
+                ..stack
+            };
+            self.inventory.set(self.inventory.selected, Some(full));
+        }
     }
 
     /// Throws one of the selected item forward (1.0.0's Q).

@@ -35,6 +35,12 @@ pub const SPRINT_JUMP_BOOST: f64 = 0.2;
 pub const WALK_ACCELERATION: f64 = 0.1;
 /// Air acceleration per tick at full input (`jumpMovementFactor`).
 pub const AIR_ACCELERATION: f64 = 0.02;
+/// Air acceleration per tick while flying in creative.
+pub const FLY_ACCELERATION: f64 = 0.05;
+/// Vertical speed added per tick holding jump (up) or sneak (down) in flight.
+pub const FLY_VERTICAL_SPEED: f64 = 0.15;
+/// Vertical speed kept per tick in flight (there's no gravity).
+pub const FLY_VERTICAL_DRAG: f64 = 0.6;
 /// Acceleration multiplier while sprinting.
 pub const SPRINT_FACTOR: f64 = 1.3;
 /// Input multiplier while sneaking.

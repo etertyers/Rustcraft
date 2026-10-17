@@ -305,7 +305,7 @@ impl App {
         let Some(game) = &self.game else {
             return;
         };
-        self.screen = Some(if game.mode.has_creative_inventory() {
+        self.screen = Some(if game.mode.has_every_item() {
             Screen::Creative { scroll: 0.0 }
         } else {
             Screen::Inventory

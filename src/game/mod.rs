@@ -271,6 +271,7 @@ impl Game {
                 self.place_clicked |= pressed;
                 self.place_cooldown = 0;
             }
+            MouseButton::Middle if pressed => self.pick_block(),
             _ => {}
         }
     }
@@ -336,6 +337,7 @@ impl Game {
             world: self.chunks.world(),
             blocks: &self.items.blocks,
         };
+        self.body.may_fly = self.mode.can_fly();
         // Wait for the chunks around the player to load before moving them.
         if !collider.is_loaded(&self.body.aabb()) {
             return;
