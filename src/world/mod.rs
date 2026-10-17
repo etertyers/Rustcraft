@@ -10,6 +10,7 @@ pub mod worldgen;
 use std::{collections::HashMap, sync::Arc};
 
 use crate::config;
+use block::BlockState;
 use chunk::{Chunk, ChunkPos};
 use mesh::ChunkArea;
 
@@ -24,8 +25,33 @@ impl World {
         self.chunks.insert(chunk.pos, Arc::new(chunk));
     }
 
-    pub fn remove(&mut self, pos: ChunkPos) {
-        self.chunks.remove(&pos);
+    /// Re-adds a chunk kept from an earlier unload.
+    pub fn insert_shared(&mut self, chunk: Arc<Chunk>) {
+        self.chunks.insert(chunk.pos, chunk);
+    }
+
+    pub fn remove(&mut self, pos: ChunkPos) -> Option<Arc<Chunk>> {
+        self.chunks.remove(&pos)
+    }
+
+    /// A loaded chunk for editing; copies it first if a worker still holds it.
+    pub fn get_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.chunks.get_mut(&pos).map(Arc::make_mut)
+    }
+
+    /// Block at world (x, y, z): `None` if its chunk isn't loaded, air above
+    /// or below the world.
+    pub fn block(&self, x: i32, y: i32, z: i32) -> Option<BlockState> {
+        let chunk = self.get(ChunkPos::of_block(x, z))?;
+        if !(0..config::WORLD_HEIGHT as i32).contains(&y) {
+            return Some(BlockState::AIR);
+        }
+        let size = config::CHUNK_SIZE as i32;
+        Some(chunk.get(
+            x.rem_euclid(size) as usize,
+            y as usize,
+            z.rem_euclid(size) as usize,
+        ))
     }
 
     /// Biome of the column at world (x, z), if its chunk is loaded.
@@ -100,5 +126,35 @@ impl Face {
             Face::North | Face::South => 0.8,
             Face::East | Face::West => 0.6,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_lookup_handles_negative_coordinates_and_unloaded_chunks() {
+        let mut world = World::default();
+        let mut chunk = Chunk::new(ChunkPos::new(-1, 0));
+        chunk.set(15, 64, 3, BlockState::new(1, 0));
+        world.insert(chunk);
+        assert_eq!(world.block(-1, 64, 3), Some(BlockState::new(1, 0)));
+        assert_eq!(world.block(-1, 65, 3), Some(BlockState::AIR));
+        assert_eq!(world.block(-1, 500, 3), Some(BlockState::AIR));
+        assert_eq!(world.block(0, 64, 3), None);
+    }
+
+    #[test]
+    fn get_mut_copies_a_shared_chunk() {
+        let mut world = World::default();
+        world.insert(Chunk::new(ChunkPos::new(0, 0)));
+        let shared = world.get(ChunkPos::new(0, 0)).unwrap().clone();
+        world
+            .get_mut(ChunkPos::new(0, 0))
+            .unwrap()
+            .set(1, 2, 3, BlockState::new(4, 0));
+        assert!(shared.get(1, 2, 3).is_air());
+        assert_eq!(world.block(1, 2, 3), Some(BlockState::new(4, 0)));
     }
 }

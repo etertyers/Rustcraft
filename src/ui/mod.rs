@@ -26,6 +26,14 @@ pub struct DebugStats {
     pub seed: Option<u64>,
 }
 
+/// Always-on HUD pieces.
+pub struct Hud {
+    /// Shown while the cursor is grabbed for play.
+    pub crosshair: bool,
+    /// The selected hotbar block, shown at the bottom until the real hotbar (M7).
+    pub selected: String,
+}
+
 pub struct DebugUi {
     ctx: egui::Context,
     state: egui_winit::State,
@@ -68,12 +76,22 @@ impl DebugUi {
         self.fps.tick(now);
     }
 
-    /// Builds this frame's UI.
-    pub fn frame(&mut self, window: &Window, camera: &Camera, stats: &DebugStats) -> UiPaint {
+    /// Builds this frame's UI: the crosshair (while playing) and the F3 overlay.
+    pub fn frame(
+        &mut self,
+        window: &Window,
+        camera: &Camera,
+        stats: &DebugStats,
+        hud: &Hud,
+    ) -> UiPaint {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
         let text = debug_text(self.fps.fps(), camera, stats);
         let output = self.ctx.run_ui(input, |ui| {
+            if hud.crosshair {
+                draw_crosshair(ui);
+            }
+            show_selected(ui.ctx(), &hud.selected);
             if visible {
                 show_overlay(ui.ctx(), &text);
             }
@@ -113,6 +131,44 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         stats.biome.map_or("-", Biome::name),
         stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
     )
+}
+
+/// A small white plus at the screen center, outlined so it shows on bright blocks too.
+fn draw_crosshair(ui: &egui::Ui) {
+    const HALF: f32 = 5.0;
+    let center = ui.ctx().content_rect().center();
+    let painter = ui.painter();
+    for (width, color) in [(3.0, Color32::from_black_alpha(140)), (1.5, Color32::WHITE)] {
+        let stroke = egui::Stroke::new(width, color);
+        painter.line_segment(
+            [
+                center - egui::vec2(HALF, 0.0),
+                center + egui::vec2(HALF, 0.0),
+            ],
+            stroke,
+        );
+        painter.line_segment(
+            [
+                center - egui::vec2(0.0, HALF),
+                center + egui::vec2(0.0, HALF),
+            ],
+            stroke,
+        );
+    }
+}
+
+fn show_selected(ctx: &egui::Context, text: &str) {
+    egui::Area::new(egui::Id::unique("selected"))
+        .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            Frame::new()
+                .fill(Color32::from_black_alpha(128))
+                .inner_margin(4.0)
+                .show(ui, |ui| {
+                    ui.label(RichText::new(text).monospace().color(Color32::WHITE));
+                });
+        });
 }
 
 fn show_overlay(ctx: &egui::Context, text: &str) {

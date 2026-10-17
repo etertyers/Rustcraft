@@ -3,6 +3,10 @@
 //!
 //! Each frame `update` collects finished work, unloads far chunks and hands
 //! out new jobs nearest-first. The main thread never waits on a worker.
+//!
+//! Block edits remesh the touched chunks right away on the main thread, so
+//! the change shows the same frame; a mesh job that was already running for
+//! one of them is discarded when it returns.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -10,10 +14,15 @@ use std::{
     thread::JoinHandle,
 };
 
+use glam::IVec3;
+
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+
+use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
 use super::{
     World,
+    block::BlockState,
     chunk::{Chunk, ChunkPos},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
     worldgen::{flat, terrain::Terrain},
@@ -48,12 +57,13 @@ impl ChunkSource {
 
 enum Job {
     Generate(ChunkPos),
-    Mesh(ChunkPos, ChunkArea),
+    /// The chunk's edit revision when the job was sent.
+    Mesh(ChunkPos, ChunkArea, u32),
 }
 
 enum Done {
     Generated(Box<Chunk>),
-    Meshed(ChunkPos, Mesh),
+    Meshed(ChunkPos, Mesh, u32),
 }
 
 /// What changed this frame, for the renderer.
@@ -66,6 +76,7 @@ pub struct Changes {
 pub struct ChunkManager {
     world: World,
     source: Arc<ChunkSource>,
+    models: Arc<BlockModels>,
     /// `None` only while shutting down.
     jobs: Option<Sender<Job>>,
     done: Receiver<Done>,
@@ -78,6 +89,14 @@ pub struct ChunkManager {
     /// Offsets within `radius + 1`, nearest first.
     offsets: Vec<(i32, i32)>,
     max_in_flight: usize,
+    /// Bumped on every edit so stale mesh jobs can be recognized.
+    revisions: HashMap<ChunkPos, u32>,
+    /// Chunks the player has changed. They're kept in memory when unloaded,
+    /// since regenerating would lose the changes (saving comes in M6).
+    edited: HashSet<ChunkPos>,
+    unloaded_edits: HashMap<ChunkPos, Arc<Chunk>>,
+    /// Meshes rebuilt by edits, handed out by the next `update`.
+    remeshed: Vec<(ChunkPos, Mesh)>,
 }
 
 /// Finished jobs collected per frame, so a burst can't stall one frame.
@@ -92,12 +111,13 @@ impl ChunkManager {
         let (done_tx, done_rx) = crossbeam_channel::unbounded();
         let workers = (0..workers.max(1))
             .map(|i| {
-                let (jobs, done, source, models) = (
+                let (jobs, done, source, worker_models) = (
                     job_rx.clone(),
                     done_tx.clone(),
                     source.clone(),
                     models.clone(),
                 );
+                let models = worker_models;
                 std::thread::Builder::new()
                     .name(format!("chunk-worker-{i}"))
                     .spawn(move || {
@@ -106,8 +126,8 @@ impl ChunkManager {
                                 Job::Generate(pos) => {
                                     Done::Generated(Box::new(source.generate(pos)))
                                 }
-                                Job::Mesh(pos, area) => {
-                                    Done::Meshed(pos, mesh_chunk(&models, &area))
+                                Job::Mesh(pos, area, revision) => {
+                                    Done::Meshed(pos, mesh_chunk(&models, &area), revision)
                                 }
                             };
                             if done.send(result).is_err() {
@@ -128,6 +148,7 @@ impl ChunkManager {
         Self {
             world: World::default(),
             source,
+            models,
             jobs: Some(job_tx),
             done: done_rx,
             max_in_flight: workers.len() * 2,
@@ -137,6 +158,10 @@ impl ChunkManager {
             meshed: HashSet::new(),
             radius,
             offsets,
+            revisions: HashMap::new(),
+            edited: HashSet::new(),
+            unloaded_edits: HashMap::new(),
+            remeshed: Vec::new(),
         }
     }
 
@@ -159,7 +184,10 @@ impl ChunkManager {
 
     /// Collects finished work, unloads far chunks and queues new jobs around `center`.
     pub fn update(&mut self, center: ChunkPos) -> Changes {
-        let mut changes = Changes::default();
+        let mut changes = Changes {
+            meshes: std::mem::take(&mut self.remeshed),
+            unloaded: Vec::new(),
+        };
 
         for _ in 0..MAX_RESULTS_PER_FRAME {
             match self.done.try_recv() {
@@ -169,9 +197,10 @@ impl ChunkManager {
                         self.world.insert(*chunk);
                     }
                 }
-                Ok(Done::Meshed(pos, mesh)) => {
+                Ok(Done::Meshed(pos, mesh, revision)) => {
                     self.meshing.remove(&pos);
-                    if self.world.get(pos).is_some() {
+                    // An edit since the job started makes it stale; it's requeued.
+                    if self.world.get(pos).is_some() && revision == self.revision(pos) {
                         self.meshed.insert(pos);
                         changes.meshes.push((pos, mesh));
                     }
@@ -189,7 +218,11 @@ impl ChunkManager {
             .filter(|&pos| Self::distance(pos, center) > keep)
             .collect();
         for pos in far {
-            self.world.remove(pos);
+            if let Some(chunk) = self.world.remove(pos)
+                && self.edited.contains(&pos)
+            {
+                self.unloaded_edits.insert(pos, chunk);
+            }
             if self.meshed.remove(&pos) {
                 changes.unloaded.push(pos);
             }
@@ -215,7 +248,9 @@ impl ChunkManager {
             }
             let pos = center.offset(dx, dz);
             if self.world.get(pos).is_none() {
-                if self.generating.insert(pos) {
+                if let Some(chunk) = self.unloaded_edits.remove(&pos) {
+                    self.world.insert_shared(chunk);
+                } else if self.generating.insert(pos) {
                     let _ = jobs.send(Job::Generate(pos));
                 }
             } else if dx.abs().max(dz.abs()) <= self.radius
@@ -225,10 +260,53 @@ impl ChunkManager {
                 && let Some(area) = self.world.area(pos)
             {
                 self.meshing.insert(pos);
-                let _ = jobs.send(Job::Mesh(pos, area));
+                let _ = jobs.send(Job::Mesh(pos, area, self.revision(pos)));
             }
         }
         changes
+    }
+
+    fn revision(&self, pos: ChunkPos) -> u32 {
+        self.revisions.get(&pos).copied().unwrap_or(0)
+    }
+
+    /// Applies block edits in loaded chunks (others are skipped) and remeshes
+    /// each touched chunk, plus the neighbor across any border an edit sits on.
+    pub fn set_blocks(&mut self, edits: &[(IVec3, BlockState)]) {
+        let size = CHUNK_SIZE as i32;
+        let mut touched = HashSet::new();
+        for &(at, block) in edits {
+            if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+                continue;
+            }
+            let pos = ChunkPos::of_block(at.x, at.z);
+            let Some(chunk) = self.world.get_mut(pos) else {
+                continue;
+            };
+            let (x, z) = (at.x.rem_euclid(size), at.z.rem_euclid(size));
+            chunk.set(x as usize, at.y as usize, z as usize, block);
+            self.edited.insert(pos);
+            touched.insert(pos);
+            for (edge, dx, dz) in [
+                (x == 0, -1, 0),
+                (x == size - 1, 1, 0),
+                (z == 0, 0, -1),
+                (z == size - 1, 0, 1),
+            ] {
+                if edge {
+                    touched.insert(pos.offset(dx, dz));
+                }
+            }
+        }
+        for pos in touched {
+            *self.revisions.entry(pos).or_default() += 1;
+            // Chunks not drawn yet get meshed by `update` as usual.
+            if self.meshed.contains(&pos)
+                && let Some(area) = self.world.area(pos)
+            {
+                self.remeshed.push((pos, mesh_chunk(&self.models, &area)));
+            }
+        }
     }
 
     fn neighbors_loaded(&self, pos: ChunkPos) -> bool {
@@ -339,6 +417,87 @@ mod tests {
         });
         assert_eq!(meshed.len(), 25);
         assert_eq!(manager.seed(), Some(42));
+    }
+
+    /// Loads a 3×3 flat area around the origin (radius 1) and drains it.
+    fn loaded_flat() -> ChunkManager {
+        let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 1, 2);
+        run_until(&mut manager, ChunkPos::new(0, 0), |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        manager
+    }
+
+    const STONE: BlockState = BlockState::new(1, 0);
+
+    #[test]
+    fn edits_remesh_the_chunk_and_border_neighbors() {
+        let mut manager = loaded_flat();
+        manager.set_blocks(&[(IVec3::new(5, 70, 5), STONE)]);
+        assert_eq!(manager.world().block(5, 70, 5), Some(STONE));
+        let changes = manager.update(ChunkPos::new(0, 0));
+        let remeshed: Vec<ChunkPos> = changes.meshes.iter().map(|(pos, _)| *pos).collect();
+        assert_eq!(remeshed, [ChunkPos::new(0, 0)]);
+
+        // A corner block touches both neighbors across its edges.
+        manager.set_blocks(&[(IVec3::new(0, 70, 15), STONE)]);
+        let changes = manager.update(ChunkPos::new(0, 0));
+        let remeshed: HashSet<ChunkPos> = changes.meshes.iter().map(|(pos, _)| *pos).collect();
+        let expected = [(0, 0), (-1, 0), (0, 1)].map(|(x, z)| ChunkPos::new(x, z));
+        assert_eq!(remeshed, expected.into_iter().collect());
+    }
+
+    #[test]
+    fn edits_outside_loaded_chunks_or_the_world_are_ignored() {
+        let mut manager = loaded_flat();
+        manager.set_blocks(&[
+            (IVec3::new(500, 70, 0), STONE),
+            (IVec3::new(0, 128, 0), STONE),
+            (IVec3::new(0, -1, 0), STONE),
+        ]);
+        assert!(manager.update(ChunkPos::new(0, 0)).meshes.is_empty());
+    }
+
+    #[test]
+    fn edited_chunks_survive_unloading() {
+        let mut manager = loaded_flat();
+        manager.set_blocks(&[(IVec3::new(3, 70, 3), STONE)]);
+        let far = ChunkPos::new(30, 0);
+        run_until(&mut manager, far, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        assert!(manager.world().get(ChunkPos::new(0, 0)).is_none());
+        run_until(&mut manager, ChunkPos::new(0, 0), |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        assert_eq!(manager.world().block(3, 70, 3), Some(STONE));
+        // Unedited chunks are regenerated, not kept.
+        assert!(manager.unloaded_edits.is_empty());
+    }
+
+    #[test]
+    fn mesh_jobs_started_before_an_edit_are_discarded() {
+        let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 1, 1);
+        let center = ChunkPos::new(0, 0);
+        // Load everything but stop before the center is meshed.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !manager.meshing.contains(&center) {
+            assert!(Instant::now() < deadline);
+            manager.update(center);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        manager.set_blocks(&[(IVec3::new(4, 70, 4), STONE)]);
+        let mut delivered = Vec::new();
+        while !(manager.meshed.contains(&center) && manager.in_flight() == 0) {
+            assert!(Instant::now() < deadline);
+            let changes = manager.update(center);
+            delivered.extend(changes.meshes.into_iter().filter(|(pos, _)| *pos == center));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Only the requeued job's mesh, with the new block, reached the renderer.
+        let fresh = mesh_chunk(&manager.models, &manager.world().area(center).unwrap());
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].1, fresh);
     }
 
     /// M3 "no stalls" check: fly in a straight line at fly speed with the real

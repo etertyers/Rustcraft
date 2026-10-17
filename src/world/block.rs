@@ -205,6 +205,17 @@ pub struct BlockDef {
     /// Hide faces between two blocks of this type (glass, water, ice).
     #[serde(default)]
     pub cull_same: bool,
+    /// Ground friction: 0.6 for most blocks, 0.98 for ice (1.0.0 values).
+    #[serde(default = "default_slipperiness")]
+    pub slipperiness: f32,
+    /// Placing a block may overwrite it, and clicking it places into its
+    /// cell (air, fluids, fire, tall grass, dead bushes, snow layers, vines).
+    #[serde(default)]
+    pub replaceable: bool,
+    /// Pops off when the block below it is removed (plants, crops, rails,
+    /// pressure plates, redstone, snow layers, standing signs).
+    #[serde(default)]
+    pub needs_ground: bool,
     #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
@@ -216,6 +227,10 @@ pub struct BlockDef {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_slipperiness() -> f32 {
+    0.6
 }
 
 impl BlockDef {
@@ -231,6 +246,11 @@ impl BlockDef {
             .get(&data)
             .and_then(|v| v.tint)
             .unwrap_or(self.tint)
+    }
+
+    /// Whether the crosshair can select it (everything but air and fluids).
+    pub fn is_targetable(&self) -> bool {
+        !matches!(self.shape, Shape::None | Shape::Liquid)
     }
 
     /// A full opaque cube hides the faces of whatever touches it.
@@ -282,6 +302,22 @@ impl BlockRegistry {
         self.blocks.get(id as usize)?.as_ref()
     }
 
+    /// A readable name like "planks" or "wool (orange)"; unknown IDs show the number.
+    pub fn display_name(&self, block: BlockState) -> String {
+        let Some(def) = self.get(block.id()) else {
+            return format!("block {}", block.id());
+        };
+        let base = def.name.replace('_', " ");
+        match def
+            .variants
+            .get(&block.data())
+            .and_then(|v| v.name.as_deref())
+        {
+            Some(variant) => format!("{base} ({})", variant.replace('_', " ")),
+            None => base,
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &BlockDef> {
         self.blocks.iter().flatten()
     }
@@ -305,6 +341,24 @@ impl BlockRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_names_are_readable() {
+        let registry = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        assert_eq!(registry.display_name(BlockState::new(98, 0)), "stonebrick");
+        assert_eq!(
+            registry.display_name(BlockState::new(35, 1)),
+            "wool (orange)"
+        );
+        assert_eq!(
+            registry.display_name(BlockState::new(31, 1)),
+            "tallgrass (grass)"
+        );
+        assert_eq!(
+            registry.display_name(BlockState::new(4000, 0)),
+            "block 4000"
+        );
+    }
 
     #[test]
     fn block_state_packs_id_and_data() {
