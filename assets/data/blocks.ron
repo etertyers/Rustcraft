@@ -130,7 +130,7 @@
     (id: 46, name: "tnt", hardness: 0.0, textures: (top: "tnt_top", bottom: "tnt_bottom", side: "tnt_side")),
     (id: 47, name: "bookshelf", hardness: 1.5, tool: Axe, drops: Nothing, textures: (end: "planks_oak", side: "bookshelf")),
     (id: 48, name: "mossy_cobblestone", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "cobblestone_mossy")),
-    (id: 49, name: "obsidian", hardness: 10.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Diamond), textures: (all: "obsidian")),
+    (id: 49, name: "obsidian", hardness: 50.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Diamond), textures: (all: "obsidian")),
     (id: 50, name: "torch", hardness: 0.0, placement: Torch, shape: Torch, layer: Cutout, solid: false, light: 14, textures: (all: "torch_on")),
     (id: 51, name: "fire", hardness: 0.0, drops: Nothing, replaceable: true, shape: Fire, layer: Cutout, solid: false, light: 15, textures: (all: "fire_layer_0")),
     (id: 52, name: "mob_spawner", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: Nothing, layer: Cutout, textures: (all: "spawner")),

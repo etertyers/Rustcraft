@@ -216,16 +216,15 @@ mod tests {
         assert_eq!(ticks(&items, 3, 269), 8, "dirt, wooden shovel: 0.4 s");
         assert_eq!(ticks(&items, 17, 0), 60, "log by hand: 3 s");
         assert_eq!(ticks(&items, 17, 275), 15, "log, stone axe: 0.75 s");
-        // Obsidian uses hardness 10 (see DECISIONS.md): 8 / 10 / 30 per tick.
         assert_eq!(
             ticks(&items, 49, 278),
-            38,
-            "obsidian, diamond pickaxe: 1.9 s"
+            188,
+            "obsidian, diamond pickaxe: 9.4 s"
         );
         assert_eq!(
             ticks(&items, 49, 257),
-            1000,
-            "obsidian, iron pickaxe: can't harvest, 50 s"
+            5000,
+            "obsidian, iron pickaxe: can't harvest, 250 s"
         );
         assert_eq!(ticks(&items, 30, 267), 8, "cobweb, sword: 0.4 s");
         assert_eq!(ticks(&items, 18, 359), 1, "leaves, shears: instant");
