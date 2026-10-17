@@ -218,7 +218,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - In creative mode: no damage of any kind, no hunger, no health/hunger HUD, and hostile mobs ignore the player.
 - **Done when:** in survival you can survive a night, kill a zombie, and eat a porkchop from a pig; in creative a zombie at night doesn't attack you and falling or lava does no damage.
 
-### - [ ] M10 — Crafting and smelting
+### - [x] M10 — Crafting and smelting
 - 2×2 inventory grid and 3×3 crafting table; shaped and shapeless recipes from `recipes.ron`.
 - **Most 1.0.0 recipes** for everything in scope: building blocks, tools, weapons, armor, food, torches, chests, doors, beds, buckets, etc. Skip recipes for deferred systems (redstone, enchanting, brewing) and list them in `DECISIONS.md`.
 - Furnace with 1.0.0 fuels and smelting recipes.
