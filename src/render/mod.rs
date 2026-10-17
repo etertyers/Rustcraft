@@ -15,6 +15,13 @@ use atlas::Atlas;
 use camera::Camera;
 use cube::Mesh;
 
+/// One frame of tessellated UI from egui, drawn over the world.
+pub struct UiPaint {
+    pub primitives: Vec<egui::ClippedPrimitive>,
+    pub textures: egui::TexturesDelta,
+    pub pixels_per_point: f32,
+}
+
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
@@ -36,6 +43,7 @@ pub struct Renderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+    egui_renderer: egui_wgpu::Renderer,
 }
 
 impl Renderer {
@@ -65,6 +73,8 @@ impl Renderer {
             config.format = *format;
         }
         config.present_mode = wgpu::PresentMode::AutoVsync;
+        // egui blends in gamma space, so it draws through a non-sRGB view of the frame.
+        config.view_formats = vec![config.format.remove_srgb_suffix()];
         surface.configure(&device, &config);
         let depth_view = create_depth_view(&device, &config);
 
@@ -146,6 +156,12 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &device,
+            config.format.remove_srgb_suffix(),
+            egui_wgpu::RendererOptions::default(),
+        );
+
         Ok(Self {
             surface,
             device,
@@ -159,6 +175,7 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             index_count: mesh.indices.len() as u32,
+            egui_renderer,
         })
     }
 
@@ -176,7 +193,23 @@ impl Renderer {
         self.depth_view = create_depth_view(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, camera: &Camera) -> Result<()> {
+    pub fn render(&mut self, camera: &Camera, mut ui: UiPaint) -> Result<()> {
+        // Upload new egui textures (e.g. the font atlas) even if this frame is skipped.
+        for (id, deltas) in &ui.textures.set {
+            for delta in deltas {
+                self.egui_renderer
+                    .update_texture(&self.device, &self.queue, *id, delta);
+            }
+        }
+        let result = self.draw(camera, &ui);
+        for id in &ui.textures.free {
+            self.egui_renderer.free_texture(id);
+        }
+        ui.textures.clear();
+        result
+    }
+
+    fn draw(&mut self, camera: &Camera, ui: &UiPaint) -> Result<()> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -192,6 +225,10 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.config.format.remove_srgb_suffix()),
+            ..Default::default()
+        });
 
         let globals = Globals {
             view_proj: camera.view_proj(self.aspect()).to_cols_array_2d(),
@@ -231,7 +268,39 @@ impl Renderer {
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             pass.draw_indexed(0..self.index_count, 0, 0..1);
         }
-        self.queue.submit([encoder.finish()]);
+
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: ui.pixels_per_point,
+        };
+        let ui_commands = self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &ui.primitives,
+            &screen,
+        );
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("ui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &ui_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            self.egui_renderer
+                .render(&mut pass, &ui.primitives, &screen);
+        }
+        self.queue
+            .submit(ui_commands.into_iter().chain([encoder.finish()]));
         self.queue.present(frame);
         Ok(())
     }

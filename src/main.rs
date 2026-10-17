@@ -4,6 +4,7 @@ mod config;
 mod inventory;
 mod player;
 mod render;
+mod ui;
 mod world;
 
 use anyhow::Result;

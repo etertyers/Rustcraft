@@ -24,6 +24,7 @@ use crate::{
         camera::Camera,
         cube::{self, FaceTexture},
     },
+    ui::DebugUi,
     world::block::{BlockId, BlockRegistry},
 };
 
@@ -36,6 +37,7 @@ const MAX_FRAME_DT: f32 = 0.1;
 pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    debug_ui: Option<DebugUi>,
     camera: Camera,
     fly_input: FlyInput,
     cursor_grabbed: bool,
@@ -49,6 +51,7 @@ impl Default for App {
         Self {
             window: None,
             renderer: None,
+            debug_ui: None,
             // A few blocks south of the test cube, looking north and slightly down at it.
             camera: Camera::new(Vec3::new(0.5, 1.8, 3.5), 0.0, -0.2),
             fly_input: FlyInput::default(),
@@ -107,6 +110,7 @@ impl App {
             tint: grass.tint.color(face),
         });
         self.renderer = Some(Renderer::new(window.clone(), &atlas, &mesh)?);
+        self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
         self.window = Some(window);
         Ok(())
@@ -143,6 +147,10 @@ impl App {
         let pressed = event.state == ElementState::Pressed;
         if key == KeyCode::Escape && pressed {
             self.set_cursor_grab(false);
+        } else if key == KeyCode::F3 && pressed && !event.repeat {
+            if let Some(debug_ui) = self.debug_ui.as_mut() {
+                debug_ui.toggle();
+            }
         } else if self.cursor_grabbed {
             self.fly_input.set_key(key, pressed);
         }
@@ -154,9 +162,13 @@ impl App {
         self.last_frame = now;
         fly::fly(&mut self.camera, &self.fly_input, dt);
 
-        if let Some(renderer) = self.renderer.as_mut()
-            && let Err(err) = renderer.render(&self.camera)
-        {
+        let (Some(window), Some(renderer), Some(debug_ui)) =
+            (&self.window, self.renderer.as_mut(), self.debug_ui.as_mut())
+        else {
+            return;
+        };
+        let ui = debug_ui.frame(window, now, &self.camera);
+        if let Err(err) = renderer.render(&self.camera, ui) {
             self.fail(event_loop, err);
         }
     }
@@ -173,6 +185,9 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let (Some(window), Some(debug_ui)) = (&self.window, self.debug_ui.as_mut()) {
+            debug_ui.on_window_event(window, &event);
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -209,6 +224,7 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         // Drop the GPU surface before the window it points to.
+        self.debug_ui = None;
         self.renderer = None;
         self.window = None;
     }

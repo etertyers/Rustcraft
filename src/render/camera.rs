@@ -48,6 +48,16 @@ impl Camera {
         Vec3::new(sin_yaw * cos_pitch, sin_pitch, -cos_yaw * cos_pitch)
     }
 
+    /// Nearest compass direction the camera faces horizontally.
+    pub fn facing(&self) -> Facing {
+        match (self.yaw / FRAC_PI_2).round() as u32 % 4 {
+            0 => Facing::North,
+            1 => Facing::East,
+            2 => Facing::South,
+            _ => Facing::West,
+        }
+    }
+
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = look_to_mat4(self.position, self.forward(), Vec3::Y);
         // wgpu clip space matches DirectX: depth 0..1, Y up.
@@ -58,6 +68,26 @@ impl Camera {
             config::Z_FAR,
         );
         proj * view
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facing {
+    North,
+    East,
+    South,
+    West,
+}
+
+impl Facing {
+    /// Minecraft's F3 wording, e.g. "north (Towards negative Z)".
+    pub fn describe(self) -> &'static str {
+        match self {
+            Facing::North => "north (Towards negative Z)",
+            Facing::East => "east (Towards positive X)",
+            Facing::South => "south (Towards positive Z)",
+            Facing::West => "west (Towards negative X)",
+        }
     }
 }
 
@@ -73,6 +103,17 @@ mod tests {
     fn yaw_zero_looks_north_and_quarter_turn_looks_east() {
         assert_vec_eq(Camera::new(Vec3::ZERO, 0.0, 0.0).forward(), Vec3::NEG_Z);
         assert_vec_eq(Camera::new(Vec3::ZERO, FRAC_PI_2, 0.0).forward(), Vec3::X);
+    }
+
+    #[test]
+    fn facing_rounds_to_the_nearest_direction() {
+        let facing = |degrees: f32| Camera::new(Vec3::ZERO, degrees.to_radians(), 0.0).facing();
+        assert_eq!(facing(0.0), Facing::North);
+        assert_eq!(facing(30.0), Facing::North);
+        assert_eq!(facing(60.0), Facing::East);
+        assert_eq!(facing(180.0), Facing::South);
+        assert_eq!(facing(-90.0), Facing::West);
+        assert_eq!(facing(350.0), Facing::North);
     }
 
     #[test]
