@@ -859,6 +859,32 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn holding_right_click_on_a_door_toggles_it_once() {
+        let mut game = flat_game(GameMode::Survival);
+        game.chunks.set_blocks(&[
+            (IVec3::new(0, 64, -2), BlockState::new(64, 3)),
+            (IVec3::new(0, 65, -2), BlockState::new(64, 3 | 8)),
+        ]);
+        game.camera.pitch = 0.0;
+        game.advance(0.0);
+        // One press, held for a second and a half.
+        game.on_mouse_button(MouseButton::Right, true);
+        for _ in 0..30 {
+            game.tick();
+        }
+        game.on_mouse_button(MouseButton::Right, false);
+        let door = game.chunks.world().block(0, 64, -2);
+        assert_eq!(door, Some(BlockState::new(64, 3 | 4)), "opened once");
+        game.on_mouse_button(MouseButton::Right, true);
+        game.tick();
+        game.on_mouse_button(MouseButton::Right, false);
+        assert_eq!(
+            game.chunks.world().block(0, 64, -2),
+            Some(BlockState::new(64, 3))
+        );
+    }
+
+    #[test]
     fn creative_breaks_instantly_without_drops_and_keeps_placed_items() {
         let mut game = flat_game(GameMode::Creative);
         game.inventory.set(0, Some(ItemStack::new(1, 1)));

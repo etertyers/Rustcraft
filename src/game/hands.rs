@@ -66,6 +66,7 @@ impl Game {
         }
         self.eating = None;
         let wants_place = using && self.place_cooldown == 0;
+        let place_pressed = self.place_clicked;
         let clicked = self.break_clicked;
         self.break_clicked = false;
         self.place_clicked = false;
@@ -90,7 +91,7 @@ impl Game {
         };
         if wants_break {
             self.mine(hit.block);
-        } else if wants_place && !self.activate(hit.block) {
+        } else if using && !self.activate(hit.block, place_pressed) && wants_place {
             self.place(&hit);
         }
     }
@@ -363,8 +364,11 @@ impl Game {
 
     /// Right-clicks the block at `cell` (1.0.0's `blockActivated`): opens a
     /// crafting table and so on. Sneaking with something in hand places
-    /// against it instead. Returns whether the block did something.
-    fn activate(&mut self, cell: IVec3) -> bool {
+    /// against it instead. Only a fresh press (`pressed`) uses the block, as
+    /// in modern Minecraft: holding the button doesn't open and shut a door
+    /// over and over. Returns whether the block is usable, so nothing gets
+    /// placed against it.
+    fn activate(&mut self, cell: IVec3, pressed: bool) -> bool {
         if self.keys.sneak && self.inventory.selected_stack().is_some() {
             return false;
         }
@@ -377,6 +381,9 @@ impl Game {
         else {
             return false;
         };
+        if !pressed {
+            return true;
+        }
         match action {
             Activate::Crafting => self.open_crafting_table(),
             Activate::Chest => self.open_chest(cell),
