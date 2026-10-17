@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod player;
 mod render;
 
 use anyhow::Result;

@@ -16,3 +16,9 @@ pub const FOV_Y_DEGREES: f32 = 70.0;
 /// Near and far clip planes in blocks.
 pub const Z_NEAR: f32 = 0.05;
 pub const Z_FAR: f32 = 1000.0;
+
+/// Free-fly dev camera speed in blocks/s (Minecraft's creative flying speed).
+pub const FLY_SPEED: f32 = 10.92;
+
+/// Mouse look in radians per pixel of mouse movement.
+pub const MOUSE_SENSITIVITY: f32 = 0.0025;
