@@ -195,7 +195,9 @@ mod tests {
         )
     }
 
-    /// Ticks to break `block` with item `tool` (0 = bare hand), standing on dry ground.
+    /// Ticks to break `block` with item `tool` (0 = bare hand), standing on
+    /// dry ground: 1 / progress per tick, rounded up. (The game sums the
+    /// progress in floats like 1.0.0, which sometimes takes one tick more.)
     fn ticks(items: &Items, block: u16, tool: u16) -> u32 {
         let def = items.blocks.get(block).unwrap();
         let per_tick = progress_per_tick(def, items.tool(tool), true, false);
