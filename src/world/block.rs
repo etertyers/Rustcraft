@@ -41,6 +41,15 @@ impl BlockState {
     pub const fn is_air(self) -> bool {
         self.id() == 0
     }
+
+    /// The packed 16 bits, for saving.
+    pub const fn to_bits(self) -> u16 {
+        self.0
+    }
+
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
 }
 
 /// Texture names per face. The most specific field wins:

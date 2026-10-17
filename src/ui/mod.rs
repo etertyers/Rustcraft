@@ -1,6 +1,7 @@
-//! On-screen UI drawn with egui. For now only the F3 debug overlay.
+//! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
 mod fps;
+pub mod menu;
 
 use std::time::Instant;
 
@@ -8,10 +9,12 @@ use egui::{Align2, Color32, Frame, RichText};
 use winit::{event::WindowEvent, window::Window};
 
 use crate::{
+    player::mode::GameMode,
     render::{UiPaint, camera::Camera},
     world::biome::Biome,
 };
 use fps::FpsCounter;
+use menu::{Menu, MenuAction};
 
 /// World and renderer numbers shown in the F3 overlay.
 #[derive(Debug, Default, Clone, Copy)]
@@ -26,6 +29,7 @@ pub struct DebugStats {
     pub seed: Option<u64>,
     /// (sky, block) light where the player stands, once its chunk is drawn.
     pub light: Option<(u8, u8)>,
+    pub mode: GameMode,
 }
 
 /// Always-on HUD pieces.
@@ -100,6 +104,25 @@ impl DebugUi {
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
         // it would unhide the cursor while it's grabbed for mouse look.
+        self.paint(output)
+    }
+
+    /// Builds this frame's main menu and returns what the player chose.
+    pub fn menu_frame(
+        &mut self,
+        window: &Window,
+        menu: &mut Menu,
+    ) -> (UiPaint, Option<MenuAction>) {
+        let input = self.state.take_egui_input(window);
+        let mut action = None;
+        let output = self.ctx.run_ui(input, |ui| action = menu.show(ui));
+        // The cursor is free in the menu, so let egui set it and use the clipboard.
+        self.state
+            .handle_platform_output(window, output.platform_output.clone());
+        (self.paint(output), action)
+    }
+
+    fn paint(&self, output: egui::FullOutput) -> UiPaint {
         UiPaint {
             primitives: self.ctx.tessellate(output.shapes, output.pixels_per_point),
             textures: output.textures_delta,
@@ -119,7 +142,8 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          Facing: {} ({:.1} / {:.1})\n\
          Biome: {}\n\
          Light: {}\n\
-         Seed: {}",
+         Seed: {}\n\
+         Mode: {}",
         stats.chunks_drawn,
         stats.chunks_loaded,
         p.x,
@@ -137,6 +161,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
             |(sky, block)| format!("{} ({sky} sky, {block} block)", sky.max(block))
         ),
         stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
+        stats.mode.name(),
     )
 }
 
@@ -206,6 +231,7 @@ mod tests {
             biome: Some(Biome::Forest),
             seed: Some(42),
             light: Some((4, 11)),
+            mode: GameMode::Creative,
         };
         let text = debug_text(59.6, &camera, &stats);
         assert!(
@@ -221,5 +247,6 @@ mod tests {
         assert!(text.contains("Biome: Forest"), "{text}");
         assert!(text.contains("Light: 11 (4 sky, 11 block)"), "{text}");
         assert!(text.contains("Seed: 42"), "{text}");
+        assert!(text.contains("Mode: Creative"), "{text}");
     }
 }

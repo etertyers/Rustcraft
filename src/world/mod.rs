@@ -6,6 +6,7 @@ pub mod chunk;
 pub mod light;
 pub mod manager;
 pub mod mesh;
+pub mod save;
 pub mod worldgen;
 
 use std::{collections::HashMap, sync::Arc};

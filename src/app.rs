@@ -1,4 +1,4 @@
-//! winit event loop: owns the window, renderer and input state.
+//! winit event loop: owns the window, renderer and UI, and the game being played.
 
 use std::{
     sync::Arc,
@@ -6,16 +6,13 @@ use std::{
 };
 
 use anyhow::Result;
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition},
     error::ExternalError,
-    event::{
-        DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause,
-        WindowEvent,
-    },
+    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
@@ -23,20 +20,19 @@ use winit::{
 
 use crate::{
     assets, config,
+    game::{Game, chunk_workers},
     inventory::item::ItemRegistry,
-    player::{
-        collision::WorldCollider,
-        input::MoveKeys,
-        interaction::{self, BREAK_REPEAT_TICKS, HOTBAR, PLACE_REPEAT_TICKS},
-        physics::Body,
-        raycast::{self, Hit},
-    },
+    level::{self, WorldDir},
+    player::{interaction::HOTBAR, mode::GameMode},
     render::{
         Renderer,
         atlas::{Atlas, MISSING_TILE},
         camera::Camera,
     },
-    ui::{DebugStats, DebugUi, Hud},
+    ui::{
+        DebugStats, DebugUi, Hud,
+        menu::{Menu, MenuAction},
+    },
     world::{
         biome::BiomeColors,
         block::BlockRegistry,
@@ -47,9 +43,16 @@ use crate::{
     },
 };
 
-/// Which test world to build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A world to start in directly, skipping the main menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldKind {
+    /// The saved world in folder `name` under the saves folder, created
+    /// with `seed` (random if `None`) and `mode` if it doesn't exist yet.
+    Saved {
+        name: String,
+        seed: Option<u64>,
+        mode: GameMode,
+    },
     /// Generated terrain from a seed (the default).
     Generated { seed: u64 },
     /// Endless flat grass plain (`--flat`).
@@ -58,23 +61,6 @@ pub enum WorldKind {
     Gallery,
 }
 
-/// Longest frame step applied to free flight, so a stall doesn't teleport the camera.
-#[cfg(debug_assertions)]
-const MAX_FRAME_DT: f32 = 0.1;
-
-/// Seconds per game tick.
-const TICK: f32 = 1.0 / config::TICKS_PER_SECOND as f32;
-
-/// Most game time simulated in one frame; after a longer stall the game
-/// slows down instead of running a burst of ticks.
-const MAX_CATCH_UP: f32 = 10.0 * TICK;
-
-/// Trackpad scrolling this many pixels moves one hotbar slot.
-const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
-
-/// Falling below this returns the player to spawn (until health exists in M9).
-const VOID_Y: f64 = -64.0;
-
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
 
@@ -82,36 +68,13 @@ pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     debug_ui: Option<DebugUi>,
-    world_kind: WorldKind,
-    chunks: Option<ChunkManager>,
+    /// `None` starts at the main menu.
+    world_kind: Option<WorldKind>,
     blocks: Option<Arc<BlockRegistry>>,
-    /// Look direction comes from the mouse; position follows `body` each frame.
-    camera: Camera,
-    body: Body,
-    /// Feet position at the previous tick, for interpolating the camera.
-    prev_feet: DVec3,
-    spawn: DVec3,
-    keys: MoveKeys,
-    /// The block under the crosshair this frame.
-    target: Option<Hit>,
-    /// Mouse buttons held for breaking and placing.
-    breaking: bool,
-    placing: bool,
-    /// Presses not yet handled by a tick, so a click shorter than a tick still counts.
-    break_clicked: bool,
-    place_clicked: bool,
-    /// Ticks until a held button acts again.
-    break_cooldown: u8,
-    place_cooldown: u8,
-    /// Selected `HOTBAR` slot.
-    slot: usize,
-    /// Trackpad scroll not yet turned into slot changes.
-    scroll_pixels: f64,
-    /// Game time not yet simulated, in seconds (less than one tick after a frame).
-    tick_time: f32,
-    /// Free flight, a dev tool toggled with F4 in debug builds.
-    #[cfg(debug_assertions)]
-    flying: bool,
+    models: Option<Arc<BlockModels>>,
+    /// Exactly one of `menu` and `game` is set once the window is up.
+    menu: Option<Menu>,
+    game: Option<Game>,
     cursor_grabbed: bool,
     last_frame: Instant,
     /// The window is fully hidden; don't draw until it's visible again.
@@ -123,46 +86,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(world_kind: WorldKind) -> Self {
-        let ground = config::SEA_LEVEL as f64 + 1.0;
-        let (spawn, yaw, pitch) = match world_kind {
-            WorldKind::Generated { seed } => {
-                let (x, y, z) = Terrain::new(seed).spawn_point();
-                (
-                    DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5),
-                    0.0,
-                    0.0,
-                )
-            }
-            // On the grass at the origin.
-            WorldKind::Flat => (DVec3::new(0.5, ground, 0.5), 0.0, 0.0),
-            // In front of the first gallery row, looking south along it.
-            WorldKind::Gallery => (DVec3::new(22.5, ground, -4.0), std::f32::consts::PI, -0.3),
-        };
+    pub fn new(world_kind: Option<WorldKind>) -> Self {
         Self {
             window: None,
             renderer: None,
             debug_ui: None,
             world_kind,
-            chunks: None,
             blocks: None,
-            camera: Camera::new(spawn.as_vec3(), yaw, pitch),
-            body: Body::new(spawn),
-            prev_feet: spawn,
-            spawn,
-            keys: MoveKeys::default(),
-            target: None,
-            breaking: false,
-            placing: false,
-            break_clicked: false,
-            place_clicked: false,
-            break_cooldown: 0,
-            place_cooldown: 0,
-            slot: 0,
-            scroll_pixels: 0.0,
-            tick_time: 0.0,
-            #[cfg(debug_assertions)]
-            flying: false,
+            models: None,
+            menu: None,
+            game: None,
             cursor_grabbed: false,
             last_frame: Instant::now(),
             occluded: false,
@@ -218,37 +151,61 @@ impl App {
             atlas.uv_rect(MISSING_TILE),
             biome_colors,
         );
-
-        let source = match self.world_kind {
-            WorldKind::Generated { seed } => {
-                info!("world seed {seed}");
-                ChunkSource::Terrain(Box::new(Terrain::new(seed)))
-            }
-            WorldKind::Flat => ChunkSource::Flat,
-            WorldKind::Gallery => ChunkSource::Fixed(
-                gallery::gallery_chunks(&blocks)
-                    .into_iter()
-                    .map(|chunk| (chunk.pos, chunk))
-                    .collect(),
-            ),
-        };
-        // Leave one core for the main thread.
-        let workers = std::thread::available_parallelism()
-            .map_or(2, |n| n.get().saturating_sub(1))
-            .max(1);
-        info!("{workers} chunk worker threads");
-        self.chunks = Some(ChunkManager::new(
-            source,
-            Arc::new(models),
-            config::RENDER_DISTANCE,
-            workers,
-        ));
         self.blocks = Some(Arc::new(blocks));
+        self.models = Some(Arc::new(models));
+        match self.world_kind.clone() {
+            Some(kind) => self.game = Some(self.start_game(kind)?),
+            None => self.menu = Some(Menu::new(level::saves_dir())),
+        }
         self.renderer = Some(renderer);
         self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
         self.window = Some(window);
         Ok(())
+    }
+
+    fn start_game(&self, kind: WorldKind) -> Result<Game> {
+        let (blocks, models) = (
+            self.blocks.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+        );
+        let ground = config::SEA_LEVEL as f64 + 1.0;
+        let (source, spawn, yaw, pitch) = match kind {
+            WorldKind::Saved { name, seed, mode } => {
+                let saves = level::saves_dir();
+                let dir = WorldDir::new(saves.join(&name));
+                return if dir.exists() {
+                    Game::open(dir, blocks, models)
+                } else {
+                    let seed = seed.unwrap_or_else(level::random_seed);
+                    Game::create(&saves, &name, seed, mode, blocks, models)
+                };
+            }
+            // The test worlds below aren't saved.
+            WorldKind::Generated { seed } => {
+                info!("world seed {seed}");
+                let terrain = Terrain::new(seed);
+                let (x, y, z) = terrain.spawn_point();
+                let spawn = DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
+                (ChunkSource::Terrain(Box::new(terrain)), spawn, 0.0, 0.0)
+            }
+            // On the grass at the origin.
+            WorldKind::Flat => (ChunkSource::Flat, DVec3::new(0.5, ground, 0.5), 0.0, 0.0),
+            // In front of the first gallery row, looking south along it.
+            WorldKind::Gallery => (
+                ChunkSource::Fixed(
+                    gallery::gallery_chunks(&blocks)
+                        .into_iter()
+                        .map(|chunk| (chunk.pos, chunk))
+                        .collect(),
+                ),
+                DVec3::new(22.5, ground, -4.0),
+                std::f32::consts::PI,
+                -0.3,
+            ),
+        };
+        let chunks = ChunkManager::new(source, models, config::RENDER_DISTANCE, chunk_workers());
+        Ok(Game::new(chunks, blocks, spawn, spawn, yaw, pitch))
     }
 
     /// macOS sometimes stops pinning a locked cursor, and the hidden cursor
@@ -290,12 +247,8 @@ impl App {
         }
         window.set_cursor_visible(!grab);
         self.cursor_grabbed = grab;
-        if !grab {
-            self.keys.clear();
-            self.breaking = false;
-            self.placing = false;
-            self.break_clicked = false;
-            self.place_clicked = false;
+        if !grab && let Some(game) = self.game.as_mut() {
+            game.release_input();
         }
     }
 
@@ -310,129 +263,36 @@ impl App {
             if let Some(debug_ui) = self.debug_ui.as_mut() {
                 debug_ui.toggle();
             }
-        } else if key == KeyCode::F4 && pressed && !event.repeat {
-            #[cfg(debug_assertions)]
-            {
-                self.flying = !self.flying;
-                self.body.velocity = DVec3::ZERO;
-                info!("flying {}", if self.flying { "on" } else { "off" });
-            }
-        } else if let Some(slot) = hotbar_slot(key)
-            && pressed
-        {
-            self.slot = slot;
-        } else if self.cursor_grabbed {
-            self.keys.set_key(key, pressed);
+        } else if let Some(game) = self.game.as_mut() {
+            game.on_key(key, pressed, event.repeat, self.cursor_grabbed);
         }
     }
 
-    /// The block the crosshair points at from `eye`, within reach.
-    fn find_target(&self, eye: DVec3) -> Option<Hit> {
-        let (chunks, blocks) = (self.chunks.as_ref()?, self.blocks.as_ref()?);
-        let world = chunks.world();
-        let dir = self.camera.forward().as_dvec3();
-        raycast::raycast(eye, dir, config::REACH, |cell| {
-            world
-                .block(cell.x, cell.y, cell.z)
-                .and_then(|block| blocks.get(block.id()))
-                .is_some_and(|def| def.is_targetable())
-        })
-    }
-
-    /// A held button acts on the next tick, then every few ticks.
-    fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
-        match button {
-            MouseButton::Left => {
-                self.breaking = pressed;
-                self.break_clicked |= pressed;
-                self.break_cooldown = 0;
-            }
-            MouseButton::Right => {
-                self.placing = pressed;
-                self.place_clicked |= pressed;
-                self.place_cooldown = 0;
-            }
-            _ => {}
-        }
-    }
-
-    /// Scrolling down moves right along the hotbar, like Minecraft.
-    fn on_scroll(&mut self, delta: MouseScrollDelta) {
-        let steps = match delta {
-            MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
-            MouseScrollDelta::PixelDelta(pos) => {
-                self.scroll_pixels -= pos.y;
-                let steps = (self.scroll_pixels / SCROLL_PIXELS_PER_SLOT).trunc();
-                self.scroll_pixels -= steps * SCROLL_PIXELS_PER_SLOT;
-                steps as i32
+    /// Opens or creates the world chosen in the menu, or quits.
+    fn on_menu_action(&mut self, event_loop: &ActiveEventLoop, action: MenuAction) {
+        let (blocks, models) = (
+            self.blocks.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+        );
+        let game = match action {
+            MenuAction::Quit => return event_loop.exit(),
+            MenuAction::Open(dir) => Game::open(dir, blocks, models),
+            MenuAction::Create { name, seed, mode } => {
+                Game::create(&level::saves_dir(), &name, seed, mode, blocks, models)
             }
         };
-        self.slot = (self.slot as i32 + steps).rem_euclid(HOTBAR.len() as i32) as usize;
-    }
-
-    /// One game tick: player physics, then breaking and placing.
-    fn tick(&mut self) {
-        self.prev_feet = self.body.position();
-        self.move_player();
-        self.use_hands();
-    }
-
-    fn move_player(&mut self) {
-        #[cfg(debug_assertions)]
-        if self.flying {
-            return;
-        }
-        let (Some(chunks), Some(blocks)) = (&self.chunks, &self.blocks) else {
-            return;
-        };
-        let collider = WorldCollider {
-            world: chunks.world(),
-            blocks,
-        };
-        // Wait for the chunks around the player to load before moving them.
-        if !collider.is_loaded(&self.body.aabb()) {
-            return;
-        }
-        self.body
-            .tick(&self.keys.move_input(), self.camera.yaw, &collider);
-        if self.body.position().y < VOID_Y {
-            self.body = Body::new(self.spawn);
-            self.prev_feet = self.spawn;
-        }
-    }
-
-    fn use_hands(&mut self) {
-        self.break_cooldown = self.break_cooldown.saturating_sub(1);
-        self.place_cooldown = self.place_cooldown.saturating_sub(1);
-        let wants_break = (self.breaking || self.break_clicked) && self.break_cooldown == 0;
-        let wants_place = (self.placing || self.place_clicked) && self.place_cooldown == 0;
-        self.break_clicked = false;
-        self.place_clicked = false;
-        if !wants_break && !wants_place {
-            return;
-        }
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let Some(hit) = self.find_target(eye) else {
-            return;
-        };
-        let (Some(chunks), Some(blocks)) = (self.chunks.as_mut(), &self.blocks) else {
-            return;
-        };
-        if wants_break {
-            let edits = interaction::break_block(chunks.world(), blocks, hit.block);
-            if !edits.is_empty() {
-                chunks.set_blocks(&edits);
-                self.break_cooldown = BREAK_REPEAT_TICKS;
+        match game {
+            Ok(game) => {
+                self.game = Some(game);
+                self.menu = None;
+                self.set_cursor_grab(true);
             }
-        } else if let Some(edit) = interaction::place_block(
-            chunks.world(),
-            blocks,
-            &hit,
-            HOTBAR[self.slot],
-            &self.body.aabb(),
-        ) {
-            chunks.set_blocks(&[edit]);
-            self.place_cooldown = PLACE_REPEAT_TICKS;
+            Err(err) => {
+                error!("{err:#}");
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.error = Some(format!("Couldn't open the world: {err:#}"));
+                }
+            }
         }
     }
 
@@ -440,62 +300,76 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
-        #[cfg(debug_assertions)]
-        if self.flying {
-            let mut feet = self.body.position();
-            crate::player::fly::fly(&mut feet, self.camera.yaw, &self.keys, dt.min(MAX_FRAME_DT));
-            self.body.set_position(feet);
-            self.prev_feet = feet;
+        if self.game.is_none() {
+            return self.redraw_menu(event_loop, now);
         }
-        self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
-        while self.tick_time >= TICK {
-            self.tick();
-            self.tick_time -= TICK;
-        }
-        let alpha = (self.tick_time / TICK) as f64;
-        let feet = self.prev_feet.lerp(self.body.position(), alpha);
-        let eye = feet + DVec3::Y * self.body.eye_height();
-        self.camera.position = eye.as_vec3();
-        self.target = self.find_target(eye);
-
-        let (Some(window), Some(renderer), Some(debug_ui), Some(chunks)) = (
+        let (Some(window), Some(renderer), Some(debug_ui), Some(game)) = (
             &self.window,
             self.renderer.as_mut(),
             self.debug_ui.as_mut(),
-            self.chunks.as_mut(),
+            self.game.as_mut(),
         ) else {
             return;
         };
-        let p = self.camera.position;
+        game.advance(dt);
+
+        let p = game.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
-        let changes = chunks.update(ChunkPos::of_block(x, z));
+        let changes = game.chunks.update(ChunkPos::of_block(x, z));
         for (pos, mesh) in &changes.meshes {
             renderer.upload_chunk(*pos, mesh);
         }
         for pos in changes.unloaded {
             renderer.remove_chunk(pos);
         }
-        renderer.set_outline(self.target.map(|hit| hit.block));
+        renderer.set_outline(game.target.map(|hit| hit.block));
 
+        let chunks = &game.chunks;
         let stats = DebugStats {
             chunks_drawn: renderer.chunks_drawn(),
             chunks_loaded: chunks.world().len(),
             biome: chunks.world().biome_at(x, z),
             seed: chunks.seed(),
             light: chunks.light_at(x, p.y.floor() as i32, z),
+            mode: game.mode,
         };
-        let selected = HOTBAR[self.slot];
+        let selected = HOTBAR[game.slot];
         let hud = Hud {
             crosshair: self.cursor_grabbed,
-            selected: self.blocks.as_ref().map_or_else(String::new, |blocks| {
-                format!("{}: {}", self.slot + 1, blocks.display_name(selected))
-            }),
+            selected: format!(
+                "{}: {}",
+                game.slot + 1,
+                game.blocks().display_name(selected)
+            ),
         };
-        let ui = debug_ui.frame(window, &self.camera, &stats, &hud);
-        match renderer.render(&self.camera, ui) {
+        let ui = debug_ui.frame(window, &game.camera, &stats, &hud);
+        let result = renderer.render(&game.camera, ui);
+        self.finish_frame(event_loop, now, result);
+    }
+
+    /// The main menu over the sky.
+    fn redraw_menu(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        let (Some(window), Some(renderer), Some(debug_ui), Some(menu)) = (
+            &self.window,
+            self.renderer.as_mut(),
+            self.debug_ui.as_mut(),
+            self.menu.as_mut(),
+        ) else {
+            return;
+        };
+        let (ui, action) = debug_ui.menu_frame(window, menu);
+        let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), ui);
+        self.finish_frame(event_loop, now, result);
+        if let Some(action) = action {
+            self.on_menu_action(event_loop, action);
+        }
+    }
+
+    fn finish_frame(&mut self, event_loop: &ActiveEventLoop, now: Instant, result: Result<bool>) {
+        match result {
             Ok(presented) => {
                 self.frame_skipped = !presented;
-                if presented {
+                if presented && let Some(debug_ui) = self.debug_ui.as_mut() {
                     debug_ui.frame_presented(now);
                 }
             }
@@ -512,6 +386,7 @@ impl ApplicationHandler for App {
             window.request_redraw();
         }
     }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -543,11 +418,17 @@ impl ApplicationHandler for App {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if !self.cursor_grabbed => self.set_cursor_grab(true),
+            } if !self.cursor_grabbed && self.game.is_some() => self.set_cursor_grab(true),
             WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {
-                self.on_mouse_button(button, state == ElementState::Pressed);
+                if let Some(game) = self.game.as_mut() {
+                    game.on_mouse_button(button, state == ElementState::Pressed);
+                }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed => self.on_scroll(delta),
+            WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed => {
+                if let Some(game) = self.game.as_mut() {
+                    game.on_scroll(delta);
+                }
+            }
             WindowEvent::CursorMoved { position, .. } if self.cursor_grabbed => {
                 self.recenter_cursor(position);
             }
@@ -560,9 +441,9 @@ impl ApplicationHandler for App {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event
             && self.cursor_grabbed
+            && let Some(game) = self.game.as_mut()
         {
-            let s = config::MOUSE_SENSITIVITY;
-            self.camera.rotate(dx as f32 * s, -dy as f32 * s);
+            game.look(dx, dy);
         }
     }
 
@@ -580,29 +461,18 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(game) = self.game.as_mut()
+            && let Err(err) = game.save()
+        {
+            error!("saving on quit failed: {err:#}");
+        }
         // Drop the GPU surface before the window it points to.
         self.debug_ui = None;
         self.renderer = None;
         // Joins the chunk workers.
-        self.chunks = None;
+        self.game = None;
         self.window = None;
     }
-}
-
-/// Number keys 1–9 pick a hotbar slot.
-fn hotbar_slot(key: KeyCode) -> Option<usize> {
-    const KEYS: [KeyCode; 9] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ];
-    KEYS.iter().position(|&k| k == key)
 }
 
 /// Pins the cursor in place. macOS supports only Locked; other platforms may

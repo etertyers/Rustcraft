@@ -5,6 +5,7 @@ pub mod collision;
 pub mod fly;
 pub mod input;
 pub mod interaction;
+pub mod mode;
 pub mod physics;
 pub mod raycast;
 #[cfg(test)]

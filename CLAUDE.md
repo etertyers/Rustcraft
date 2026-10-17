@@ -191,7 +191,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Smooth lighting / ambient occlusion per vertex.
 - **Done when:** caves are dark, torches light them, and breaking/placing blocks updates light correctly across chunk borders.
 
-### - [ ] M6 — Saving and loading
+### - [x] M6 — Saving and loading
 - Region files (32×32 chunks per file), only modified chunks saved, compressed.
 - Save player position, stats, inventory, world seed, game mode, time of day. Autosave every few minutes and on quit.
 - Main menu: create world (name + seed + **game mode: Survival or Creative**, default Survival), load world (list shows each world's mode), quit. The mode is fixed for the life of the world, as in 1.0.0.

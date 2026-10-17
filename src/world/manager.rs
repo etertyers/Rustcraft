@@ -9,6 +9,9 @@
 //! thread, so the change shows the same frame; other chunks within light
 //! range are relit in the background. A mesh job that was already running
 //! for an edited chunk is discarded when it returns.
+//!
+//! With a region store, workers load saved chunks instead of generating
+//! them, and `save` writes the chunks changed since the last save.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -19,6 +22,7 @@ use std::{
 use glam::IVec3;
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use log::error;
 
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
@@ -28,6 +32,7 @@ use super::{
     chunk::{Chunk, ChunkPos},
     light::{ChunkLight, light_chunk},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
+    save::{RegionStore, SaveError},
     worldgen::{flat, terrain::Terrain},
 };
 
@@ -56,6 +61,18 @@ impl ChunkSource {
             _ => None,
         }
     }
+
+    /// The saved chunk if there is one, else a newly generated one.
+    fn load_or_generate(&self, store: Option<&RegionStore>, pos: ChunkPos) -> Chunk {
+        match store.map(|store| store.load(pos)) {
+            Some(Ok(Some(chunk))) => chunk,
+            Some(Err(err)) => {
+                error!("can't load chunk {pos:?}, generating it instead: {err}");
+                self.generate(pos)
+            }
+            Some(Ok(None)) | None => self.generate(pos),
+        }
+    }
 }
 
 enum Job {
@@ -79,6 +96,7 @@ pub struct Changes {
 pub struct ChunkManager {
     world: World,
     source: Arc<ChunkSource>,
+    store: Option<Arc<RegionStore>>,
     models: Arc<BlockModels>,
     /// `None` only while shutting down.
     jobs: Option<Sender<Job>>,
@@ -94,9 +112,10 @@ pub struct ChunkManager {
     max_in_flight: usize,
     /// Bumped on every edit so stale mesh jobs can be recognized.
     revisions: HashMap<ChunkPos, u32>,
-    /// Chunks the player has changed. They're kept in memory when unloaded,
-    /// since regenerating would lose the changes (saving comes in M6).
-    edited: HashSet<ChunkPos>,
+    /// Chunks changed since they were last saved (every changed chunk when
+    /// there's no store). They're kept in memory when unloaded, since
+    /// loading or regenerating them would lose the changes.
+    unsaved: HashSet<ChunkPos>,
     unloaded_edits: HashMap<ChunkPos, Arc<Chunk>>,
     /// Meshes rebuilt by edits, handed out by the next `update`.
     remeshed: Vec<(ChunkPos, Mesh)>,
@@ -116,15 +135,38 @@ impl ChunkManager {
     /// Starts `workers` threads. Chunks are generated one ring beyond
     /// `radius` so border chunks can be meshed against their neighbors.
     pub fn new(source: ChunkSource, models: Arc<BlockModels>, radius: i32, workers: usize) -> Self {
+        Self::start(source, None, models, radius, workers)
+    }
+
+    /// Like `new`, but saved chunks come from `store`, and `save` writes there.
+    pub fn with_store(
+        source: ChunkSource,
+        store: RegionStore,
+        models: Arc<BlockModels>,
+        radius: i32,
+        workers: usize,
+    ) -> Self {
+        Self::start(source, Some(store), models, radius, workers)
+    }
+
+    fn start(
+        source: ChunkSource,
+        store: Option<RegionStore>,
+        models: Arc<BlockModels>,
+        radius: i32,
+        workers: usize,
+    ) -> Self {
         let source = Arc::new(source);
+        let store = store.map(Arc::new);
         let (job_tx, job_rx) = crossbeam_channel::unbounded::<Job>();
         let (done_tx, done_rx) = crossbeam_channel::unbounded();
         let workers = (0..workers.max(1))
             .map(|i| {
-                let (jobs, done, source, worker_models) = (
+                let (jobs, done, source, store, worker_models) = (
                     job_rx.clone(),
                     done_tx.clone(),
                     source.clone(),
+                    store.clone(),
                     models.clone(),
                 );
                 let models = worker_models;
@@ -133,9 +175,9 @@ impl ChunkManager {
                     .spawn(move || {
                         for job in jobs {
                             let result = match job {
-                                Job::Generate(pos) => {
-                                    Done::Generated(Box::new(source.generate(pos)))
-                                }
+                                Job::Generate(pos) => Done::Generated(Box::new(
+                                    source.load_or_generate(store.as_deref(), pos),
+                                )),
                                 Job::Mesh(pos, area, revision) => {
                                     let light = light_chunk(&models, &area);
                                     let mesh = mesh_chunk(&models, &area, &light);
@@ -160,6 +202,7 @@ impl ChunkManager {
         Self {
             world: World::default(),
             source,
+            store,
             models,
             jobs: Some(job_tx),
             done: done_rx,
@@ -171,7 +214,7 @@ impl ChunkManager {
             radius,
             offsets,
             revisions: HashMap::new(),
-            edited: HashSet::new(),
+            unsaved: HashSet::new(),
             unloaded_edits: HashMap::new(),
             remeshed: Vec::new(),
             relight: HashSet::new(),
@@ -235,7 +278,7 @@ impl ChunkManager {
             .collect();
         for pos in far {
             if let Some(chunk) = self.world.remove(pos)
-                && self.edited.contains(&pos)
+                && self.unsaved.contains(&pos)
             {
                 self.unloaded_edits.insert(pos, chunk);
             }
@@ -314,7 +357,7 @@ impl ChunkManager {
             };
             let (x, z) = (at.x.rem_euclid(size), at.z.rem_euclid(size));
             chunk.set(x as usize, at.y as usize, z as usize, block);
-            self.edited.insert(pos);
+            self.unsaved.insert(pos);
             touched.insert(pos);
             let low = ChunkPos::of_block(at.x - LIGHT_REACH, at.z - LIGHT_REACH);
             let high = ChunkPos::of_block(at.x + LIGHT_REACH, at.z + LIGHT_REACH);
@@ -355,6 +398,29 @@ impl ChunkManager {
         }
     }
 
+    /// Writes every chunk changed since the last save to the store, and
+    /// returns how many there were. Without a store this does nothing.
+    pub fn save(&mut self) -> Result<usize, SaveError> {
+        let Some(store) = &self.store else {
+            return Ok(0);
+        };
+        let chunks: Vec<&Chunk> = self
+            .unsaved
+            .iter()
+            .filter_map(|pos| {
+                let chunk = self.world.get(*pos).or(self.unloaded_edits.get(pos))?;
+                Some(&**chunk)
+            })
+            .collect();
+        let count = chunks.len();
+        store.save(chunks)?;
+        // Saved chunks that aren't loaded will be read back from the store.
+        for pos in self.unsaved.drain() {
+            self.unloaded_edits.remove(&pos);
+        }
+        Ok(count)
+    }
+
     fn neighbors_loaded(&self, pos: ChunkPos) -> bool {
         (-1..=1).all(|dz| (-1..=1).all(|dx| self.world.get(pos.offset(dx, dz)).is_some()))
     }
@@ -373,7 +439,7 @@ impl Drop for ChunkManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{biome::BiomeColors, block::BlockRegistry};
+    use crate::world::{biome::BiomeColors, block::BlockRegistry, save::TempDir};
     use std::time::{Duration, Instant};
 
     fn models() -> Arc<BlockModels> {
@@ -524,6 +590,63 @@ mod tests {
         assert_eq!(manager.world().block(3, 70, 3), Some(STONE));
         // Unedited chunks are regenerated, not kept.
         assert!(manager.unloaded_edits.is_empty());
+    }
+
+    fn flat_with_store(dir: &std::path::Path) -> ChunkManager {
+        let store = RegionStore::new(dir);
+        let mut manager = ChunkManager::with_store(ChunkSource::Flat, store, models(), 1, 2);
+        run_until(&mut manager, ChunkPos::new(0, 0), |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        manager
+    }
+
+    #[test]
+    fn saved_edits_load_in_a_new_manager() {
+        let dir = TempDir::new("manager-save");
+        let mut manager = flat_with_store(dir.path());
+        manager.set_blocks(&[
+            (IVec3::new(3, 70, 3), STONE),
+            (IVec3::new(17, 70, -1), TORCH),
+        ]);
+        assert_eq!(manager.save().unwrap(), 2);
+        assert_eq!(manager.save().unwrap(), 0, "nothing changed since");
+        drop(manager);
+
+        // As after quitting and relaunching.
+        let manager = flat_with_store(dir.path());
+        assert_eq!(manager.world().block(3, 70, 3), Some(STONE));
+        assert_eq!(manager.world().block(17, 70, -1), Some(TORCH));
+        assert_eq!(manager.world().block(4, 70, 3), Some(BlockState::AIR));
+    }
+
+    #[test]
+    fn saved_chunks_leave_memory_and_come_back_from_the_store() {
+        let dir = TempDir::new("manager-unload");
+        let mut manager = flat_with_store(dir.path());
+        manager.set_blocks(&[(IVec3::new(3, 70, 3), STONE)]);
+        let (home, far) = (ChunkPos::new(0, 0), ChunkPos::new(30, 0));
+        run_until(&mut manager, far, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        assert!(
+            manager.unloaded_edits.contains_key(&home),
+            "unsaved, so kept"
+        );
+        assert_eq!(manager.save().unwrap(), 1);
+        assert!(manager.unloaded_edits.is_empty());
+        run_until(&mut manager, home, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        assert_eq!(manager.world().block(3, 70, 3), Some(STONE));
+    }
+
+    #[test]
+    fn without_a_store_saving_does_nothing() {
+        let mut manager = loaded_flat();
+        manager.set_blocks(&[(IVec3::new(3, 70, 3), STONE)]);
+        assert_eq!(manager.save().unwrap(), 0);
+        assert!(manager.unsaved.contains(&ChunkPos::new(0, 0)));
     }
 
     #[test]
