@@ -1,4 +1,5 @@
 mod app;
+mod assets;
 mod config;
 mod player;
 mod render;

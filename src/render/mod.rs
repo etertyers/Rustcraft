@@ -1,7 +1,8 @@
 //! wgpu setup and frame rendering.
 
+pub mod atlas;
 pub mod camera;
-mod cube;
+pub mod cube;
 
 use std::sync::Arc;
 
@@ -10,7 +11,9 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::config::SKY_COLOR;
+use atlas::Atlas;
 use camera::Camera;
+use cube::Mesh;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -29,13 +32,14 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    atlas_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>) -> Result<Self> {
+    pub fn new(window: Arc<Window>, atlas: &Atlas, mesh: &Mesh) -> Result<Self> {
         let size = window.inner_size();
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -92,10 +96,12 @@ impl Renderer {
             }],
         });
 
+        let (atlas_layout, atlas_bind_group) = create_atlas_bind_group(&device, &queue, atlas);
+
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blocks"),
-            bind_group_layouts: &[Some(&globals_layout)],
+            bind_group_layouts: &[Some(&globals_layout), Some(&atlas_layout)],
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -129,15 +135,14 @@ impl Renderer {
             cache: None,
         });
 
-        let (vertices, indices) = cube::cube_mesh([0.0, 0.0, 0.0]);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cube vertices"),
-            contents: bytemuck::cast_slice(&vertices),
+            contents: bytemuck::cast_slice(&mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cube indices"),
-            contents: bytemuck::cast_slice(&indices),
+            contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -150,9 +155,10 @@ impl Renderer {
             pipeline,
             globals_buffer,
             globals_bind_group,
+            atlas_bind_group,
             vertex_buffer,
             index_buffer,
-            index_count: indices.len() as u32,
+            index_count: mesh.indices.len() as u32,
         })
     }
 
@@ -220,6 +226,7 @@ impl Renderer {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -228,6 +235,77 @@ impl Renderer {
         self.queue.present(frame);
         Ok(())
     }
+}
+
+/// Uploads the atlas as an sRGB texture with nearest filtering and no mipmaps, like Minecraft 1.0.0.
+fn create_atlas_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    atlas: &Atlas,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let image = atlas.image();
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("atlas"),
+            size: wgpu::Extent3d {
+                width: image.width(),
+                height: image.height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        image.as_raw(),
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("atlas"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("atlas"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("atlas"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+    (layout, bind_group)
 }
 
 fn create_depth_view(

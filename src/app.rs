@@ -15,9 +15,14 @@ use winit::{
 };
 
 use crate::{
-    config,
+    assets, config,
     player::fly::{self, FlyInput},
-    render::{Renderer, camera::Camera},
+    render::{
+        Renderer,
+        atlas::Atlas,
+        camera::Camera,
+        cube::{self, FaceTexture},
+    },
 };
 
 /// Longest frame step applied to movement, so a stall doesn't teleport the camera.
@@ -68,7 +73,13 @@ impl App {
                 config::WINDOW_HEIGHT,
             ));
         let window = Arc::new(event_loop.create_window(attrs)?);
-        self.renderer = Some(Renderer::new(window.clone())?);
+        let atlas = Atlas::load(&assets::dir().join("textures/blocks"))?;
+        let stone = FaceTexture {
+            uv: atlas.uv_rect(atlas.tile_or_missing("stone")),
+            tint: [1.0; 3],
+        };
+        let mesh = cube::cube_mesh([0.0; 3], |_| stone);
+        self.renderer = Some(Renderer::new(window.clone(), &atlas, &mesh)?);
         window.request_redraw();
         self.window = Some(window);
         Ok(())
