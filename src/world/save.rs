@@ -122,10 +122,6 @@ pub struct RegionStore {
 }
 
 impl RegionStore {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "saved worlds arrive with the session")
-    )]
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
     }

@@ -3,10 +3,6 @@ mod assets;
 mod config;
 mod game;
 mod inventory;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the main menu opens saved worlds")
-)]
 mod level;
 mod player;
 mod render;
@@ -25,14 +21,18 @@ fn main() -> Result<()> {
     app.into_result()
 }
 
-/// `--gallery`, `--flat`, or generated terrain with `--seed <n>` (random if omitted).
+/// `--world <name>` opens a saved world (creating it with `--seed <n>` and
+/// `--creative` if it doesn't exist). Otherwise `--gallery`, `--flat`, or
+/// unsaved generated terrain with `--seed <n>` (random if omitted).
 fn parse_args(args: impl Iterator<Item = String>) -> Result<app::WorldKind> {
     let mut args = args.peekable();
-    let mut seed = None;
+    let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--gallery" => return Ok(app::WorldKind::Gallery),
             "--flat" => return Ok(app::WorldKind::Flat),
+            "--world" => world = Some(args.next().context("--world needs a name")?),
+            "--creative" => mode = player::mode::GameMode::Creative,
             "--seed" => {
                 let value = args.next().context("--seed needs a number")?;
                 seed = Some(
@@ -41,15 +41,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<app::WorldKind> {
                         .with_context(|| format!("bad seed {value:?}"))?,
                 );
             }
-            other => {
-                anyhow::bail!("unknown argument {other:?} (try --seed <n>, --flat or --gallery)")
-            }
+            other => anyhow::bail!(
+                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat or --gallery)"
+            ),
         }
     }
-    let seed = seed.unwrap_or_else(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos() as u64)
-    });
+    if let Some(name) = world {
+        return Ok(app::WorldKind::Saved { name, seed, mode });
+    }
+    let seed = seed.unwrap_or_else(level::random_seed);
     Ok(app::WorldKind::Generated { seed })
 }

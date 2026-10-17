@@ -20,6 +20,10 @@ pub const Z_FAR: f32 = 1000.0;
 /// Game logic rate, like Minecraft.
 pub const TICKS_PER_SECOND: u32 = 20;
 
+/// Ticks between autosaves: 5 minutes, as CLAUDE.md asks for "every few
+/// minutes" (1.0.0 itself saved a few changed chunks every 40 ticks).
+pub const AUTOSAVE_TICKS: u32 = 5 * 60 * TICKS_PER_SECOND;
+
 /// Player physics, in Minecraft's units (blocks, ticks) from 1.0.0.
 pub const GRAVITY: f64 = 0.08;
 /// Vertical velocity kept each tick (air drag).

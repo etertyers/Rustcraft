@@ -20,6 +20,7 @@ impl GameMode {
     }
 
     /// The other mode, for the create-world button that cycles through them.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the main menu comes next"))]
     pub fn next(self) -> Self {
         match self {
             GameMode::Survival => GameMode::Creative,

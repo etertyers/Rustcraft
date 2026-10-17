@@ -20,9 +20,10 @@ use winit::{
 
 use crate::{
     assets, config,
-    game::Game,
+    game::{Game, chunk_workers},
     inventory::item::ItemRegistry,
-    player::interaction::HOTBAR,
+    level::{self, WorldDir},
+    player::{interaction::HOTBAR, mode::GameMode},
     render::{
         Renderer,
         atlas::{Atlas, MISSING_TILE},
@@ -38,9 +39,16 @@ use crate::{
     },
 };
 
-/// Which test world to build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which world to start in.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldKind {
+    /// The saved world in folder `name` under the saves folder, created
+    /// with `seed` (random if `None`) and `mode` if it doesn't exist yet.
+    Saved {
+        name: String,
+        seed: Option<u64>,
+        mode: GameMode,
+    },
     /// Generated terrain from a seed (the default).
     Generated { seed: u64 },
     /// Endless flat grass plain (`--flat`).
@@ -137,7 +145,7 @@ impl App {
         );
         self.blocks = Some(Arc::new(blocks));
         self.models = Some(Arc::new(models));
-        self.game = Some(self.start_game(self.world_kind));
+        self.game = Some(self.start_game(self.world_kind.clone())?);
         self.renderer = Some(renderer);
         self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
@@ -145,14 +153,24 @@ impl App {
         Ok(())
     }
 
-    /// A new game in a test world (not saved).
-    fn start_game(&self, kind: WorldKind) -> Game {
+    fn start_game(&self, kind: WorldKind) -> Result<Game> {
         let (blocks, models) = (
             self.blocks.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
         let ground = config::SEA_LEVEL as f64 + 1.0;
         let (source, spawn, yaw, pitch) = match kind {
+            WorldKind::Saved { name, seed, mode } => {
+                let saves = level::saves_dir();
+                let dir = WorldDir::new(saves.join(&name));
+                return if dir.exists() {
+                    Game::open(dir, blocks, models)
+                } else {
+                    let seed = seed.unwrap_or_else(level::random_seed);
+                    Game::create(&saves, &name, seed, mode, blocks, models)
+                };
+            }
+            // The test worlds below aren't saved.
             WorldKind::Generated { seed } => {
                 info!("world seed {seed}");
                 let terrain = Terrain::new(seed);
@@ -176,7 +194,7 @@ impl App {
             ),
         };
         let chunks = ChunkManager::new(source, models, config::RENDER_DISTANCE, chunk_workers());
-        Game::new(chunks, blocks, spawn, spawn, yaw, pitch)
+        Ok(Game::new(chunks, blocks, spawn, spawn, yaw, pitch))
     }
 
     /// macOS sometimes stops pinning a locked cursor, and the hidden cursor
@@ -271,6 +289,7 @@ impl App {
             biome: chunks.world().biome_at(x, z),
             seed: chunks.seed(),
             light: chunks.light_at(x, p.y.floor() as i32, z),
+            mode: game.mode,
         };
         let selected = HOTBAR[game.slot];
         let hud = Hud {
@@ -377,6 +396,11 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(game) = self.game.as_mut()
+            && let Err(err) = game.save()
+        {
+            error!("saving on quit failed: {err:#}");
+        }
         // Drop the GPU surface before the window it points to.
         self.debug_ui = None;
         self.renderer = None;
@@ -384,15 +408,6 @@ impl ApplicationHandler for App {
         self.game = None;
         self.window = None;
     }
-}
-
-/// One worker per core, leaving one core for the main thread.
-fn chunk_workers() -> usize {
-    let workers = std::thread::available_parallelism()
-        .map_or(2, |n| n.get().saturating_sub(1))
-        .max(1);
-    info!("{workers} chunk worker threads");
-    workers
 }
 
 /// Pins the cursor in place. macOS supports only Locked; other platforms may

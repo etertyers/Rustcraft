@@ -8,6 +8,7 @@ use egui::{Align2, Color32, Frame, RichText};
 use winit::{event::WindowEvent, window::Window};
 
 use crate::{
+    player::mode::GameMode,
     render::{UiPaint, camera::Camera},
     world::biome::Biome,
 };
@@ -26,6 +27,7 @@ pub struct DebugStats {
     pub seed: Option<u64>,
     /// (sky, block) light where the player stands, once its chunk is drawn.
     pub light: Option<(u8, u8)>,
+    pub mode: GameMode,
 }
 
 /// Always-on HUD pieces.
@@ -119,7 +121,8 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          Facing: {} ({:.1} / {:.1})\n\
          Biome: {}\n\
          Light: {}\n\
-         Seed: {}",
+         Seed: {}\n\
+         Mode: {}",
         stats.chunks_drawn,
         stats.chunks_loaded,
         p.x,
@@ -137,6 +140,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
             |(sky, block)| format!("{} ({sky} sky, {block} block)", sky.max(block))
         ),
         stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
+        stats.mode.name(),
     )
 }
 
@@ -206,6 +210,7 @@ mod tests {
             biome: Some(Biome::Forest),
             seed: Some(42),
             light: Some((4, 11)),
+            mode: GameMode::Creative,
         };
         let text = debug_text(59.6, &camera, &stats);
         assert!(
@@ -221,5 +226,6 @@ mod tests {
         assert!(text.contains("Biome: Forest"), "{text}");
         assert!(text.contains("Light: 11 (4 sky, 11 block)"), "{text}");
         assert!(text.contains("Seed: 42"), "{text}");
+        assert!(text.contains("Mode: Creative"), "{text}");
     }
 }

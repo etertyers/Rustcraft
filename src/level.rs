@@ -94,8 +94,14 @@ impl WorldDir {
         Ok(dir)
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "the main menu comes next"))]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether the folder holds a world.
+    pub fn exists(&self) -> bool {
+        self.path.join(LEVEL_FILE).is_file()
     }
 
     pub fn load_level(&self) -> Result<Level> {
@@ -126,17 +132,17 @@ impl WorldDir {
 }
 
 /// Every world in `saves` that has a readable level, most recently played first.
+#[cfg_attr(not(test), expect(dead_code, reason = "the main menu comes next"))]
 pub fn list_worlds(saves: &Path) -> Vec<(WorldDir, Level)> {
     let Ok(entries) = fs::read_dir(saves) else {
         return Vec::new();
     };
     let mut worlds: Vec<(WorldDir, Level)> = entries
         .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            if !path.join(LEVEL_FILE).is_file() {
+            let dir = WorldDir::new(entry.ok()?.path());
+            if !dir.exists() {
                 return None;
             }
-            let dir = WorldDir::new(path);
             match dir.load_level() {
                 Ok(level) => Some((dir, level)),
                 Err(err) => {
@@ -173,6 +179,7 @@ pub fn folder_name(name: &str, exists: impl Fn(&str) -> bool) -> String {
 /// 1.0.0's seed from the create-world seed box: a number is used as is,
 /// other text is hashed like Java's `String.hashCode`, and an empty box
 /// (or 0) gives a random seed.
+#[cfg_attr(not(test), expect(dead_code, reason = "the main menu comes next"))]
 pub fn parse_seed(text: &str, random: impl FnOnce() -> u64) -> u64 {
     let text = text.trim();
     if text.is_empty() {

@@ -138,10 +138,6 @@ impl ChunkManager {
         Self::start(source, None, models, radius, workers)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "saved worlds arrive with the session")
-    )]
     /// Like `new`, but saved chunks come from `store`, and `save` writes there.
     pub fn with_store(
         source: ChunkSource,
@@ -402,10 +398,6 @@ impl ChunkManager {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "saved worlds arrive with the session")
-    )]
     /// Writes every chunk changed since the last save to the store, and
     /// returns how many there were. Without a store this does nothing.
     pub fn save(&mut self) -> Result<usize, SaveError> {
