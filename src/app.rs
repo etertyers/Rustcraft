@@ -26,7 +26,7 @@ use crate::{
     player::{interaction::HOTBAR, mode::GameMode},
     render::{
         Renderer,
-        atlas::{Atlas, MISSING_TILE},
+        atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
     },
     ui::{
@@ -125,11 +125,14 @@ impl App {
         let assets = assets::dir();
         let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
         let items = ItemRegistry::load(&assets.join("data/items.ron"))?;
-        let atlas = Atlas::load(&assets.join("textures/blocks"))?;
-        let item_dir = assets.join("textures/items");
+        let textures = assets.join("textures");
+        let atlas = Atlas::load(&[
+            (&textures.join("blocks"), ""),
+            (&textures.join("items"), ITEM_PREFIX),
+        ])?;
         let missing_blocks = blocks.missing_textures(|name| atlas.get(name).is_some());
         let missing_items =
-            items.missing_textures(|name| item_dir.join(format!("{name}.png")).is_file());
+            items.missing_textures(|name| atlas.get(&format!("{ITEM_PREFIX}{name}")).is_some());
         info!(
             "loaded {} blocks and {} items",
             blocks.iter().count(),

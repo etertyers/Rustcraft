@@ -1,4 +1,4 @@
-//! Texture atlas: every block texture packed into one grid of 16×16 tiles.
+//! Texture atlas: every block and item texture packed into one grid of 16×16 tiles.
 
 use std::{collections::HashMap, path::Path};
 
@@ -7,6 +7,9 @@ use image::{RgbaImage, imageops};
 
 /// Edge length of one tile in pixels.
 pub const TILE_SIZE: u32 = 16;
+
+/// Prefix for item texture names, so they can't clash with block textures.
+pub const ITEM_PREFIX: &str = "item/";
 
 /// Tile 0 is the magenta/black checkerboard used for missing textures.
 pub const MISSING_TILE: u32 = 0;
@@ -21,27 +24,34 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    /// Packs every `.png` directly in `dir`, keyed by file stem (`grass_top.png` → `grass_top`).
-    pub fn load(dir: &Path) -> Result<Self> {
+    /// Packs every `.png` directly in each folder, keyed by the folder's
+    /// prefix plus the file stem (`grass_top.png` → `grass_top`, or with
+    /// prefix `item/`, `stick.png` → `item/stick`).
+    pub fn load(sources: &[(&Path, &str)]) -> Result<Self> {
         let mut textures = Vec::new();
-        for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
-            let path = entry?.path();
-            if path.extension().is_none_or(|ext| ext != "png") {
-                continue;
+        for &(dir, prefix) in sources {
+            let before = textures.len();
+            for entry in
+                std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))?
+            {
+                let path = entry?.path();
+                if path.extension().is_none_or(|ext| ext != "png") {
+                    continue;
+                }
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .with_context(|| format!("bad texture file name {}", path.display()))?;
+                let image = image::open(&path)
+                    .with_context(|| format!("loading {}", path.display()))?
+                    .into_rgba8();
+                textures.push((format!("{prefix}{name}"), image));
             }
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .with_context(|| format!("bad texture file name {}", path.display()))?
-                .to_owned();
-            let image = image::open(&path)
-                .with_context(|| format!("loading {}", path.display()))?
-                .into_rgba8();
-            textures.push((name, image));
+            let count = textures.len() - before;
+            log::info!("packed {count} textures from {}", dir.display());
         }
         // Sort so tile indices don't depend on directory order.
         textures.sort_by(|a, b| a.0.cmp(&b.0));
-        log::info!("packed {} textures from {}", textures.len(), dir.display());
         Ok(Self::pack(textures))
     }
 
@@ -184,7 +194,13 @@ mod tests {
 
     #[test]
     fn real_block_textures_load() {
-        let atlas = Atlas::load(&crate::assets::dir().join("textures/blocks")).unwrap();
+        let textures = crate::assets::dir().join("textures");
+        let atlas = Atlas::load(&[
+            (&textures.join("blocks"), ""),
+            (&textures.join("items"), ITEM_PREFIX),
+        ])
+        .unwrap();
+        assert!(atlas.get("item/stick").is_some());
         assert!(atlas.get("stone").is_some());
         assert!(atlas.get("grass_top").is_some());
     }

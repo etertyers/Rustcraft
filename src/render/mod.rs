@@ -2,7 +2,17 @@
 
 pub mod atlas;
 pub mod camera;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the game draws dropped items later in M7")
+)]
+pub mod entities;
 pub mod frustum;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the HUD and dropped items draw icons later in M7")
+)]
+pub mod icons;
 mod outline;
 pub mod vertex;
 

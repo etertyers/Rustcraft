@@ -100,6 +100,12 @@ impl BlockModels {
         }
     }
 
+    /// sRGB color for a face tint on an item icon or a dropped item, which
+    /// isn't in any biome: plains colors.
+    pub fn icon_color(&self, tint: FaceTint) -> [f32; 3] {
+        self.tint_color(tint, Biome::Plains)
+    }
+
     /// sRGB color for a face tint in `biome`.
     fn tint_color(&self, tint: FaceTint, biome: Biome) -> [f32; 3] {
         match tint {
@@ -173,7 +179,7 @@ impl Mesh {
     /// Adds a quad from corners ordered bottom-left, bottom-right, top-right,
     /// top-left as seen from its front (counter-clockwise), with a color and
     /// (sky, block) light per corner.
-    fn quad(
+    pub fn quad(
         &mut self,
         corners: [[f32; 3]; 4],
         uv: [f32; 4],

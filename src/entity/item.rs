@@ -36,6 +36,8 @@ const PICKUP_REACH: f64 = 1.0;
 pub struct ItemEntity {
     pub stack: ItemStack,
     bb: Aabb,
+    /// Center at the previous tick, for smooth drawing between ticks.
+    prev_center: DVec3,
     pub velocity: DVec3,
     pub on_ground: bool,
     /// Ticks since it was dropped.
@@ -52,6 +54,7 @@ impl ItemEntity {
         Self {
             stack,
             bb: Aabb::new(center - half, center + half),
+            prev_center: center,
             velocity,
             on_ground: false,
             age: 0,
@@ -102,12 +105,18 @@ impl ItemEntity {
         (self.bb.min + self.bb.max) / 2.0
     }
 
+    /// Center `alpha` of the way from the previous tick to this one.
+    pub fn center_between_ticks(&self, alpha: f64) -> DVec3 {
+        self.prev_center.lerp(self.center(), alpha)
+    }
+
     pub fn expired(&self) -> bool {
         self.age >= LIFETIME || self.stack.count == 0
     }
 
     /// One tick of 1.0.0's `EntityItem.onUpdate`.
     pub fn tick(&mut self, world: &impl Collider) {
+        self.prev_center = self.center();
         self.velocity.y -= GRAVITY;
         let wanted = self.velocity;
         let (moved, bb) = sweep(self.bb, wanted, world, &mut Vec::new());
