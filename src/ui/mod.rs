@@ -1,6 +1,7 @@
-//! On-screen UI drawn with egui. For now only the F3 debug overlay.
+//! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
 mod fps;
+pub mod menu;
 
 use std::time::Instant;
 
@@ -13,6 +14,7 @@ use crate::{
     world::biome::Biome,
 };
 use fps::FpsCounter;
+use menu::{Menu, MenuAction};
 
 /// World and renderer numbers shown in the F3 overlay.
 #[derive(Debug, Default, Clone, Copy)]
@@ -102,6 +104,25 @@ impl DebugUi {
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
         // it would unhide the cursor while it's grabbed for mouse look.
+        self.paint(output)
+    }
+
+    /// Builds this frame's main menu and returns what the player chose.
+    pub fn menu_frame(
+        &mut self,
+        window: &Window,
+        menu: &mut Menu,
+    ) -> (UiPaint, Option<MenuAction>) {
+        let input = self.state.take_egui_input(window);
+        let mut action = None;
+        let output = self.ctx.run_ui(input, |ui| action = menu.show(ui));
+        // The cursor is free in the menu, so let egui set it and use the clipboard.
+        self.state
+            .handle_platform_output(window, output.platform_output.clone());
+        (self.paint(output), action)
+    }
+
+    fn paint(&self, output: egui::FullOutput) -> UiPaint {
         UiPaint {
             primitives: self.ctx.tessellate(output.shapes, output.pixels_per_point),
             textures: output.textures_delta,

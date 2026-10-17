@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use log::{error, info, warn};
 use winit::{
     application::ApplicationHandler,
@@ -27,8 +27,12 @@ use crate::{
     render::{
         Renderer,
         atlas::{Atlas, MISSING_TILE},
+        camera::Camera,
     },
-    ui::{DebugStats, DebugUi, Hud},
+    ui::{
+        DebugStats, DebugUi, Hud,
+        menu::{Menu, MenuAction},
+    },
     world::{
         biome::BiomeColors,
         block::BlockRegistry,
@@ -39,7 +43,7 @@ use crate::{
     },
 };
 
-/// Which world to start in.
+/// A world to start in directly, skipping the main menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorldKind {
     /// The saved world in folder `name` under the saves folder, created
@@ -64,9 +68,12 @@ pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     debug_ui: Option<DebugUi>,
-    world_kind: WorldKind,
+    /// `None` starts at the main menu.
+    world_kind: Option<WorldKind>,
     blocks: Option<Arc<BlockRegistry>>,
     models: Option<Arc<BlockModels>>,
+    /// Exactly one of `menu` and `game` is set once the window is up.
+    menu: Option<Menu>,
     game: Option<Game>,
     cursor_grabbed: bool,
     last_frame: Instant,
@@ -79,7 +86,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(world_kind: WorldKind) -> Self {
+    pub fn new(world_kind: Option<WorldKind>) -> Self {
         Self {
             window: None,
             renderer: None,
@@ -87,6 +94,7 @@ impl App {
             world_kind,
             blocks: None,
             models: None,
+            menu: None,
             game: None,
             cursor_grabbed: false,
             last_frame: Instant::now(),
@@ -145,7 +153,10 @@ impl App {
         );
         self.blocks = Some(Arc::new(blocks));
         self.models = Some(Arc::new(models));
-        self.game = Some(self.start_game(self.world_kind.clone())?);
+        match self.world_kind.clone() {
+            Some(kind) => self.game = Some(self.start_game(kind)?),
+            None => self.menu = Some(Menu::new(level::saves_dir())),
+        }
         self.renderer = Some(renderer);
         self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
@@ -257,10 +268,41 @@ impl App {
         }
     }
 
+    /// Opens or creates the world chosen in the menu, or quits.
+    fn on_menu_action(&mut self, event_loop: &ActiveEventLoop, action: MenuAction) {
+        let (blocks, models) = (
+            self.blocks.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+        );
+        let game = match action {
+            MenuAction::Quit => return event_loop.exit(),
+            MenuAction::Open(dir) => Game::open(dir, blocks, models),
+            MenuAction::Create { name, seed, mode } => {
+                Game::create(&level::saves_dir(), &name, seed, mode, blocks, models)
+            }
+        };
+        match game {
+            Ok(game) => {
+                self.game = Some(game);
+                self.menu = None;
+                self.set_cursor_grab(true);
+            }
+            Err(err) => {
+                error!("{err:#}");
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.error = Some(format!("Couldn't open the world: {err:#}"));
+                }
+            }
+        }
+    }
+
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
+        if self.game.is_none() {
+            return self.redraw_menu(event_loop, now);
+        }
         let (Some(window), Some(renderer), Some(debug_ui), Some(game)) = (
             &self.window,
             self.renderer.as_mut(),
@@ -301,10 +343,33 @@ impl App {
             ),
         };
         let ui = debug_ui.frame(window, &game.camera, &stats, &hud);
-        match renderer.render(&game.camera, ui) {
+        let result = renderer.render(&game.camera, ui);
+        self.finish_frame(event_loop, now, result);
+    }
+
+    /// The main menu over the sky.
+    fn redraw_menu(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        let (Some(window), Some(renderer), Some(debug_ui), Some(menu)) = (
+            &self.window,
+            self.renderer.as_mut(),
+            self.debug_ui.as_mut(),
+            self.menu.as_mut(),
+        ) else {
+            return;
+        };
+        let (ui, action) = debug_ui.menu_frame(window, menu);
+        let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), ui);
+        self.finish_frame(event_loop, now, result);
+        if let Some(action) = action {
+            self.on_menu_action(event_loop, action);
+        }
+    }
+
+    fn finish_frame(&mut self, event_loop: &ActiveEventLoop, now: Instant, result: Result<bool>) {
+        match result {
             Ok(presented) => {
                 self.frame_skipped = !presented;
-                if presented {
+                if presented && let Some(debug_ui) = self.debug_ui.as_mut() {
                     debug_ui.frame_presented(now);
                 }
             }
@@ -353,7 +418,7 @@ impl ApplicationHandler for App {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if !self.cursor_grabbed => self.set_cursor_grab(true),
+            } if !self.cursor_grabbed && self.game.is_some() => self.set_cursor_grab(true),
             WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {
                 if let Some(game) = self.game.as_mut() {
                     game.on_mouse_button(button, state == ElementState::Pressed);

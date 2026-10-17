@@ -21,16 +21,17 @@ fn main() -> Result<()> {
     app.into_result()
 }
 
-/// `--world <name>` opens a saved world (creating it with `--seed <n>` and
-/// `--creative` if it doesn't exist). Otherwise `--gallery`, `--flat`, or
-/// unsaved generated terrain with `--seed <n>` (random if omitted).
-fn parse_args(args: impl Iterator<Item = String>) -> Result<app::WorldKind> {
+/// No arguments opens the main menu. `--world <name>` opens a saved world
+/// (creating it with `--seed <n>` and `--creative` if it doesn't exist).
+/// The unsaved test worlds are `--gallery`, `--flat`, and generated terrain
+/// with `--seed <n>`.
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<app::WorldKind>> {
     let mut args = args.peekable();
     let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--gallery" => return Ok(app::WorldKind::Gallery),
-            "--flat" => return Ok(app::WorldKind::Flat),
+            "--gallery" => return Ok(Some(app::WorldKind::Gallery)),
+            "--flat" => return Ok(Some(app::WorldKind::Flat)),
             "--world" => world = Some(args.next().context("--world needs a name")?),
             "--creative" => mode = player::mode::GameMode::Creative,
             "--seed" => {
@@ -46,9 +47,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<app::WorldKind> {
             ),
         }
     }
-    if let Some(name) = world {
-        return Ok(app::WorldKind::Saved { name, seed, mode });
-    }
-    let seed = seed.unwrap_or_else(level::random_seed);
-    Ok(app::WorldKind::Generated { seed })
+    Ok(match (world, seed) {
+        (Some(name), seed) => Some(app::WorldKind::Saved { name, seed, mode }),
+        (None, Some(seed)) => Some(app::WorldKind::Generated { seed }),
+        (None, None) => None,
+    })
 }
