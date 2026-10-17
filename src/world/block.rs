@@ -2,7 +2,10 @@
 //!
 //! IDs are Minecraft 1.0.0's numeric block IDs (`docs/blocks-and-items.md`).
 
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -11,6 +14,34 @@ use super::Face;
 use crate::config;
 
 pub type BlockId = u16;
+
+/// Number of distinct data values (1.0.0 stores 4 bits per block).
+pub const DATA_VALUES: usize = 16;
+
+/// A block in the world: its ID plus a 4-bit data value (wool color, log type,
+/// crop stage...), packed into 16 bits like 1.0.0's 12-bit ID + 4-bit data.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockState(u16);
+
+impl BlockState {
+    pub const AIR: BlockState = BlockState(0);
+
+    pub const fn new(id: BlockId, data: u8) -> Self {
+        Self((id & 0x0FFF) | ((data as u16 & 0xF) << 12))
+    }
+
+    pub const fn id(self) -> BlockId {
+        self.0 & 0x0FFF
+    }
+
+    pub const fn data(self) -> u8 {
+        (self.0 >> 12) as u8
+    }
+
+    pub const fn is_air(self) -> bool {
+        self.id() == 0
+    }
+}
 
 /// Texture names per face. The most specific field wins:
 /// a direction (`north`, …), then `top`/`bottom`, then `end` (top and bottom)
@@ -77,16 +108,126 @@ impl Tint {
     }
 }
 
+/// A block's model. Only `None`, `Cube`, `Cross` and `Crop` are built so far;
+/// every other shape draws as a full cube placeholder (see docs/DECISIONS.md).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Shape {
+    /// Draws nothing (air, moving piston).
+    None,
+    #[default]
+    Cube,
+    /// Two crossed diagonal planes (flowers, saplings, tall grass).
+    Cross,
+    /// Four planes in a # pattern (wheat, stems, nether wart).
+    Crop,
+    Liquid,
+    Slab,
+    Stairs,
+    Fence,
+    FenceGate,
+    Pane,
+    Door,
+    Trapdoor,
+    Torch,
+    Rail,
+    Ladder,
+    Lever,
+    Button,
+    PressurePlate,
+    Repeater,
+    RedstoneWire,
+    SnowLayer,
+    Vine,
+    LilyPad,
+    Cactus,
+    Bed,
+    Cake,
+    Chest,
+    Sign,
+    Farmland,
+    PistonHead,
+    Fire,
+    BrewingStand,
+    Cauldron,
+    EnchantingTable,
+    EndPortal,
+    EndPortalFrame,
+    DragonEgg,
+}
+
+/// How a block's pixels are drawn.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum RenderLayer {
+    #[default]
+    Opaque,
+    /// Pixels are fully opaque or fully transparent (leaves, glass, plants).
+    Cutout,
+    /// Partly see-through (water, ice, portal). Drawn as cutout until the
+    /// blended pass exists (M8).
+    Translucent,
+}
+
+/// Overrides for one data value.
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Variant {
+    pub name: Option<String>,
+    pub textures: Option<Textures>,
+    pub tint: Option<Tint>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDef {
     pub id: BlockId,
     pub name: String,
-    /// `None` for blocks that draw nothing (air, moving piston).
+    /// Mining hardness from 1.0.0; negative means unbreakable.
+    pub hardness: f32,
+    #[serde(default)]
+    pub shape: Shape,
+    #[serde(default)]
+    pub layer: RenderLayer,
+    /// Whether entities collide with it.
+    #[serde(default = "default_true")]
+    pub solid: bool,
+    /// Light emitted, 0–15.
+    #[serde(default)]
+    pub light: u8,
+    /// Hide faces between two blocks of this type (glass, water, ice).
+    #[serde(default)]
+    pub cull_same: bool,
     #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
     pub tint: Tint,
+    /// Per-data-value overrides; data values not listed use the defaults above.
+    #[serde(default)]
+    pub variants: BTreeMap<u8, Variant>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl BlockDef {
+    pub fn textures_for(&self, data: u8) -> Option<&Textures> {
+        self.variants
+            .get(&data)
+            .and_then(|v| v.textures.as_ref())
+            .or(self.textures.as_ref())
+    }
+
+    pub fn tint_for(&self, data: u8) -> Tint {
+        self.variants
+            .get(&data)
+            .and_then(|v| v.tint)
+            .unwrap_or(self.tint)
+    }
+
+    /// A full opaque cube hides the faces of whatever touches it.
+    pub fn is_opaque_cube(&self) -> bool {
+        self.shape == Shape::Cube && self.layer == RenderLayer::Opaque
+    }
 }
 
 /// All block definitions, indexed by ID.
@@ -106,6 +247,12 @@ impl BlockRegistry {
         let mut blocks: Vec<Option<BlockDef>> = Vec::new();
         for def in defs {
             let index = def.id as usize;
+            if let Some(&data) = def.variants.keys().find(|&&d| d as usize >= DATA_VALUES) {
+                bail!("block {} has out-of-range data value {data}", def.name);
+            }
+            if def.light > 15 {
+                bail!("block {} has light level {} above 15", def.name, def.light);
+            }
             if blocks.len() <= index {
                 blocks.resize(index + 1, None);
             }
@@ -130,10 +277,14 @@ impl BlockRegistry {
         self.blocks.iter().flatten()
     }
 
-    /// Texture names referenced by some block that `exists` rejects.
+    /// Texture names referenced by some block or variant that `exists` rejects.
     pub fn missing_textures(&self, exists: impl Fn(&str) -> bool) -> BTreeSet<String> {
         self.iter()
-            .filter_map(|def| def.textures.as_ref())
+            .flat_map(|def| {
+                def.textures
+                    .iter()
+                    .chain(def.variants.values().filter_map(|v| v.textures.as_ref()))
+            })
             .flat_map(|textures| Face::ALL.map(|face| textures.get(face)))
             .flatten()
             .filter(|name| !exists(name))
@@ -145,6 +296,15 @@ impl BlockRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_state_packs_id_and_data() {
+        let state = BlockState::new(35, 14);
+        assert_eq!((state.id(), state.data()), (35, 14));
+        assert_eq!(BlockState::new(4095, 15).id(), 4095);
+        assert!(BlockState::AIR.is_air());
+        assert!(!state.is_air());
+    }
 
     #[test]
     fn most_specific_texture_wins() {
@@ -172,9 +332,29 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_ids_are_rejected() {
-        let ron = r#"[(id: 1, name: "a"), (id: 1, name: "b")]"#;
-        assert!(BlockRegistry::from_ron(ron).is_err());
+    fn variants_override_textures_and_tint() {
+        let ron = r#"#![enable(implicit_some)]
+            [(id: 18, name: "leaves", hardness: 0.2, textures: (all: "oak"), tint: Foliage,
+              variants: {2: (textures: (all: "birch"), tint: Fixed(0x80A755))})]"#;
+        let registry = BlockRegistry::from_ron(ron).unwrap();
+        let leaves = registry.get(18).unwrap();
+        assert_eq!(leaves.textures_for(0).unwrap().get(Face::Top), Some("oak"));
+        assert_eq!(
+            leaves.textures_for(2).unwrap().get(Face::Top),
+            Some("birch")
+        );
+        assert_eq!(leaves.tint_for(0), Tint::Foliage);
+        assert_eq!(leaves.tint_for(2), Tint::Fixed(0x80A755));
+    }
+
+    #[test]
+    fn invalid_definitions_are_rejected() {
+        let duplicate = r#"[(id: 1, name: "a", hardness: 1.0), (id: 1, name: "b", hardness: 1.0)]"#;
+        assert!(BlockRegistry::from_ron(duplicate).is_err());
+        let bad_data = r#"[(id: 1, name: "a", hardness: 1.0, variants: {16: ()})]"#;
+        assert!(BlockRegistry::from_ron(bad_data).is_err());
+        let bad_light = r#"[(id: 1, name: "a", hardness: 1.0, light: 16)]"#;
+        assert!(BlockRegistry::from_ron(bad_light).is_err());
     }
 
     fn real_registry() -> BlockRegistry {
@@ -192,6 +372,22 @@ mod tests {
         }
         assert_eq!(registry.iter().count(), 123);
         assert_eq!(registry.get(2).unwrap().name, "grass");
+    }
+
+    #[test]
+    fn spot_check_1_0_0_properties() {
+        let registry = real_registry();
+        let block = |id| registry.get(id).unwrap();
+        assert_eq!(block(1).hardness, 1.5);
+        assert!(block(7).hardness < 0.0, "bedrock is unbreakable");
+        assert_eq!(block(49).hardness, 10.0);
+        assert_eq!(block(50).light, 14);
+        assert_eq!(block(89).light, 15);
+        assert!(block(1).is_opaque_cube());
+        assert!(!block(20).is_opaque_cube(), "glass is see-through");
+        assert!(!block(37).solid, "flowers have no collision");
+        assert_eq!(block(37).shape, Shape::Cross);
+        assert_eq!(block(0).shape, Shape::None);
     }
 
     /// Keep in sync with the missing-texture list in docs/DECISIONS.md.

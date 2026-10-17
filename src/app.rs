@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use glam::Vec3;
 use log::{error, info, warn};
 use winit::{
@@ -25,14 +25,28 @@ use crate::{
         Renderer,
         atlas::{Atlas, MISSING_TILE},
         camera::Camera,
-        cube::{self, FaceTexture},
     },
-    ui::DebugUi,
-    world::block::{BlockId, BlockRegistry},
+    ui::{DebugStats, DebugUi},
+    world::{
+        World,
+        block::BlockRegistry,
+        chunk::ChunkPos,
+        mesh::{self, BlockModels},
+        worldgen::{flat, gallery},
+    },
 };
 
-/// The block shown as M1's test cube.
-const GRASS: BlockId = 2;
+/// Which test world to build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldKind {
+    /// Flat grass plain, `FLAT_RADIUS` chunks in each direction.
+    Flat,
+    /// Every block and variant on display (`--gallery`).
+    Gallery,
+}
+
+/// Chunks generated in each direction around the origin for the flat world.
+const FLAT_RADIUS: i32 = 4;
 
 /// Longest frame step applied to movement, so a stall doesn't teleport the camera.
 const MAX_FRAME_DT: f32 = 0.1;
@@ -44,6 +58,8 @@ pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     debug_ui: Option<DebugUi>,
+    world_kind: WorldKind,
+    world: World,
     camera: Camera,
     fly_input: FlyInput,
     cursor_grabbed: bool,
@@ -56,14 +72,29 @@ pub struct App {
     error: Option<anyhow::Error>,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub fn new(world_kind: WorldKind) -> Self {
+        let camera = match world_kind {
+            // Standing height above the grass at the origin.
+            WorldKind::Flat => Camera::new(
+                Vec3::new(0.5, config::SEA_LEVEL as f32 + 2.62, 0.5),
+                0.0,
+                0.0,
+            ),
+            // In front of the first gallery row, looking south over it and down.
+            WorldKind::Gallery => Camera::new(
+                Vec3::new(22.5, config::SEA_LEVEL as f32 + 12.0, -10.0),
+                std::f32::consts::PI,
+                -0.6,
+            ),
+        };
         Self {
             window: None,
             renderer: None,
             debug_ui: None,
-            // A few blocks south of the test cube, looking north and slightly down at it.
-            camera: Camera::new(Vec3::new(0.5, 1.8, 3.5), 0.0, -0.2),
+            world_kind,
+            world: World::default(),
+            camera,
             fly_input: FlyInput::default(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
@@ -72,9 +103,7 @@ impl Default for App {
             error: None,
         }
     }
-}
 
-impl App {
     pub fn into_result(self) -> Result<()> {
         self.error.map_or(Ok(()), Err)
     }
@@ -110,18 +139,41 @@ impl App {
             warn!("missing block textures: {missing_blocks:?}, item textures: {missing_items:?}");
         }
 
-        let grass = blocks.get(GRASS).context("grass block not defined")?;
-        let mesh = cube::cube_mesh([0.0; 3], |face| FaceTexture {
-            uv: atlas.uv_rect(
-                grass
-                    .textures
-                    .as_ref()
-                    .and_then(|t| t.get(face))
-                    .map_or(MISSING_TILE, |name| atlas.tile_or_missing(name)),
-            ),
-            tint: grass.tint.color(face),
-        });
-        self.renderer = Some(Renderer::new(window.clone(), &atlas, &mesh)?);
+        let mut renderer = Renderer::new(window.clone(), &atlas)?;
+        let models = BlockModels::new(
+            &blocks,
+            |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
+            atlas.uv_rect(MISSING_TILE),
+        );
+
+        let started = Instant::now();
+        match self.world_kind {
+            WorldKind::Flat => {
+                for z in -FLAT_RADIUS..=FLAT_RADIUS {
+                    for x in -FLAT_RADIUS..=FLAT_RADIUS {
+                        self.world.insert(flat::flat_chunk(ChunkPos::new(x, z)));
+                    }
+                }
+            }
+            WorldKind::Gallery => {
+                for chunk in gallery::gallery_chunks(&blocks) {
+                    self.world.insert(chunk);
+                }
+            }
+        }
+        let positions: Vec<ChunkPos> = self.world.positions().collect();
+        for pos in positions {
+            if let Some(area) = self.world.area(pos) {
+                renderer.upload_chunk(pos, &mesh::mesh_chunk(&models, &area));
+            }
+        }
+        info!(
+            "built {} chunks of the {:?} world in {:.0?}",
+            self.world.len(),
+            self.world_kind,
+            started.elapsed()
+        );
+        self.renderer = Some(renderer);
         self.debug_ui = Some(DebugUi::new(&window));
         window.request_redraw();
         self.window = Some(window);
@@ -179,7 +231,11 @@ impl App {
         else {
             return;
         };
-        let ui = debug_ui.frame(window, &self.camera);
+        let stats = DebugStats {
+            chunks_drawn: renderer.chunks_drawn(),
+            chunks_loaded: renderer.chunks_loaded(),
+        };
+        let ui = debug_ui.frame(window, &self.camera, &stats);
         match renderer.render(&self.camera, ui) {
             Ok(presented) => {
                 self.frame_skipped = !presented;

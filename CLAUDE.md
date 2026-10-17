@@ -74,7 +74,7 @@ src/
     block.rs         # BlockId (u16) + BlockRegistry (data-driven properties)
     chunk.rs         # Chunk storage (16x16x16 sections), get/set
     mesh.rs          # chunk → vertex buffer (face culling, then greedy meshing)
-    gen/             # terrain, biomes, caves, ores, trees
+    worldgen/        # terrain, biomes, caves, ores, trees (`gen` is reserved in Rust 2024)
     manager.rs       # load/unload around player, worker threads, dirty tracking
     light.rs         # sky light + block light propagation
     fluid.rs         # water/lava flow (M12)

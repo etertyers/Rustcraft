@@ -2,18 +2,23 @@
 
 pub mod atlas;
 pub mod camera;
-pub mod cube;
+pub mod frustum;
+pub mod vertex;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result, bail};
+use glam::Vec3;
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::config::SKY_COLOR;
+use crate::{
+    config::{CHUNK_SIZE, SKY_COLOR, WORLD_HEIGHT},
+    world::{chunk::ChunkPos, mesh::Mesh},
+};
 use atlas::Atlas;
 use camera::Camera;
-use cube::Mesh;
+use frustum::Frustum;
 
 /// One frame of tessellated UI from egui, drawn over the world.
 pub struct UiPaint {
@@ -30,6 +35,13 @@ struct Globals {
     view_proj: [[f32; 4]; 4],
 }
 
+/// A chunk's mesh on the GPU.
+struct ChunkBuffers {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -40,14 +52,14 @@ pub struct Renderer {
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     atlas_bind_group: wgpu::BindGroup,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
+    chunks: HashMap<ChunkPos, ChunkBuffers>,
+    /// Chunks that passed frustum culling in the last frame.
+    chunks_drawn: usize,
     egui_renderer: egui_wgpu::Renderer,
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>, atlas: &Atlas, mesh: &Mesh) -> Result<Self> {
+    pub fn new(window: Arc<Window>, atlas: &Atlas) -> Result<Self> {
         let size = window.inner_size();
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -121,7 +133,7 @@ impl Renderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[Some(cube::Vertex::layout())],
+                buffers: &[Some(vertex::Vertex::layout())],
             },
             primitive: wgpu::PrimitiveState {
                 cull_mode: Some(wgpu::Face::Back),
@@ -145,17 +157,6 @@ impl Renderer {
             cache: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cube vertices"),
-            contents: bytemuck::cast_slice(&mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cube indices"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             config.format.remove_srgb_suffix(),
@@ -172,11 +173,50 @@ impl Renderer {
             globals_buffer,
             globals_bind_group,
             atlas_bind_group,
-            vertex_buffer,
-            index_buffer,
-            index_count: mesh.indices.len() as u32,
+            chunks: HashMap::new(),
+            chunks_drawn: 0,
             egui_renderer,
         })
+    }
+
+    /// Uploads a chunk's mesh, replacing any previous one. Empty meshes just remove it.
+    pub fn upload_chunk(&mut self, pos: ChunkPos, mesh: &Mesh) {
+        if mesh.is_empty() {
+            self.chunks.remove(&pos);
+            return;
+        }
+        let vertices = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("chunk vertices"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let indices = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("chunk indices"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+        self.chunks.insert(
+            pos,
+            ChunkBuffers {
+                vertices,
+                indices,
+                index_count: mesh.indices.len() as u32,
+            },
+        );
+    }
+
+    /// Chunk meshes on the GPU.
+    pub fn chunks_loaded(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// Chunk meshes drawn in the last frame, after frustum culling.
+    pub fn chunks_drawn(&self) -> usize {
+        self.chunks_drawn
     }
 
     pub fn aspect(&self) -> f32 {
@@ -231,8 +271,10 @@ impl Renderer {
             ..Default::default()
         });
 
+        let view_proj = camera.view_proj(self.aspect());
+        let frustum = Frustum::from_view_proj(view_proj);
         let globals = Globals {
-            view_proj: camera.view_proj(self.aspect()).to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
         };
         self.queue
             .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
@@ -265,9 +307,20 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            pass.draw_indexed(0..self.index_count, 0, 0..1);
+            self.chunks_drawn = 0;
+            for (pos, chunk) in &self.chunks {
+                let (x, z) = pos.min_block();
+                let min = Vec3::new(x as f32, 0.0, z as f32);
+                let max =
+                    min + Vec3::new(CHUNK_SIZE as f32, WORLD_HEIGHT as f32, CHUNK_SIZE as f32);
+                if !frustum.intersects_box(min, max) {
+                    continue;
+                }
+                pass.set_vertex_buffer(0, chunk.vertices.slice(..));
+                pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..chunk.index_count, 0, 0..1);
+                self.chunks_drawn += 1;
+            }
         }
 
         let screen = egui_wgpu::ScreenDescriptor {
