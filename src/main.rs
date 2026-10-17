@@ -2,6 +2,11 @@ mod app;
 mod assets;
 mod config;
 mod inventory;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the main menu opens saved worlds")
+)]
+mod level;
 mod player;
 mod render;
 mod ui;
