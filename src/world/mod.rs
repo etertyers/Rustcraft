@@ -3,6 +3,11 @@
 pub mod biome;
 pub mod block;
 pub mod chunk;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the sky and lightmap use these later in M8")
+)]
+pub mod daytime;
 pub mod harvest;
 pub mod light;
 pub mod manager;
