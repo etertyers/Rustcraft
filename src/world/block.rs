@@ -11,7 +11,12 @@ use anyhow::{Context, Result, bail};
 use glam::IVec3;
 use serde::Deserialize;
 
-use super::{Face, biome::rgb};
+use super::{
+    Face,
+    biome::rgb,
+    harvest::{Drops, Harvest},
+};
+use crate::inventory::item::ToolKind;
 
 pub type BlockId = u16;
 
@@ -244,6 +249,15 @@ pub struct BlockDef {
     pub needs_ground: bool,
     #[serde(default)]
     pub placement: Placement,
+    /// The tool that mines it fast (1.0.0's effective tool lists and
+    /// materials).
+    #[serde(default)]
+    pub tool: Option<ToolKind>,
+    /// The tool it needs to drop anything; `None` drops for anything.
+    #[serde(default)]
+    pub harvest: Option<Harvest>,
+    #[serde(default)]
+    pub drops: Drops,
     #[serde(default)]
     pub textures: Option<Textures>,
     #[serde(default)]
@@ -494,7 +508,7 @@ mod tests {
         let block = |id| registry.get(id).unwrap();
         assert_eq!(block(1).hardness, 1.5);
         assert!(block(7).hardness < 0.0, "bedrock is unbreakable");
-        assert_eq!(block(49).hardness, 10.0);
+        assert_eq!(block(49).hardness, 50.0);
         assert_eq!(block(50).light, 14);
         assert_eq!(block(89).light, 15);
         assert!(block(1).is_opaque_cube());

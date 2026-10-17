@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use crate::{player::mode::GameMode, world::save::RegionStore};
+use crate::{inventory::player::Inventory, player::mode::GameMode, world::save::RegionStore};
 
 const LEVEL_FILE: &str = "level.ron";
 const LEVEL_VERSION: u32 = 1;
@@ -41,6 +41,12 @@ pub struct PlayerData {
     pub position: [f64; 3],
     pub yaw: f32,
     pub pitch: f32,
+    /// Added in M7.
+    #[serde(default)]
+    pub inventory: Inventory,
+    /// Creative flight (added in M7).
+    #[serde(default)]
+    pub flying: bool,
 }
 
 impl Level {
@@ -55,6 +61,8 @@ impl Level {
                 position: spawn,
                 yaw: 0.0,
                 pitch: 0.0,
+                inventory: Inventory::default(),
+                flying: false,
             },
             time: 0,
             last_played: now(),
@@ -245,6 +253,7 @@ mod tests {
             position: [10.25, 64.0, -3.5],
             yaw: 1.5,
             pitch: -0.25,
+            ..first.player
         };
         first.time = 12345;
         let first_dir = WorldDir::create(saves.path(), &first).unwrap();
@@ -271,5 +280,21 @@ mod tests {
         let modes: Vec<GameMode> = worlds.iter().map(|(_, level)| level.game_mode).collect();
         assert_eq!(modes, [GameMode::Creative, GameMode::Survival]);
         assert!(list_worlds(&saves.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn m6_levels_without_an_inventory_still_load() {
+        let saves = TempDir::new("old-level");
+        let dir = saves.path().join("Old");
+        fs::create_dir(&dir).unwrap();
+        fs::write(
+            dir.join(LEVEL_FILE),
+            r#"(version: 1, name: "Old", seed: 5, game_mode: Survival, spawn: (0.5, 70.0, 0.5),
+               player: (position: (1.0, 70.0, 2.0), yaw: 0.0, pitch: 0.0), time: 10, last_played: 0)"#,
+        )
+        .unwrap();
+        let level = WorldDir::new(dir).load_level().unwrap();
+        assert_eq!(level.player.inventory, Inventory::default());
+        assert!(!level.player.flying);
     }
 }

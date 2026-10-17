@@ -3,6 +3,7 @@
 pub mod biome;
 pub mod block;
 pub mod chunk;
+pub mod harvest;
 pub mod light;
 pub mod manager;
 pub mod mesh;

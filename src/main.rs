@@ -1,6 +1,7 @@
 mod app;
 mod assets;
 mod config;
+mod entity;
 mod game;
 mod inventory;
 mod level;

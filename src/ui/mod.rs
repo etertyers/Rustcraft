@@ -1,7 +1,9 @@
 //! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
 mod fps;
+pub mod gui;
 pub mod menu;
+pub mod screens;
 
 use std::time::Instant;
 
@@ -14,6 +16,7 @@ use crate::{
     world::biome::Biome,
 };
 use fps::FpsCounter;
+use gui::{GuiTextures, SlotView};
 use menu::{Menu, MenuAction};
 
 /// World and renderer numbers shown in the F3 overlay.
@@ -36,12 +39,13 @@ pub struct DebugStats {
 pub struct Hud {
     /// Shown while the cursor is grabbed for play.
     pub crosshair: bool,
-    /// The selected hotbar block, shown at the bottom until the real hotbar (M7).
-    pub selected: String,
+    pub hotbar: Vec<Option<SlotView>>,
+    pub selected: usize,
 }
 
 pub struct DebugUi {
     ctx: egui::Context,
+    textures: GuiTextures,
     state: egui_winit::State,
     fps: FpsCounter,
     /// Whether the F3 overlay is shown.
@@ -49,8 +53,10 @@ pub struct DebugUi {
 }
 
 impl DebugUi {
-    pub fn new(window: &Window) -> Self {
+    /// `atlas` is the block and item texture atlas, for item icons.
+    pub fn new(window: &Window, atlas: &image::RgbaImage) -> anyhow::Result<Self> {
         let ctx = egui::Context::default();
+        let textures = GuiTextures::load(&ctx, atlas, &crate::assets::dir().join("textures/gui"))?;
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,
@@ -59,12 +65,13 @@ impl DebugUi {
             None,
             None,
         );
-        Self {
+        Ok(Self {
             ctx,
+            textures,
             state,
             fps: FpsCounter::new(Instant::now()),
             visible: false,
-        }
+        })
     }
 
     /// Feeds a window event to egui so it tracks size and scale.
@@ -82,29 +89,39 @@ impl DebugUi {
         self.fps.tick(now);
     }
 
-    /// Builds this frame's UI: the crosshair (while playing) and the F3 overlay.
+    /// Builds this frame's UI: the crosshair (while playing), the hotbar,
+    /// the F3 overlay and any open inventory screen, returning what was
+    /// clicked on the screen.
     pub fn frame(
         &mut self,
         window: &Window,
         camera: &Camera,
         stats: &DebugStats,
         hud: &Hud,
-    ) -> UiPaint {
+        screen: Option<(&mut screens::Screen, &screens::ScreenView)>,
+    ) -> (UiPaint, Vec<screens::ScreenAction>) {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
         let text = debug_text(self.fps.fps(), camera, stats);
+        let textures = &self.textures;
+        let mut actions = Vec::new();
+        let mut screen = screen;
         let output = self.ctx.run_ui(input, |ui| {
             if hud.crosshair {
                 draw_crosshair(ui);
             }
-            show_selected(ui.ctx(), &hud.selected);
+            let full = ui.ctx().content_rect();
+            gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
             if visible {
                 show_overlay(ui.ctx(), &text);
+            }
+            if let Some((screen, view)) = &mut screen {
+                actions = screens::show(ui.ctx(), screen, view, textures);
             }
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
         // it would unhide the cursor while it's grabbed for mouse look.
-        self.paint(output)
+        (self.paint(output), actions)
     }
 
     /// Builds this frame's main menu and returns what the player chose.
@@ -187,20 +204,6 @@ fn draw_crosshair(ui: &egui::Ui) {
             stroke,
         );
     }
-}
-
-fn show_selected(ctx: &egui::Context, text: &str) {
-    egui::Area::new(egui::Id::unique("selected"))
-        .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0])
-        .interactable(false)
-        .show(ctx, |ui| {
-            Frame::new()
-                .fill(Color32::from_black_alpha(128))
-                .inner_margin(4.0)
-                .show(ui, |ui| {
-                    ui.label(RichText::new(text).monospace().color(Color32::WHITE));
-                });
-        });
 }
 
 fn show_overlay(ctx: &egui::Context, text: &str) {

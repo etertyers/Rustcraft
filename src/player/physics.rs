@@ -6,9 +6,9 @@ use glam::DVec3;
 
 use super::collision::{Aabb, Collider};
 use crate::config::{
-    AIR_ACCELERATION, AIR_FRICTION, EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, PLAYER_HEIGHT,
-    PLAYER_WIDTH, SNEAK_EYE_DROP, SNEAK_FACTOR, SPRINT_FACTOR, SPRINT_JUMP_BOOST, STEP_HEIGHT,
-    VERTICAL_DRAG, WALK_ACCELERATION,
+    AIR_ACCELERATION, AIR_FRICTION, EYE_HEIGHT, FLY_ACCELERATION, FLY_VERTICAL_DRAG,
+    FLY_VERTICAL_SPEED, GRAVITY, JUMP_VELOCITY, PLAYER_HEIGHT, PLAYER_WIDTH, SNEAK_EYE_DROP,
+    SNEAK_FACTOR, SPRINT_FACTOR, SPRINT_JUMP_BOOST, STEP_HEIGHT, VERTICAL_DRAG, WALK_ACCELERATION,
 };
 
 /// Movement intent for one tick.
@@ -26,6 +26,8 @@ pub struct MoveInput {
 
 /// A second forward press within this many ticks starts sprinting.
 const SPRINT_DOUBLE_TAP_TICKS: u8 = 7;
+/// A second jump press within this many ticks toggles creative flight.
+const FLY_DOUBLE_TAP_TICKS: u8 = 7;
 /// Forward input needed to start or keep sprinting.
 const SPRINT_MIN_FORWARD: f64 = 0.8;
 /// Every movement input is scaled by this (1.0.0 `moveForward *= 0.98`).
@@ -47,9 +49,14 @@ pub struct Body {
     pub on_ground: bool,
     pub sneaking: bool,
     pub sprinting: bool,
+    /// Double-tapping jump toggles `flying` (creative).
+    pub may_fly: bool,
+    pub flying: bool,
     collided_horizontally: bool,
     was_moving_forward: bool,
     sprint_tap_timer: u8,
+    was_jumping: bool,
+    fly_tap_timer: u8,
 }
 
 impl Body {
@@ -60,9 +67,13 @@ impl Body {
             on_ground: false,
             sneaking: false,
             sprinting: false,
+            may_fly: false,
+            flying: false,
             collided_horizontally: false,
             was_moving_forward: false,
             sprint_tap_timer: 0,
+            was_jumping: false,
+            fly_tap_timer: 0,
         }
     }
 
@@ -104,11 +115,19 @@ impl Body {
             strafe *= SNEAK_FACTOR;
         }
         self.update_sprint(forward, input.sprint);
+        self.update_flight(input.jump);
 
         let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
         let facing = DVec3::new(sin_yaw, 0.0, -cos_yaw);
         let right = DVec3::new(cos_yaw, 0.0, sin_yaw);
-        if input.jump && self.on_ground {
+        if self.flying {
+            if input.sneak {
+                self.velocity.y -= FLY_VERTICAL_SPEED;
+            }
+            if input.jump {
+                self.velocity.y += FLY_VERTICAL_SPEED;
+            }
+        } else if input.jump && self.on_ground {
             self.velocity.y = JUMP_VELOCITY;
             if self.sprinting {
                 self.velocity += facing * SPRINT_JUMP_BOOST;
@@ -117,7 +136,9 @@ impl Body {
 
         let friction = self.friction(world);
         let sprint = if self.sprinting { SPRINT_FACTOR } else { 1.0 };
-        let acceleration = if self.on_ground {
+        let acceleration = if self.flying {
+            FLY_ACCELERATION
+        } else if self.on_ground {
             WALK_ACCELERATION * sprint * GROUND_ACCELERATION_SCALE / friction.powi(3)
         } else {
             AIR_ACCELERATION * sprint
@@ -129,8 +150,17 @@ impl Body {
             self.velocity += (facing * forward + right * strafe) * scale;
         }
 
+        let vertical = self.velocity.y;
         self.move_by(self.velocity, world);
-        self.velocity.y = (self.velocity.y - GRAVITY) * VERTICAL_DRAG;
+        if self.flying {
+            // 1.0.0 keeps 0.6 of the vertical speed and ignores gravity.
+            self.velocity.y = vertical * FLY_VERTICAL_DRAG;
+            if self.on_ground {
+                self.flying = false;
+            }
+        } else {
+            self.velocity.y = (self.velocity.y - GRAVITY) * VERTICAL_DRAG;
+        }
         self.velocity.x *= friction;
         self.velocity.z *= friction;
     }
@@ -155,6 +185,23 @@ impl Body {
             self.sprinting = false;
         }
         self.was_moving_forward = moving_forward;
+    }
+
+    /// Double-tapping jump toggles flight when allowed (1.0.0's
+    /// `flyToggleTimer`).
+    fn update_flight(&mut self, jump: bool) {
+        self.fly_tap_timer = self.fly_tap_timer.saturating_sub(1);
+        if !self.may_fly {
+            self.flying = false;
+        } else if jump && !self.was_jumping {
+            if self.fly_tap_timer == 0 {
+                self.fly_tap_timer = FLY_DOUBLE_TAP_TICKS;
+            } else {
+                self.flying = !self.flying;
+                self.fly_tap_timer = 0;
+            }
+        }
+        self.was_jumping = jump;
     }
 
     /// Horizontal velocity kept per tick: the block underfoot's slipperiness
@@ -214,7 +261,7 @@ pub fn hitbox(feet: DVec3) -> Aabb {
 
 /// Moves `bb` by `d`, clipping Y first, then X, then Z, like 1.0.0.
 /// Returns the distance actually moved and the moved box.
-fn sweep(bb: Aabb, d: DVec3, world: &impl Collider, boxes: &mut Vec<Aabb>) -> (DVec3, Aabb) {
+pub fn sweep(bb: Aabb, d: DVec3, world: &impl Collider, boxes: &mut Vec<Aabb>) -> (DVec3, Aabb) {
     boxes.clear();
     world.boxes(&bb.stretch(d), boxes);
     let mut bb = bb;
@@ -602,5 +649,88 @@ mod tests {
         // 0.2 boost plus a tick of sprint acceleration, toward north.
         assert!(body.velocity.z - before.z < -0.2 * AIR_FRICTION * 0.6);
         assert!(body.velocity.y > 0.0);
+    }
+
+    const JUMP: MoveInput = MoveInput {
+        forward: 0.0,
+        strafe: 0.0,
+        jump: true,
+        sneak: false,
+        sprint: false,
+    };
+
+    /// Taps jump twice, a tick apart, as a player double-tapping Space.
+    fn double_tap_jump(body: &mut Body, world: &TestWorld) {
+        for input in [JUMP, MoveInput::default(), JUMP, MoveInput::default()] {
+            body.tick(&input, 0.0, world);
+        }
+    }
+
+    #[test]
+    fn double_tapping_jump_flies_only_when_allowed() {
+        let world = TestWorld::floor(Kind::Full);
+        let mut survival = standing_at(0.5, 0.5);
+        double_tap_jump(&mut survival, &world);
+        assert!(!survival.flying);
+
+        let mut creative = standing_at(0.5, 0.5);
+        creative.may_fly = true;
+        double_tap_jump(&mut creative, &world);
+        assert!(creative.flying);
+        // Hovering: no gravity, so once the jump dies away it stays up.
+        for _ in 0..60 {
+            creative.tick(&MoveInput::default(), 0.0, &world);
+        }
+        let height = creative.position().y;
+        for _ in 0..40 {
+            creative.tick(&MoveInput::default(), 0.0, &world);
+        }
+        assert!((creative.position().y - height).abs() < 1e-6, "hovers");
+        assert!(height > 64.0);
+    }
+
+    #[test]
+    fn flight_speeds_match_1_0_0() {
+        let world = TestWorld::default();
+        let mut body = Body::new(DVec3::new(0.5, 80.0, 0.5));
+        body.may_fly = true;
+        body.flying = true;
+        let rise = MoveInput {
+            jump: true,
+            ..FORWARD
+        };
+        let mut start = body.position();
+        for tick in 0..200 {
+            if tick == 100 {
+                start = body.position();
+            }
+            body.tick(&rise, 0.0, &world);
+        }
+        let per_second = (body.position() - start) / 100.0 * TICKS_PER_SECOND as f64;
+        // 1.0.0: 0.05 × 0.98 / (1 − 0.91) blocks per tick forward; up, the
+        // 0.15 is added before moving, so 0.15 / (1 − 0.6) per tick.
+        assert!(
+            (-per_second.z - 10.89).abs() < 0.01,
+            "forward {}",
+            -per_second.z
+        );
+        assert!((per_second.y - 7.5).abs() < 0.01, "up {}", per_second.y);
+    }
+
+    #[test]
+    fn flying_stops_on_landing() {
+        let world = TestWorld::floor(Kind::Full);
+        let mut body = Body::new(DVec3::new(0.5, 66.0, 0.5));
+        body.may_fly = true;
+        body.flying = true;
+        let down = MoveInput {
+            sneak: true,
+            ..MoveInput::default()
+        };
+        for _ in 0..40 {
+            body.tick(&down, 0.0, &world);
+        }
+        assert!(!body.flying);
+        assert_eq!(body.position().y, 64.0);
     }
 }

@@ -22,16 +22,24 @@ use crate::{
     assets, config,
     game::{Game, chunk_workers},
     inventory::item::ItemRegistry,
+    inventory::{
+        player::{HOTBAR_SLOTS, SLOTS},
+        stack::{ItemStack, Items},
+    },
     level::{self, WorldDir},
-    player::{interaction::HOTBAR, mode::GameMode},
+    player::mode::GameMode,
     render::{
         Renderer,
-        atlas::{Atlas, MISSING_TILE},
+        atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
+        entities::item_mesh,
+        icons::ItemIcons,
     },
     ui::{
         DebugStats, DebugUi, Hud,
+        gui::SlotView,
         menu::{Menu, MenuAction},
+        screens::{Screen, ScreenAction, ScreenView},
     },
     world::{
         biome::BiomeColors,
@@ -70,11 +78,16 @@ pub struct App {
     debug_ui: Option<DebugUi>,
     /// `None` starts at the main menu.
     world_kind: Option<WorldKind>,
-    blocks: Option<Arc<BlockRegistry>>,
+    items: Option<Items>,
     models: Option<Arc<BlockModels>>,
+    icons: Option<Arc<ItemIcons>>,
     /// Exactly one of `menu` and `game` is set once the window is up.
     menu: Option<Menu>,
     game: Option<Game>,
+    /// An inventory screen open over the game.
+    screen: Option<Screen>,
+    /// Every block and item, for the creative inventory.
+    catalog: Vec<(ItemStack, SlotView, String)>,
     cursor_grabbed: bool,
     last_frame: Instant,
     /// The window is fully hidden; don't draw until it's visible again.
@@ -92,10 +105,13 @@ impl App {
             renderer: None,
             debug_ui: None,
             world_kind,
-            blocks: None,
+            items: None,
             models: None,
+            icons: None,
             menu: None,
             game: None,
+            screen: None,
+            catalog: Vec::new(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
             occluded: false,
@@ -125,11 +141,14 @@ impl App {
         let assets = assets::dir();
         let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
         let items = ItemRegistry::load(&assets.join("data/items.ron"))?;
-        let atlas = Atlas::load(&assets.join("textures/blocks"))?;
-        let item_dir = assets.join("textures/items");
+        let textures = assets.join("textures");
+        let atlas = Atlas::load(&[
+            (&textures.join("blocks"), ""),
+            (&textures.join("items"), ITEM_PREFIX),
+        ])?;
         let missing_blocks = blocks.missing_textures(|name| atlas.get(name).is_some());
         let missing_items =
-            items.missing_textures(|name| item_dir.join(format!("{name}.png")).is_file());
+            items.missing_textures(|name| atlas.get(&format!("{ITEM_PREFIX}{name}")).is_some());
         info!(
             "loaded {} blocks and {} items",
             blocks.iter().count(),
@@ -151,22 +170,27 @@ impl App {
             atlas.uv_rect(MISSING_TILE),
             biome_colors,
         );
-        self.blocks = Some(Arc::new(blocks));
-        self.models = Some(Arc::new(models));
+        let models = Arc::new(models);
+        let icons = ItemIcons::new(&atlas, models.clone(), &items);
+        let items = Items::new(Arc::new(blocks), Arc::new(items));
+        self.catalog = catalog(&items, &icons);
+        self.icons = Some(Arc::new(icons));
+        self.items = Some(items);
+        self.models = Some(models);
         match self.world_kind.clone() {
             Some(kind) => self.game = Some(self.start_game(kind)?),
             None => self.menu = Some(Menu::new(level::saves_dir())),
         }
         self.renderer = Some(renderer);
-        self.debug_ui = Some(DebugUi::new(&window));
+        self.debug_ui = Some(DebugUi::new(&window, atlas.image())?);
         window.request_redraw();
         self.window = Some(window);
         Ok(())
     }
 
     fn start_game(&self, kind: WorldKind) -> Result<Game> {
-        let (blocks, models) = (
-            self.blocks.clone().expect("loaded in init"),
+        let (items, models) = (
+            self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
         let ground = config::SEA_LEVEL as f64 + 1.0;
@@ -175,10 +199,10 @@ impl App {
                 let saves = level::saves_dir();
                 let dir = WorldDir::new(saves.join(&name));
                 return if dir.exists() {
-                    Game::open(dir, blocks, models)
+                    Game::open(dir, items, models)
                 } else {
                     let seed = seed.unwrap_or_else(level::random_seed);
-                    Game::create(&saves, &name, seed, mode, blocks, models)
+                    Game::create(&saves, &name, seed, mode, items, models)
                 };
             }
             // The test worlds below aren't saved.
@@ -194,7 +218,7 @@ impl App {
             // In front of the first gallery row, looking south along it.
             WorldKind::Gallery => (
                 ChunkSource::Fixed(
-                    gallery::gallery_chunks(&blocks)
+                    gallery::gallery_chunks(&items.blocks)
                         .into_iter()
                         .map(|chunk| (chunk.pos, chunk))
                         .collect(),
@@ -205,7 +229,7 @@ impl App {
             ),
         };
         let chunks = ChunkManager::new(source, models, config::RENDER_DISTANCE, chunk_workers());
-        Ok(Game::new(chunks, blocks, spawn, spawn, yaw, pitch))
+        Ok(Game::new(chunks, items, spawn, spawn, yaw, pitch))
     }
 
     /// macOS sometimes stops pinning a locked cursor, and the hidden cursor
@@ -257,8 +281,16 @@ impl App {
             return;
         };
         let pressed = event.state == ElementState::Pressed;
-        if key == KeyCode::Escape && pressed {
+        if key == KeyCode::Escape && pressed && self.screen.is_some() {
+            self.close_screen();
+        } else if key == KeyCode::Escape && pressed {
             self.set_cursor_grab(false);
+        } else if key == KeyCode::KeyE && pressed && !event.repeat && self.game.is_some() {
+            if self.screen.is_some() {
+                self.close_screen();
+            } else {
+                self.open_screen();
+            }
         } else if key == KeyCode::F3 && pressed && !event.repeat {
             if let Some(debug_ui) = self.debug_ui.as_mut() {
                 debug_ui.toggle();
@@ -268,17 +300,73 @@ impl App {
         }
     }
 
+    /// Opens the inventory (or creative item list) and frees the mouse.
+    fn open_screen(&mut self) {
+        let Some(game) = &self.game else {
+            return;
+        };
+        self.screen = Some(if game.mode.has_every_item() {
+            Screen::Creative { scroll: 0.0 }
+        } else {
+            Screen::Inventory
+        });
+        self.set_cursor_grab(false);
+    }
+
+    /// Closes the screen, throwing whatever was held on the mouse (1.0.0).
+    fn close_screen(&mut self) {
+        self.screen = None;
+        if let Some(game) = self.game.as_mut()
+            && let Some(stack) = game.cursor.take()
+        {
+            game.throw(stack);
+        }
+        self.set_cursor_grab(true);
+    }
+
+    fn on_screen_action(&mut self, action: ScreenAction) {
+        let Some(game) = self.game.as_mut() else {
+            return;
+        };
+        let items = game.items().clone();
+        match action {
+            ScreenAction::Click(slot, click) => {
+                game.inventory.click(slot, click, &mut game.cursor, &items);
+            }
+            ScreenAction::Throw { all } => {
+                let Some(held) = game.cursor.as_mut() else {
+                    return;
+                };
+                let count = if all { held.count } else { 1 };
+                held.count -= count;
+                let thrown = ItemStack { count, ..*held };
+                if held.count == 0 {
+                    game.cursor = None;
+                }
+                game.throw(thrown);
+            }
+            ScreenAction::Take(stack) => {
+                let full = ItemStack {
+                    count: items.max_stack(stack.id),
+                    ..stack
+                };
+                game.inventory.set(game.inventory.selected, Some(full));
+            }
+            ScreenAction::Discard => game.cursor = None,
+        }
+    }
+
     /// Opens or creates the world chosen in the menu, or quits.
     fn on_menu_action(&mut self, event_loop: &ActiveEventLoop, action: MenuAction) {
-        let (blocks, models) = (
-            self.blocks.clone().expect("loaded in init"),
+        let (items, models) = (
+            self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
-            MenuAction::Open(dir) => Game::open(dir, blocks, models),
+            MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create { name, seed, mode } => {
-                Game::create(&level::saves_dir(), &name, seed, mode, blocks, models)
+                Game::create(&level::saves_dir(), &name, seed, mode, items, models)
             }
         };
         match game {
@@ -323,6 +411,21 @@ impl App {
             renderer.remove_chunk(pos);
         }
         renderer.set_outline(game.target.map(|hit| hit.block));
+        if let Some(icons) = &self.icons {
+            let chunks = &game.chunks;
+            let light_at = |p: DVec3| {
+                let p = p.floor().as_ivec3();
+                chunks.light_at(p.x, p.y, p.z).unwrap_or((15, 0))
+            };
+            let mesh = item_mesh(
+                &game.entities,
+                icons,
+                &game.camera,
+                game.tick_alpha(),
+                light_at,
+            );
+            renderer.set_entities(&mesh);
+        }
 
         let chunks = &game.chunks;
         let stats = DebugStats {
@@ -333,18 +436,40 @@ impl App {
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
         };
-        let selected = HOTBAR[game.slot];
         let hud = Hud {
             crosshair: self.cursor_grabbed,
-            selected: format!(
-                "{}: {}",
-                game.slot + 1,
-                game.blocks().display_name(selected)
-            ),
+            hotbar: (0..HOTBAR_SLOTS)
+                .map(|i| {
+                    let stack = game.inventory.slot(i)?;
+                    let icons = self.icons.as_ref()?;
+                    Some(SlotView::of(stack, icons, game.items()))
+                })
+                .collect(),
+            selected: game.inventory.selected,
         };
-        let ui = debug_ui.frame(window, &game.camera, &stats, &hud);
+        let view_of = |stack: &ItemStack| {
+            let icons = self.icons.as_ref()?;
+            Some(SlotView::of(stack, icons, game.items()))
+        };
+        let slots: Vec<Option<SlotView>> = (0..SLOTS)
+            .map(|i| game.inventory.slot(i).and_then(view_of))
+            .collect();
+        let names: Vec<Option<String>> = (0..SLOTS)
+            .map(|i| game.inventory.slot(i).map(|stack| game.items().name(stack)))
+            .collect();
+        let view = ScreenView {
+            slots: &slots,
+            names: &names,
+            cursor: game.cursor.as_ref().and_then(view_of),
+            catalog: &self.catalog,
+        };
+        let screen = self.screen.as_mut().map(|screen| (screen, &view));
+        let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen);
         let result = renderer.render(&game.camera, ui);
         self.finish_frame(event_loop, now, result);
+        for action in actions {
+            self.on_screen_action(action);
+        }
     }
 
     /// The main menu over the sky.
@@ -418,7 +543,9 @@ impl ApplicationHandler for App {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if !self.cursor_grabbed && self.game.is_some() => self.set_cursor_grab(true),
+            } if !self.cursor_grabbed && self.game.is_some() && self.screen.is_none() => {
+                self.set_cursor_grab(true)
+            }
             WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {
                 if let Some(game) = self.game.as_mut() {
                     game.on_mouse_button(button, state == ElementState::Pressed);
@@ -473,6 +600,35 @@ impl ApplicationHandler for App {
         self.game = None;
         self.window = None;
     }
+}
+
+/// Every block and item with each data-value variant, for the creative
+/// inventory, with how it looks and its name.
+fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
+    let blocks = items
+        .blocks
+        .iter()
+        .filter(|def| def.id != 0)
+        .flat_map(|def| {
+            std::iter::once(0)
+                .chain(def.variants.keys().copied().filter(|&data| data != 0))
+                .map(|data| ItemStack::with_damage(def.id, 1, data as u16))
+        });
+    let others = items.items.iter().flat_map(|item| {
+        std::iter::once(0)
+            .chain(item.variants.keys().copied().filter(|&data| data != 0))
+            .map(|data| ItemStack::with_damage(item.id, 1, data as u16))
+    });
+    blocks
+        .chain(others)
+        .map(|stack| {
+            (
+                stack,
+                SlotView::of(&stack, icons, items),
+                items.name(&stack),
+            )
+        })
+        .collect()
 }
 
 /// Pins the cursor in place. macOS supports only Locked; other platforms may
