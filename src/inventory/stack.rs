@@ -20,10 +20,7 @@ pub struct ItemStack {
 impl ItemStack {
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "used by the inventory screen and saving later in M7"
-        )
+        expect(dead_code, reason = "saving the inventory comes next")
     )]
     pub fn new(id: ItemId, count: u8) -> Self {
         Self {
@@ -66,10 +63,7 @@ impl Items {
     /// Whether `id` names a block or item that exists.
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "used by the inventory screen and saving later in M7"
-        )
+        expect(dead_code, reason = "saving the inventory comes next")
     )]
     pub fn exists(&self, id: ItemId) -> bool {
         self.item(id).is_some() || (id < FIRST_ITEM_ID && self.blocks.get(id).is_some())
@@ -106,10 +100,6 @@ impl Items {
     }
 
     /// Display name, e.g. "stone" or "lapis_lazuli".
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the inventory screens come next")
-    )]
     pub fn name(&self, stack: &ItemStack) -> String {
         if stack.id < FIRST_ITEM_ID {
             return self

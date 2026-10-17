@@ -40,20 +40,8 @@ impl SlotView {
 pub struct GuiTextures {
     pub atlas: TextureHandle,
     pub widgets: TextureHandle,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the inventory screens come next")
-    )]
     pub inventory: TextureHandle,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the inventory screens come next")
-    )]
     pub creative: TextureHandle,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the inventory screens come next")
-    )]
     pub tabs: TextureHandle,
 }
 

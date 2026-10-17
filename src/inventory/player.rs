@@ -18,13 +18,6 @@ pub struct Inventory {
 
 /// A mouse click on an inventory slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "used by the inventory screen and saving later in M7"
-    )
-)]
 pub enum Click {
     Left,
     Right,
@@ -46,13 +39,6 @@ impl Inventory {
         self.slots[index].as_ref()
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used by the inventory screen and saving later in M7"
-        )
-    )]
     pub fn set(&mut self, index: usize, stack: Option<ItemStack>) {
         self.slots[index] = stack;
     }
@@ -64,10 +50,7 @@ impl Inventory {
     /// Fixes a save whose slot list has the wrong length.
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "used by the inventory screen and saving later in M7"
-        )
+        expect(dead_code, reason = "saving the inventory comes next")
     )]
     pub fn repair(&mut self) {
         self.slots.resize(SLOTS, None);
@@ -150,13 +133,6 @@ impl Inventory {
 
     /// Clicks slot `index` with `cursor` held, following 1.0.0's
     /// `Container.slotClick`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used by the inventory screen and saving later in M7"
-        )
-    )]
     pub fn click(
         &mut self,
         index: usize,

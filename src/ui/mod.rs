@@ -3,6 +3,7 @@
 mod fps;
 pub mod gui;
 pub mod menu;
+pub mod screens;
 
 use std::time::Instant;
 
@@ -88,31 +89,39 @@ impl DebugUi {
         self.fps.tick(now);
     }
 
-    /// Builds this frame's UI: the crosshair (while playing) and the F3 overlay.
+    /// Builds this frame's UI: the crosshair (while playing), the hotbar,
+    /// the F3 overlay and any open inventory screen, returning what was
+    /// clicked on the screen.
     pub fn frame(
         &mut self,
         window: &Window,
         camera: &Camera,
         stats: &DebugStats,
         hud: &Hud,
-    ) -> UiPaint {
+        screen: Option<(&mut screens::Screen, &screens::ScreenView)>,
+    ) -> (UiPaint, Vec<screens::ScreenAction>) {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
         let text = debug_text(self.fps.fps(), camera, stats);
         let textures = &self.textures;
+        let mut actions = Vec::new();
+        let mut screen = screen;
         let output = self.ctx.run_ui(input, |ui| {
             if hud.crosshair {
                 draw_crosshair(ui);
             }
-            let screen = ui.ctx().content_rect();
-            gui::paint_hotbar(ui.painter(), screen, &hud.hotbar, hud.selected, textures);
+            let full = ui.ctx().content_rect();
+            gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
             if visible {
                 show_overlay(ui.ctx(), &text);
+            }
+            if let Some((screen, view)) = &mut screen {
+                actions = screens::show(ui.ctx(), screen, view, textures);
             }
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
         // it would unhide the cursor while it's grabbed for mouse look.
-        self.paint(output)
+        (self.paint(output), actions)
     }
 
     /// Builds this frame's main menu and returns what the player chose.

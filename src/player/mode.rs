@@ -39,6 +39,11 @@ impl GameMode {
         self == GameMode::Survival
     }
 
+    /// E opens the creative item list instead of the inventory.
+    pub fn has_creative_inventory(self) -> bool {
+        self == GameMode::Creative
+    }
+
     /// The other mode, for the create-world button that cycles through them.
     pub fn next(self) -> Self {
         match self {

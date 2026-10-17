@@ -19,7 +19,7 @@ use crate::{
     entity::item::ItemEntity,
     inventory::{
         player::{HOTBAR_SLOTS, Inventory},
-        stack::Items,
+        stack::{ItemStack, Items},
     },
     level::{Level, PlayerData, WorldDir},
     player::{
@@ -76,6 +76,8 @@ pub struct Game {
     break_cooldown: u8,
     place_cooldown: u8,
     pub inventory: Inventory,
+    /// The stack held on the mouse in an inventory screen.
+    pub cursor: Option<ItemStack>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     /// The block being mined and how far along it is (0–1).
@@ -131,6 +133,7 @@ impl Game {
             break_cooldown: 0,
             place_cooldown: 0,
             inventory: Inventory::default(),
+            cursor: None,
             entities: Vec::new(),
             mining: None,
             rng: Rng::new(level_random_seed()),
