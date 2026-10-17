@@ -1,6 +1,6 @@
 # CLAUDE.md — Rustcraft (a simplified Minecraft clone)
 
-> Draft v0.3. All open questions are settled (questions.md plus Kenzo's follow-up answers).
+> Draft v0.4 (creative mode added). All open questions are settled (questions.md plus Kenzo's follow-up answers).
 
 ## 0. Locations (read first)
 
@@ -10,13 +10,13 @@
 
 ## 1. What we're building
 
-Rustcraft (working name) is a single-player, survival-only Minecraft clone (no creative mode, no cheats) for macOS (Apple Silicon), written in Rust. It follows **Minecraft Java Edition 1.0.0**: the same blocks, items, recipes and, where practical, the same mechanics and physics constants. The core loop is an infinite procedurally generated world, mining and placing blocks, inventory, survival (health, hunger, mobs, day/night), crafting, and saving.
+Rustcraft (working name) is a single-player Minecraft clone with survival and creative modes (no cheats or commands) for macOS (Apple Silicon), written in Rust. It follows **Minecraft Java Edition 1.0.0**: the same blocks, items, recipes and, where practical, the same mechanics and physics constants. The core loop is an infinite procedurally generated world, mining and placing blocks, inventory, survival (health, hunger, mobs, day/night), crafting, and saving.
 
 **Reference list:** `docs/blocks-and-items.md` (copied from the planning folder) lists every 1.0.0 block and item with its original numeric ID. It is the source of truth for what exists in the game.
 
 **Faithfulness:** mechanics should match Minecraft 1.0.0 as closely as practical. When unsure of an exact value, use the best-known Minecraft value, write it in `docs/DECISIONS.md`, and keep it as a named constant in `src/config.rs`.
 
-**Out of scope:** multiplayer, creative mode, cheats/commands, mod support, Windows/Linux builds (wgpu may run there, but don't spend effort on it). Blocks for redstone, the Nether, the End, enchanting and brewing are registered and placeable, but their special behavior (circuits, portals, dimensions, enchanting, potions) is not planned. Nothing after M13 is planned.
+**Out of scope:** multiplayer, cheats/commands, switching game mode inside an existing world, mod support, Windows/Linux builds (wgpu may run there, but don't spend effort on it). Blocks for redstone, the Nether, the End, enchanting and brewing are registered and placeable, but their special behavior (circuits, portals, dimensions, enchanting, potions) is not planned. Nothing after M13 is planned.
 
 ## 2. Tech stack
 
@@ -180,7 +180,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - **Done when:** flying in one direction for 2 minutes shows all four biomes with continuous terrain and no stalls; the same seed gives the same world.
 
 ### - [ ] M4 — Player physics and block interaction
-- Walking with Minecraft constants from §4: gravity, jump, AABB collision, step-up, sprint, sneak (no falling off edges). The M1 free-fly camera stays as a dev tool in debug builds only (`cfg(debug_assertions)`); release builds have no flying.
+- Walking with Minecraft constants from §4: gravity, jump, AABB collision, step-up, sprint, sneak (no falling off edges). The M1 free-fly camera stays as a dev tool in debug builds only (`cfg(debug_assertions)`). Player flying in release builds comes with creative mode in M7.
 - DDA voxel raycast (reach 5) for the target block, wireframe highlight outline.
 - Left-click breaks (instant for now), right-click places the selected block; can't place inside the player.
 - Remesh only affected chunks (and neighbors on borders).
@@ -193,15 +193,16 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 
 ### - [ ] M6 — Saving and loading
 - Region files (32×32 chunks per file), only modified chunks saved, compressed.
-- Save player position, stats, inventory, world seed, time of day. Autosave every few minutes and on quit.
-- Main menu: create world (name + seed), load world, quit.
-- **Done when:** edits survive quit-and-relaunch; round-trip tests pass.
+- Save player position, stats, inventory, world seed, game mode, time of day. Autosave every few minutes and on quit.
+- Main menu: create world (name + seed + **game mode: Survival or Creative**, default Survival), load world (list shows each world's mode), quit. The mode is fixed for the life of the world, as in 1.0.0.
+- **Done when:** edits survive quit-and-relaunch; a creative world reloads as creative; round-trip tests pass.
 
-### - [ ] M7 — Items, inventory, and survival mining
+### - [ ] M7 — Items, inventory, survival mining, and creative mode
 - `items.ron` with every item from `docs/blocks-and-items.md`; stacks (64, or 1/16 where 1.0.0 differs); dropped item entities with pickup.
 - Hotbar (1–9, scroll wheel), full inventory screen (E) with click and drag stack moving.
 - Mining time from 1.0.0 hardness × tool type/tier (wood/stone/iron/gold/diamond), tool durability, correct-tool requirements for drops, 1.0.0 drop rules.
-- **Done when:** you can mine stone with a pickaxe, get cobblestone, and see tool durability drop.
+- **Creative mode** (1.0.0 behavior): blocks break instantly with no drops; placing doesn't use up items; tools take no durability; double-tap Space toggles flying (Space up, Shift down, faster horizontal speed); the E key opens a scrollable creative inventory containing every registered block and item, and clicking one puts a stack in the hotbar. Keep game-mode checks in one place (e.g. a `GameMode` on the player) rather than scattered `if creative` checks.
+- **Done when:** in survival you can mine stone with a pickaxe, get cobblestone, and see tool durability drop; in a creative world you can fly, break blocks instantly, and pull any block from the creative inventory.
 
 ### - [ ] M8 — Environment
 - Day/night cycle (20-minute day), sun and moon, sky color gradient, sky light level tied to time.
@@ -214,7 +215,8 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Entity system for mobs: AABB physics shared with the player, box-model rendering.
 - Mobs: **pig** (passive, wanders, drops porkchop) and **zombie** (hostile, spawns in darkness, chases and attacks, burns in daylight, drops rotten flesh), with 1.0.0 behaviors. Build the mob code so more 1.0.0 mobs can be added later from data plus a small AI module; adding them isn't planned yet.
 - Melee combat with knockback and critical hits; bow and arrows; eating restores hunger.
-- **Done when:** you can survive a night, kill a zombie, and eat a porkchop from a pig.
+- In creative mode: no damage of any kind, no hunger, no health/hunger HUD, and hostile mobs ignore the player.
+- **Done when:** in survival you can survive a night, kill a zombie, and eat a porkchop from a pig; in creative a zombie at night doesn't attack you and falling or lava does no damage.
 
 ### - [ ] M10 — Crafting and smelting
 - 2×2 inventory grid and 3×3 crafting table; shaped and shapeless recipes from `recipes.ron`.
@@ -242,6 +244,6 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 ## 8. Decisions log (from Kenzo)
 
 - Mobs: pig and zombie only for now; more default mobs later (unscheduled).
-- Survival only. No stats editing, cheats, or creative mode.
+- Survival and creative modes, chosen per world at creation (changed from survival-only after M5). No stats editing, cheats, or commands.
 - Sounds come from Kenzo's Minecraft sample pack, downloaded per `docs/sounds.md`. Audio stays a placeholder in M11 until the files are downloaded.
 - Nothing after M13 is planned.
