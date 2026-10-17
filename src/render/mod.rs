@@ -75,6 +75,7 @@ pub struct Environment {
 pub struct SkyImages {
     pub sun: RgbaImage,
     pub moon: RgbaImage,
+    pub clouds: RgbaImage,
 }
 
 impl SkyImages {
@@ -88,6 +89,7 @@ impl SkyImages {
         Ok(Self {
             sun: load("sun.png")?,
             moon: load("moon_phases.png")?,
+            clouds: load("clouds.png")?,
         })
     }
 }
@@ -121,6 +123,8 @@ pub struct Renderer {
     sky_pipeline: wgpu::RenderPipeline,
     sun_bind_group: wgpu::BindGroup,
     moon_bind_group: wgpu::BindGroup,
+    cloud_pipeline: wgpu::RenderPipeline,
+    cloud_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     atlas_bind_group: wgpu::BindGroup,
@@ -200,6 +204,8 @@ impl Renderer {
             create_texture_bind_group(&device, &queue, &texture_layout, "sun", &sky.sun);
         let moon_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "moon", &sky.moon);
+        let cloud_bind_group =
+            create_texture_bind_group(&device, &queue, &texture_layout, "clouds", &sky.clouds);
         let atlas_layout = &texture_layout;
 
         let shader = world_shader!(device, "shader.wgsl");
@@ -241,6 +247,8 @@ impl Renderer {
 
         let sky_pipeline =
             create_sky_pipeline(&device, &globals_layout, &texture_layout, config.format);
+        let cloud_pipeline =
+            create_cloud_pipeline(&device, &globals_layout, &texture_layout, config.format);
         let outline = Outline::new(&device, &globals_layout, config.format, DEPTH_FORMAT);
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
@@ -258,6 +266,8 @@ impl Renderer {
             sky_pipeline,
             sun_bind_group,
             moon_bind_group,
+            cloud_pipeline,
+            cloud_bind_group,
             globals_buffer,
             globals_bind_group,
             atlas_bind_group,
@@ -435,6 +445,9 @@ impl Renderer {
                 pass.set_index_buffer(entities.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..entities.index_count, 0, 0..1);
             }
+            pass.set_pipeline(&self.cloud_pipeline);
+            pass.set_bind_group(1, &self.cloud_bind_group, &[]);
+            pass.draw(0..6, 0..1);
             if outline {
                 self.outline.draw(&mut pass);
             }
@@ -571,6 +584,53 @@ fn create_texture_bind_group(
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
+    })
+}
+
+/// Draws the cloud layer: blended, seen from both sides, depth-tested but
+/// not written.
+fn create_cloud_pipeline(
+    device: &wgpu::Device,
+    globals_layout: &wgpu::BindGroupLayout,
+    texture_layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = world_shader!(device, "clouds.wgsl");
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("clouds"),
+        bind_group_layouts: &[Some(globals_layout), Some(texture_layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("clouds"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
     })
 }
 
