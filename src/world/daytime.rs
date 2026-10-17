@@ -88,6 +88,14 @@ pub fn star_brightness(angle: f32) -> f32 {
     f * f * 0.5
 }
 
+/// Clock time like "day 1, 06:00": tick 0 is 6 in the morning of day 1.
+pub fn clock(time: u64) -> String {
+    let day = time / DAY_TICKS + 1;
+    let ticks = (time + 6000) % DAY_TICKS;
+    let (hours, minutes) = (ticks / 1000, ticks % 1000 * 60 / 1000);
+    format!("day {day}, {hours:02}:{minutes:02}")
+}
+
 /// Moon phase 0–7 (0 full), one per day.
 pub fn moon_phase(time: u64) -> u32 {
     ((time / DAY_TICKS) % 8) as u32
@@ -162,6 +170,10 @@ mod tests {
         assert!(sunrise_color(noon).is_none());
         let (glow, alpha) = sunrise_color(0.25).unwrap();
         assert!(alpha > 0.9 && glow.x > glow.z, "orange at sunset");
+        assert_eq!(clock(0), "day 1, 06:00");
+        assert_eq!(clock(6000), "day 1, 12:00");
+        assert_eq!(clock(18500), "day 1, 00:30");
+        assert_eq!(clock(DAY_TICKS + 12000), "day 2, 18:00");
         assert_eq!(moon_phase(0), 0);
         assert_eq!(moon_phase(DAY_TICKS * 9), 1);
     }

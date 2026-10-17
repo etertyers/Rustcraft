@@ -436,6 +436,7 @@ impl App {
             seed: chunks.seed(),
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
+            time: game.time(),
         };
         let hud = Hud {
             crosshair: self.cursor_grabbed,
