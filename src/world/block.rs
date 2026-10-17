@@ -192,6 +192,21 @@ pub enum Placement {
     /// Turns its front (the `south` texture) toward the player, like
     /// 1.0.0's furnace: data 2–5 for a front facing north, south, west, east.
     Facing,
+    /// A two-block bed on top of a block (1.0.0's `ItemBed`): the foot where
+    /// placed and the head one block further the way the player looks.
+    /// Data 0–3 is that way (south, west, north, east); the head adds 8.
+    Bed,
+}
+
+/// The way from a bed's foot to its head for direction `dir` (0–3: south,
+/// west, north, east, as in 1.0.0).
+pub fn bed_direction(dir: u8) -> IVec3 {
+    match dir & 3 {
+        0 => IVec3::Z,
+        1 => IVec3::NEG_X,
+        2 => IVec3::NEG_Z,
+        _ => IVec3::X,
+    }
 }
 
 /// What right-clicking a block does (1.0.0's `blockActivated`).
@@ -333,6 +348,15 @@ impl BlockDef {
                 _ => IVec3::NEG_Y,
             }),
             Placement::Plain | Placement::Facing => self.needs_ground.then_some(IVec3::NEG_Y),
+            // Each half goes with the other.
+            Placement::Bed => {
+                let toward_head = bed_direction(data & 3);
+                Some(if data & 8 == 0 {
+                    toward_head
+                } else {
+                    -toward_head
+                })
+            }
         }
     }
 

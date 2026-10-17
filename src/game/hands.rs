@@ -393,24 +393,32 @@ impl Game {
         let Some(block) = self.items.places(&stack) else {
             return;
         };
-        let Some((at, mut placed)) = interaction::place_block(
-            self.chunks.world(),
-            &self.items.blocks,
-            hit,
-            block,
-            &self.body.aabb(),
-        ) else {
+        let world = self.chunks.world();
+        let player = self.body.aabb();
+        let Some((at, placed)) =
+            interaction::place_block(world, &self.items.blocks, hit, block, &player)
+        else {
             return;
         };
-        if self
-            .items
-            .blocks
-            .get(placed.id())
-            .is_some_and(|def| def.placement == Placement::Facing)
-        {
-            placed = BlockState::new(placed.id(), interaction::facing_data(self.camera.yaw));
-        }
-        self.chunks.set_blocks(&[(at, placed)]);
+        let placement = self.items.blocks.get(placed.id()).map(|def| def.placement);
+        let yaw = self.camera.yaw;
+        let edits = match placement {
+            Some(Placement::Facing) => {
+                vec![(
+                    at,
+                    BlockState::new(placed.id(), interaction::facing_data(yaw)),
+                )]
+            }
+            Some(Placement::Bed) => {
+                let blocks = &self.items.blocks;
+                match interaction::place_bed(world, blocks, hit, (at, placed), yaw, &player) {
+                    Some(halves) => halves.to_vec(),
+                    None => return,
+                }
+            }
+            _ => vec![(at, placed)],
+        };
+        self.chunks.set_blocks(&edits);
         if self.mode.uses_up_items() {
             self.inventory.take(self.inventory.selected, 1);
         }

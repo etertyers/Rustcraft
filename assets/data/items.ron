@@ -118,7 +118,7 @@
     (id: 352, name: "bone", texture: "bone"),
     (id: 353, name: "sugar", texture: "sugar"),
     (id: 354, name: "cake", texture: "cake", max_stack: 1, places: 92),
-    (id: 355, name: "bed", texture: "bed", max_stack: 1),
+    (id: 355, name: "bed", texture: "bed", places: 26, max_stack: 1),
     (id: 356, name: "repeater", texture: "repeater", places: 93),
     (id: 357, name: "cookie", texture: "cookie", food: (hunger: 1, saturation: 0.1)),
     (id: 358, name: "filled_map", texture: "filled_map", max_stack: 1),

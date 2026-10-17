@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
-    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape},
+    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape, bed_direction},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     light::ChunkLight,
 };
@@ -397,6 +397,62 @@ fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
     ]
 }
 
+/// Height of a bed's top, and of the planks under it (1.0.0's
+/// `renderBlockBed`).
+const BED_TOP: f32 = 9.0 / 16.0;
+const BED_BOTTOM: f32 = 3.0 / 16.0;
+
+/// A bed half's quads, block-relative: the top (its texture running from
+/// foot to head), the planks underneath, the two long sides and the end
+/// away from the other half, each with the face it shows and is shaded as.
+/// `model` holds the half's textures (`blocks.ron` puts the foot's end on
+/// south and the head's on north); `data` is the direction plus 8 for the
+/// head.
+fn bed_quads(data: u8, model: &BlockModel) -> Vec<(Face, [[f32; 3]; 4], [f32; 4])> {
+    let head = data & 8 != 0;
+    let toward_head = bed_direction(data & 3);
+    let along = [
+        toward_head.x as f32,
+        toward_head.y as f32,
+        toward_head.z as f32,
+    ];
+    let texture = |face: Face| model.faces[face.index()].uv;
+    // The top's u runs along +x; turning its corners points it at the head.
+    let mut top = face_corners(Face::Top).map(|[x, _, z]| [x, BED_TOP, z]);
+    top.rotate_left(3 - (data & 3) as usize);
+    let bottom = face_corners(Face::Bottom).map(|[x, _, z]| [x, BED_BOTTOM, z]);
+    let mut quads = vec![
+        (Face::Top, top, texture(Face::Top)),
+        (Face::Bottom, bottom, texture(Face::Bottom)),
+    ];
+    let end = texture(if head { Face::North } else { Face::South });
+    for face in [Face::North, Face::South, Face::East, Face::West] {
+        let normal = face.normal().map(|n| n as f32);
+        let facing_along = normal[0] * along[0] + normal[2] * along[2];
+        let corners = face_corners(face);
+        if facing_along == 0.0 {
+            // A long side: flip the texture where the face's u runs from head
+            // to foot, so the legs stay at the foot.
+            let u = [
+                corners[1][0] - corners[0][0],
+                0.0,
+                corners[1][2] - corners[0][2],
+            ];
+            let [u0, v0, u1, v1] = texture(Face::East);
+            let uv = if u[0] * along[0] + u[2] * along[2] < 0.0 {
+                [u1, v0, u0, v1]
+            } else {
+                [u0, v0, u1, v1]
+            };
+            quads.push((face, corners, uv));
+        } else if (facing_along > 0.0) == head {
+            // The end away from the other half.
+            quads.push((face, corners, end));
+        }
+    }
+    quads
+}
+
 /// Height of a block's top: 1, or for a liquid with no liquid of its kind
 /// above it, 1.0.0's 8/9 for a source block.
 fn liquid_height(
@@ -491,6 +547,27 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                     side.uv,
                                     side_color,
                                     own_light,
+                                );
+                            }
+                        }
+                        Shape::Bed => {
+                            // Both halves of a direction share a model; the
+                            // head's (data 8) has its textures.
+                            let half = BlockState::new(block.id(), block.data() & 8);
+                            for (face, corners, uv) in bed_quads(block.data(), models.get(half)) {
+                                let [dx, dy, dz] = face.normal();
+                                let neighbor =
+                                    area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                                let inset = matches!(face, Face::Top | Face::Bottom);
+                                if !inset && !face_visible(models, block, model, neighbor) {
+                                    continue;
+                                }
+                                let color = side_color.map(|c| c * face.shade());
+                                mesh.quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    [color; 4],
+                                    [own_light; 4],
                                 );
                             }
                         }
@@ -618,6 +695,53 @@ mod tests {
     fn quads(mesh: &Mesh) -> usize {
         assert_eq!(mesh.indices.len() % 6, 0);
         mesh.indices.len() / 6
+    }
+
+    /// A bed model whose faces have the uvs [i, 0, i + 1, 1] for face index i.
+    fn bed_model() -> BlockModel {
+        let mut model = models().get(STONE).clone();
+        for face in Face::ALL {
+            let i = face.index() as f32;
+            model.faces[face.index()].uv = [i, 0.0, i + 1.0, 1.0];
+        }
+        model
+    }
+
+    #[test]
+    fn a_bed_half_has_a_turned_top_planks_two_sides_and_its_end() {
+        let model = bed_model();
+        let uv = |face: Face| {
+            let i = face.index() as f32;
+            [i, 0.0, i + 1.0, 1.0]
+        };
+        // Foot of a bed whose head is north (direction 2).
+        let foot = bed_quads(2, &model);
+        let faces: Vec<Face> = foot.iter().map(|(face, ..)| *face).collect();
+        assert_eq!(
+            faces,
+            [Face::Top, Face::Bottom, Face::South, Face::East, Face::West]
+        );
+        let (_, top, top_uv) = foot[0];
+        assert!(top.iter().all(|c| c[1] == BED_TOP));
+        assert_eq!(top_uv, uv(Face::Top));
+        let u = [top[1][0] - top[0][0], top[1][2] - top[0][2]];
+        assert_eq!(u, [0.0, -1.0], "the top's texture runs north, to the head");
+        assert_eq!(foot[2].2, uv(Face::South), "the foot's end");
+        assert!(foot[1].1.iter().all(|c| c[1] == BED_BOTTOM));
+        // The head (data 8 on) shows its north end instead.
+        let head = bed_quads(2 | 8, &model);
+        assert!(
+            head.iter()
+                .any(|&(face, _, end)| face == Face::North && end == uv(Face::North))
+        );
+        assert!(head.iter().all(|&(face, ..)| face != Face::South));
+        // Heading east, the north side's texture is flipped to keep the legs
+        // at the foot; the south side's isn't.
+        let east = bed_quads(3, &model);
+        let side = |face: Face| east.iter().find(|q| q.0 == face).unwrap().2;
+        let [u0, _, u1, _] = uv(Face::East);
+        assert_eq!(side(Face::North), [u1, 0.0, u0, 1.0]);
+        assert_eq!(side(Face::South), [u0, 0.0, u1, 1.0]);
     }
 
     #[test]

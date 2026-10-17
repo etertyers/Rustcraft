@@ -17,15 +17,16 @@
 //   variants  per-data-value overrides: {data: (name, textures, tint)}
 //   tool      tool that mines it fast: Pickaxe, Shovel or Axe
 //   harvest   tool needed to drop anything: (tools: [...], tier: Wood)
-//   placement Plain (default), Torch (attaches to the clicked face) or
-//             Facing (front toward the player, data 2-5)
+//   placement Plain (default), Torch (attaches to the clicked face),
+//             Facing (front toward the player, data 2-5) or Bed (two
+//             halves, data 0-3 the direction and 8 the head)
 //   activate  what right-clicking it does: Crafting (opens a 3×3 grid),
 //             Chest or Furnace (opens its slots)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
 //   drops     Itself (default; keeps the data value if it has variants),
 //             Nothing, All([...]) every drop that rolls, or OneOf([...]) the
 //             first that rolls. A drop is (item, data, keep_data, min, max,
-//             chance, min_data, tool, not_tool).
+//             chance, min_data, max_data, tool, not_tool).
 //
 // Data values that only encode orientation, growth or fluid level (furnace
 // facing, snow height, cake bites...) don't need variants.
@@ -71,7 +72,7 @@
     (id: 24, name: "sandstone", hardness: 0.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone_normal")),
     (id: 25, name: "note_block", hardness: 0.8, textures: (all: "noteblock")),
     // Data 0-3 is the foot (facing); 8-11 is the head.
-    (id: 26, name: "bed", hardness: 0.2, drops: All([(item: 355)]), shape: Bed, textures: (top: "bed_feet_top", bottom: "planks_oak", side: "bed_feet_side", south: "bed_feet_end"),
+    (id: 26, name: "bed", hardness: 0.2, drops: All([(item: 355, max_data: 7)]), placement: Bed, shape: Bed, layer: Cutout, textures: (top: "bed_feet_top", bottom: "planks_oak", side: "bed_feet_side", south: "bed_feet_end"),
         variants: {
             8: (name: "head", textures: (top: "bed_head_top", bottom: "planks_oak", side: "bed_head_side", north: "bed_head_end")),
         }),

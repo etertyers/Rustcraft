@@ -7,7 +7,7 @@ use crate::{
     config::WORLD_HEIGHT,
     world::{
         Face, World,
-        block::{BlockDef, BlockRegistry, BlockState, Placement},
+        block::{BlockDef, BlockRegistry, BlockState, Placement, bed_direction},
     },
 };
 
@@ -82,8 +82,9 @@ pub fn place_block(
         return None;
     }
     let data = match new.placement {
-        // Turned toward the player by `facing_data` afterwards.
-        Placement::Plain | Placement::Facing => block.data(),
+        // Turned toward the player by `facing_data`, or made into two
+        // halves by `place_bed`, afterwards.
+        Placement::Plain | Placement::Facing | Placement::Bed => block.data(),
         Placement::Torch => match hit.face? {
             Face::Top => 5,
             Face::East => 1,
@@ -93,18 +94,54 @@ pub fn place_block(
             Face::Bottom => return None,
         },
     };
-    if let Some(offset) = new.support(data) {
+    if new.placement != Placement::Bed
+        && let Some(offset) = new.support(data)
+    {
         let support = def_at(world, blocks, at + offset)?;
         // Torches need a full solid block; plants just need ground.
         let holds = match new.placement {
             Placement::Torch => support.is_opaque_cube(),
-            Placement::Plain | Placement::Facing => !support.replaceable,
+            Placement::Plain | Placement::Facing | Placement::Bed => !support.replaceable,
         };
         if !holds {
             return None;
         }
     }
     Some((at, BlockState::new(block.id(), data)))
+}
+
+/// A bed's two halves for `foot` (from `place_block`) and a player looking
+/// along `yaw`: only on top of a block, into empty cells above full solid
+/// blocks, clear of the player (1.0.0's `ItemBed.onItemUse`).
+pub fn place_bed(
+    world: &World,
+    blocks: &BlockRegistry,
+    hit: &Hit,
+    (foot, bed): Edit,
+    yaw: f32,
+    player: &Aabb,
+) -> Option<[Edit; 2]> {
+    if hit.face != Some(Face::Top) {
+        return None;
+    }
+    let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
+    // Looking north, east, south, west puts the head north, east, south, west.
+    let dir = [2, 3, 0, 1][quarter.rem_euclid(4) as usize];
+    let head = foot + bed_direction(dir);
+    for cell in [foot, head] {
+        if !world
+            .block(cell.x, cell.y, cell.z)
+            .is_some_and(BlockState::is_air)
+            || !def_at(world, blocks, cell - IVec3::Y).is_some_and(BlockDef::is_opaque_cube)
+            || Aabb::block(cell.x, cell.y, cell.z).intersects(player)
+        {
+            return None;
+        }
+    }
+    Some([
+        (foot, BlockState::new(bed.id(), dir)),
+        (head, BlockState::new(bed.id(), dir | 8)),
+    ])
 }
 
 /// The data value turning a `Placement::Facing` block's front toward a
@@ -174,6 +211,50 @@ mod tests {
         assert_eq!(facing_data(PI), 2);
         assert_eq!(facing_data(-FRAC_PI_2), 5);
         assert_eq!(facing_data(TAU - 0.2), 3);
+    }
+
+    #[test]
+    fn beds_go_on_top_of_solid_blocks_with_the_head_ahead() {
+        use std::f32::consts::FRAC_PI_2;
+        const BED: BlockState = BlockState::new(26, 0);
+        let world = world_with(&[(IVec3::new(5, 64, 3), STONE)]);
+        let blocks = blocks();
+        let on_top = hit(IVec3::new(5, 63, 5), Face::Top);
+        let foot = place_block(&world, &blocks, &on_top, BED, &far_player()).unwrap();
+        // Looking east: the head goes east (direction 3).
+        let halves = place_bed(&world, &blocks, &on_top, foot, FRAC_PI_2, &far_player());
+        assert_eq!(
+            halves,
+            Some([
+                (IVec3::new(5, 64, 5), BlockState::new(26, 3)),
+                (IVec3::new(6, 64, 5), BlockState::new(26, 3 | 8)),
+            ])
+        );
+        // Looking north, the head's cell is taken by stone.
+        let blocked = hit(IVec3::new(5, 63, 4), Face::Top);
+        let foot = place_block(&world, &blocks, &blocked, BED, &far_player()).unwrap();
+        assert_eq!(
+            place_bed(&world, &blocks, &blocked, foot, 0.0, &far_player()),
+            None
+        );
+        // Only on top of blocks.
+        let side = hit(IVec3::new(5, 64, 3), Face::East);
+        let foot = place_block(&world, &blocks, &side, BED, &far_player()).unwrap();
+        assert_eq!(
+            place_bed(&world, &blocks, &side, foot, 0.0, &far_player()),
+            None
+        );
+        // Breaking either half takes the other.
+        let mut world = world;
+        for (at, block) in halves.unwrap() {
+            let pos = ChunkPos::of_block(at.x, at.z);
+            world
+                .get_mut(pos)
+                .unwrap()
+                .set(at.x as usize, at.y as usize, at.z as usize, block);
+        }
+        let broken = break_block(&world, &blocks, IVec3::new(6, 64, 5));
+        assert_eq!(broken.len(), 2);
     }
 
     #[test]

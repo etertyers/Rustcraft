@@ -762,6 +762,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_bed_goes_down_as_two_halves_and_breaks_into_one_bed() {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(355, 1)));
+        // Looking north at the grass two blocks ahead.
+        game.camera.pitch = -0.7;
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        let block = |game: &Game, z| game.chunks.world().block(0, 64, z);
+        assert_eq!(block(&game, -2), Some(BlockState::new(26, 2)), "the foot");
+        assert_eq!(
+            block(&game, -3),
+            Some(BlockState::new(26, 2 | 8)),
+            "the head"
+        );
+        assert_eq!(game.inventory.slot(0), None);
+        game.break_block(IVec3::new(0, 64, -3));
+        assert_eq!(block(&game, -2), Some(BlockState::AIR));
+        let drops: Vec<ItemStack> = game.entities.iter().map(|item| item.stack).collect();
+        assert_eq!(drops, [ItemStack::new(355, 1)]);
+    }
+
+    #[test]
     fn creative_breaks_instantly_without_drops_and_keeps_placed_items() {
         let mut game = flat_game(GameMode::Creative);
         game.inventory.set(0, Some(ItemStack::new(1, 1)));
