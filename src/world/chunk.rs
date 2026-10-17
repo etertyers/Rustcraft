@@ -1,8 +1,14 @@
-//! Chunk storage: a 16×128×16 column split into 16³ sections.
+//! Chunk storage: a 16×128×16 column split into 16³ sections, plus the
+//! block entities (chests, furnaces) in it.
+
+use std::collections::BTreeMap;
 
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
-use super::{biome::Biome, block::BlockState};
+use super::{biome::Biome, block::BlockState, block_entity::BlockEntity};
+
+/// A block's position within its chunk: x and z in 0..16, y in 0..128.
+pub type LocalPos = [u8; 3];
 
 /// Edge length of a section (and width of a chunk).
 pub const SECTION_SIZE: usize = CHUNK_SIZE;
@@ -47,6 +53,7 @@ pub struct Chunk {
     sections: [Option<Box<Section>>; SECTION_COUNT],
     /// Biome of each column, indexed `z * 16 + x`.
     biomes: [Biome; CHUNK_SIZE * CHUNK_SIZE],
+    block_entities: BTreeMap<LocalPos, BlockEntity>,
 }
 
 impl Chunk {
@@ -55,7 +62,33 @@ impl Chunk {
             pos,
             sections: Default::default(),
             biomes: [Biome::default(); CHUNK_SIZE * CHUNK_SIZE],
+            block_entities: BTreeMap::new(),
         }
+    }
+
+    pub fn block_entity(&self, at: LocalPos) -> Option<&BlockEntity> {
+        self.block_entities.get(&at)
+    }
+
+    pub fn block_entity_mut(&mut self, at: LocalPos) -> Option<&mut BlockEntity> {
+        self.block_entities.get_mut(&at)
+    }
+
+    /// Puts or (with `None`) removes the block entity at `at`, returning the
+    /// one there before.
+    pub fn set_block_entity(
+        &mut self,
+        at: LocalPos,
+        entity: Option<BlockEntity>,
+    ) -> Option<BlockEntity> {
+        match entity {
+            Some(entity) => self.block_entities.insert(at, entity),
+            None => self.block_entities.remove(&at),
+        }
+    }
+
+    pub fn block_entities(&self) -> impl Iterator<Item = (LocalPos, &BlockEntity)> {
+        self.block_entities.iter().map(|(&at, entity)| (at, entity))
     }
 
     pub fn biome(&self, x: usize, z: usize) -> Biome {

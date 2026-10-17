@@ -1,0 +1,198 @@
+// 1.0.0's recipes for everything in scope (CraftingManager, FurnaceRecipes
+// and TileEntityFurnace.getItemBurnTime).
+//
+// Ingredients are (item, data). Leaving data out matches any data value for
+// blocks (any log, any wool, as 1.0.0 does) and data 0 for items.
+// Shaped recipes fit anywhere in the grid and may be mirrored.
+//
+// Left out, because their systems aren't in the game (see DECISIONS.md):
+// redstone torch, repeater, lever, buttons, pressure plates, piston, sticky
+// piston, dispenser, rails, powered and detector rails, minecarts, boat,
+// fishing rod, map, painting, cake (no milk), enchanting table, brewing
+// stand, cauldron, glass bottle, blaze powder, eye of ender, magma cream,
+// fermented spider eye, glistering melon, nether brick blocks.
+#![enable(implicit_some)]
+(
+    shaped: [
+        // Wood and basics
+        (result: (item: 5, count: 4), pattern: ["#"], key: {'#': (item: 17)}),  // planks from any log
+        (result: (item: 280, count: 4), pattern: ["#", "#"], key: {'#': (item: 5)}),  // sticks
+        (result: (item: 58, count: 1), pattern: ["##", "##"], key: {'#': (item: 5)}),  // crafting table
+        (result: (item: 61, count: 1), pattern: ["###", "# #", "###"], key: {'#': (item: 4)}),  // furnace
+        (result: (item: 54, count: 1), pattern: ["###", "# #", "###"], key: {'#': (item: 5)}),  // chest
+        (result: (item: 50, count: 4), pattern: ["X", "#"], key: {'X': (item: 263, data: 0), '#': (item: 280)}),  // torch (coal)
+        (result: (item: 50, count: 4), pattern: ["X", "#"], key: {'X': (item: 263, data: 1), '#': (item: 280)}),  // torch (charcoal)
+        // Tools and weapons
+        (result: (item: 270, count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: 5), '#': (item: 280)}),  // wood pickaxe
+        (result: (item: 269, count: 1), pattern: ["X", "#", "#"], key: {'X': (item: 5), '#': (item: 280)}),  // wood shovel
+        (result: (item: 271, count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: 5), '#': (item: 280)}),  // wood axe
+        (result: (item: 290, count: 1), pattern: ["XX", " #", " #"], key: {'X': (item: 5), '#': (item: 280)}),  // wood hoe
+        (result: (item: 268, count: 1), pattern: ["X", "X", "#"], key: {'X': (item: 5), '#': (item: 280)}),  // wood sword
+        (result: (item: 274, count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: 4), '#': (item: 280)}),  // stone pickaxe
+        (result: (item: 273, count: 1), pattern: ["X", "#", "#"], key: {'X': (item: 4), '#': (item: 280)}),  // stone shovel
+        (result: (item: 275, count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: 4), '#': (item: 280)}),  // stone axe
+        (result: (item: 291, count: 1), pattern: ["XX", " #", " #"], key: {'X': (item: 4), '#': (item: 280)}),  // stone hoe
+        (result: (item: 272, count: 1), pattern: ["X", "X", "#"], key: {'X': (item: 4), '#': (item: 280)}),  // stone sword
+        (result: (item: 257, count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: 265), '#': (item: 280)}),  // iron pickaxe
+        (result: (item: 256, count: 1), pattern: ["X", "#", "#"], key: {'X': (item: 265), '#': (item: 280)}),  // iron shovel
+        (result: (item: 258, count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: 265), '#': (item: 280)}),  // iron axe
+        (result: (item: 292, count: 1), pattern: ["XX", " #", " #"], key: {'X': (item: 265), '#': (item: 280)}),  // iron hoe
+        (result: (item: 267, count: 1), pattern: ["X", "X", "#"], key: {'X': (item: 265), '#': (item: 280)}),  // iron sword
+        (result: (item: 278, count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: 264), '#': (item: 280)}),  // diamond pickaxe
+        (result: (item: 277, count: 1), pattern: ["X", "#", "#"], key: {'X': (item: 264), '#': (item: 280)}),  // diamond shovel
+        (result: (item: 279, count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: 264), '#': (item: 280)}),  // diamond axe
+        (result: (item: 293, count: 1), pattern: ["XX", " #", " #"], key: {'X': (item: 264), '#': (item: 280)}),  // diamond hoe
+        (result: (item: 276, count: 1), pattern: ["X", "X", "#"], key: {'X': (item: 264), '#': (item: 280)}),  // diamond sword
+        (result: (item: 285, count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: 266), '#': (item: 280)}),  // gold pickaxe
+        (result: (item: 284, count: 1), pattern: ["X", "#", "#"], key: {'X': (item: 266), '#': (item: 280)}),  // gold shovel
+        (result: (item: 286, count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: 266), '#': (item: 280)}),  // gold axe
+        (result: (item: 294, count: 1), pattern: ["XX", " #", " #"], key: {'X': (item: 266), '#': (item: 280)}),  // gold hoe
+        (result: (item: 283, count: 1), pattern: ["X", "X", "#"], key: {'X': (item: 266), '#': (item: 280)}),  // gold sword
+        (result: (item: 261, count: 1), pattern: [" #X", "# X", " #X"], key: {'#': (item: 280), 'X': (item: 287)}),  // bow
+        (result: (item: 262, count: 4), pattern: ["X", "#", "Y"], key: {'X': (item: 318), '#': (item: 280), 'Y': (item: 288)}),  // arrows
+        (result: (item: 359, count: 1), pattern: [" #", "# "], key: {'#': (item: 265)}),  // shears
+        (result: (item: 259, count: 1), pattern: ["A ", " B"], key: {'A': (item: 265), 'B': (item: 318)}),  // flint and steel
+        (result: (item: 325, count: 1), pattern: ["# #", " # "], key: {'#': (item: 265)}),  // bucket
+        (result: (item: 345, count: 1), pattern: [" # ", "#X#", " # "], key: {'#': (item: 265), 'X': (item: 331)}),  // compass
+        (result: (item: 347, count: 1), pattern: [" # ", "#X#", " # "], key: {'#': (item: 266), 'X': (item: 331)}),  // clock
+        // Armor
+        (result: (item: 298, count: 1), pattern: ["XXX", "X X"], key: {'X': (item: 334)}),  // leather helmet
+        (result: (item: 299, count: 1), pattern: ["X X", "XXX", "XXX"], key: {'X': (item: 334)}),  // leather chestplate
+        (result: (item: 300, count: 1), pattern: ["XXX", "X X", "X X"], key: {'X': (item: 334)}),  // leather leggings
+        (result: (item: 301, count: 1), pattern: ["X X", "X X"], key: {'X': (item: 334)}),  // leather boots
+        (result: (item: 306, count: 1), pattern: ["XXX", "X X"], key: {'X': (item: 265)}),  // iron helmet
+        (result: (item: 307, count: 1), pattern: ["X X", "XXX", "XXX"], key: {'X': (item: 265)}),  // iron chestplate
+        (result: (item: 308, count: 1), pattern: ["XXX", "X X", "X X"], key: {'X': (item: 265)}),  // iron leggings
+        (result: (item: 309, count: 1), pattern: ["X X", "X X"], key: {'X': (item: 265)}),  // iron boots
+        (result: (item: 314, count: 1), pattern: ["XXX", "X X"], key: {'X': (item: 266)}),  // gold helmet
+        (result: (item: 315, count: 1), pattern: ["X X", "XXX", "XXX"], key: {'X': (item: 266)}),  // gold chestplate
+        (result: (item: 316, count: 1), pattern: ["XXX", "X X", "X X"], key: {'X': (item: 266)}),  // gold leggings
+        (result: (item: 317, count: 1), pattern: ["X X", "X X"], key: {'X': (item: 266)}),  // gold boots
+        (result: (item: 310, count: 1), pattern: ["XXX", "X X"], key: {'X': (item: 264)}),  // diamond helmet
+        (result: (item: 311, count: 1), pattern: ["X X", "XXX", "XXX"], key: {'X': (item: 264)}),  // diamond chestplate
+        (result: (item: 312, count: 1), pattern: ["XXX", "X X", "X X"], key: {'X': (item: 264)}),  // diamond leggings
+        (result: (item: 313, count: 1), pattern: ["X X", "X X"], key: {'X': (item: 264)}),  // diamond boots
+        // Building blocks
+        (result: (item: 44, count: 3, data: 0), pattern: ["###"], key: {'#': (item: 1)}),  // stone slabs
+        (result: (item: 44, count: 3, data: 1), pattern: ["###"], key: {'#': (item: 24)}),  // sandstone slabs
+        (result: (item: 126, count: 3), pattern: ["###"], key: {'#': (item: 5)}),  // wooden slabs (block 126, as since 1.3)
+        (result: (item: 44, count: 3, data: 3), pattern: ["###"], key: {'#': (item: 4)}),  // cobblestone slabs
+        (result: (item: 44, count: 3, data: 4), pattern: ["###"], key: {'#': (item: 45)}),  // brick slabs
+        (result: (item: 44, count: 3, data: 5), pattern: ["###"], key: {'#': (item: 98)}),  // stone brick slabs
+        (result: (item: 53, count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: 5)}),  // wooden stairs
+        (result: (item: 67, count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: 4)}),  // cobblestone stairs
+        (result: (item: 108, count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: 45)}),  // brick stairs
+        (result: (item: 109, count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: 98)}),  // stone brick stairs
+        (result: (item: 65, count: 2), pattern: ["# #", "###", "# #"], key: {'#': (item: 280)}),  // ladder
+        (result: (item: 85, count: 2), pattern: ["###", "###"], key: {'#': (item: 280)}),  // fence
+        (result: (item: 107, count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: 280), 'W': (item: 5)}),  // fence gate
+        (result: (item: 96, count: 2), pattern: ["###", "###"], key: {'#': (item: 5)}),  // trapdoor
+        (result: (item: 324, count: 1), pattern: ["##", "##", "##"], key: {'#': (item: 5)}),  // wooden door
+        (result: (item: 330, count: 1), pattern: ["##", "##", "##"], key: {'#': (item: 265)}),  // iron door
+        (result: (item: 323, count: 1), pattern: ["###", "###", " X "], key: {'#': (item: 5), 'X': (item: 280)}),  // sign
+        (result: (item: 47, count: 1), pattern: ["###", "XXX", "###"], key: {'#': (item: 5), 'X': (item: 340)}),  // bookshelf
+        (result: (item: 84, count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: 5), 'X': (item: 264)}),  // jukebox
+        (result: (item: 25, count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: 5), 'X': (item: 331)}),  // note block
+        (result: (item: 80, count: 1), pattern: ["##", "##"], key: {'#': (item: 332)}),  // snow block
+        (result: (item: 82, count: 1), pattern: ["##", "##"], key: {'#': (item: 337)}),  // clay block
+        (result: (item: 45, count: 1), pattern: ["##", "##"], key: {'#': (item: 336)}),  // brick block
+        (result: (item: 98, count: 4), pattern: ["##", "##"], key: {'#': (item: 1)}),  // stone bricks
+        (result: (item: 24, count: 1), pattern: ["##", "##"], key: {'#': (item: 12)}),  // sandstone
+        (result: (item: 89, count: 1), pattern: ["##", "##"], key: {'#': (item: 348)}),  // glowstone
+        (result: (item: 35, count: 1), pattern: ["##", "##"], key: {'#': (item: 287)}),  // wool
+        (result: (item: 46, count: 1), pattern: ["X#X", "#X#", "X#X"], key: {'X': (item: 289), '#': (item: 12)}),  // TNT
+        (result: (item: 102, count: 16), pattern: ["###", "###"], key: {'#': (item: 20)}),  // glass panes
+        (result: (item: 101, count: 16), pattern: ["###", "###"], key: {'#': (item: 265)}),  // iron bars
+        (result: (item: 91, count: 1), pattern: ["A", "B"], key: {'A': (item: 86), 'B': (item: 50)}),  // jack o'lantern
+        (result: (item: 103, count: 1), pattern: ["MMM", "MMM", "MMM"], key: {'M': (item: 360)}),  // melon block
+        (result: (item: 355, count: 1), pattern: ["###", "XXX"], key: {'#': (item: 35), 'X': (item: 5)}),  // bed (any wool)
+        (result: (item: 41, count: 1), pattern: ["###", "###", "###"], key: {'#': (item: 266)}),  // gold block
+        (result: (item: 42, count: 1), pattern: ["###", "###", "###"], key: {'#': (item: 265)}),  // iron block
+        (result: (item: 57, count: 1), pattern: ["###", "###", "###"], key: {'#': (item: 264)}),  // diamond block
+        (result: (item: 22, count: 1), pattern: ["###", "###", "###"], key: {'#': (item: 351, data: 4)}),  // lapis block
+        (result: (item: 266, count: 1), pattern: ["###", "###", "###"], key: {'#': (item: 371)}),  // gold ingot from nuggets
+        // Food and materials
+        (result: (item: 281, count: 4), pattern: ["# #", " # "], key: {'#': (item: 5)}),  // bowls
+        (result: (item: 297, count: 1), pattern: ["###"], key: {'#': (item: 296)}),  // bread
+        (result: (item: 357, count: 8), pattern: ["#X#"], key: {'#': (item: 296), 'X': (item: 351, data: 3)}),  // cookies
+        (result: (item: 339, count: 3), pattern: ["###"], key: {'#': (item: 338)}),  // paper
+        (result: (item: 340, count: 1), pattern: ["#", "#", "#"], key: {'#': (item: 339)}),  // book
+        (result: (item: 322, count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: 41), 'X': (item: 260)}),  // golden apple
+    ],
+    shapeless: [
+        (result: (item: 266, count: 9), ingredients: [(item: 41)]),  // gold from its block
+        (result: (item: 265, count: 9), ingredients: [(item: 42)]),  // iron from its block
+        (result: (item: 264, count: 9), ingredients: [(item: 57)]),  // diamond from its block
+        (result: (item: 351, count: 9, data: 4), ingredients: [(item: 22)]),  // lapis from its block
+        (result: (item: 371, count: 9), ingredients: [(item: 266)]),  // gold nuggets
+        (result: (item: 282, count: 1), ingredients: [(item: 39), (item: 40), (item: 281)]),  // mushroom stew
+        (result: (item: 353, count: 1), ingredients: [(item: 338)]),  // sugar
+        (result: (item: 362, count: 1), ingredients: [(item: 360)]),  // melon seeds
+        (result: (item: 361, count: 4), ingredients: [(item: 86)]),  // pumpkin seeds
+        (result: (item: 351, count: 3, data: 15), ingredients: [(item: 352)]),  // bone meal
+        (result: (item: 351, count: 2, data: 1), ingredients: [(item: 38)]),  // rose red
+        (result: (item: 351, count: 2, data: 11), ingredients: [(item: 37)]),  // dandelion yellow
+        (result: (item: 351, count: 2, data: 14), ingredients: [(item: 351, data: 1), (item: 351, data: 11)]),  // orange
+        (result: (item: 351, count: 2, data: 5), ingredients: [(item: 351, data: 4), (item: 351, data: 1)]),  // purple
+        (result: (item: 351, count: 2, data: 6), ingredients: [(item: 351, data: 4), (item: 351, data: 2)]),  // cyan
+        (result: (item: 351, count: 2, data: 7), ingredients: [(item: 351, data: 8), (item: 351, data: 15)]),  // light gray
+        (result: (item: 351, count: 3, data: 7), ingredients: [(item: 351, data: 0), (item: 351, data: 15), (item: 351, data: 15)]),  // light gray from ink
+        (result: (item: 351, count: 2, data: 8), ingredients: [(item: 351, data: 0), (item: 351, data: 15)]),  // gray
+        (result: (item: 351, count: 2, data: 9), ingredients: [(item: 351, data: 1), (item: 351, data: 15)]),  // pink
+        (result: (item: 351, count: 2, data: 10), ingredients: [(item: 351, data: 2), (item: 351, data: 15)]),  // lime
+        (result: (item: 351, count: 2, data: 12), ingredients: [(item: 351, data: 4), (item: 351, data: 15)]),  // light blue
+        (result: (item: 351, count: 2, data: 13), ingredients: [(item: 351, data: 5), (item: 351, data: 9)]),  // magenta
+        (result: (item: 351, count: 3, data: 13), ingredients: [(item: 351, data: 4), (item: 351, data: 1), (item: 351, data: 9)]),  // magenta from blue, red and pink
+        (result: (item: 351, count: 4, data: 13), ingredients: [(item: 351, data: 4), (item: 351, data: 1), (item: 351, data: 1), (item: 351, data: 15)]),  // magenta from blue, two red and bone meal
+        (result: (item: 35, count: 1, data: 15), ingredients: [(item: 351, data: 0), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 14), ingredients: [(item: 351, data: 1), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 13), ingredients: [(item: 351, data: 2), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 12), ingredients: [(item: 351, data: 3), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 11), ingredients: [(item: 351, data: 4), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 10), ingredients: [(item: 351, data: 5), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 9), ingredients: [(item: 351, data: 6), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 8), ingredients: [(item: 351, data: 7), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 7), ingredients: [(item: 351, data: 8), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 6), ingredients: [(item: 351, data: 9), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 5), ingredients: [(item: 351, data: 10), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 4), ingredients: [(item: 351, data: 11), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 3), ingredients: [(item: 351, data: 12), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 2), ingredients: [(item: 351, data: 13), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 1), ingredients: [(item: 351, data: 14), (item: 35, data: 0)]),
+        (result: (item: 35, count: 1, data: 0), ingredients: [(item: 351, data: 15), (item: 35, data: 0)]),
+    ],
+    smelting: [
+        (input: (item: 15), result: (item: 265, count: 1)),  // iron
+        (input: (item: 14), result: (item: 266, count: 1)),  // gold
+        (input: (item: 56), result: (item: 264, count: 1)),  // diamond
+        (input: (item: 12), result: (item: 20, count: 1)),  // glass
+        (input: (item: 319), result: (item: 320, count: 1)),  // porkchop
+        (input: (item: 363), result: (item: 364, count: 1)),  // beef
+        (input: (item: 365), result: (item: 366, count: 1)),  // chicken
+        (input: (item: 349), result: (item: 350, count: 1)),  // fish
+        (input: (item: 4), result: (item: 1, count: 1)),  // stone
+        (input: (item: 337), result: (item: 336, count: 1)),  // brick
+        (input: (item: 81), result: (item: 351, count: 1, data: 2)),  // cactus green
+        (input: (item: 17), result: (item: 263, count: 1, data: 1)),  // charcoal
+    ],
+    fuels: [
+        (item: 5, ticks: 300),  // planks
+        (item: 126, ticks: 150),  // wooden slab (as since 1.3)
+        (item: 17, ticks: 300),  // log
+        (item: 47, ticks: 300),  // bookshelf
+        (item: 53, ticks: 300),  // wooden stairs
+        (item: 54, ticks: 300),  // chest
+        (item: 58, ticks: 300),  // crafting table
+        (item: 25, ticks: 300),  // note block
+        (item: 84, ticks: 300),  // jukebox
+        (item: 85, ticks: 300),  // fence
+        (item: 96, ticks: 300),  // trapdoor
+        (item: 107, ticks: 300),  // fence gate
+        (item: 72, ticks: 300),  // wooden pressure plate
+        (item: 280, ticks: 100),  // stick
+        (item: 6, ticks: 100),  // sapling
+        (item: 263, ticks: 1600),  // coal and charcoal
+        (item: 327, ticks: 20000),  // lava bucket
+        (item: 369, ticks: 2400),  // blaze rod
+    ],
+)

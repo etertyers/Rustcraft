@@ -2,15 +2,21 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+mod containers;
 pub mod environment;
 mod hands;
 mod mobs;
+#[cfg(test)]
+mod progression;
+mod sleep;
 
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
     sync::Arc,
 };
+
+pub use containers::Container;
 
 use anyhow::Result;
 use glam::DVec3;
@@ -97,6 +103,14 @@ pub struct Game {
     pub stats: Stats,
     /// The stack held on the mouse in an inventory screen.
     pub cursor: Option<ItemStack>,
+    /// The crafting grid, chest or furnace open, if any.
+    pub container: Option<Container>,
+    /// Lying in a bed.
+    sleep: Option<sleep::Sleep>,
+    /// The head of the bed the player last slept in, where they respawn.
+    bed: Option<glam::IVec3>,
+    /// A notice on screen and the ticks it has left (1.0.0's chat lines).
+    pub message: Option<(String, u32)>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     pub arrows: Vec<Arrow>,
@@ -165,6 +179,10 @@ impl Game {
             inventory: Inventory::default(),
             stats: Stats::default(),
             cursor: None,
+            container: None,
+            sleep: None,
+            bed: None,
+            message: None,
             entities: Vec::new(),
             arrows: Vec::new(),
             drawing: None,
@@ -216,6 +234,7 @@ impl Game {
         game.time = level.time;
         game.inventory = player.inventory.clone();
         game.stats = player.stats.clone();
+        game.bed = player.bed.map(glam::IVec3::from_array);
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
@@ -259,23 +278,32 @@ impl Game {
         self.ticks_since_save = 0;
         let mobs = self.saved_mobs();
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
+        if self.saved.is_none() {
+            return Ok(());
+        }
+        let chunks = self.chunks.save()?;
+        // A stack held in an open inventory screen, and the crafting grid,
+        // go back in the inventory rather than being lost.
+        let mut inventory = self.inventory.clone();
+        let grid = match &self.container {
+            Some(Container::Crafting { grid, .. }) => grid.clone(),
+            _ => Vec::new(),
+        };
+        for held in self.cursor.into_iter().chain(grid.into_iter().flatten()) {
+            inventory.add(held, &self.items);
+        }
+        let feet = self.standing_feet();
         let Some(saved) = self.saved.as_mut() else {
             return Ok(());
         };
-        let chunks = self.chunks.save()?;
-        // A stack held in an open inventory screen goes back in the
-        // inventory rather than being lost.
-        let mut inventory = self.inventory.clone();
-        if let Some(held) = self.cursor {
-            inventory.add(held, &self.items);
-        }
         saved.level.player = PlayerData {
-            position: self.body.position().to_array(),
+            position: feet.to_array(),
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
             inventory,
             flying: self.body.flying,
             stats: self.stats.clone(),
+            bed: self.bed.map(|bed| bed.to_array()),
         };
         saved.level.time = self.time;
         saved.level.mobs = mobs;
@@ -403,7 +431,9 @@ impl Game {
         }
         let alpha = (self.tick_time / TICK) as f64;
         let feet = self.prev_feet.lerp(self.body.position(), alpha);
-        let eye = feet + DVec3::Y * self.body.eye_height();
+        let eye = self
+            .lying_eye()
+            .unwrap_or(feet + DVec3::Y * self.body.eye_height());
         self.camera.position = eye.as_vec3();
         self.target = self.find_target(eye);
     }
@@ -412,13 +442,31 @@ impl Game {
     fn tick(&mut self) {
         self.prev_feet = self.body.position();
         if !self.stats.is_dead() {
-            self.move_player();
+            if self.is_sleeping() {
+                self.tick_sleep();
+            } else {
+                self.move_player();
+            }
+            let health = self.stats.health;
             self.tick_stats();
-            self.use_hands();
+            // Getting hurt wakes a sleeping player (1.0.0).
+            if self.stats.health < health {
+                self.wake();
+            }
+            if !self.is_sleeping() {
+                self.use_hands();
+            }
+        }
+        if let Some((_, ticks)) = &mut self.message {
+            *ticks = ticks.saturating_sub(1);
+            if *ticks == 0 {
+                self.message = None;
+            }
         }
         self.tick_items();
         self.tick_arrows();
         self.tick_mobs();
+        self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -517,6 +565,9 @@ impl Game {
     fn drop_everything(&mut self) {
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
+        if let Some(Container::Crafting { grid, .. }) = self.container.take() {
+            stacks.extend(grid.into_iter().flatten());
+        }
         for slot in 0..crate::inventory::player::SLOTS {
             if let Some(stack) = self.inventory.slot(slot).copied() {
                 self.inventory.set(slot, None);
@@ -531,10 +582,12 @@ impl Game {
         }
     }
 
-    /// Back to the world spawn with full health and food (1.0.0's respawn).
+    /// Back beside the bed last slept in, or the world spawn, with full
+    /// health and food (1.0.0's respawn).
     pub fn respawn(&mut self) {
-        self.body = Body::new(self.spawn);
-        self.prev_feet = self.spawn;
+        let feet = self.respawn_point();
+        self.body = Body::new(feet);
+        self.prev_feet = feet;
         self.stats = Stats::default();
         self.mining = None;
         self.release_input();
@@ -584,7 +637,7 @@ fn hotbar_slot(key: KeyCode) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
     use glam::IVec3;
@@ -592,7 +645,7 @@ mod tests {
     use super::*;
     use crate::{
         entity::mobs::MobRegistry,
-        inventory::{item::ItemRegistry, stack::ItemStack},
+        inventory::{crafting::Recipes, item::ItemRegistry, stack::ItemStack},
         player::stats::MAX_HEALTH,
         world::{
             biome::BiomeColors,
@@ -602,7 +655,7 @@ mod tests {
         },
     };
 
-    fn registries() -> (Items, Arc<BlockModels>) {
+    pub(crate) fn registries() -> (Items, Arc<BlockModels>) {
         let assets = crate::assets::dir();
         let blocks = BlockRegistry::load(&assets.join("data/blocks.ron")).unwrap();
         let models = BlockModels::new(
@@ -612,14 +665,15 @@ mod tests {
             BiomeColors::uniform(),
         );
         let items = ItemRegistry::load(&assets.join("data/items.ron")).unwrap();
+        let recipes = Recipes::load(&assets.join("data/recipes.ron")).unwrap();
         (
-            Items::new(Arc::new(blocks), Arc::new(items)),
+            Items::new(Arc::new(blocks), Arc::new(items)).with_recipes(Arc::new(recipes)),
             Arc::new(models),
         )
     }
 
     /// Runs chunk loading until the player's chunk is in memory.
-    fn load_player_chunk(game: &mut Game) {
+    pub(crate) fn load_player_chunk(game: &mut Game) {
         let feet = game.body.position();
         let center = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -663,6 +717,7 @@ mod tests {
         game.inventory.selected = 3;
         game.cursor = Some(ItemStack::new(50, 7));
         game.body.flying = true;
+        game.bed = Some(IVec3::new(3, 70, -9));
         game.save().unwrap();
         drop(game);
 
@@ -685,13 +740,14 @@ mod tests {
         // The held torches went back into the first free slot.
         assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(50, 7)));
         assert!(game.body.flying);
+        assert_eq!(game.bed, Some(IVec3::new(3, 70, -9)));
         load_player_chunk(&mut game);
         assert_eq!(game.chunks.world().block(at.x, at.y, at.z), Some(bricks));
     }
 
     /// A flat test world with the player standing at the origin, looking
     /// straight down, with every chunk around them loaded.
-    fn flat_game(mode: GameMode) -> Game {
+    pub(crate) fn flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
         let chunks = ChunkManager::new(ChunkSource::Flat, models, 1, 2);
         let feet = DVec3::new(0.5, 64.0, 0.5);
@@ -744,6 +800,105 @@ mod tests {
             Some(BlockState::new(3, 0))
         );
         assert_eq!(game.inventory.slot(0), None);
+    }
+
+    #[test]
+    fn a_bed_goes_down_as_two_halves_and_breaks_into_one_bed() {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(355, 1)));
+        // Looking north at the grass two blocks ahead.
+        game.camera.pitch = -0.7;
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        let block = |game: &Game, z| game.chunks.world().block(0, 64, z);
+        assert_eq!(block(&game, -2), Some(BlockState::new(26, 2)), "the foot");
+        assert_eq!(
+            block(&game, -3),
+            Some(BlockState::new(26, 2 | 8)),
+            "the head"
+        );
+        assert_eq!(game.inventory.slot(0), None);
+        game.break_block(IVec3::new(0, 64, -3));
+        assert_eq!(block(&game, -2), Some(BlockState::AIR));
+        let drops: Vec<ItemStack> = game.entities.iter().map(|item| item.stack).collect();
+        assert_eq!(drops, [ItemStack::new(355, 1)]);
+    }
+
+    #[test]
+    fn a_closed_door_blocks_the_way_until_right_clicked_open() {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(324, 1)));
+        game.camera.pitch = -0.7;
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        let door = |game: &Game, y| game.chunks.world().block(0, y, -2);
+        assert_eq!(door(&game, 64), Some(BlockState::new(64, 3)));
+        assert_eq!(door(&game, 65), Some(BlockState::new(64, 3 | 8)));
+        // Walking north stops against the door's slab on the cell's south side.
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..40 {
+            game.tick();
+        }
+        let front = game.body.position().z;
+        assert!((front - (-1.0 + 0.3)).abs() < 0.01, "stopped at {front}");
+        // Right-clicking the upper half opens both.
+        game.keys.set_key(KeyCode::KeyW, false);
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        assert_eq!(door(&game, 64), Some(BlockState::new(64, 3 | 4)));
+        assert_eq!(door(&game, 65), Some(BlockState::new(64, 3 | 4 | 8)));
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..40 {
+            game.tick();
+        }
+        assert!(game.body.position().z < -3.0, "walked through");
+    }
+
+    #[test]
+    fn slabs_are_half_a_block_to_walk_up_onto() {
+        let mut game = flat_game(GameMode::Survival);
+        let slabs: Vec<_> = (-6..=-2)
+            .map(|z| (IVec3::new(0, 64, z), BlockState::new(126, 0)))
+            .collect();
+        game.chunks.set_blocks(&slabs);
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..30 {
+            game.tick();
+        }
+        let feet = game.body.position();
+        assert!(feet.z < -2.0, "stepped up without jumping: {feet}");
+        assert_eq!(feet.y, 64.5);
+    }
+
+    #[test]
+    fn holding_right_click_on_a_door_toggles_it_once() {
+        let mut game = flat_game(GameMode::Survival);
+        game.chunks.set_blocks(&[
+            (IVec3::new(0, 64, -2), BlockState::new(64, 3)),
+            (IVec3::new(0, 65, -2), BlockState::new(64, 3 | 8)),
+        ]);
+        game.camera.pitch = 0.0;
+        game.advance(0.0);
+        // One press, held for a second and a half.
+        game.on_mouse_button(MouseButton::Right, true);
+        for _ in 0..30 {
+            game.tick();
+        }
+        game.on_mouse_button(MouseButton::Right, false);
+        let door = game.chunks.world().block(0, 64, -2);
+        assert_eq!(door, Some(BlockState::new(64, 3 | 4)), "opened once");
+        game.on_mouse_button(MouseButton::Right, true);
+        game.tick();
+        game.on_mouse_button(MouseButton::Right, false);
+        assert_eq!(
+            game.chunks.world().block(0, 64, -2),
+            Some(BlockState::new(64, 3))
+        );
     }
 
     #[test]
@@ -879,7 +1034,7 @@ mod tests {
         assert_eq!(creative.inventory.slot(0), Some(&ItemStack::new(320, 1)));
     }
 
-    fn mob_registry() -> Arc<MobRegistry> {
+    pub(crate) fn mob_registry() -> Arc<MobRegistry> {
         Arc::new(MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap())
     }
 

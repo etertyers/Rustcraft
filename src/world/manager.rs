@@ -29,7 +29,8 @@ use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 use super::{
     World,
     block::BlockState,
-    chunk::{Chunk, ChunkPos},
+    block_entity::BlockEntity,
+    chunk::{Chunk, ChunkPos, LocalPos},
     light::{ChunkLight, light_chunk},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
     save::{RegionStore, SaveError},
@@ -125,6 +126,17 @@ pub struct ChunkManager {
     relight: HashSet<ChunkPos>,
     /// Light of every drawn chunk.
     lights: HashMap<ChunkPos, ChunkLight>,
+}
+
+/// The chunk holding block `at` and its position there, if `at` is inside
+/// the world's height.
+fn local_pos(at: IVec3) -> Option<(ChunkPos, LocalPos)> {
+    if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+        return None;
+    }
+    let size = CHUNK_SIZE as i32;
+    let local = [at.x.rem_euclid(size), at.y, at.z.rem_euclid(size)].map(|v| v as u8);
+    Some((ChunkPos::of_block(at.x, at.z), local))
 }
 
 /// Farthest a light change reaches (a level-15 source fades out after 14 blocks).
@@ -401,6 +413,34 @@ impl ChunkManager {
                 self.relight.insert(*pos);
             }
         }
+    }
+
+    /// The block entity at `at`, if its chunk is loaded and it has one.
+    pub fn block_entity(&self, at: IVec3) -> Option<&BlockEntity> {
+        let (pos, local) = local_pos(at)?;
+        self.world.get(pos)?.block_entity(local)
+    }
+
+    /// The block entity at `at` for changing; its chunk will be saved.
+    pub fn block_entity_mut(&mut self, at: IVec3) -> Option<&mut BlockEntity> {
+        let (pos, local) = local_pos(at)?;
+        let chunk = self.world.get_mut(pos)?;
+        chunk.block_entity(local)?;
+        self.unsaved.insert(pos);
+        chunk.block_entity_mut(local)
+    }
+
+    /// Puts or removes the block entity at `at` in a loaded chunk, returning
+    /// the one there before.
+    pub fn set_block_entity(
+        &mut self,
+        at: IVec3,
+        entity: Option<BlockEntity>,
+    ) -> Option<BlockEntity> {
+        let (pos, local) = local_pos(at)?;
+        let chunk = self.world.get_mut(pos)?;
+        self.unsaved.insert(pos);
+        chunk.set_block_entity(local, entity)
     }
 
     /// Writes every chunk changed since the last save to the store, and

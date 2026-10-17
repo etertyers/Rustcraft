@@ -15,7 +15,7 @@
 //   variants    per-data-value name and texture (dye colors, charcoal)
 //   food        (hunger, saturation, always_edible): eaten by holding
 //               right-click for 32 ticks (1.0.0's ItemFood values)
-//   leftover    item left in the hand after use (stew → bowl)
+//   leftover    item left after use (stew eaten → bowl, lava bucket burned → bucket)
 //   shoots      ammunition used up by drawing and releasing (bow → arrow)
 #![enable(implicit_some)]
 [
@@ -87,13 +87,13 @@
     (id: 321, name: "painting", texture: "painting"),
     (id: 322, name: "golden_apple", texture: "apple_golden", food: (hunger: 10, saturation: 1.2, always_edible: true)),
     (id: 323, name: "sign", texture: "sign", max_stack: 1),
-    (id: 324, name: "wooden_door", texture: "door_wood", max_stack: 1),
+    (id: 324, name: "wooden_door", texture: "door_wood", places: 64, max_stack: 1),
     (id: 325, name: "bucket", texture: "bucket_empty", max_stack: 1),
     (id: 326, name: "water_bucket", texture: "bucket_water", max_stack: 1),
-    (id: 327, name: "lava_bucket", texture: "bucket_lava", max_stack: 1),
+    (id: 327, name: "lava_bucket", texture: "bucket_lava", leftover: 325, max_stack: 1),
     (id: 328, name: "minecart", texture: "minecart_normal", max_stack: 1),
     (id: 329, name: "saddle", texture: "saddle", max_stack: 1),
-    (id: 330, name: "iron_door", texture: "door_iron", max_stack: 1),
+    (id: 330, name: "iron_door", texture: "door_iron", places: 71, max_stack: 1),
     (id: 331, name: "redstone", texture: "redstone_dust", places: 55),
     (id: 332, name: "snowball", texture: "snowball", max_stack: 16),
     (id: 333, name: "boat", texture: "boat", max_stack: 1),
@@ -118,7 +118,7 @@
     (id: 352, name: "bone", texture: "bone"),
     (id: 353, name: "sugar", texture: "sugar"),
     (id: 354, name: "cake", texture: "cake", max_stack: 1, places: 92),
-    (id: 355, name: "bed", texture: "bed", max_stack: 1),
+    (id: 355, name: "bed", texture: "bed", places: 26, max_stack: 1),
     (id: 356, name: "repeater", texture: "repeater", places: 93),
     (id: 357, name: "cookie", texture: "cookie", food: (hunger: 1, saturation: 0.1)),
     (id: 358, name: "filled_map", texture: "filled_map", max_stack: 1),

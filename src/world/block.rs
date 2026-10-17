@@ -189,6 +189,70 @@ pub enum Placement {
     /// (attached to the block to the west, east, north, south), 5 for floors.
     /// Can't hang from ceilings.
     Torch,
+    /// Turns its front (the `south` texture) toward the player, like
+    /// 1.0.0's furnace: data 2–5 for a front facing north, south, west, east.
+    Facing,
+    /// A two-block bed on top of a block (1.0.0's `ItemBed`): the foot where
+    /// placed and the head one block further the way the player looks.
+    /// Data 0–3 is that way (south, west, north, east); the head adds 8.
+    Bed,
+    /// A slab, which turns the same slab under it into `double` (keeping
+    /// the data value) instead of stacking on it (1.0.0's `BlockStep`).
+    Slab { double: BlockId },
+    /// A two-block door on top of a full block (1.0.0's `ItemDoor`): data
+    /// 0–3 is its direction, 4 is open and 8 the upper half.
+    Door,
+}
+
+/// The way from a bed's foot to its head for direction `dir` (0–3: south,
+/// west, north, east, as in 1.0.0).
+pub fn bed_direction(dir: u8) -> IVec3 {
+    match dir & 3 {
+        0 => IVec3::Z,
+        1 => IVec3::NEG_X,
+        2 => IVec3::NEG_Z,
+        _ => IVec3::X,
+    }
+}
+
+/// A door's thickness (1.0.0's 0.1875).
+const DOOR_THICKNESS: f32 = 3.0 / 16.0;
+
+/// Which side of its cell a door covers, 0–3 (1.0.0's `getState`): its
+/// direction less one while closed, its direction while open.
+pub fn door_side(data: u8) -> u8 {
+    if data & 4 == 0 {
+        (data + 3) & 3
+    } else {
+        data & 3
+    }
+}
+
+/// A door's slab within its cell, as (min, max) (1.0.0's
+/// `setDoorRotation`): along the north, east, south or west side.
+pub fn door_box(data: u8) -> ([f32; 3], [f32; 3]) {
+    let t = DOOR_THICKNESS;
+    match door_side(data) {
+        0 => ([0.0, 0.0, 0.0], [1.0, 1.0, t]),
+        1 => ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        2 => ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]),
+        _ => ([0.0, 0.0, 0.0], [t, 1.0, 1.0]),
+    }
+}
+
+/// What right-clicking a block does (1.0.0's `blockActivated`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Activate {
+    /// Opens a 3×3 crafting grid.
+    Crafting,
+    /// Opens its 27 slots, unless a solid block sits on top.
+    Chest,
+    /// Opens its input, fuel and output slots.
+    Furnace,
+    /// Sleeps in it.
+    Bed,
+    /// Opens or closes it.
+    Door,
 }
 
 /// The liquid a block is (flowing or still).
@@ -256,6 +320,9 @@ pub struct BlockDef {
     pub needs_ground: bool,
     #[serde(default)]
     pub placement: Placement,
+    /// What right-clicking it does, if anything.
+    #[serde(default)]
+    pub activate: Option<Activate>,
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,
@@ -315,8 +382,59 @@ impl BlockDef {
                 4 => IVec3::Z,
                 _ => IVec3::NEG_Y,
             }),
-            Placement::Plain => self.needs_ground.then_some(IVec3::NEG_Y),
+            Placement::Plain | Placement::Facing | Placement::Slab { .. } => {
+                self.needs_ground.then_some(IVec3::NEG_Y)
+            }
+            // The lower half stands on the ground, the upper on the lower.
+            Placement::Door => Some(IVec3::NEG_Y),
+            // Each half goes with the other.
+            Placement::Bed => {
+                let toward_head = bed_direction(data & 3);
+                Some(if data & 8 == 0 {
+                    toward_head
+                } else {
+                    -toward_head
+                })
+            }
         }
+    }
+
+    /// Every neighbor whose removal takes this block with it: what holds
+    /// it up, plus a door's upper half for its lower half.
+    pub fn held_by(&self, data: u8) -> Vec<IVec3> {
+        let mut by: Vec<IVec3> = self.support(data).into_iter().collect();
+        if self.placement == Placement::Door && data & 8 == 0 {
+            by.push(IVec3::Y);
+        }
+        by
+    }
+
+    /// The part of its cell entities bump into, as (min, max) within the
+    /// cell, or `None` if they pass through (1.0.0's collision bounds; a
+    /// bed is 9/16 tall and a door a 3/16 slab on one side).
+    pub fn collision_box(&self, data: u8) -> Option<([f32; 3], [f32; 3])> {
+        if !self.solid {
+            return None;
+        }
+        Some(match self.shape {
+            Shape::Bed => ([0.0; 3], [1.0, 9.0 / 16.0, 1.0]),
+            Shape::Slab => ([0.0; 3], [1.0, 0.5, 1.0]),
+            Shape::Door => door_box(data),
+            _ => ([0.0; 3], [1.0; 3]),
+        })
+    }
+
+    /// The face its front texture is on, for blocks placed facing the player.
+    pub fn front(&self, data: u8) -> Option<Face> {
+        if self.placement != Placement::Facing {
+            return None;
+        }
+        Some(match data {
+            2 => Face::North,
+            4 => Face::West,
+            5 => Face::East,
+            _ => Face::South,
+        })
     }
 
     /// Whether the crosshair can select it (everything but air and fluids).
@@ -508,7 +626,9 @@ mod tests {
                 "block {id} missing from blocks.ron"
             );
         }
-        assert_eq!(registry.iter().count(), 123);
+        // Plus the wooden slabs from 1.3 (125, 126).
+        assert_eq!(registry.iter().count(), 125);
+        assert_eq!(registry.get(126).unwrap().name, "wooden_slab");
         assert_eq!(registry.get(2).unwrap().name, "grass");
     }
 
@@ -528,19 +648,42 @@ mod tests {
         assert_eq!(block(0).shape, Shape::None);
     }
 
+    #[test]
+    fn doors_cover_one_side_and_swing_a_quarter_when_opened() {
+        let t = 3.0 / 16.0;
+        // Direction 3 (placed looking north) closes along the south side.
+        assert_eq!(door_box(3), ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]));
+        // Open, it swings to the west side; the upper half matches.
+        assert_eq!(door_box(3 | 4), ([0.0; 3], [t, 1.0, 1.0]));
+        assert_eq!(door_box(3 | 4 | 8), door_box(3 | 4));
+        let blocks = real_registry();
+        let door = blocks.get(64).unwrap();
+        assert_eq!(door.collision_box(0), Some(door_box(0)));
+        let bed = blocks.get(26).unwrap();
+        assert_eq!(bed.collision_box(8).unwrap().1[1], 9.0 / 16.0);
+        assert_eq!(blocks.get(37).unwrap().collision_box(0), None);
+        assert_eq!(door.held_by(0), [IVec3::NEG_Y, IVec3::Y]);
+        assert_eq!(door.held_by(8), [IVec3::NEG_Y]);
+    }
+
+    #[test]
+    fn furnaces_and_chests_turn_their_front_by_data() {
+        let blocks = real_registry();
+        let furnace = blocks.get(61).unwrap();
+        assert_eq!(furnace.front(2), Some(Face::North));
+        assert_eq!(furnace.front(5), Some(Face::East));
+        assert_eq!(furnace.front(0), Some(Face::South), "the item's front");
+        assert_eq!(blocks.get(54).unwrap().front(4), Some(Face::West));
+        assert_eq!(blocks.get(1).unwrap().front(2), None);
+    }
+
     /// Keep in sync with the missing-texture list in docs/DECISIONS.md.
     #[test]
     fn only_known_block_textures_are_missing() {
         let dir = crate::assets::dir().join("textures/blocks");
         let missing =
             real_registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
-        let expected = [
-            "chest_front",
-            "chest_side",
-            "chest_top",
-            "end_portal",
-            "sign",
-        ];
+        let expected = ["end_portal", "sign"];
         assert_eq!(missing, expected.map(String::from).into());
     }
 }

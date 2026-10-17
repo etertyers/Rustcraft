@@ -1,5 +1,8 @@
-//! Items, stacks and the player's inventory (crafting comes in M10).
+//! Items, stacks, the player's inventory, crafting and furnaces.
 
+pub mod crafting;
+pub mod furnace;
 pub mod item;
 pub mod player;
+pub mod slots;
 pub mod stack;

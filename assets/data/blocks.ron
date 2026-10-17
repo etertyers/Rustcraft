@@ -10,17 +10,26 @@
 //   textures  names in assets/textures/blocks/ (without .png), per face. The
 //             most specific field wins: north/south/east/west, then
 //             top/bottom, then end (top + bottom) or side (four sides), then
-//             all. Blocks with a "front" use south until placement facing
-//             exists (M4). Leave out for blocks that draw nothing.
+//             all. A block with a "front" puts it on south; with placement
+//             Facing it's turned toward the player. Leave out for blocks that
+//             draw nothing.
 //   tint      None (default), GrassTop, Grass, Foliage or Fixed(0xRRGGBB)
 //   variants  per-data-value overrides: {data: (name, textures, tint)}
 //   tool      tool that mines it fast: Pickaxe, Shovel or Axe
 //   harvest   tool needed to drop anything: (tools: [...], tier: Wood)
+//   placement Plain (default), Torch (attaches to the clicked face),
+//             Facing (front toward the player, data 2-5), Bed (two
+//             halves, data 0-3 the direction and 8 the head), Door (two
+//             halves, data 0-3 the direction, 4 open and 8 the upper) or
+//             Slab(double: id) (joins the same slab below into `double`)
+//   activate  what right-clicking it does: Crafting (opens a 3×3 grid),
+//             Chest or Furnace (opens its slots), Bed (sleeps) or Door
+//             (opens and closes; iron doors have none, needing redstone)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
 //   drops     Itself (default; keeps the data value if it has variants),
 //             Nothing, All([...]) every drop that rolls, or OneOf([...]) the
 //             first that rolls. A drop is (item, data, keep_data, min, max,
-//             chance, min_data, tool, not_tool).
+//             chance, min_data, max_data, tool, not_tool).
 //
 // Data values that only encode orientation, growth or fluid level (furnace
 // facing, snow height, cake bites...) don't need variants.
@@ -62,11 +71,11 @@
     (id: 20, name: "glass", hardness: 0.3, drops: Nothing, layer: Translucent, cull_same: true, textures: (all: "glass")),
     (id: 21, name: "lapis_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Stone), drops: All([(item: 351, data: 4, min: 4, max: 8)]), textures: (all: "lapis_ore")),
     (id: 22, name: "lapis_block", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Stone), textures: (all: "lapis_block")),
-    (id: 23, name: "dispenser", hardness: 3.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "dispenser_front_horizontal")),
+    (id: 23, name: "dispenser", hardness: 3.5, placement: Facing, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "dispenser_front_horizontal")),
     (id: 24, name: "sandstone", hardness: 0.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone_normal")),
     (id: 25, name: "note_block", hardness: 0.8, textures: (all: "noteblock")),
     // Data 0-3 is the foot (facing); 8-11 is the head.
-    (id: 26, name: "bed", hardness: 0.2, drops: All([(item: 355)]), shape: Bed, textures: (top: "bed_feet_top", bottom: "planks_oak", side: "bed_feet_side", south: "bed_feet_end"),
+    (id: 26, name: "bed", hardness: 0.2, drops: All([(item: 355, max_data: 7)]), placement: Bed, activate: Bed, shape: Bed, layer: Cutout, textures: (top: "bed_feet_top", bottom: "planks_oak", side: "bed_feet_side", south: "bed_feet_end"),
         variants: {
             8: (name: "head", textures: (top: "bed_head_top", bottom: "planks_oak", side: "bed_head_side", north: "bed_head_end")),
         }),
@@ -114,15 +123,17 @@
     (id: 43, name: "double_stone_slab", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 44, keep_data: true, min: 2)]), textures: (end: "stone_slab_top", side: "stone_slab_side"),
         variants: {
             1: (name: "sandstone", textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone_normal")),
-            2: (name: "wooden", textures: (all: "planks_oak")),
+            // 1.0.0's stone-material wooden slab; no longer crafted (the
+            // wooden slab is block 126), named as modern Minecraft does.
+            2: (name: "petrified_oak", textures: (all: "planks_oak")),
             3: (name: "cobblestone", textures: (all: "cobblestone")),
             4: (name: "brick", textures: (all: "brick")),
             5: (name: "stone_brick", textures: (all: "stonebrick")),
         }),
-    (id: 44, name: "stone_slab", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, shape: Slab, textures: (end: "stone_slab_top", side: "stone_slab_side"),
+    (id: 44, name: "stone_slab", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, placement: Slab(double: 43), shape: Slab, textures: (end: "stone_slab_top", side: "stone_slab_side"),
         variants: {
             1: (name: "sandstone", textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone_normal")),
-            2: (name: "wooden", textures: (all: "planks_oak")),
+            2: (name: "petrified_oak", textures: (all: "planks_oak")),
             3: (name: "cobblestone", textures: (all: "cobblestone")),
             4: (name: "brick", textures: (all: "brick")),
             5: (name: "stone_brick", textures: (all: "stonebrick")),
@@ -137,11 +148,11 @@
     (id: 52, name: "mob_spawner", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: Nothing, layer: Cutout, textures: (all: "spawner")),
     (id: 53, name: "oak_stairs", hardness: 2.0, opacity: 15, shape: Stairs, textures: (all: "planks_oak")),
     // No block texture in the pack; 1.0.0 chests are cut from entity/chest/normal.png later.
-    (id: 54, name: "chest", hardness: 2.5, tool: Axe, shape: Chest, textures: (end: "chest_top", side: "chest_side", south: "chest_front")),
+    (id: 54, name: "chest", hardness: 2.5, placement: Facing, activate: Chest, tool: Axe, shape: Chest, textures: (end: "chest_top", side: "chest_side", south: "chest_front")),
     (id: 55, name: "redstone_wire", hardness: 0.0, drops: All([(item: 331)]), needs_ground: true, shape: RedstoneWire, layer: Cutout, solid: false, textures: (all: "redstone_dust_dot")),
     (id: 56, name: "diamond_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), drops: All([(item: 264)]), textures: (all: "diamond_ore")),
     (id: 57, name: "diamond_block", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "diamond_block")),
-    (id: 58, name: "crafting_table", hardness: 2.5, textures: (top: "crafting_table_top", bottom: "planks_oak", north: "crafting_table_front", south: "crafting_table_front", east: "crafting_table_side", west: "crafting_table_side")),
+    (id: 58, name: "crafting_table", hardness: 2.5, activate: Crafting, textures: (top: "crafting_table_top", bottom: "planks_oak", north: "crafting_table_front", south: "crafting_table_front", east: "crafting_table_side", west: "crafting_table_side")),
     (id: 59, name: "wheat", hardness: 0.0, drops: All([(item: 296, min_data: 7), (item: 295)]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "wheat_stage_0"),
         variants: {
             1: (textures: (all: "wheat_stage_1")),
@@ -157,12 +168,12 @@
         variants: {
             7: (name: "wet", textures: (all: "dirt", top: "farmland_wet")),
         }),
-    (id: 61, name: "furnace", hardness: 3.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_off")),
-    (id: 62, name: "lit_furnace", hardness: 3.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 61)]), light: 13, textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_on")),
+    (id: 61, name: "furnace", hardness: 3.5, placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_off")),
+    (id: 62, name: "lit_furnace", hardness: 3.5, placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 61)]), light: 13, textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_on")),
     // No block texture in the pack; signs are drawn from entity/sign.png later.
     (id: 63, name: "standing_sign", hardness: 1.0, drops: All([(item: 323)]), needs_ground: true, shape: Sign, solid: false, textures: (all: "sign")),
     // Data 0-7 is the lower half, 8+ the upper half.
-    (id: 64, name: "wooden_door", hardness: 3.0, drops: All([(item: 324)]), shape: Door, layer: Cutout, textures: (all: "door_wood_lower"),
+    (id: 64, name: "wooden_door", hardness: 3.0, drops: All([(item: 324, max_data: 7)]), placement: Door, activate: Door, shape: Door, layer: Cutout, textures: (all: "door_wood_lower"),
         variants: {
             8: (name: "upper", textures: (all: "door_wood_upper")),
         }),
@@ -172,7 +183,7 @@
     (id: 68, name: "wall_sign", hardness: 1.0, drops: All([(item: 323)]), shape: Sign, solid: false, textures: (all: "sign")),
     (id: 69, name: "lever", hardness: 0.5, shape: Lever, layer: Cutout, solid: false, textures: (all: "lever")),
     (id: 70, name: "stone_pressure_plate", hardness: 0.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: PressurePlate, solid: false, textures: (all: "stone")),
-    (id: 71, name: "iron_door", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 330)]), shape: Door, layer: Cutout, textures: (all: "door_iron_lower"),
+    (id: 71, name: "iron_door", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 330, max_data: 7)]), placement: Door, shape: Door, layer: Cutout, textures: (all: "door_iron_lower"),
         variants: {
             8: (name: "upper", textures: (all: "door_iron_upper")),
         }),
@@ -200,7 +211,7 @@
     (id: 93, name: "unpowered_repeater", hardness: 0.0, drops: All([(item: 356)]), needs_ground: true, shape: Repeater, textures: (all: "repeater_off")),
     (id: 94, name: "powered_repeater", hardness: 0.0, drops: All([(item: 356)]), needs_ground: true, shape: Repeater, light: 9, textures: (all: "repeater_on")),
     // April Fools' leftover; looks like a chest.
-    (id: 95, name: "locked_chest", hardness: 0.0, shape: Chest, textures: (end: "chest_top", side: "chest_side", south: "chest_front")),
+    (id: 95, name: "locked_chest", hardness: 0.0, placement: Facing, shape: Chest, textures: (end: "chest_top", side: "chest_side", south: "chest_front")),
     (id: 96, name: "trapdoor", hardness: 3.0, shape: Trapdoor, layer: Cutout, textures: (all: "trapdoor")),
     // Silverfish hide in stone (0), cobblestone (1) or stone brick (2).
     (id: 97, name: "monster_egg", hardness: 0.75, drops: Nothing, textures: (all: "stone"),
@@ -268,5 +279,9 @@
     (id: 119, name: "end_portal", hardness: -1.0, drops: Nothing, shape: EndPortal, solid: false, light: 15, textures: (all: "end_portal")),
     (id: 120, name: "end_portal_frame", hardness: -1.0, shape: EndPortalFrame, light: 1, textures: (top: "endframe_top", bottom: "end_stone", side: "endframe_side")),
     (id: 121, name: "end_stone", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "end_stone")),
+    // From Minecraft 1.3: the wood-material slab that replaced 1.0.0's
+    // stone-material wooden slab (44:2), mined fast with an axe.
+    (id: 125, name: "double_wooden_slab", hardness: 2.0, tool: Axe, drops: All([(item: 126, min: 2)]), textures: (all: "planks_oak")),
+    (id: 126, name: "wooden_slab", hardness: 2.0, tool: Axe, opacity: 15, placement: Slab(double: 125), shape: Slab, textures: (all: "planks_oak")),
     (id: 122, name: "dragon_egg", hardness: 3.0, shape: DragonEgg, light: 1, textures: (all: "dragon_egg")),
 ]

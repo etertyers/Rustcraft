@@ -3,7 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::stack::{ItemStack, Items};
+pub use super::slots::Click;
+use super::{
+    slots,
+    stack::{ItemStack, Items},
+};
 
 pub const HOTBAR_SLOTS: usize = 9;
 pub const SLOTS: usize = 36;
@@ -14,15 +18,6 @@ pub struct Inventory {
     slots: Vec<Option<ItemStack>>,
     /// Selected hotbar slot.
     pub selected: usize,
-}
-
-/// A mouse click on an inventory slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Click {
-    Left,
-    Right,
-    /// Shift + left click: move the stack between the hotbar and the rest.
-    Shift,
 }
 
 impl Default for Inventory {
@@ -63,42 +58,18 @@ impl Inventory {
     /// both hotbar first (1.0.0's `addItemStackToInventory`). Returns what
     /// didn't fit.
     pub fn add(&mut self, stack: ItemStack, items: &Items) -> Option<ItemStack> {
-        self.merge_into(stack, 0..SLOTS, items)
+        self.merge(stack, 0..SLOTS, items)
     }
 
-    /// Moves `stack` into slots in `range`: onto matching stacks, then into
-    /// the first empty slots. Returns what didn't fit.
-    fn merge_into(
+    /// Moves `stack` into the slots at the indices in `order` (matching
+    /// stacks first, then empty slots). Returns what didn't fit.
+    pub fn merge(
         &mut self,
-        mut stack: ItemStack,
-        range: std::ops::Range<usize>,
+        stack: ItemStack,
+        order: impl Iterator<Item = usize> + Clone,
         items: &Items,
     ) -> Option<ItemStack> {
-        let max = items.max_stack(stack.id);
-        for slot in self.slots[range.clone()].iter_mut().flatten() {
-            if slot.stacks_with(&stack) && slot.count < max {
-                let moved = stack.count.min(max - slot.count);
-                slot.count += moved;
-                stack.count -= moved;
-                if stack.count == 0 {
-                    return None;
-                }
-            }
-        }
-        for slot in &mut self.slots[range] {
-            if slot.is_none() {
-                let moved = stack.count.min(max);
-                *slot = Some(ItemStack {
-                    count: moved,
-                    ..stack
-                });
-                stack.count -= moved;
-                if stack.count == 0 {
-                    return None;
-                }
-            }
-        }
-        Some(stack)
+        slots::merge(&mut self.slots, order, stack, items)
     }
 
     /// Takes up to `count` items from `index`.
@@ -152,55 +123,7 @@ impl Inventory {
         if click == Click::Shift {
             return self.transfer(index, items);
         }
-        let slot = &mut self.slots[index];
-        match (slot.as_mut(), cursor.as_mut()) {
-            (None, None) => {}
-            // Pick up everything, or half rounded up.
-            (Some(stack), None) => {
-                let taken = match click {
-                    Click::Right => stack.count.div_ceil(2),
-                    _ => stack.count,
-                };
-                *cursor = Some(ItemStack {
-                    count: taken,
-                    ..*stack
-                });
-                stack.count -= taken;
-                if stack.count == 0 {
-                    *slot = None;
-                }
-            }
-            // Put down everything that fits, or one.
-            (None, Some(held)) => {
-                let put = match click {
-                    Click::Right => 1,
-                    _ => held.count.min(items.max_stack(held.id)),
-                };
-                *slot = Some(ItemStack {
-                    count: put,
-                    ..*held
-                });
-                held.count -= put;
-                if held.count == 0 {
-                    *cursor = None;
-                }
-            }
-            // Add onto a matching stack.
-            (Some(stack), Some(held)) if stack.stacks_with(held) => {
-                let room = items.max_stack(stack.id).saturating_sub(stack.count);
-                let put = match click {
-                    Click::Right => 1.min(room),
-                    _ => held.count.min(room),
-                };
-                stack.count += put;
-                held.count -= put;
-                if held.count == 0 {
-                    *cursor = None;
-                }
-            }
-            // Different items swap.
-            (Some(_), Some(_)) => std::mem::swap(slot, cursor),
-        }
+        slots::click(&mut self.slots[index], click, cursor, items);
     }
 
     /// Shift-click: moves a hotbar stack into the rest of the inventory,
@@ -214,12 +137,12 @@ impl Inventory {
         } else {
             0..HOTBAR_SLOTS
         };
-        self.slots[index] = self.merge_into(stack, target, items);
+        self.slots[index] = self.merge(stack, target, items);
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
 
     use super::*;

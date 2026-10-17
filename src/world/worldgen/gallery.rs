@@ -97,7 +97,7 @@ mod tests {
         let registry = registry();
         let exhibits = exhibits(&registry);
         let ids: BTreeSet<u16> = exhibits.iter().map(|e| e.block.id()).collect();
-        assert_eq!(ids, (1..=122).collect());
+        assert_eq!(ids, (1..=122).chain([125, 126]).collect());
         let wool: Vec<_> = exhibits.iter().filter(|e| e.block.id() == 35).collect();
         assert_eq!(wool.len(), 16);
         let positions: HashSet<_> = exhibits.iter().map(|e| e.pos).collect();

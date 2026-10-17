@@ -1,6 +1,6 @@
 //! Axis-aligned boxes and Minecraft-style collision against the world's blocks.
 
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 
 use crate::world::{
     World,
@@ -135,12 +135,19 @@ impl Collider for WorldCollider<'_> {
         for y in min.y..=max.y {
             for z in min.z..=max.z {
                 for x in min.x..=max.x {
-                    let solid = match self.world.block(x, y, z) {
-                        None => true,
-                        Some(block) => self.blocks.get(block.id()).is_some_and(|def| def.solid),
+                    // Unloaded chunks are walls.
+                    let bounds = match self.world.block(x, y, z) {
+                        None => Some(([0.0; 3], [1.0; 3])),
+                        Some(block) => self
+                            .blocks
+                            .get(block.id())
+                            .and_then(|def| def.collision_box(block.data())),
                     };
-                    if solid {
-                        out.push(Aabb::block(x, y, z));
+                    if let Some((min, max)) = bounds {
+                        let cell = DVec3::new(x as f64, y as f64, z as f64);
+                        let min = cell + Vec3::from(min).as_dvec3();
+                        let max = cell + Vec3::from(max).as_dvec3();
+                        out.push(Aabb::new(min, max));
                     }
                 }
             }

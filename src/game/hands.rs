@@ -16,7 +16,10 @@ use crate::{
         raycast::Hit,
         stats::DamageSource,
     },
-    world::{block::Fluid, harvest},
+    world::{
+        block::{Activate, BlockState, Fluid, Placement},
+        harvest,
+    },
 };
 
 /// The arrow item, given back when a stuck arrow is picked up.
@@ -63,6 +66,7 @@ impl Game {
         }
         self.eating = None;
         let wants_place = using && self.place_cooldown == 0;
+        let place_pressed = self.place_clicked;
         let clicked = self.break_clicked;
         self.break_clicked = false;
         self.place_clicked = false;
@@ -87,7 +91,7 @@ impl Game {
         };
         if wants_break {
             self.mine(hit.block);
-        } else if wants_place {
+        } else if using && !self.activate(hit.block, place_pressed) && wants_place {
             self.place(&hit);
         }
     }
@@ -131,7 +135,7 @@ impl Game {
 
     /// Removes the block at `cell` and whatever it held up, dropping items
     /// and wearing the tool as the game mode says.
-    fn break_block(&mut self, cell: IVec3) {
+    pub(super) fn break_block(&mut self, cell: IVec3) {
         let world = self.chunks.world();
         let edits = interaction::break_block(world, &self.items.blocks, cell);
         if edits.is_empty() {
@@ -161,6 +165,18 @@ impl Game {
                     self.entities
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
+            }
+        }
+        // A chest or furnace spills what it held, in every game mode (1.0.0).
+        for &(at, _) in &edits {
+            let Some(entity) = self.chunks.set_block_entity(at, None) else {
+                continue;
+            };
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            for stack in entity.contents() {
+                self.entities
+                    .push(ItemEntity::from_block(stack, at, &mut random));
             }
         }
         if self.mode.is_vulnerable() {
@@ -346,6 +362,60 @@ impl Game {
         }
     }
 
+    /// Right-clicks the block at `cell` (1.0.0's `blockActivated`): opens a
+    /// crafting table and so on. Sneaking with something in hand places
+    /// against it instead. Only a fresh press (`pressed`) uses the block, as
+    /// in modern Minecraft: holding the button doesn't open and shut a door
+    /// over and over. Returns whether the block is usable, so nothing gets
+    /// placed against it.
+    fn activate(&mut self, cell: IVec3, pressed: bool) -> bool {
+        if self.keys.sneak && self.inventory.selected_stack().is_some() {
+            return false;
+        }
+        let Some(action) = self
+            .chunks
+            .world()
+            .block(cell.x, cell.y, cell.z)
+            .and_then(|block| self.items.blocks.get(block.id()))
+            .and_then(|def| def.activate)
+        else {
+            return false;
+        };
+        if !pressed {
+            return true;
+        }
+        match action {
+            Activate::Crafting => self.open_crafting_table(),
+            Activate::Chest => self.open_chest(cell),
+            Activate::Furnace => self.open_furnace(cell),
+            Activate::Bed => self.use_bed(cell),
+            Activate::Door => self.toggle_door(cell),
+        }
+        true
+    }
+
+    /// Opens or closes the door at `cell`, both halves (1.0.0's
+    /// `BlockDoor.blockActivated`).
+    fn toggle_door(&mut self, cell: IVec3) {
+        let world = self.chunks.world();
+        let Some(block) = world.block(cell.x, cell.y, cell.z) else {
+            return;
+        };
+        let lower = if block.data() & 8 == 0 {
+            cell
+        } else {
+            cell - IVec3::Y
+        };
+        let edits: Vec<_> = [lower, lower + IVec3::Y]
+            .into_iter()
+            .filter_map(|at| {
+                let half = world.block(at.x, at.y, at.z)?;
+                (half.id() == block.id()).then(|| (at, BlockState::new(half.id(), half.data() ^ 4)))
+            })
+            .collect();
+        self.chunks.set_blocks(&edits);
+    }
+
     /// Places the selected stack's block against the clicked face.
     fn place(&mut self, hit: &Hit) {
         let Some(stack) = self.inventory.selected_stack().copied() else {
@@ -354,16 +424,42 @@ impl Game {
         let Some(block) = self.items.places(&stack) else {
             return;
         };
-        let Some(edit) = interaction::place_block(
-            self.chunks.world(),
-            &self.items.blocks,
-            hit,
-            block,
-            &self.body.aabb(),
-        ) else {
+        let world = self.chunks.world();
+        let player = self.body.aabb();
+        let Some((at, placed)) =
+            interaction::place_block(world, &self.items.blocks, hit, block, &player)
+        else {
             return;
         };
-        self.chunks.set_blocks(&[edit]);
+        let placement = self.items.blocks.get(placed.id()).map(|def| def.placement);
+        let yaw = self.camera.yaw;
+        let edits = match placement {
+            Some(Placement::Facing) => {
+                vec![(
+                    at,
+                    BlockState::new(placed.id(), interaction::facing_data(yaw)),
+                )]
+            }
+            Some(Placement::Bed) => {
+                let blocks = &self.items.blocks;
+                match interaction::place_bed(world, blocks, hit, (at, placed), yaw, &player) {
+                    Some(halves) => halves.to_vec(),
+                    None => return,
+                }
+            }
+            Some(Placement::Slab { double }) => {
+                vec![interaction::place_slab(world, (at, placed), double)]
+            }
+            Some(Placement::Door) => {
+                let blocks = &self.items.blocks;
+                match interaction::place_door(world, blocks, hit, (at, placed), yaw, &player) {
+                    Some(halves) => halves.to_vec(),
+                    None => return,
+                }
+            }
+            _ => vec![(at, placed)],
+        };
+        self.chunks.set_blocks(&edits);
         if self.mode.uses_up_items() {
             self.inventory.take(self.inventory.selected, 1);
         }
@@ -409,8 +505,9 @@ impl Game {
         }
     }
 
-    /// A dev tool for debug builds (F6), until crafting exists in M10: one
-    /// pickaxe of each tier, iron shovel, axe and sword, shears and torches.
+    /// A dev tool for debug builds (F6), a shortcut past crafting for
+    /// testing: one pickaxe of each tier, iron shovel, axe and sword,
+    /// shears and torches.
     #[cfg(debug_assertions)]
     pub fn give_dev_kit(&mut self) {
         const KIT: [(u16, u8); 10] = [

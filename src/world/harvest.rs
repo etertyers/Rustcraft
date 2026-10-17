@@ -57,12 +57,19 @@ pub struct Drop {
     /// Only from blocks with at least this data value (ripe crops).
     #[serde(default)]
     pub min_data: u8,
+    /// Only from blocks with at most this data value (a bed's foot).
+    #[serde(default = "max_data")]
+    pub max_data: u8,
     /// Only when broken with this tool (leaves with shears).
     #[serde(default)]
     pub tool: Option<ToolKind>,
     /// Never when broken with this tool.
     #[serde(default)]
     pub not_tool: Option<ToolKind>,
+}
+
+fn max_data() -> u8 {
+    u8::MAX
 }
 
 fn one() -> u8 {
@@ -80,7 +87,7 @@ impl Drop {
         tool: Option<ToolKind>,
         random: &mut impl FnMut() -> f32,
     ) -> Option<ItemStack> {
-        if data < self.min_data
+        if !(self.min_data..=self.max_data).contains(&data)
             || self.tool.is_some_and(|needed| tool != Some(needed))
             || self.not_tool.is_some_and(|banned| tool == Some(banned))
             || random() >= self.chance

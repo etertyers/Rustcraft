@@ -5,7 +5,10 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
-    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape},
+    block::{
+        BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape, bed_direction,
+        door_box, door_side,
+    },
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     light::ChunkLight,
 };
@@ -79,13 +82,17 @@ impl BlockModels {
                 };
                 let textures = def.textures_for(data);
                 let tint = def.tint_for(data);
-                let faces = Face::ALL.map(|face| FaceTexture {
+                let mut faces = Face::ALL.map(|face| FaceTexture {
                     uv: textures
                         .and_then(|t| t.get(face))
                         .and_then(&uv)
                         .unwrap_or(missing_uv),
                     tint: tint.for_face(face),
                 });
+                // Blocks placed facing the player turn their south face.
+                if let Some(front) = def.front(data) {
+                    faces.swap(Face::South.index(), front.index());
+                }
                 models.push(BlockModel {
                     shape: def.shape,
                     opaque_cube: def.is_opaque_cube(),
@@ -393,6 +400,131 @@ fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
     ]
 }
 
+/// One face of a shaped block: the face it shows (for culling and shade),
+/// its block-relative corners and its uv rect.
+type Quad = (Face, [[f32; 3]; 4], [f32; 4]);
+
+/// Height of a bed's top, and of the planks under it (1.0.0's
+/// `renderBlockBed`).
+const BED_TOP: f32 = 9.0 / 16.0;
+const BED_BOTTOM: f32 = 3.0 / 16.0;
+
+/// A bed half's quads, block-relative: the top (its texture running from
+/// foot to head), the planks underneath, the two long sides and the end
+/// away from the other half, each with the face it shows and is shaded as.
+/// `model` holds the half's textures (`blocks.ron` puts the foot's end on
+/// south and the head's on north); `data` is the direction plus 8 for the
+/// head.
+fn bed_quads(data: u8, model: &BlockModel) -> Vec<Quad> {
+    let head = data & 8 != 0;
+    let toward_head = bed_direction(data & 3);
+    let along = [
+        toward_head.x as f32,
+        toward_head.y as f32,
+        toward_head.z as f32,
+    ];
+    let texture = |face: Face| model.faces[face.index()].uv;
+    // The top's u runs along +x; turning its corners points it at the head.
+    let mut top = face_corners(Face::Top).map(|[x, _, z]| [x, BED_TOP, z]);
+    top.rotate_left(3 - (data & 3) as usize);
+    let bottom = face_corners(Face::Bottom).map(|[x, _, z]| [x, BED_BOTTOM, z]);
+    let mut quads = vec![
+        (Face::Top, top, texture(Face::Top)),
+        (Face::Bottom, bottom, texture(Face::Bottom)),
+    ];
+    let end = texture(if head { Face::North } else { Face::South });
+    for face in [Face::North, Face::South, Face::East, Face::West] {
+        let normal = face.normal().map(|n| n as f32);
+        let facing_along = normal[0] * along[0] + normal[2] * along[2];
+        let corners = face_corners(face);
+        if facing_along == 0.0 {
+            // A long side: flip the texture where the face's u runs from head
+            // to foot, so the legs stay at the foot.
+            let u = [
+                corners[1][0] - corners[0][0],
+                0.0,
+                corners[1][2] - corners[0][2],
+            ];
+            let [u0, v0, u1, v1] = texture(Face::East);
+            let uv = if u[0] * along[0] + u[2] * along[2] < 0.0 {
+                [u1, v0, u0, v1]
+            } else {
+                [u0, v0, u1, v1]
+            };
+            quads.push((face, corners, uv));
+        } else if (facing_along > 0.0) == head {
+            // The end away from the other half.
+            quads.push((face, corners, end));
+        }
+    }
+    quads
+}
+
+/// A door half's six faces, block-relative: its slab (`door_box`) with
+/// each face's texture cut to the part of the slab it covers, and the
+/// wide faces mirrored as 1.0.0's `BlockDoor.getBlockTexture` does so the
+/// handle sits away from the hinge.
+fn door_quads(data: u8, model: &BlockModel) -> [Quad; 6] {
+    let (min, max) = door_box(data);
+    let side = door_side(data);
+    Face::ALL.map(|face| {
+        let corners = face_corners(face)
+            .map(|c| [0, 1, 2].map(|axis| if c[axis] > 0.5 { max[axis] } else { min[axis] }));
+        // Where along the texture each corner falls: u from the face's
+        // first corner toward its second, v down from the top.
+        let (u_axis, u_flip, v_axis, v_flip) = match face {
+            Face::Top => (0, false, 2, false),
+            Face::Bottom => (0, false, 2, true),
+            Face::North => (0, true, 1, true),
+            Face::South => (0, false, 1, true),
+            Face::East => (2, true, 1, true),
+            Face::West => (2, false, 1, true),
+        };
+        let along = |flip: bool, value: f32| if flip { 1.0 - value } else { value };
+        let (a, b) = (
+            along(u_flip, corners[0][u_axis]),
+            along(u_flip, corners[1][u_axis]),
+        );
+        let (c, d) = (
+            along(v_flip, corners[3][v_axis]),
+            along(v_flip, corners[0][v_axis]),
+        );
+        let [u0, v0, u1, v1] = model.faces[face.index()].uv;
+        let lerp = |from: f32, to: f32, t: f32| from + (to - from) * t;
+        let mut uv = [
+            lerp(u0, u1, a),
+            lerp(v0, v1, c),
+            lerp(u0, u1, b),
+            lerp(v0, v1, d),
+        ];
+        if door_mirrored(data, side, face) {
+            uv.swap(0, 2);
+        }
+        (face, corners, uv)
+    })
+}
+
+/// Whether a door face's texture is drawn mirrored (1.0.0's negative
+/// texture index for the wide faces).
+fn door_mirrored(data: u8, side: u8, face: Face) -> bool {
+    let mc_side = match face {
+        Face::North => 2,
+        Face::South => 3,
+        Face::West => 4,
+        Face::East => 5,
+        Face::Top | Face::Bottom => return false,
+    };
+    // Only the wide faces: north and south for a door along x.
+    if (side == 0 || side == 2) != (mc_side <= 3) {
+        return false;
+    }
+    let turn = side / 2 + ((mc_side & 1) ^ side) + (data & 4) / 4;
+    turn & 1 != 0
+}
+
+/// Height of a slab (the bottom half of its cell).
+const SLAB_HEIGHT: f32 = 0.5;
+
 /// Height of a block's top: 1, or for a liquid with no liquid of its kind
 /// above it, 1.0.0's 8/9 for a source block.
 fn liquid_height(
@@ -490,6 +622,41 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 );
                             }
                         }
+                        Shape::Bed => {
+                            // Both halves of a direction share a model; the
+                            // head's (data 8) has its textures.
+                            let half = BlockState::new(block.id(), block.data() & 8);
+                            for (face, corners, uv) in bed_quads(block.data(), models.get(half)) {
+                                let [dx, dy, dz] = face.normal();
+                                let neighbor =
+                                    area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                                let inset = matches!(face, Face::Top | Face::Bottom);
+                                if !inset && !face_visible(models, block, model, neighbor) {
+                                    continue;
+                                }
+                                let color = side_color.map(|c| c * face.shade());
+                                mesh.quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    [color; 4],
+                                    [own_light; 4],
+                                );
+                            }
+                        }
+                        Shape::Door => {
+                            // Both halves share their textures with data 0
+                            // or 8.
+                            let half = BlockState::new(block.id(), block.data() & 8);
+                            for (face, corners, uv) in door_quads(block.data(), models.get(half)) {
+                                let color = side_color.map(|c| c * face.shade());
+                                mesh.quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    [color; 4],
+                                    [own_light; 4],
+                                );
+                            }
+                        }
                         Shape::Torch => {
                             for (corners, uv) in torch_quads(block.data(), side.uv) {
                                 mesh.quad(
@@ -503,15 +670,27 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         // Every other shape is a full cube until its model is
                         // built; liquids lower their surface.
                         _ => {
-                            let height = liquid_height(area, block, model, [x, y, z]);
+                            let slab = model.shape == Shape::Slab;
+                            let height = if slab {
+                                SLAB_HEIGHT
+                            } else {
+                                liquid_height(area, block, model, [x, y, z])
+                            };
                             for face in Face::ALL {
                                 let [dx, dy, dz] = face.normal();
                                 let neighbor =
                                     area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
-                                if !face_visible(models, block, model, neighbor) {
+                                // A slab's top is below whatever sits on it.
+                                let open_top = slab && face == Face::Top;
+                                if !open_top && !face_visible(models, block, model, neighbor) {
                                     continue;
                                 }
-                                let texture = model.faces[face.index()];
+                                let mut texture = model.faces[face.index()];
+                                if slab && !matches!(face, Face::Top | Face::Bottom) {
+                                    // Sides show the texture's lower half.
+                                    let [u0, v0, u1, v1] = texture.uv;
+                                    texture.uv = [u0, v0 + (v1 - v0) * (1.0 - height), u1, v1];
+                                }
                                 let color = models
                                     .tint_color(texture.tint, biome)
                                     .map(|c| c * face.shade());
@@ -523,7 +702,8 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 let lights = lit.map(|(_, l)| l);
                                 let corners = translate(corners, origin);
                                 mesh.quad(corners, texture.uv, colors, lights);
-                                if face == Face::Top && height < 1.0 {
+                                if face == Face::Top && model.shape == Shape::Liquid && height < 1.0
+                                {
                                     // A liquid's surface is seen from below too.
                                     let [a, b, c, d] = corners;
                                     let [ca, cb, cc, cd] = colors;
@@ -569,6 +749,7 @@ mod tests {
             (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout, light: 14),
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
             (id: 85, name: "fence", hardness: 2.0, shape: Fence),
+            (id: 126, name: "wooden_slab", hardness: 2.0, shape: Slab),
             (id: 9, name: "water", hardness: 100.0, shape: Liquid, layer: Translucent, solid: false, cull_same: true),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
@@ -614,6 +795,106 @@ mod tests {
     fn quads(mesh: &Mesh) -> usize {
         assert_eq!(mesh.indices.len() % 6, 0);
         mesh.indices.len() / 6
+    }
+
+    /// A bed model whose faces have the uvs [i, 0, i + 1, 1] for face index i.
+    fn bed_model() -> BlockModel {
+        let mut model = models().get(STONE).clone();
+        for face in Face::ALL {
+            let i = face.index() as f32;
+            model.faces[face.index()].uv = [i, 0.0, i + 1.0, 1.0];
+        }
+        model
+    }
+
+    #[test]
+    fn a_bed_half_has_a_turned_top_planks_two_sides_and_its_end() {
+        let model = bed_model();
+        let uv = |face: Face| {
+            let i = face.index() as f32;
+            [i, 0.0, i + 1.0, 1.0]
+        };
+        // Foot of a bed whose head is north (direction 2).
+        let foot = bed_quads(2, &model);
+        let faces: Vec<Face> = foot.iter().map(|(face, ..)| *face).collect();
+        assert_eq!(
+            faces,
+            [Face::Top, Face::Bottom, Face::South, Face::East, Face::West]
+        );
+        let (_, top, top_uv) = foot[0];
+        assert!(top.iter().all(|c| c[1] == BED_TOP));
+        assert_eq!(top_uv, uv(Face::Top));
+        let u = [top[1][0] - top[0][0], top[1][2] - top[0][2]];
+        assert_eq!(u, [0.0, -1.0], "the top's texture runs north, to the head");
+        assert_eq!(foot[2].2, uv(Face::South), "the foot's end");
+        assert!(foot[1].1.iter().all(|c| c[1] == BED_BOTTOM));
+        // The head (data 8 on) shows its north end instead.
+        let head = bed_quads(2 | 8, &model);
+        assert!(
+            head.iter()
+                .any(|&(face, _, end)| face == Face::North && end == uv(Face::North))
+        );
+        assert!(head.iter().all(|&(face, ..)| face != Face::South));
+        // Heading east, the north side's texture is flipped to keep the legs
+        // at the foot; the south side's isn't.
+        let east = bed_quads(3, &model);
+        let side = |face: Face| east.iter().find(|q| q.0 == face).unwrap().2;
+        let [u0, _, u1, _] = uv(Face::East);
+        assert_eq!(side(Face::North), [u1, 0.0, u0, 1.0]);
+        assert_eq!(side(Face::South), [u0, 0.0, u1, 1.0]);
+    }
+
+    #[test]
+    fn door_faces_cut_their_texture_and_mirror_when_open() {
+        let model = bed_model();
+        let uv = |face: Face| {
+            let i = face.index() as f32;
+            [i, 0.0, i + 1.0, 1.0]
+        };
+        let mirrored = |[u0, v0, u1, v1]: [f32; 4]| [u1, v0, u0, v1];
+        let find = |quads: &[Quad], face: Face| quads.iter().find(|q| q.0 == face).unwrap().2;
+        // Closed along the south side (direction 3): the wide faces show the
+        // whole texture, the north one mirrored, and the thin ones a strip.
+        let closed = door_quads(3, &model);
+        assert_eq!(find(&closed, Face::South), uv(Face::South));
+        assert_eq!(find(&closed, Face::North), mirrored(uv(Face::North)));
+        let [u0, _, u1, _] = find(&closed, Face::East);
+        assert!(((u1 - u0) - 3.0 / 16.0).abs() < 1e-6, "{u0} {u1}");
+        // Open, it lies along the west side; now the west face is mirrored.
+        let open = door_quads(3 | 4, &model);
+        assert!(
+            open.iter()
+                .all(|(_, corners, _)| corners.iter().all(|c| c[0] <= 3.0 / 16.0))
+        );
+        assert_eq!(find(&open, Face::East), uv(Face::East));
+        assert_eq!(find(&open, Face::West), mirrored(uv(Face::West)));
+    }
+
+    #[test]
+    fn a_slab_is_half_a_block_with_its_top_always_shown() {
+        const SLAB: BlockState = BlockState::new(126, 0);
+        let mesh = mesh_with(&[(5, 64, 5, SLAB), (5, 65, 5, STONE)], true);
+        // Six slab faces (its top shows under the stone) and five of the
+        // stone's (its bottom faces a slab, which doesn't hide it).
+        assert_eq!(quads(&mesh), 12);
+        let slab_top = mesh
+            .vertices
+            .iter()
+            .filter(|v| v.position[1] == 64.5)
+            .count();
+        assert_eq!(
+            slab_top,
+            4 + 4 * 2,
+            "the top face and the sides' upper corners"
+        );
+        // Side faces show the lower half of the texture: their top corners
+        // sit at v 0.5 of the test's 0–1 texture.
+        let half_way = mesh
+            .vertices
+            .iter()
+            .filter(|v| v.position[1] == 64.5 && v.uv[1] == 0.5)
+            .count();
+        assert_eq!(half_way, 4 * 2);
     }
 
     #[test]
