@@ -1035,4 +1035,30 @@ mod tests {
         assert_eq!(creative.arrows.len(), 1);
         assert!(!creative.arrows[0].pickup);
     }
+
+    #[test]
+    fn a_zombie_at_night_hurts_a_survival_player_but_ignores_a_creative_one() {
+        for (mode, hurt) in [(GameMode::Survival, true), (GameMode::Creative, false)] {
+            let mut game = flat_game(mode);
+            game.mob_defs = mob_registry();
+            game.time = 18000;
+            let kind = game.mob_defs.find("zombie").unwrap();
+            let zombie = Mob::new(
+                kind,
+                game.mob_defs.get(kind),
+                DVec3::new(0.5, 64.0, -2.5),
+                0.0,
+            );
+            game.mobs.push(zombie);
+            for _ in 0..100 {
+                game.tick();
+            }
+            assert_eq!(
+                game.stats.health < MAX_HEALTH,
+                hurt,
+                "{mode:?}: {}",
+                game.stats.health
+            );
+        }
+    }
 }
