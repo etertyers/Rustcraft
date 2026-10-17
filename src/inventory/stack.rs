@@ -18,6 +18,13 @@ pub struct ItemStack {
 }
 
 impl ItemStack {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "used by the inventory screen and saving later in M7"
+        )
+    )]
     pub fn new(id: ItemId, count: u8) -> Self {
         Self {
             id,
@@ -57,6 +64,13 @@ impl Items {
     }
 
     /// Whether `id` names a block or item that exists.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "used by the inventory screen and saving later in M7"
+        )
+    )]
     pub fn exists(&self, id: ItemId) -> bool {
         self.item(id).is_some() || (id < FIRST_ITEM_ID && self.blocks.get(id).is_some())
     }

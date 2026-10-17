@@ -1,5 +1,8 @@
-//! The world being played: chunks, the player, their camera and input,
-//! advanced on the 20 TPS fixed timestep. `App` owns at most one.
+//! The world being played: chunks, the player, their camera, inventory and
+//! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
+//! owns at most one.
+
+mod hands;
 
 use std::{path::Path, sync::Arc};
 
@@ -13,21 +16,24 @@ use winit::{
 
 use crate::{
     config,
+    entity::item::ItemEntity,
+    inventory::{
+        player::{HOTBAR_SLOTS, Inventory},
+        stack::Items,
+    },
     level::{Level, PlayerData, WorldDir},
     player::{
         collision::WorldCollider,
         input::MoveKeys,
-        interaction::{self, BREAK_REPEAT_TICKS, HOTBAR, PLACE_REPEAT_TICKS},
         mode::GameMode,
         physics::Body,
         raycast::{self, Hit},
     },
     render::camera::Camera,
     world::{
-        block::BlockRegistry,
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
-        worldgen::terrain::Terrain,
+        worldgen::{rng::Rng, terrain::Terrain},
     },
 };
 
@@ -50,7 +56,7 @@ const VOID_Y: f64 = -64.0;
 
 pub struct Game {
     pub chunks: ChunkManager,
-    blocks: Arc<BlockRegistry>,
+    items: Items,
     /// Look direction comes from the mouse; position follows `body` each frame.
     pub camera: Camera,
     body: Body,
@@ -69,8 +75,13 @@ pub struct Game {
     /// Ticks until a held button acts again.
     break_cooldown: u8,
     place_cooldown: u8,
-    /// Selected `HOTBAR` slot.
-    pub slot: usize,
+    pub inventory: Inventory,
+    /// Dropped items lying around.
+    pub entities: Vec<ItemEntity>,
+    /// The block being mined and how far along it is (0–1).
+    mining: Option<(glam::IVec3, f32)>,
+    /// For drops and throws.
+    rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
     scroll_pixels: f64,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
@@ -96,7 +107,7 @@ impl Game {
     /// Starts with the player's feet at `feet`, looking along `yaw` and `pitch`.
     pub fn new(
         chunks: ChunkManager,
-        blocks: Arc<BlockRegistry>,
+        items: Items,
         feet: DVec3,
         spawn: DVec3,
         yaw: f32,
@@ -106,7 +117,7 @@ impl Game {
         let eye = feet + DVec3::Y * body.eye_height();
         Self {
             chunks,
-            blocks,
+            items,
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
             body,
             prev_feet: feet,
@@ -119,7 +130,10 @@ impl Game {
             place_clicked: false,
             break_cooldown: 0,
             place_cooldown: 0,
-            slot: 0,
+            inventory: Inventory::default(),
+            entities: Vec::new(),
+            mining: None,
+            rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
@@ -132,11 +146,7 @@ impl Game {
     }
 
     /// Opens the saved world in `dir` where the player left it.
-    pub fn open(
-        dir: WorldDir,
-        blocks: Arc<BlockRegistry>,
-        models: Arc<BlockModels>,
-    ) -> Result<Self> {
+    pub fn open(dir: WorldDir, items: Items, models: Arc<BlockModels>) -> Result<Self> {
         let level = dir.load_level()?;
         info!(
             "opening {:?} (seed {}, {})",
@@ -155,7 +165,7 @@ impl Game {
         let player = &level.player;
         let mut game = Self::new(
             chunks,
-            blocks,
+            items,
             DVec3::from_array(player.position),
             DVec3::from_array(level.spawn),
             player.yaw,
@@ -173,13 +183,13 @@ impl Game {
         name: &str,
         seed: u64,
         mode: GameMode,
-        blocks: Arc<BlockRegistry>,
+        items: Items,
         models: Arc<BlockModels>,
     ) -> Result<Self> {
         let (x, y, z) = Terrain::new(seed).spawn_point();
         let spawn = [x as f64 + 0.5, y as f64, z as f64 + 0.5];
         let dir = WorldDir::create(saves, &Level::new(name, seed, mode, spawn))?;
-        Self::open(dir, blocks, models)
+        Self::open(dir, items, models)
     }
 
     /// Writes the changed chunks and the level (player, time). Test worlds
@@ -201,12 +211,17 @@ impl Game {
         Ok(())
     }
 
-    pub fn blocks(&self) -> &BlockRegistry {
-        &self.blocks
+    pub fn items(&self) -> &Items {
+        &self.items
     }
 
-    /// Number keys, the F4 dev flight toggle and, while the cursor is
-    /// grabbed, movement keys.
+    /// How far the frame is between the last two ticks, 0–1.
+    pub fn tick_alpha(&self) -> f64 {
+        (self.tick_time / TICK) as f64
+    }
+
+    /// Number keys, Q to throw, the F4 dev flight toggle and, while the
+    /// cursor is grabbed, movement keys.
     pub fn on_key(&mut self, key: KeyCode, pressed: bool, repeat: bool, grabbed: bool) {
         if key == KeyCode::F4 && pressed && !repeat {
             #[cfg(debug_assertions)]
@@ -218,7 +233,9 @@ impl Game {
         } else if let Some(slot) = hotbar_slot(key)
             && pressed
         {
-            self.slot = slot;
+            self.inventory.selected = slot;
+        } else if key == KeyCode::KeyQ && pressed && grabbed {
+            self.throw_selected();
         } else if grabbed {
             self.keys.set_key(key, pressed);
         }
@@ -266,7 +283,8 @@ impl Game {
                 steps as i32
             }
         };
-        self.slot = (self.slot as i32 + steps).rem_euclid(HOTBAR.len() as i32) as usize;
+        let slot = self.inventory.selected as i32 + steps;
+        self.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
 
     /// Advances the game by `dt` seconds of real time: runs any ticks due,
@@ -296,6 +314,7 @@ impl Game {
         self.prev_feet = self.body.position();
         self.move_player();
         self.use_hands();
+        self.tick_items();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -312,7 +331,7 @@ impl Game {
         }
         let collider = WorldCollider {
             world: self.chunks.world(),
-            blocks: &self.blocks,
+            blocks: &self.items.blocks,
         };
         // Wait for the chunks around the player to load before moving them.
         if !collider.is_loaded(&self.body.aabb()) {
@@ -326,38 +345,6 @@ impl Game {
         }
     }
 
-    fn use_hands(&mut self) {
-        self.break_cooldown = self.break_cooldown.saturating_sub(1);
-        self.place_cooldown = self.place_cooldown.saturating_sub(1);
-        let wants_break = (self.breaking || self.break_clicked) && self.break_cooldown == 0;
-        let wants_place = (self.placing || self.place_clicked) && self.place_cooldown == 0;
-        self.break_clicked = false;
-        self.place_clicked = false;
-        if !wants_break && !wants_place {
-            return;
-        }
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let Some(hit) = self.find_target(eye) else {
-            return;
-        };
-        if wants_break {
-            let edits = interaction::break_block(self.chunks.world(), &self.blocks, hit.block);
-            if !edits.is_empty() {
-                self.chunks.set_blocks(&edits);
-                self.break_cooldown = BREAK_REPEAT_TICKS;
-            }
-        } else if let Some(edit) = interaction::place_block(
-            self.chunks.world(),
-            &self.blocks,
-            &hit,
-            HOTBAR[self.slot],
-            &self.body.aabb(),
-        ) {
-            self.chunks.set_blocks(&[edit]);
-            self.place_cooldown = PLACE_REPEAT_TICKS;
-        }
-    }
-
     /// The block the crosshair points at from `eye`, within reach.
     fn find_target(&self, eye: DVec3) -> Option<Hit> {
         let world = self.chunks.world();
@@ -365,10 +352,15 @@ impl Game {
         raycast::raycast(eye, dir, config::REACH, |cell| {
             world
                 .block(cell.x, cell.y, cell.z)
-                .and_then(|block| self.blocks.get(block.id()))
+                .and_then(|block| self.items.blocks.get(block.id()))
                 .is_some_and(|def| def.is_targetable())
         })
     }
+}
+
+/// A seed for drop and throw randomness, from the clock.
+fn level_random_seed() -> u64 {
+    crate::level::random_seed()
 }
 
 /// One chunk worker per core, leaving one core for the main thread.
@@ -403,17 +395,30 @@ mod tests {
     use glam::IVec3;
 
     use super::*;
-    use crate::world::{biome::BiomeColors, block::BlockState, chunk::ChunkPos, save::TempDir};
+    use crate::{
+        inventory::{item::ItemRegistry, stack::ItemStack},
+        world::{
+            biome::BiomeColors,
+            block::{BlockRegistry, BlockState},
+            chunk::ChunkPos,
+            save::TempDir,
+        },
+    };
 
-    fn registries() -> (Arc<BlockRegistry>, Arc<BlockModels>) {
-        let blocks = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+    fn registries() -> (Items, Arc<BlockModels>) {
+        let assets = crate::assets::dir();
+        let blocks = BlockRegistry::load(&assets.join("data/blocks.ron")).unwrap();
         let models = BlockModels::new(
             &blocks,
             |_| Some([0.0; 4]),
             [0.0; 4],
             BiomeColors::uniform(),
         );
-        (Arc::new(blocks), Arc::new(models))
+        let items = ItemRegistry::load(&assets.join("data/items.ron")).unwrap();
+        (
+            Items::new(Arc::new(blocks), Arc::new(items)),
+            Arc::new(models),
+        )
     }
 
     /// Runs chunk loading until the player's chunk is in memory.
@@ -431,13 +436,13 @@ mod tests {
     #[test]
     fn a_creative_world_reloads_as_creative_with_its_edits_and_player() {
         let saves = TempDir::new("game");
-        let (blocks, models) = registries();
+        let (items, models) = registries();
         let mut game = Game::create(
             saves.path(),
             "Creative Test",
             42,
             GameMode::Creative,
-            blocks.clone(),
+            items.clone(),
             models.clone(),
         )
         .unwrap();
@@ -459,12 +464,92 @@ mod tests {
 
         // As after quitting and relaunching.
         let dir = WorldDir::new(saves.path().join("Creative Test"));
-        let mut game = Game::open(dir, blocks, models).unwrap();
+        let mut game = Game::open(dir, items, models).unwrap();
         assert_eq!(game.mode, GameMode::Creative);
         assert_eq!(game.time, 500);
         assert_eq!(game.body.position(), feet);
         assert_eq!((game.camera.yaw, game.camera.pitch), (1.25, -0.5));
         load_player_chunk(&mut game);
         assert_eq!(game.chunks.world().block(at.x, at.y, at.z), Some(bricks));
+    }
+
+    /// A flat test world with the player standing at the origin, looking
+    /// straight down, with every chunk around them loaded.
+    fn flat_game(mode: GameMode) -> Game {
+        let (items, models) = registries();
+        let chunks = ChunkManager::new(ChunkSource::Flat, models, 1, 2);
+        let feet = DVec3::new(0.5, 64.0, 0.5);
+        let mut game = Game::new(chunks, items, feet, feet, 0.0, -std::f32::consts::FRAC_PI_2);
+        game.mode = mode;
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while game.chunks.world().len() < 9 {
+            assert!(Instant::now() < deadline, "chunks never loaded");
+            game.chunks.update(ChunkPos::new(0, 0));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // One tick to settle onto the ground.
+        game.tick();
+        game.advance(0.0);
+        game
+    }
+
+    #[test]
+    fn survival_mining_takes_1_0_0_time_and_the_drop_is_picked_up() {
+        let mut game = flat_game(GameMode::Survival);
+        let grass = |game: &Game| game.chunks.world().block(0, 63, 0);
+        game.breaking = true;
+        // Grass by hand: 1 / 0.6 / 30 per tick, so 18 ticks.
+        for _ in 0..17 {
+            game.tick();
+        }
+        assert_eq!(grass(&game), Some(BlockState::new(2, 0)), "still mining");
+        game.tick();
+        assert_eq!(grass(&game), Some(BlockState::AIR));
+        assert_eq!(game.entities.len(), 1);
+        assert_eq!(
+            game.entities[0].stack,
+            ItemStack::new(3, 1),
+            "grass drops dirt"
+        );
+        game.breaking = false;
+        for _ in 0..40 {
+            game.tick();
+        }
+        assert!(game.entities.is_empty(), "picked up");
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(3, 1)));
+
+        // Placing it on the grass two blocks north uses it up.
+        game.camera.pitch = -0.3;
+        game.advance(0.0);
+        game.placing = true;
+        game.tick();
+        assert_eq!(
+            game.chunks.world().block(0, 64, -2),
+            Some(BlockState::new(3, 0))
+        );
+        assert_eq!(game.inventory.slot(0), None);
+    }
+
+    #[test]
+    fn creative_breaks_instantly_without_drops_and_keeps_placed_items() {
+        let mut game = flat_game(GameMode::Creative);
+        game.inventory.set(0, Some(ItemStack::new(1, 1)));
+        game.break_clicked = true;
+        game.tick();
+        assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
+        assert!(game.entities.is_empty());
+        // Drop into the hole, then place on the grass two blocks north.
+        for _ in 0..20 {
+            game.tick();
+        }
+        game.camera.pitch = -0.3;
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        assert_eq!(
+            game.chunks.world().block(0, 64, -2),
+            Some(BlockState::new(1, 0))
+        );
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(1, 1)));
     }
 }

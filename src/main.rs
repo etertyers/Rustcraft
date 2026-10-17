@@ -1,10 +1,6 @@
 mod app;
 mod assets;
 mod config;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the game spawns dropped items later in M7")
-)]
 mod entity;
 mod game;
 mod inventory;

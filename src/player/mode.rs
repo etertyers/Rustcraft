@@ -19,6 +19,26 @@ impl GameMode {
         }
     }
 
+    /// Blocks break on the first hit, with no mining time.
+    pub fn breaks_instantly(self) -> bool {
+        self == GameMode::Creative
+    }
+
+    /// Broken blocks drop items.
+    pub fn drops_items(self) -> bool {
+        self == GameMode::Survival
+    }
+
+    /// Placing a block uses one from the stack.
+    pub fn uses_up_items(self) -> bool {
+        self == GameMode::Survival
+    }
+
+    /// Tools lose durability.
+    pub fn wears_tools(self) -> bool {
+        self == GameMode::Survival
+    }
+
     /// The other mode, for the create-world button that cycles through them.
     pub fn next(self) -> Self {
         match self {

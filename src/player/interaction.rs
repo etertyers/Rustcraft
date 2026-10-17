@@ -11,19 +11,6 @@ use crate::{
     },
 };
 
-/// Blocks on the number keys until the inventory exists (M7).
-pub const HOTBAR: [BlockState; 9] = [
-    BlockState::new(1, 0),  // stone
-    BlockState::new(4, 0),  // cobblestone
-    BlockState::new(3, 0),  // dirt
-    BlockState::new(5, 0),  // planks
-    BlockState::new(17, 0), // oak log
-    BlockState::new(20, 0), // glass
-    BlockState::new(45, 0), // bricks
-    BlockState::new(98, 0), // stone bricks
-    BlockState::new(50, 0), // torch
-];
-
 /// Ticks between breaks while the button is held (1.0.0's creative `blockHitDelay`).
 pub const BREAK_REPEAT_TICKS: u8 = 5;
 /// Ticks between placements while the button is held (1.0.0's `rightClickDelayTimer`).
@@ -289,16 +276,6 @@ mod tests {
             place_block(&world, &blocks, &on_side, DANDELION, &player),
             None
         );
-    }
-
-    #[test]
-    fn hotbar_has_building_blocks_and_a_torch() {
-        let blocks = blocks();
-        for block in &HOTBAR[..8] {
-            let def = blocks.get(block.id()).unwrap();
-            assert!(def.solid && def.is_targetable(), "{}", def.name);
-        }
-        assert_eq!(blocks.get(HOTBAR[8].id()).unwrap().name, "torch");
     }
 
     const TORCH: BlockState = BlockState::new(50, 0);

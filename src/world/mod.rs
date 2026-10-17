@@ -3,10 +3,6 @@
 pub mod biome;
 pub mod block;
 pub mod chunk;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "survival mining uses these later in M7")
-)]
 pub mod harvest;
 pub mod light;
 pub mod manager;

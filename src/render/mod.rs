@@ -2,16 +2,8 @@
 
 pub mod atlas;
 pub mod camera;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the game draws dropped items later in M7")
-)]
 pub mod entities;
 pub mod frustum;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the HUD and dropped items draw icons later in M7")
-)]
 pub mod icons;
 mod outline;
 pub mod vertex;
@@ -65,6 +57,8 @@ pub struct Renderer {
     globals_bind_group: wgpu::BindGroup,
     atlas_bind_group: wgpu::BindGroup,
     chunks: HashMap<ChunkPos, ChunkBuffers>,
+    /// Dropped items, rebuilt every frame.
+    entities: Option<ChunkBuffers>,
     /// Chunks that passed frustum culling in the last frame.
     chunks_drawn: usize,
     outline: Outline,
@@ -188,6 +182,7 @@ impl Renderer {
             globals_bind_group,
             atlas_bind_group,
             chunks: HashMap::new(),
+            entities: None,
             chunks_drawn: 0,
             outline,
             egui_renderer,
@@ -200,28 +195,35 @@ impl Renderer {
             self.chunks.remove(&pos);
             return;
         }
+        let buffers = self.buffers("chunk", mesh);
+        self.chunks.insert(pos, buffers);
+    }
+
+    /// Replaces the dropped-item mesh drawn from the next frame on.
+    pub fn set_entities(&mut self, mesh: &Mesh) {
+        self.entities = (!mesh.is_empty()).then(|| self.buffers("entity", mesh));
+    }
+
+    fn buffers(&self, label: &str, mesh: &Mesh) -> ChunkBuffers {
         let vertices = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("chunk vertices"),
+                label: Some(label),
                 contents: bytemuck::cast_slice(&mesh.vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
         let indices = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("chunk indices"),
+                label: Some(label),
                 contents: bytemuck::cast_slice(&mesh.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
-        self.chunks.insert(
-            pos,
-            ChunkBuffers {
-                vertices,
-                indices,
-                index_count: mesh.indices.len() as u32,
-            },
-        );
+        ChunkBuffers {
+            vertices,
+            indices,
+            index_count: mesh.indices.len() as u32,
+        }
     }
 
     /// Outlines `block` from the next frame on, or nothing.
@@ -340,6 +342,11 @@ impl Renderer {
                 pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..chunk.index_count, 0, 0..1);
                 self.chunks_drawn += 1;
+            }
+            if let Some(entities) = &self.entities {
+                pass.set_vertex_buffer(0, entities.vertices.slice(..));
+                pass.set_index_buffer(entities.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..entities.index_count, 0, 0..1);
             }
             if outline {
                 self.outline.draw(&mut pass);

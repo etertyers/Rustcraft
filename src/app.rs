@@ -22,12 +22,15 @@ use crate::{
     assets, config,
     game::{Game, chunk_workers},
     inventory::item::ItemRegistry,
+    inventory::stack::Items,
     level::{self, WorldDir},
-    player::{interaction::HOTBAR, mode::GameMode},
+    player::mode::GameMode,
     render::{
         Renderer,
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
+        entities::item_mesh,
+        icons::ItemIcons,
     },
     ui::{
         DebugStats, DebugUi, Hud,
@@ -70,8 +73,9 @@ pub struct App {
     debug_ui: Option<DebugUi>,
     /// `None` starts at the main menu.
     world_kind: Option<WorldKind>,
-    blocks: Option<Arc<BlockRegistry>>,
+    items: Option<Items>,
     models: Option<Arc<BlockModels>>,
+    icons: Option<Arc<ItemIcons>>,
     /// Exactly one of `menu` and `game` is set once the window is up.
     menu: Option<Menu>,
     game: Option<Game>,
@@ -92,8 +96,9 @@ impl App {
             renderer: None,
             debug_ui: None,
             world_kind,
-            blocks: None,
+            items: None,
             models: None,
+            icons: None,
             menu: None,
             game: None,
             cursor_grabbed: false,
@@ -154,8 +159,10 @@ impl App {
             atlas.uv_rect(MISSING_TILE),
             biome_colors,
         );
-        self.blocks = Some(Arc::new(blocks));
-        self.models = Some(Arc::new(models));
+        let models = Arc::new(models);
+        self.icons = Some(Arc::new(ItemIcons::new(&atlas, models.clone(), &items)));
+        self.items = Some(Items::new(Arc::new(blocks), Arc::new(items)));
+        self.models = Some(models);
         match self.world_kind.clone() {
             Some(kind) => self.game = Some(self.start_game(kind)?),
             None => self.menu = Some(Menu::new(level::saves_dir())),
@@ -168,8 +175,8 @@ impl App {
     }
 
     fn start_game(&self, kind: WorldKind) -> Result<Game> {
-        let (blocks, models) = (
-            self.blocks.clone().expect("loaded in init"),
+        let (items, models) = (
+            self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
         let ground = config::SEA_LEVEL as f64 + 1.0;
@@ -178,10 +185,10 @@ impl App {
                 let saves = level::saves_dir();
                 let dir = WorldDir::new(saves.join(&name));
                 return if dir.exists() {
-                    Game::open(dir, blocks, models)
+                    Game::open(dir, items, models)
                 } else {
                     let seed = seed.unwrap_or_else(level::random_seed);
-                    Game::create(&saves, &name, seed, mode, blocks, models)
+                    Game::create(&saves, &name, seed, mode, items, models)
                 };
             }
             // The test worlds below aren't saved.
@@ -197,7 +204,7 @@ impl App {
             // In front of the first gallery row, looking south along it.
             WorldKind::Gallery => (
                 ChunkSource::Fixed(
-                    gallery::gallery_chunks(&blocks)
+                    gallery::gallery_chunks(&items.blocks)
                         .into_iter()
                         .map(|chunk| (chunk.pos, chunk))
                         .collect(),
@@ -208,7 +215,7 @@ impl App {
             ),
         };
         let chunks = ChunkManager::new(source, models, config::RENDER_DISTANCE, chunk_workers());
-        Ok(Game::new(chunks, blocks, spawn, spawn, yaw, pitch))
+        Ok(Game::new(chunks, items, spawn, spawn, yaw, pitch))
     }
 
     /// macOS sometimes stops pinning a locked cursor, and the hidden cursor
@@ -273,15 +280,15 @@ impl App {
 
     /// Opens or creates the world chosen in the menu, or quits.
     fn on_menu_action(&mut self, event_loop: &ActiveEventLoop, action: MenuAction) {
-        let (blocks, models) = (
-            self.blocks.clone().expect("loaded in init"),
+        let (items, models) = (
+            self.items.clone().expect("loaded in init"),
             self.models.clone().expect("loaded in init"),
         );
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
-            MenuAction::Open(dir) => Game::open(dir, blocks, models),
+            MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create { name, seed, mode } => {
-                Game::create(&level::saves_dir(), &name, seed, mode, blocks, models)
+                Game::create(&level::saves_dir(), &name, seed, mode, items, models)
             }
         };
         match game {
@@ -326,6 +333,21 @@ impl App {
             renderer.remove_chunk(pos);
         }
         renderer.set_outline(game.target.map(|hit| hit.block));
+        if let Some(icons) = &self.icons {
+            let chunks = &game.chunks;
+            let light_at = |p: DVec3| {
+                let p = p.floor().as_ivec3();
+                chunks.light_at(p.x, p.y, p.z).unwrap_or((15, 0))
+            };
+            let mesh = item_mesh(
+                &game.entities,
+                icons,
+                &game.camera,
+                game.tick_alpha(),
+                light_at,
+            );
+            renderer.set_entities(&mesh);
+        }
 
         let chunks = &game.chunks;
         let stats = DebugStats {
@@ -336,13 +358,19 @@ impl App {
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
         };
-        let selected = HOTBAR[game.slot];
+        let slot = game.inventory.selected;
         let hud = Hud {
             crosshair: self.cursor_grabbed,
-            selected: format!(
-                "{}: {}",
-                game.slot + 1,
-                game.blocks().display_name(selected)
+            selected: game.inventory.selected_stack().map_or_else(
+                || format!("{}: empty", slot + 1),
+                |stack| {
+                    format!(
+                        "{}: {} ×{}",
+                        slot + 1,
+                        game.items().name(stack),
+                        stack.count
+                    )
+                },
             ),
         };
         let ui = debug_ui.frame(window, &game.camera, &stats, &hud);
