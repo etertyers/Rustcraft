@@ -458,6 +458,9 @@ impl Game {
             flying: self.body.flying,
         };
         self.stats.tick(&around, vulnerable);
+        if vulnerable {
+            self.stats.tick_food();
+        }
         self.body.can_sprint = !vulnerable || self.stats.can_sprint();
         if self.stats.is_dead() {
             self.drop_everything();

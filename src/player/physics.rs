@@ -110,6 +110,11 @@ impl Body {
         self.bb
     }
 
+    /// Whether the last move ran into a wall.
+    pub fn collided_horizontally(&self) -> bool {
+        self.collided_horizontally
+    }
+
     /// Feet: the center of the hitbox's bottom face.
     pub fn position(&self) -> DVec3 {
         DVec3::new(

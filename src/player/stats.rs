@@ -148,6 +148,14 @@ impl Stats {
         }
     }
 
+    /// Stats for a mob with `health` points.
+    pub fn with_health(health: i32) -> Self {
+        Self {
+            health,
+            ..Self::default()
+        }
+    }
+
     /// Hurts the player, honoring the hurt cooldown. Returns true for a
     /// fresh hit (which knocks back and flashes), false if it was absorbed
     /// or only topped up the last one.
@@ -172,8 +180,8 @@ impl Stats {
         fresh
     }
 
-    /// One tick of falling, drowning, burning and hunger. `vulnerable` is
-    /// false in creative: nothing hurts and hunger stands still.
+    /// One tick of falling, drowning and burning. `vulnerable` is false in
+    /// creative: nothing hurts. Mobs use this too; hunger is `tick_food`.
     pub fn tick(&mut self, around: &Surroundings, vulnerable: bool) {
         self.hurt_cooldown = self.hurt_cooldown.saturating_sub(1);
         self.tick_fall(around, vulnerable);
@@ -199,9 +207,6 @@ impl Stats {
             }
             self.fire -= 1;
         }
-        if vulnerable {
-            self.tick_food();
-        }
     }
 
     /// 1.0.0's `updateFallState`: a fall hurts on landing; water, lava and
@@ -223,8 +228,8 @@ impl Stats {
         }
     }
 
-    /// 1.0.0's `FoodStats.onUpdate` on normal difficulty.
-    fn tick_food(&mut self) {
+    /// A tick of hunger: 1.0.0's `FoodStats.onUpdate` on normal difficulty.
+    pub fn tick_food(&mut self) {
         if self.exhaustion > EXHAUSTION_PER_POINT {
             self.exhaustion -= EXHAUSTION_PER_POINT;
             if self.saturation > 0.0 {
@@ -392,7 +397,7 @@ mod tests {
             ..Stats::default()
         };
         for _ in 0..FOOD_TIMER_TICKS {
-            stats.tick(&GROUND, true);
+            stats.tick_food();
         }
         assert_eq!(stats.health, 11, "one point per 4 seconds at 18+ food");
 
@@ -404,6 +409,7 @@ mod tests {
         };
         for _ in 0..FOOD_TIMER_TICKS * 5 {
             starving.tick(&GROUND, true);
+            starving.tick_food();
         }
         assert_eq!(
             starving.health, STARVING_FLOOR,
@@ -415,11 +421,11 @@ mod tests {
     fn exhaustion_eats_saturation_before_food_and_eating_refills_both() {
         let mut stats = Stats::default();
         stats.add_exhaustion(4.1);
-        stats.tick(&GROUND, true);
+        stats.tick_food();
         assert_eq!((stats.food, stats.saturation), (20, 4.0));
         stats.saturation = 0.0;
         stats.add_exhaustion(4.1);
-        stats.tick(&GROUND, true);
+        stats.tick_food();
         assert_eq!(stats.food, 19);
         // Cooked porkchop: 8 food, 0.8 saturation modifier.
         stats.food = 10;
