@@ -322,6 +322,14 @@ mod tests {
     }
 
     #[test]
+    fn planks_make_wooden_slabs_not_stone_ones() {
+        let recipes = recipes();
+        let row = grid(3, &[(0, 1, 5, 0), (1, 1, 5, 0), (2, 1, 5, 0)]);
+        assert_eq!(recipes.craft(&row, 3), Some(ItemStack::new(126, 3)));
+        assert_eq!(recipes.burn_ticks(126), 150);
+    }
+
+    #[test]
     fn shapeless_recipes_take_any_arrangement() {
         let recipes = recipes();
         let stew = grid(3, &[(2, 2, 281, 0), (0, 1, 40, 0), (1, 0, 39, 0)]);

@@ -19,8 +19,9 @@
 //   harvest   tool needed to drop anything: (tools: [...], tier: Wood)
 //   placement Plain (default), Torch (attaches to the clicked face),
 //             Facing (front toward the player, data 2-5), Bed (two
-//             halves, data 0-3 the direction and 8 the head) or Door (two
-//             halves, data 0-3 the direction, 4 open and 8 the upper)
+//             halves, data 0-3 the direction and 8 the head), Door (two
+//             halves, data 0-3 the direction, 4 open and 8 the upper) or
+//             Slab(double: id) (joins the same slab below into `double`)
 //   activate  what right-clicking it does: Crafting (opens a 3×3 grid),
 //             Chest or Furnace (opens its slots), Bed (sleeps) or Door
 //             (opens and closes; iron doors have none, needing redstone)
@@ -122,15 +123,17 @@
     (id: 43, name: "double_stone_slab", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 44, keep_data: true, min: 2)]), textures: (end: "stone_slab_top", side: "stone_slab_side"),
         variants: {
             1: (name: "sandstone", textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone_normal")),
-            2: (name: "wooden", textures: (all: "planks_oak")),
+            // 1.0.0's stone-material wooden slab; no longer crafted (the
+            // wooden slab is block 126), named as modern Minecraft does.
+            2: (name: "petrified_oak", textures: (all: "planks_oak")),
             3: (name: "cobblestone", textures: (all: "cobblestone")),
             4: (name: "brick", textures: (all: "brick")),
             5: (name: "stone_brick", textures: (all: "stonebrick")),
         }),
-    (id: 44, name: "stone_slab", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, shape: Slab, textures: (end: "stone_slab_top", side: "stone_slab_side"),
+    (id: 44, name: "stone_slab", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, placement: Slab(double: 43), shape: Slab, textures: (end: "stone_slab_top", side: "stone_slab_side"),
         variants: {
             1: (name: "sandstone", textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone_normal")),
-            2: (name: "wooden", textures: (all: "planks_oak")),
+            2: (name: "petrified_oak", textures: (all: "planks_oak")),
             3: (name: "cobblestone", textures: (all: "cobblestone")),
             4: (name: "brick", textures: (all: "brick")),
             5: (name: "stone_brick", textures: (all: "stonebrick")),
@@ -276,5 +279,9 @@
     (id: 119, name: "end_portal", hardness: -1.0, drops: Nothing, shape: EndPortal, solid: false, light: 15, textures: (all: "end_portal")),
     (id: 120, name: "end_portal_frame", hardness: -1.0, shape: EndPortalFrame, light: 1, textures: (top: "endframe_top", bottom: "end_stone", side: "endframe_side")),
     (id: 121, name: "end_stone", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "end_stone")),
+    // From Minecraft 1.3: the wood-material slab that replaced 1.0.0's
+    // stone-material wooden slab (44:2), mined fast with an axe.
+    (id: 125, name: "double_wooden_slab", hardness: 2.0, tool: Axe, drops: All([(item: 126, min: 2)]), textures: (all: "planks_oak")),
+    (id: 126, name: "wooden_slab", hardness: 2.0, tool: Axe, opacity: 15, placement: Slab(double: 125), shape: Slab, textures: (all: "planks_oak")),
     (id: 122, name: "dragon_egg", hardness: 3.0, shape: DragonEgg, light: 1, textures: (all: "dragon_egg")),
 ]

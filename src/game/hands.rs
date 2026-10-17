@@ -447,6 +447,9 @@ impl Game {
                     None => return,
                 }
             }
+            Some(Placement::Slab { double }) => {
+                vec![interaction::place_slab(world, (at, placed), double)]
+            }
             Some(Placement::Door) => {
                 let blocks = &self.items.blocks;
                 match interaction::place_door(world, blocks, hit, (at, placed), yaw, &player) {

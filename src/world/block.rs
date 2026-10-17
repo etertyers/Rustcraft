@@ -196,6 +196,9 @@ pub enum Placement {
     /// placed and the head one block further the way the player looks.
     /// Data 0–3 is that way (south, west, north, east); the head adds 8.
     Bed,
+    /// A slab, which turns the same slab under it into `double` (keeping
+    /// the data value) instead of stacking on it (1.0.0's `BlockStep`).
+    Slab { double: BlockId },
     /// A two-block door on top of a full block (1.0.0's `ItemDoor`): data
     /// 0–3 is its direction, 4 is open and 8 the upper half.
     Door,
@@ -379,7 +382,9 @@ impl BlockDef {
                 4 => IVec3::Z,
                 _ => IVec3::NEG_Y,
             }),
-            Placement::Plain | Placement::Facing => self.needs_ground.then_some(IVec3::NEG_Y),
+            Placement::Plain | Placement::Facing | Placement::Slab { .. } => {
+                self.needs_ground.then_some(IVec3::NEG_Y)
+            }
             // The lower half stands on the ground, the upper on the lower.
             Placement::Door => Some(IVec3::NEG_Y),
             // Each half goes with the other.
@@ -413,6 +418,7 @@ impl BlockDef {
         }
         Some(match self.shape {
             Shape::Bed => ([0.0; 3], [1.0, 9.0 / 16.0, 1.0]),
+            Shape::Slab => ([0.0; 3], [1.0, 0.5, 1.0]),
             Shape::Door => door_box(data),
             _ => ([0.0; 3], [1.0; 3]),
         })
@@ -620,7 +626,9 @@ mod tests {
                 "block {id} missing from blocks.ron"
             );
         }
-        assert_eq!(registry.iter().count(), 123);
+        // Plus the wooden slabs from 1.3 (125, 126).
+        assert_eq!(registry.iter().count(), 125);
+        assert_eq!(registry.get(126).unwrap().name, "wooden_slab");
         assert_eq!(registry.get(2).unwrap().name, "grass");
     }
 

@@ -859,6 +859,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn slabs_are_half_a_block_to_walk_up_onto() {
+        let mut game = flat_game(GameMode::Survival);
+        let slabs: Vec<_> = (-6..=-2)
+            .map(|z| (IVec3::new(0, 64, z), BlockState::new(126, 0)))
+            .collect();
+        game.chunks.set_blocks(&slabs);
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..30 {
+            game.tick();
+        }
+        let feet = game.body.position();
+        assert!(feet.z < -2.0, "stepped up without jumping: {feet}");
+        assert_eq!(feet.y, 64.5);
+    }
+
+    #[test]
     fn holding_right_click_on_a_door_toggles_it_once() {
         let mut game = flat_game(GameMode::Survival);
         game.chunks.set_blocks(&[

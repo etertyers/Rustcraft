@@ -7,7 +7,7 @@ use crate::{
     config::WORLD_HEIGHT,
     world::{
         Face, World,
-        block::{BlockDef, BlockRegistry, BlockState, Placement, bed_direction},
+        block::{BlockDef, BlockId, BlockRegistry, BlockState, Placement, bed_direction},
     },
 };
 
@@ -85,7 +85,11 @@ pub fn place_block(
     let data = match new.placement {
         // Turned toward the player by `facing_data`, or made into two
         // halves by `place_bed` or `place_door`, afterwards.
-        Placement::Plain | Placement::Facing | Placement::Bed | Placement::Door => block.data(),
+        Placement::Plain
+        | Placement::Facing
+        | Placement::Bed
+        | Placement::Door
+        | Placement::Slab { .. } => block.data(),
         Placement::Torch => match hit.face? {
             Face::Top => 5,
             Face::East => 1,
@@ -102,9 +106,11 @@ pub fn place_block(
         // Torches need a full solid block; plants just need ground.
         let holds = match new.placement {
             Placement::Torch => support.is_opaque_cube(),
-            Placement::Plain | Placement::Facing | Placement::Bed | Placement::Door => {
-                !support.replaceable
-            }
+            Placement::Plain
+            | Placement::Facing
+            | Placement::Bed
+            | Placement::Door
+            | Placement::Slab { .. } => !support.replaceable,
         };
         if !holds {
             return None;
@@ -194,6 +200,17 @@ pub fn place_door(
         (lower, BlockState::new(door.id(), dir)),
         (upper, BlockState::new(door.id(), dir | 8)),
     ])
+}
+
+/// A slab placed at `at` onto the same slab (same block and data value)
+/// joins it into the `double` block instead (1.0.0's
+/// `BlockStep.onBlockAdded`).
+pub fn place_slab(world: &World, (at, slab): Edit, double: BlockId) -> Edit {
+    let below = at - IVec3::Y;
+    match world.block(below.x, below.y, below.z) {
+        Some(under) if under == slab => (below, BlockState::new(double, slab.data())),
+        _ => (at, slab),
+    }
 }
 
 /// The data value turning a `Placement::Facing` block's front toward a
@@ -351,6 +368,22 @@ mod tests {
         assert_eq!(
             place_door(&world, &blocks, &side, lower, 0.0, &far_player()),
             None
+        );
+    }
+
+    #[test]
+    fn a_slab_on_the_same_slab_makes_a_double_slab() {
+        let wooden = BlockState::new(126, 0);
+        let world = world_with(&[(IVec3::new(2, 64, 2), wooden)]);
+        assert_eq!(
+            place_slab(&world, (IVec3::new(2, 65, 2), wooden), 125),
+            (IVec3::new(2, 64, 2), BlockState::new(125, 0))
+        );
+        // Different slabs, or a different variant, just stack.
+        let brick = BlockState::new(44, 4);
+        assert_eq!(
+            place_slab(&world, (IVec3::new(2, 65, 2), brick), 43),
+            (IVec3::new(2, 65, 2), brick)
         );
     }
 

@@ -522,6 +522,9 @@ fn door_mirrored(data: u8, side: u8, face: Face) -> bool {
     turn & 1 != 0
 }
 
+/// Height of a slab (the bottom half of its cell).
+const SLAB_HEIGHT: f32 = 0.5;
+
 /// Height of a block's top: 1, or for a liquid with no liquid of its kind
 /// above it, 1.0.0's 8/9 for a source block.
 fn liquid_height(
@@ -667,15 +670,27 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         // Every other shape is a full cube until its model is
                         // built; liquids lower their surface.
                         _ => {
-                            let height = liquid_height(area, block, model, [x, y, z]);
+                            let slab = model.shape == Shape::Slab;
+                            let height = if slab {
+                                SLAB_HEIGHT
+                            } else {
+                                liquid_height(area, block, model, [x, y, z])
+                            };
                             for face in Face::ALL {
                                 let [dx, dy, dz] = face.normal();
                                 let neighbor =
                                     area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
-                                if !face_visible(models, block, model, neighbor) {
+                                // A slab's top is below whatever sits on it.
+                                let open_top = slab && face == Face::Top;
+                                if !open_top && !face_visible(models, block, model, neighbor) {
                                     continue;
                                 }
-                                let texture = model.faces[face.index()];
+                                let mut texture = model.faces[face.index()];
+                                if slab && !matches!(face, Face::Top | Face::Bottom) {
+                                    // Sides show the texture's lower half.
+                                    let [u0, v0, u1, v1] = texture.uv;
+                                    texture.uv = [u0, v0 + (v1 - v0) * (1.0 - height), u1, v1];
+                                }
                                 let color = models
                                     .tint_color(texture.tint, biome)
                                     .map(|c| c * face.shade());
@@ -687,7 +702,8 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 let lights = lit.map(|(_, l)| l);
                                 let corners = translate(corners, origin);
                                 mesh.quad(corners, texture.uv, colors, lights);
-                                if face == Face::Top && height < 1.0 {
+                                if face == Face::Top && model.shape == Shape::Liquid && height < 1.0
+                                {
                                     // A liquid's surface is seen from below too.
                                     let [a, b, c, d] = corners;
                                     let [ca, cb, cc, cd] = colors;
@@ -733,6 +749,7 @@ mod tests {
             (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout, light: 14),
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
             (id: 85, name: "fence", hardness: 2.0, shape: Fence),
+            (id: 126, name: "wooden_slab", hardness: 2.0, shape: Slab),
             (id: 9, name: "water", hardness: 100.0, shape: Liquid, layer: Translucent, solid: false, cull_same: true),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
@@ -851,6 +868,33 @@ mod tests {
         );
         assert_eq!(find(&open, Face::East), uv(Face::East));
         assert_eq!(find(&open, Face::West), mirrored(uv(Face::West)));
+    }
+
+    #[test]
+    fn a_slab_is_half_a_block_with_its_top_always_shown() {
+        const SLAB: BlockState = BlockState::new(126, 0);
+        let mesh = mesh_with(&[(5, 64, 5, SLAB), (5, 65, 5, STONE)], true);
+        // Six slab faces (its top shows under the stone) and five of the
+        // stone's (its bottom faces a slab, which doesn't hide it).
+        assert_eq!(quads(&mesh), 12);
+        let slab_top = mesh
+            .vertices
+            .iter()
+            .filter(|v| v.position[1] == 64.5)
+            .count();
+        assert_eq!(
+            slab_top,
+            4 + 4 * 2,
+            "the top face and the sides' upper corners"
+        );
+        // Side faces show the lower half of the texture: their top corners
+        // sit at v 0.5 of the test's 0–1 texture.
+        let half_way = mesh
+            .vertices
+            .iter()
+            .filter(|v| v.position[1] == 64.5 && v.uv[1] == 0.5)
+            .count();
+        assert_eq!(half_way, 4 * 2);
     }
 
     #[test]

@@ -75,7 +75,7 @@
         // Building blocks
         (result: (item: 44, count: 3, data: 0), pattern: ["###"], key: {'#': (item: 1)}),  // stone slabs
         (result: (item: 44, count: 3, data: 1), pattern: ["###"], key: {'#': (item: 24)}),  // sandstone slabs
-        (result: (item: 44, count: 3, data: 2), pattern: ["###"], key: {'#': (item: 5)}),  // wooden slabs
+        (result: (item: 126, count: 3), pattern: ["###"], key: {'#': (item: 5)}),  // wooden slabs (block 126, as since 1.3)
         (result: (item: 44, count: 3, data: 3), pattern: ["###"], key: {'#': (item: 4)}),  // cobblestone slabs
         (result: (item: 44, count: 3, data: 4), pattern: ["###"], key: {'#': (item: 45)}),  // brick slabs
         (result: (item: 44, count: 3, data: 5), pattern: ["###"], key: {'#': (item: 98)}),  // stone brick slabs
@@ -177,6 +177,7 @@
     ],
     fuels: [
         (item: 5, ticks: 300),  // planks
+        (item: 126, ticks: 150),  // wooden slab (as since 1.3)
         (item: 17, ticks: 300),  // log
         (item: 47, ticks: 300),  // bookshelf
         (item: 53, ticks: 300),  // wooden stairs
