@@ -373,6 +373,7 @@ impl App {
         self.screen = Some(match container {
             Container::Crafting { size: 2, .. } => Screen::Inventory,
             Container::Crafting { .. } => Screen::Crafting,
+            Container::Chest(_) => Screen::Chest,
         });
         self.set_cursor_grab(false);
     }

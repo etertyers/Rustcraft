@@ -615,7 +615,7 @@ pub(crate) mod tests {
         },
     };
 
-    fn registries() -> (Items, Arc<BlockModels>) {
+    pub(crate) fn registries() -> (Items, Arc<BlockModels>) {
         let assets = crate::assets::dir();
         let blocks = BlockRegistry::load(&assets.join("data/blocks.ron")).unwrap();
         let models = BlockModels::new(
@@ -633,7 +633,7 @@ pub(crate) mod tests {
     }
 
     /// Runs chunk loading until the player's chunk is in memory.
-    fn load_player_chunk(game: &mut Game) {
+    pub(crate) fn load_player_chunk(game: &mut Game) {
         let feet = game.body.position();
         let center = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
         let deadline = Instant::now() + Duration::from_secs(20);

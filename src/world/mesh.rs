@@ -79,13 +79,17 @@ impl BlockModels {
                 };
                 let textures = def.textures_for(data);
                 let tint = def.tint_for(data);
-                let faces = Face::ALL.map(|face| FaceTexture {
+                let mut faces = Face::ALL.map(|face| FaceTexture {
                     uv: textures
                         .and_then(|t| t.get(face))
                         .and_then(&uv)
                         .unwrap_or(missing_uv),
                     tint: tint.for_face(face),
                 });
+                // Blocks placed facing the player turn their south face.
+                if let Some(front) = def.front(data) {
+                    faces.swap(Face::South.index(), front.index());
+                }
                 models.push(BlockModel {
                     shape: def.shape,
                     opaque_cube: def.is_opaque_cube(),

@@ -1,6 +1,6 @@
 //! Screens with slots: the inventory opened with E (survival's, with its
-//! 2×2 crafting grid, or creative's list of every block and item) and the
-//! crafting table's, laid out as in 1.0.0.
+//! 2×2 crafting grid, or creative's list of every block and item), the
+//! crafting table's and the chest's, laid out as in 1.0.0.
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
@@ -22,6 +22,7 @@ pub enum Screen {
     },
     /// A crafting table's 3×3 grid.
     Crafting,
+    Chest,
 }
 
 /// What the player did on a screen this frame.
@@ -76,14 +77,27 @@ fn wheel_rows(input: &egui::InputState, scale: f32) -> f32 {
         .sum()
 }
 
-/// An inventory slot's top-left in panel pixels, below the top part of a
-/// 166-pixel-tall screen.
+/// Rows of slots in a chest.
+const CHEST_ROWS: usize = 3;
+
+/// An inventory slot's top-left in panel pixels, on a 166-pixel-tall
+/// screen.
 fn inventory_slot(index: usize) -> [f32; 2] {
     if index < HOTBAR_SLOTS {
         [8.0 + index as f32 * 18.0, 142.0]
     } else {
         let i = index - HOTBAR_SLOTS;
         [8.0 + (i % 9) as f32 * 18.0, 84.0 + (i / 9) as f32 * 18.0]
+    }
+}
+
+/// Panel size in GUI pixels.
+fn panel_size(screen: &Screen) -> [f32; 2] {
+    match screen {
+        Screen::Inventory | Screen::Crafting => [176.0, 166.0],
+        Screen::Creative { .. } => [195.0, 136.0],
+        // 1.0.0's GuiChest: 114 plus 18 per row.
+        Screen::Chest => [176.0, 114.0 + CHEST_ROWS as f32 * 18.0],
     }
 }
 
@@ -102,7 +116,15 @@ fn crafting_slots(size: usize, at: [f32; 2], result: [f32; 2]) -> Vec<(SlotRef, 
 /// The slots `screen` shows and where (1.0.0's container layouts). The
 /// creative item grid isn't included.
 fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
-    let inventory = (0..SLOTS).map(|i| (SlotRef::Inventory(i), inventory_slot(i)));
+    // 1.0.0's chest puts the player's rows at 103 + (rows − 4) × 18.
+    let below = match screen {
+        Screen::Chest => 103.0 + (CHEST_ROWS as f32 - 4.0) * 18.0 - 84.0,
+        _ => 0.0,
+    };
+    let inventory = (0..SLOTS).map(move |i| {
+        let [x, y] = inventory_slot(i);
+        (SlotRef::Inventory(i), [x, y + below])
+    });
     match screen {
         Screen::Inventory => crafting_slots(2, [88.0, 26.0], [144.0, 36.0])
             .into_iter()
@@ -115,6 +137,13 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         Screen::Creative { .. } => (0..HOTBAR_SLOTS)
             .map(|i| (SlotRef::Inventory(i), [9.0 + i as f32 * 18.0, 112.0]))
             .collect(),
+        Screen::Chest => (0..CHEST_ROWS * 9)
+            .map(|i| {
+                let (column, row) = ((i % 9) as f32, (i / 9) as f32);
+                (SlotRef::Block(i), [8.0 + column * 18.0, 18.0 + row * 18.0])
+            })
+            .chain(inventory)
+            .collect(),
     }
 }
 
@@ -124,6 +153,7 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
         Screen::Inventory => &[("Crafting", [86.0, 16.0])],
         Screen::Crafting => &[("Crafting", [28.0, 6.0]), ("Inventory", [8.0, 72.0])],
         Screen::Creative { .. } => &[],
+        Screen::Chest => &[("Chest", [8.0, 6.0]), ("Inventory", [8.0, 74.0])],
     }
 }
 
@@ -161,10 +191,7 @@ pub fn show(
         None
     };
 
-    let size = match screen {
-        Screen::Inventory | Screen::Crafting => vec2(176.0, 166.0),
-        Screen::Creative { .. } => vec2(195.0, 136.0),
-    };
+    let size = egui::Vec2::from(panel_size(screen));
     let origin = full.center() - size * scale / 2.0;
     let panel = Rect::from_min_size(origin, size * scale);
     let slot_rect = |at: [f32; 2]| {
@@ -180,15 +207,38 @@ pub fn show(
         Screen::Inventory => &textures.inventory,
         Screen::Crafting => &textures.crafting,
         Screen::Creative { .. } => &textures.creative,
+        Screen::Chest => &textures.chest,
     };
-    gui::sheet_image(
-        &painter,
-        background.id(),
-        [0.0, 0.0],
-        size.into(),
-        origin,
-        scale,
-    );
+    if *screen == Screen::Chest {
+        // The chest rows, then the inventory part from the bottom of the
+        // six-row sheet (1.0.0's GuiChest).
+        let top = CHEST_ROWS as f32 * 18.0 + 17.0;
+        gui::sheet_image(
+            &painter,
+            background.id(),
+            [0.0, 0.0],
+            [size.x, top],
+            origin,
+            scale,
+        );
+        gui::sheet_image(
+            &painter,
+            background.id(),
+            [0.0, 126.0],
+            [size.x, 96.0],
+            origin + vec2(0.0, top) * scale,
+            scale,
+        );
+    } else {
+        gui::sheet_image(
+            &painter,
+            background.id(),
+            [0.0, 0.0],
+            size.into(),
+            origin,
+            scale,
+        );
+    }
     for &(text, at) in labels(screen) {
         painter.text(
             origin + vec2(at[0], at[1]) * scale,
@@ -312,6 +362,10 @@ mod tests {
         assert!(table.contains(&(SlotRef::Grid(0), [30.0, 17.0])));
         assert!(table.contains(&(SlotRef::Grid(8), [66.0, 53.0])));
         assert!(table.contains(&(SlotRef::Result, [124.0, 35.0])));
+        let chest = layout(&Screen::Chest);
+        assert!(chest.contains(&(SlotRef::Block(26), [152.0, 54.0])));
+        assert!(chest.contains(&(SlotRef::Inventory(9), [8.0, 85.0])));
+        assert!(chest.contains(&(SlotRef::Inventory(0), [8.0, 143.0])));
         let inventory = layout(&Screen::Inventory);
         assert!(inventory.contains(&(SlotRef::Grid(3), [106.0, 44.0])));
         assert!(inventory.contains(&(SlotRef::Result, [144.0, 36.0])));

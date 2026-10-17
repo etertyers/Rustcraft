@@ -82,7 +82,8 @@ pub fn place_block(
         return None;
     }
     let data = match new.placement {
-        Placement::Plain => block.data(),
+        // Turned toward the player by `facing_data` afterwards.
+        Placement::Plain | Placement::Facing => block.data(),
         Placement::Torch => match hit.face? {
             Face::Top => 5,
             Face::East => 1,
@@ -97,13 +98,21 @@ pub fn place_block(
         // Torches need a full solid block; plants just need ground.
         let holds = match new.placement {
             Placement::Torch => support.is_opaque_cube(),
-            Placement::Plain => !support.replaceable,
+            Placement::Plain | Placement::Facing => !support.replaceable,
         };
         if !holds {
             return None;
         }
     }
     Some((at, BlockState::new(block.id(), data)))
+}
+
+/// The data value turning a `Placement::Facing` block's front toward a
+/// player looking along `yaw` (radians, 0 north, turning east).
+pub fn facing_data(yaw: f32) -> u8 {
+    let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
+    // Looking north, east, south, west puts the front south, west, north, east.
+    [3, 4, 2, 5][quarter.rem_euclid(4) as usize]
 }
 
 #[cfg(test)]
@@ -155,6 +164,16 @@ mod tests {
     /// A player standing well away from the test cells.
     fn far_player() -> Aabb {
         hitbox(DVec3::new(12.5, 64.0, 12.5))
+    }
+
+    #[test]
+    fn facing_blocks_put_their_front_toward_the_player() {
+        use std::f32::consts::{FRAC_PI_2, PI, TAU};
+        assert_eq!(facing_data(0.0), 3, "looking north, the front faces south");
+        assert_eq!(facing_data(FRAC_PI_2), 4);
+        assert_eq!(facing_data(PI), 2);
+        assert_eq!(facing_data(-FRAC_PI_2), 5);
+        assert_eq!(facing_data(TAU - 0.2), 3);
     }
 
     #[test]

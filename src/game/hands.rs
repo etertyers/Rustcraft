@@ -17,7 +17,7 @@ use crate::{
         stats::DamageSource,
     },
     world::{
-        block::{Activate, Fluid},
+        block::{Activate, BlockState, Fluid, Placement},
         harvest,
     },
 };
@@ -134,7 +134,7 @@ impl Game {
 
     /// Removes the block at `cell` and whatever it held up, dropping items
     /// and wearing the tool as the game mode says.
-    fn break_block(&mut self, cell: IVec3) {
+    pub(super) fn break_block(&mut self, cell: IVec3) {
         let world = self.chunks.world();
         let edits = interaction::break_block(world, &self.items.blocks, cell);
         if edits.is_empty() {
@@ -164,6 +164,18 @@ impl Game {
                     self.entities
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
+            }
+        }
+        // A chest spills what it held, in every game mode (1.0.0).
+        for &(at, _) in &edits {
+            let Some(entity) = self.chunks.set_block_entity(at, None) else {
+                continue;
+            };
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            for stack in entity.contents() {
+                self.entities
+                    .push(ItemEntity::from_block(stack, at, &mut random));
             }
         }
         if self.mode.is_vulnerable() {
@@ -367,6 +379,7 @@ impl Game {
         };
         match action {
             Activate::Crafting => self.open_crafting_table(),
+            Activate::Chest => self.open_chest(cell),
         }
         true
     }
@@ -379,7 +392,7 @@ impl Game {
         let Some(block) = self.items.places(&stack) else {
             return;
         };
-        let Some(edit) = interaction::place_block(
+        let Some((at, mut placed)) = interaction::place_block(
             self.chunks.world(),
             &self.items.blocks,
             hit,
@@ -388,7 +401,15 @@ impl Game {
         ) else {
             return;
         };
-        self.chunks.set_blocks(&[edit]);
+        if self
+            .items
+            .blocks
+            .get(placed.id())
+            .is_some_and(|def| def.placement == Placement::Facing)
+        {
+            placed = BlockState::new(placed.id(), interaction::facing_data(self.camera.yaw));
+        }
+        self.chunks.set_blocks(&[(at, placed)]);
         if self.mode.uses_up_items() {
             self.inventory.take(self.inventory.selected, 1);
         }

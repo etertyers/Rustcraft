@@ -2,6 +2,7 @@
 
 pub mod biome;
 pub mod block;
+pub mod block_entity;
 pub mod chunk;
 pub mod daytime;
 pub mod harvest;

@@ -189,6 +189,9 @@ pub enum Placement {
     /// (attached to the block to the west, east, north, south), 5 for floors.
     /// Can't hang from ceilings.
     Torch,
+    /// Turns its front (the `south` texture) toward the player, like
+    /// 1.0.0's furnace: data 2–5 for a front facing north, south, west, east.
+    Facing,
 }
 
 /// What right-clicking a block does (1.0.0's `blockActivated`).
@@ -196,6 +199,8 @@ pub enum Placement {
 pub enum Activate {
     /// Opens a 3×3 crafting grid.
     Crafting,
+    /// Opens its 27 slots, unless a solid block sits on top.
+    Chest,
 }
 
 /// The liquid a block is (flowing or still).
@@ -325,8 +330,21 @@ impl BlockDef {
                 4 => IVec3::Z,
                 _ => IVec3::NEG_Y,
             }),
-            Placement::Plain => self.needs_ground.then_some(IVec3::NEG_Y),
+            Placement::Plain | Placement::Facing => self.needs_ground.then_some(IVec3::NEG_Y),
         }
+    }
+
+    /// The face its front texture is on, for blocks placed facing the player.
+    pub fn front(&self, data: u8) -> Option<Face> {
+        if self.placement != Placement::Facing {
+            return None;
+        }
+        Some(match data {
+            2 => Face::North,
+            4 => Face::West,
+            5 => Face::East,
+            _ => Face::South,
+        })
     }
 
     /// Whether the crosshair can select it (everything but air and fluids).
@@ -538,19 +556,24 @@ mod tests {
         assert_eq!(block(0).shape, Shape::None);
     }
 
+    #[test]
+    fn furnaces_and_chests_turn_their_front_by_data() {
+        let blocks = real_registry();
+        let furnace = blocks.get(61).unwrap();
+        assert_eq!(furnace.front(2), Some(Face::North));
+        assert_eq!(furnace.front(5), Some(Face::East));
+        assert_eq!(furnace.front(0), Some(Face::South), "the item's front");
+        assert_eq!(blocks.get(54).unwrap().front(4), Some(Face::West));
+        assert_eq!(blocks.get(1).unwrap().front(2), None);
+    }
+
     /// Keep in sync with the missing-texture list in docs/DECISIONS.md.
     #[test]
     fn only_known_block_textures_are_missing() {
         let dir = crate::assets::dir().join("textures/blocks");
         let missing =
             real_registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
-        let expected = [
-            "chest_front",
-            "chest_side",
-            "chest_top",
-            "end_portal",
-            "sign",
-        ];
+        let expected = ["end_portal", "sign"];
         assert_eq!(missing, expected.map(String::from).into());
     }
 }

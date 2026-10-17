@@ -13,6 +13,8 @@ pub enum SlotRef {
     Grid(usize),
     /// The crafting result.
     Result,
+    /// A slot of the open chest.
+    Block(usize),
 }
 
 /// A mouse click on a slot.
