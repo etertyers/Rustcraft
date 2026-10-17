@@ -24,6 +24,8 @@ pub struct DebugStats {
     pub biome: Option<Biome>,
     /// World seed, for generated worlds.
     pub seed: Option<u64>,
+    /// (sky, block) light where the player stands, once its chunk is drawn.
+    pub light: Option<(u8, u8)>,
 }
 
 /// Always-on HUD pieces.
@@ -116,6 +118,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          Block: {} {} {}\n\
          Facing: {} ({:.1} / {:.1})\n\
          Biome: {}\n\
+         Light: {}\n\
          Seed: {}",
         stats.chunks_drawn,
         stats.chunks_loaded,
@@ -129,6 +132,10 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         camera.yaw.to_degrees(),
         camera.pitch.to_degrees(),
         stats.biome.map_or("-", Biome::name),
+        stats.light.map_or_else(
+            || "-".to_owned(),
+            |(sky, block)| format!("{} ({sky} sky, {block} block)", sky.max(block))
+        ),
         stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
     )
 }
@@ -198,6 +205,7 @@ mod tests {
             chunks_loaded: 81,
             biome: Some(Biome::Forest),
             seed: Some(42),
+            light: Some((4, 11)),
         };
         let text = debug_text(59.6, &camera, &stats);
         assert!(
@@ -211,6 +219,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Biome: Forest"), "{text}");
+        assert!(text.contains("Light: 11 (4 sky, 11 block)"), "{text}");
         assert!(text.contains("Seed: 42"), "{text}");
     }
 }

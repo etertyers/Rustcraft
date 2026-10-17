@@ -29,6 +29,10 @@ pub struct BlockModel {
     pub opaque_cube: bool,
     /// Hides faces between two blocks with the same ID.
     pub cull_same: bool,
+    /// Light lost passing through it, 0–15.
+    pub opacity: u8,
+    /// Light it gives off, 0–15.
+    pub emission: u8,
     /// Indexed by `Face::index`.
     pub faces: [FaceTexture; 6],
 }
@@ -54,6 +58,8 @@ impl BlockModels {
             shape: Shape::Cube,
             opaque_cube: true,
             cull_same: false,
+            opacity: 15,
+            emission: 0,
             faces: [FaceTexture {
                 uv: missing_uv,
                 tint: FaceTint::None,
@@ -80,6 +86,8 @@ impl BlockModels {
                     shape: def.shape,
                     opaque_cube: def.is_opaque_cube(),
                     cull_same: def.cull_same,
+                    opacity: def.light_opacity(),
+                    emission: def.light,
                     faces,
                 });
             }

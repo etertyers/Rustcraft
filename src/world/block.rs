@@ -202,6 +202,10 @@ pub struct BlockDef {
     /// Light emitted, 0–15.
     #[serde(default)]
     pub light: u8,
+    /// Light lost passing through, 0–15 (1.0.0's `lightOpacity`, with 255 as
+    /// 15). Defaults to 15 for opaque cubes and 0 for everything else.
+    #[serde(default)]
+    pub opacity: Option<u8>,
     /// Hide faces between two blocks of this type (glass, water, ice).
     #[serde(default)]
     pub cull_same: bool,
@@ -248,6 +252,11 @@ impl BlockDef {
             .unwrap_or(self.tint)
     }
 
+    pub fn light_opacity(&self) -> u8 {
+        self.opacity
+            .unwrap_or(if self.is_opaque_cube() { 15 } else { 0 })
+    }
+
     /// Whether the crosshair can select it (everything but air and fluids).
     pub fn is_targetable(&self) -> bool {
         !matches!(self.shape, Shape::None | Shape::Liquid)
@@ -278,6 +287,9 @@ impl BlockRegistry {
             let index = def.id as usize;
             if let Some(&data) = def.variants.keys().find(|&&d| d as usize >= DATA_VALUES) {
                 bail!("block {} has out-of-range data value {data}", def.name);
+            }
+            if def.opacity.is_some_and(|o| o > 15) {
+                bail!("block {} has opacity above 15", def.name);
             }
             if def.light > 15 {
                 bail!("block {} has light level {} above 15", def.name, def.light);

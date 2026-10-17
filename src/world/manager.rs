@@ -4,9 +4,11 @@
 //! Each frame `update` collects finished work, unloads far chunks and hands
 //! out new jobs nearest-first. The main thread never waits on a worker.
 //!
-//! Block edits remesh the touched chunks right away on the main thread, so
-//! the change shows the same frame; a mesh job that was already running for
-//! one of them is discarded when it returns.
+//! Mesh jobs also compute the chunk's light (see `light`). Block edits
+//! remesh the chunks whose blocks or faces changed right away on the main
+//! thread, so the change shows the same frame; other chunks within light
+//! range are relit in the background. A mesh job that was already running
+//! for an edited chunk is discarded when it returns.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -24,6 +26,7 @@ use super::{
     World,
     block::BlockState,
     chunk::{Chunk, ChunkPos},
+    light::{ChunkLight, light_chunk},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
     worldgen::{flat, terrain::Terrain},
 };
@@ -63,7 +66,7 @@ enum Job {
 
 enum Done {
     Generated(Box<Chunk>),
-    Meshed(ChunkPos, Mesh, u32),
+    Meshed(ChunkPos, Mesh, ChunkLight, u32),
 }
 
 /// What changed this frame, for the renderer.
@@ -97,7 +100,14 @@ pub struct ChunkManager {
     unloaded_edits: HashMap<ChunkPos, Arc<Chunk>>,
     /// Meshes rebuilt by edits, handed out by the next `update`.
     remeshed: Vec<(ChunkPos, Mesh)>,
+    /// Drawn chunks whose light changed, waiting for a background remesh.
+    relight: HashSet<ChunkPos>,
+    /// Light of every drawn chunk.
+    lights: HashMap<ChunkPos, ChunkLight>,
 }
+
+/// Farthest a light change reaches (a level-15 source fades out after 14 blocks).
+const LIGHT_REACH: i32 = 14;
 
 /// Finished jobs collected per frame, so a burst can't stall one frame.
 const MAX_RESULTS_PER_FRAME: usize = 64;
@@ -127,7 +137,9 @@ impl ChunkManager {
                                     Done::Generated(Box::new(source.generate(pos)))
                                 }
                                 Job::Mesh(pos, area, revision) => {
-                                    Done::Meshed(pos, mesh_chunk(&models, &area), revision)
+                                    let light = light_chunk(&models, &area);
+                                    let mesh = mesh_chunk(&models, &area);
+                                    Done::Meshed(pos, mesh, light, revision)
                                 }
                             };
                             if done.send(result).is_err() {
@@ -162,6 +174,8 @@ impl ChunkManager {
             edited: HashSet::new(),
             unloaded_edits: HashMap::new(),
             remeshed: Vec::new(),
+            relight: HashSet::new(),
+            lights: HashMap::new(),
         }
     }
 
@@ -197,11 +211,13 @@ impl ChunkManager {
                         self.world.insert(*chunk);
                     }
                 }
-                Ok(Done::Meshed(pos, mesh, revision)) => {
+                Ok(Done::Meshed(pos, mesh, light, revision)) => {
                     self.meshing.remove(&pos);
                     // An edit since the job started makes it stale; it's requeued.
                     if self.world.get(pos).is_some() && revision == self.revision(pos) {
                         self.meshed.insert(pos);
+                        self.relight.remove(&pos);
+                        self.lights.insert(pos, light);
                         changes.meshes.push((pos, mesh));
                     }
                 }
@@ -226,6 +242,8 @@ impl ChunkManager {
             if self.meshed.remove(&pos) {
                 changes.unloaded.push(pos);
             }
+            self.relight.remove(&pos);
+            self.lights.remove(&pos);
         }
         // Meshes outside the draw radius go too (their chunk stays loaded).
         let hidden: Vec<ChunkPos> = self
@@ -236,6 +254,8 @@ impl ChunkManager {
             .collect();
         for pos in hidden {
             self.meshed.remove(&pos);
+            self.relight.remove(&pos);
+            self.lights.remove(&pos);
             changes.unloaded.push(pos);
         }
 
@@ -254,7 +274,7 @@ impl ChunkManager {
                     let _ = jobs.send(Job::Generate(pos));
                 }
             } else if dx.abs().max(dz.abs()) <= self.radius
-                && !self.meshed.contains(&pos)
+                && (!self.meshed.contains(&pos) || self.relight.contains(&pos))
                 && !self.meshing.contains(&pos)
                 && self.neighbors_loaded(pos)
                 && let Some(area) = self.world.area(pos)
@@ -270,11 +290,20 @@ impl ChunkManager {
         self.revisions.get(&pos).copied().unwrap_or(0)
     }
 
-    /// Applies block edits in loaded chunks (others are skipped) and remeshes
-    /// each touched chunk, plus the neighbor across any border an edit sits on.
+    /// (sky, block) light at a world position, if its chunk is drawn.
+    pub fn light_at(&self, x: i32, y: i32, z: i32) -> Option<(u8, u8)> {
+        let size = CHUNK_SIZE as i32;
+        let light = self.lights.get(&ChunkPos::of_block(x, z))?;
+        Some(light.get(x.rem_euclid(size), y, z.rem_euclid(size)))
+    }
+
+    /// Applies block edits in loaded chunks (others are skipped). Each
+    /// touched chunk, plus the neighbor across any border an edit sits on,
+    /// is remeshed now; chunks only within light range are relit soon after.
     pub fn set_blocks(&mut self, edits: &[(IVec3, BlockState)]) {
         let size = CHUNK_SIZE as i32;
         let mut touched = HashSet::new();
+        let mut lit = HashSet::new();
         for &(at, block) in edits {
             if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
                 continue;
@@ -287,6 +316,13 @@ impl ChunkManager {
             chunk.set(x as usize, at.y as usize, z as usize, block);
             self.edited.insert(pos);
             touched.insert(pos);
+            let low = ChunkPos::of_block(at.x - LIGHT_REACH, at.z - LIGHT_REACH);
+            let high = ChunkPos::of_block(at.x + LIGHT_REACH, at.z + LIGHT_REACH);
+            for cz in low.z..=high.z {
+                for cx in low.x..=high.x {
+                    lit.insert(ChunkPos::new(cx, cz));
+                }
+            }
             for (edge, dx, dz) in [
                 (x == 0, -1, 0),
                 (x == size - 1, 1, 0),
@@ -298,13 +334,22 @@ impl ChunkManager {
                 }
             }
         }
-        for pos in touched {
+        for &pos in &touched {
             *self.revisions.entry(pos).or_default() += 1;
             // Chunks not drawn yet get meshed by `update` as usual.
             if self.meshed.contains(&pos)
                 && let Some(area) = self.world.area(pos)
             {
+                let light = light_chunk(&self.models, &area);
                 self.remeshed.push((pos, mesh_chunk(&self.models, &area)));
+                self.lights.insert(pos, light);
+                self.relight.remove(&pos);
+            }
+        }
+        for pos in lit.difference(&touched) {
+            *self.revisions.entry(*pos).or_default() += 1;
+            if self.meshed.contains(pos) {
+                self.relight.insert(*pos);
             }
         }
     }
@@ -429,6 +474,7 @@ mod tests {
     }
 
     const STONE: BlockState = BlockState::new(1, 0);
+    const TORCH: BlockState = BlockState::new(50, 0);
 
     #[test]
     fn edits_remesh_the_chunk_and_border_neighbors() {
@@ -438,6 +484,10 @@ mod tests {
         let changes = manager.update(ChunkPos::new(0, 0));
         let remeshed: Vec<ChunkPos> = changes.meshes.iter().map(|(pos, _)| *pos).collect();
         assert_eq!(remeshed, [ChunkPos::new(0, 0)]);
+        // Let the background relight of the neighbors finish.
+        run_until(&mut manager, ChunkPos::new(0, 0), |m, _| {
+            m.in_flight() == 0 && m.relight.is_empty()
+        });
 
         // A corner block touches both neighbors across its edges.
         manager.set_blocks(&[(IVec3::new(0, 70, 15), STONE)]);
@@ -495,9 +545,64 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         // Only the requeued job's mesh, with the new block, reached the renderer.
-        let fresh = mesh_chunk(&manager.models, &manager.world().area(center).unwrap());
+        let area = manager.world().area(center).unwrap();
+        let fresh = mesh_chunk(&manager.models, &area);
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].1, fresh);
+    }
+
+    /// M5 "done when": a sealed cave crossing a chunk border is dark, a torch
+    /// placed in it lights the far side of the border, and breaking the torch
+    /// makes it dark again.
+    #[test]
+    fn torches_light_caves_across_chunk_borders_and_breaking_them_undoes_it() {
+        let mut chunks = HashMap::new();
+        for cz in -2..=2 {
+            for cx in -2..=2 {
+                let pos = ChunkPos::new(cx, cz);
+                let mut chunk = Chunk::new(pos);
+                for y in 0..64 {
+                    for z in 0..16 {
+                        for x in 0..16 {
+                            chunk.set(x, y, z, STONE);
+                        }
+                    }
+                }
+                chunks.insert(pos, chunk);
+            }
+        }
+        // Tunnel at y 30 from x 8 to 23, crossing the border at x 16.
+        for x in 8..24 {
+            let chunk = chunks.get_mut(&ChunkPos::of_block(x, 5)).unwrap();
+            chunk.set(x.rem_euclid(16) as usize, 30, 5, BlockState::AIR);
+        }
+        let mut manager = ChunkManager::new(ChunkSource::Fixed(chunks), models(), 1, 2);
+        let center = ChunkPos::new(0, 0);
+        let settle = |manager: &mut ChunkManager| {
+            run_until(manager, center, |m, _| {
+                m.meshed.len() >= 9 && m.in_flight() == 0 && m.relight.is_empty()
+            });
+        };
+        settle(&mut manager);
+        assert_eq!(
+            manager.light_at(17, 30, 5),
+            Some((0, 0)),
+            "cave starts dark"
+        );
+        assert_eq!(manager.light_at(5, 70, 5), Some((15, 0)), "open sky");
+
+        manager.set_blocks(&[(IVec3::new(14, 30, 5), TORCH)]);
+        // The torch's own chunk relights at once.
+        assert_eq!(manager.light_at(15, 30, 5), Some((0, 13)));
+        settle(&mut manager);
+        assert_eq!(manager.light_at(17, 30, 5), Some((0, 11)));
+        assert_eq!(manager.light_at(23, 30, 5), Some((0, 5)));
+
+        manager.set_blocks(&[(IVec3::new(14, 30, 5), BlockState::AIR)]);
+        settle(&mut manager);
+        for x in 8..24 {
+            assert_eq!(manager.light_at(x, 30, 5), Some((0, 0)), "x = {x}");
+        }
     }
 
     /// M3 "no stalls" check: fly in a straight line at fly speed with the real

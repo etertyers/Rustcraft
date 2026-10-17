@@ -450,6 +450,7 @@ impl App {
             chunks_loaded: chunks.world().len(),
             biome: chunks.world().biome_at(x, z),
             seed: chunks.seed(),
+            light: chunks.light_at(x, p.y.floor() as i32, z),
         };
         let selected = HOTBAR[self.slot];
         let hud = Hud {
