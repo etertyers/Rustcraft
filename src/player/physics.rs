@@ -214,7 +214,7 @@ pub fn hitbox(feet: DVec3) -> Aabb {
 
 /// Moves `bb` by `d`, clipping Y first, then X, then Z, like 1.0.0.
 /// Returns the distance actually moved and the moved box.
-fn sweep(bb: Aabb, d: DVec3, world: &impl Collider, boxes: &mut Vec<Aabb>) -> (DVec3, Aabb) {
+pub fn sweep(bb: Aabb, d: DVec3, world: &impl Collider, boxes: &mut Vec<Aabb>) -> (DVec3, Aabb) {
     boxes.clear();
     world.boxes(&bb.stretch(d), boxes);
     let mut bb = bb;
