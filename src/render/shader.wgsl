@@ -56,7 +56,8 @@ fn lightmap(light: vec2<f32>) -> vec3<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
-    // Cutout transparency (leaves, plants); blended transparency comes in M8.
+    // Cutout transparency (leaves, plants); water, ice and glass use
+    // fs_translucent.
     if texel.a < 0.5 {
         discard;
     }
@@ -68,4 +69,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));
     let fogged = mix(globals.fog_color.rgb, color, visible);
     return vec4<f32>(srgb_to_linear(fogged), 1.0);
+}
+
+// Translucent faces (water, ice, glass): the texture's own alpha, blended.
+@fragment
+fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    if texel.a < 0.01 {
+        discard;
+    }
+    let color = linear_to_srgb(texel.rgb) * in.color * lightmap(in.light);
+    let visible = fog_visibility(distance(in.world, globals.camera.xyz));
+    let fogged = mix(globals.fog_color.rgb, color, visible);
+    return vec4<f32>(srgb_to_linear(fogged), texel.a);
 }

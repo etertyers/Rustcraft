@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
-    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, Shape},
+    block::{BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     light::ChunkLight,
 };
@@ -34,6 +34,8 @@ pub struct BlockModel {
     pub opacity: u8,
     /// Light it gives off, 0–15.
     pub emission: u8,
+    /// Drawn in the blended pass (water, ice, glass).
+    pub translucent: bool,
     /// Indexed by `Face::index`.
     pub faces: [FaceTexture; 6],
 }
@@ -61,6 +63,7 @@ impl BlockModels {
             cull_same: false,
             opacity: 15,
             emission: 0,
+            translucent: false,
             faces: [FaceTexture {
                 uv: missing_uv,
                 tint: FaceTint::None,
@@ -89,6 +92,7 @@ impl BlockModels {
                     cull_same: def.cull_same,
                     opacity: def.light_opacity(),
                     emission: def.light,
+                    translucent: def.layer == RenderLayer::Translucent,
                     faces,
                 });
             }
@@ -168,12 +172,17 @@ impl ChunkArea {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
+    /// Opaque and cutout faces.
     pub indices: Vec<u32>,
+    /// Faces for the blended pass, drawn after everything opaque.
+    pub translucent: Vec<u32>,
+    /// Where `quad` puts new faces.
+    adding_translucent: bool,
 }
 
 impl Mesh {
     pub fn is_empty(&self) -> bool {
-        self.indices.is_empty()
+        self.indices.is_empty() && self.translucent.is_empty()
     }
 
     /// Adds a quad from corners ordered bottom-left, bottom-right, top-right,
@@ -206,7 +215,12 @@ impl Mesh {
         } else {
             [0, 1, 2, 0, 2, 3]
         };
-        self.indices.extend(order.map(|i| base + i));
+        let indices = if self.adding_translucent {
+            &mut self.translucent
+        } else {
+            &mut self.indices
+        };
+        indices.extend(order.map(|i| base + i));
     }
 
     /// Adds an evenly colored and lit quad visible from both sides.
@@ -379,6 +393,29 @@ fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
     ]
 }
 
+/// Height of a block's top: 1, or for a liquid with no liquid of its kind
+/// above it, 1.0.0's 8/9 for a source block.
+fn liquid_height(
+    area: &ChunkArea,
+    block: BlockState,
+    model: &BlockModel,
+    [x, y, z]: [usize; 3],
+) -> f32 {
+    if model.shape != Shape::Liquid {
+        return 1.0;
+    }
+    let above = area.get(x as i32, y as i32 + 1, z as i32);
+    if above.is_some_and(|above| above.id() == block.id()) {
+        1.0
+    } else {
+        LIQUID_SURFACE
+    }
+}
+
+/// A still liquid's surface, 1/9 below the top of its block (1.0.0's
+/// `BlockFluid.getFluidHeightPercent` for a source).
+const LIQUID_SURFACE: f32 = 8.0 / 9.0;
+
 fn translate(corners: [[f32; 3]; 4], origin: [f32; 3]) -> [[f32; 3]; 4] {
     corners.map(|c| [c[0] + origin[0], c[1] + origin[1], c[2] + origin[2]])
 }
@@ -419,6 +456,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         continue;
                     }
                     let model = models.get(block);
+                    mesh.adding_translucent = model.translucent;
                     let origin = [
                         (min_x + x as i32) as f32,
                         y as f32,
@@ -462,8 +500,10 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 );
                             }
                         }
-                        // Every other shape is a full cube until its model is built.
+                        // Every other shape is a full cube until its model is
+                        // built; liquids lower their surface.
                         _ => {
+                            let height = liquid_height(area, block, model, [x, y, z]);
                             for face in Face::ALL {
                                 let [dx, dy, dz] = face.normal();
                                 let neighbor =
@@ -477,12 +517,24 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                     .map(|c| c * face.shade());
                                 let cell = [x as i32, y as i32, z as i32];
                                 let lit = smooth_face(models, area, light, cell, face);
-                                mesh.quad(
-                                    translate(face_corners(face), origin),
-                                    texture.uv,
-                                    lit.map(|(ao, _)| color.map(|c| c * ao)),
-                                    lit.map(|(_, l)| l),
-                                );
+                                let corners =
+                                    face_corners(face).map(|[cx, cy, cz]| [cx, cy.min(height), cz]);
+                                let colors = lit.map(|(ao, _)| color.map(|c| c * ao));
+                                let lights = lit.map(|(_, l)| l);
+                                let corners = translate(corners, origin);
+                                mesh.quad(corners, texture.uv, colors, lights);
+                                if face == Face::Top && height < 1.0 {
+                                    // A liquid's surface is seen from below too.
+                                    let [a, b, c, d] = corners;
+                                    let [ca, cb, cc, cd] = colors;
+                                    let [la, lb, lc, ld] = lights;
+                                    mesh.quad(
+                                        [b, a, d, c],
+                                        texture.uv,
+                                        [cb, ca, cd, cc],
+                                        [lb, la, ld, lc],
+                                    );
+                                }
                             }
                         }
                     }
@@ -517,6 +569,7 @@ mod tests {
             (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout, light: 14),
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
             (id: 85, name: "fence", hardness: 2.0, shape: Fence),
+            (id: 9, name: "water", hardness: 100.0, shape: Liquid, layer: Translucent, solid: false, cull_same: true),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
         BlockModels::new(
@@ -821,5 +874,35 @@ mod tests {
         };
         assert_eq!(top_color(0.0), [0.0, 200.0 / 255.0, 0.0]);
         assert_eq!(top_color(5.0), [200.0 / 255.0, 0.0, 0.0]);
+    }
+
+    const WATER: BlockState = BlockState::new(9, 0);
+
+    #[test]
+    fn water_goes_in_the_translucent_list_with_a_lowered_surface_seen_from_below() {
+        let mesh = mesh_with(&[(4, 60, 4, WATER)], true);
+        assert!(mesh.indices.is_empty(), "nothing opaque");
+        // Six faces plus the surface seen from below.
+        assert_eq!(mesh.translucent.len() / 6, 7);
+        let top = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[1])
+            .fold(f32::MIN, f32::max);
+        assert_eq!(top, 60.0 + LIQUID_SURFACE);
+    }
+
+    #[test]
+    fn water_under_water_is_full_height_and_hides_shared_faces() {
+        let mesh = mesh_with(&[(4, 60, 4, WATER), (4, 61, 4, WATER)], true);
+        // Two blocks of 5 visible faces each, plus the surface from below.
+        assert_eq!(mesh.translucent.len() / 6, 11);
+        let lower_top = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[1])
+            .filter(|&y| y < 61.5)
+            .fold(f32::MIN, f32::max);
+        assert_eq!(lower_top, 61.0, "the lower block reaches the one above");
     }
 }

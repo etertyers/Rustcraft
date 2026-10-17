@@ -11,7 +11,7 @@ pub mod vertex;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result, bail};
-use glam::{IVec3, Vec3};
+use glam::{IVec3, Vec2, Vec3};
 use image::RgbaImage;
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -107,10 +107,12 @@ macro_rules! world_shader {
 }
 
 /// A chunk's mesh on the GPU.
+/// A mesh on the GPU: opaque indices first, then translucent ones.
 struct ChunkBuffers {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    index_count: u32,
+    opaque: u32,
+    translucent: u32,
 }
 
 pub struct Renderer {
@@ -120,6 +122,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
+    translucent_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     sun_bind_group: wgpu::BindGroup,
     moon_bind_group: wgpu::BindGroup,
@@ -214,36 +217,10 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(atlas_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blocks"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(vertex::Vertex::layout())],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(config.format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline =
+            create_block_pipeline(&device, &pipeline_layout, &shader, config.format, false);
+        let translucent_pipeline =
+            create_block_pipeline(&device, &pipeline_layout, &shader, config.format, true);
 
         let sky_pipeline =
             create_sky_pipeline(&device, &globals_layout, &texture_layout, config.format);
@@ -263,6 +240,7 @@ impl Renderer {
             config,
             depth_view,
             pipeline,
+            translucent_pipeline,
             sky_pipeline,
             sun_bind_group,
             moon_bind_group,
@@ -302,18 +280,31 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&mesh.vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
+        let all: Vec<u32> = mesh
+            .indices
+            .iter()
+            .chain(&mesh.translucent)
+            .copied()
+            .collect();
         let indices = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
-                contents: bytemuck::cast_slice(&mesh.indices),
+                contents: bytemuck::cast_slice(&all),
                 usage: wgpu::BufferUsages::INDEX,
             });
         ChunkBuffers {
             vertices,
             indices,
-            index_count: mesh.indices.len() as u32,
+            opaque: mesh.indices.len() as u32,
+            translucent: mesh.translucent.len() as u32,
         }
+    }
+
+    fn draw_clouds(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(&self.cloud_pipeline);
+        pass.set_bind_group(1, &self.cloud_bind_group, &[]);
+        pass.draw(0..6, 0..1);
     }
 
     /// Outlines `block` from the next frame on, or nothing.
@@ -426,28 +417,48 @@ impl Renderer {
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-            self.chunks_drawn = 0;
-            for (pos, chunk) in &self.chunks {
-                let (x, z) = pos.min_block();
-                let min = Vec3::new(x as f32, 0.0, z as f32);
-                let max =
-                    min + Vec3::new(CHUNK_SIZE as f32, WORLD_HEIGHT as f32, CHUNK_SIZE as f32);
-                if !frustum.intersects_box(min, max) {
-                    continue;
-                }
-                pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-                pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..chunk.index_count, 0, 0..1);
-                self.chunks_drawn += 1;
+            // Chunks in view, nearest first: opaque faces draw front to back,
+            // translucent ones back to front.
+            let mut visible: Vec<(f32, &ChunkBuffers)> = self
+                .chunks
+                .iter()
+                .filter_map(|(pos, chunk)| {
+                    let (x, z) = pos.min_block();
+                    let min = Vec3::new(x as f32, 0.0, z as f32);
+                    let size = Vec3::new(CHUNK_SIZE as f32, WORLD_HEIGHT as f32, CHUNK_SIZE as f32);
+                    let center = min + size / 2.0;
+                    let distance =
+                        Vec2::new(center.x - camera.position.x, center.z - camera.position.z);
+                    frustum
+                        .intersects_box(min, min + size)
+                        .then_some((distance.length_squared(), chunk))
+                })
+                .collect();
+            visible.sort_by(|a, b| a.0.total_cmp(&b.0));
+            self.chunks_drawn = visible.len();
+            for (_, chunk) in &visible {
+                draw_range(&mut pass, chunk, 0..chunk.opaque);
             }
             if let Some(entities) = &self.entities {
-                pass.set_vertex_buffer(0, entities.vertices.slice(..));
-                pass.set_index_buffer(entities.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..entities.index_count, 0, 0..1);
+                draw_range(&mut pass, entities, 0..entities.opaque);
             }
-            pass.set_pipeline(&self.cloud_pipeline);
-            pass.set_bind_group(1, &self.cloud_bind_group, &[]);
-            pass.draw(0..6, 0..1);
+            // Clouds and water both blend: draw whichever is farther first.
+            let above_clouds = camera.position.y > environment.cloud_height;
+            if above_clouds {
+                self.draw_clouds(&mut pass);
+            }
+            pass.set_pipeline(&self.translucent_pipeline);
+            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            for (_, chunk) in visible.iter().rev() {
+                draw_range(
+                    &mut pass,
+                    chunk,
+                    chunk.opaque..chunk.opaque + chunk.translucent,
+                );
+            }
+            if !above_clouds {
+                self.draw_clouds(&mut pass);
+            }
             if outline {
                 self.outline.draw(&mut pass);
             }
@@ -488,6 +499,16 @@ impl Renderer {
         self.queue.present(frame);
         Ok(true)
     }
+}
+
+/// Draws `range` of a mesh's indices, if it isn't empty.
+fn draw_range(pass: &mut wgpu::RenderPass<'_>, mesh: &ChunkBuffers, range: std::ops::Range<u32>) {
+    if range.is_empty() {
+        return;
+    }
+    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+    pass.draw_indexed(range, 0, 0..1);
 }
 
 fn globals(view_proj: glam::Mat4, camera: Vec3, env: &Environment) -> Globals {
@@ -584,6 +605,60 @@ fn create_texture_bind_group(
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
+    })
+}
+
+/// Block faces: opaque and cutout ones write depth; translucent ones blend
+/// over what's behind them and don't.
+fn create_block_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    translucent: bool,
+) -> wgpu::RenderPipeline {
+    let (label, entry, blend) = if translucent {
+        (
+            "translucent blocks",
+            "fs_translucent",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+        )
+    } else {
+        ("blocks", "fs_main", None)
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[Some(vertex::Vertex::layout())],
+        },
+        primitive: wgpu::PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(!translucent),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
     })
 }
 
