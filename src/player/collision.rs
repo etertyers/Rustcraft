@@ -2,7 +2,11 @@
 
 use glam::DVec3;
 
-use crate::world::{World, block::BlockRegistry, chunk::ChunkPos};
+use crate::world::{
+    World,
+    block::{BlockRegistry, Fluid},
+    chunk::ChunkPos,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
@@ -62,6 +66,13 @@ pub trait Collider {
 
     /// Slipperiness of the block at (x, y, z), 0.6 for most blocks.
     fn slipperiness(&self, x: i32, y: i32, z: i32) -> f32;
+
+    /// The liquid `region` reaches into, if any (water first). A liquid
+    /// counts once the region's top reaches its surface, as in 1.0.0's
+    /// `handleMaterialAcceleration`.
+    fn liquid(&self, _region: &Aabb) -> Option<Fluid> {
+        None
+    }
 }
 
 /// The loaded world's solid blocks. Unloaded chunks are walls, so nothing
@@ -109,6 +120,34 @@ impl Collider for WorldCollider<'_> {
             .block(x, y, z)
             .and_then(|block| self.blocks.get(block.id()))
             .map_or(0.6, |def| def.slipperiness)
+    }
+
+    fn liquid(&self, region: &Aabb) -> Option<Fluid> {
+        let min = region.min.floor().as_ivec3();
+        let max = region.max.floor().as_ivec3();
+        let mut found = None;
+        for y in min.y..=max.y {
+            for z in min.z..=max.z {
+                for x in min.x..=max.x {
+                    let Some(block) = self.world.block(x, y, z) else {
+                        continue;
+                    };
+                    let Some(fluid) = self.blocks.get(block.id()).and_then(|def| def.fluid) else {
+                        continue;
+                    };
+                    // 1.0.0's getFluidHeightPercent: level 0 (a source) fills 8/9.
+                    let level = (block.data() & 7) as f64;
+                    let surface = (y + 1) as f64 - (level + 1.0) / 9.0;
+                    if region.max.y >= surface {
+                        if fluid == Fluid::Water {
+                            return Some(fluid);
+                        }
+                        found = Some(fluid);
+                    }
+                }
+            }
+        }
+        found
     }
 }
 

@@ -20,10 +20,7 @@ use winit::{
 
 use crate::{
     assets, config,
-    game::{
-        Game, chunk_workers,
-        environment::{EyeIn, environment},
-    },
+    game::{Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
     inventory::{
         player::{HOTBAR_SLOTS, SLOTS},
@@ -488,7 +485,7 @@ impl App {
         };
         let (ui, action) = debug_ui.menu_frame(window, menu);
         // A noon sky behind the menu.
-        let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, EyeIn::Air);
+        let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
         let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), &noon, ui);
         self.finish_frame(event_loop, now, result);
         if let Some(action) = action {

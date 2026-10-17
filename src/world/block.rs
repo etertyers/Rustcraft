@@ -191,6 +191,13 @@ pub enum Placement {
     Torch,
 }
 
+/// The liquid a block is (flowing or still).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Fluid {
+    Water,
+    Lava,
+}
+
 /// How a block's pixels are drawn.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum RenderLayer {
@@ -249,6 +256,9 @@ pub struct BlockDef {
     pub needs_ground: bool,
     #[serde(default)]
     pub placement: Placement,
+    /// Liquids swim, slow mining and color the fog.
+    #[serde(default)]
+    pub fluid: Option<Fluid>,
     /// The tool that mines it fast (1.0.0's effective tool lists and
     /// materials).
     #[serde(default)]

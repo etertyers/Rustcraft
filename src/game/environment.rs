@@ -8,20 +8,8 @@ use super::Game;
 use crate::{
     config::{CHUNK_SIZE, CLOUD_HEIGHT, RENDER_DISTANCE},
     render::Environment,
-    world::{biome::Biome, daytime},
+    world::{biome::Biome, block::Fluid, daytime},
 };
-
-/// What the camera is inside, for the fog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EyeIn {
-    Air,
-    Water,
-    Lava,
-}
-
-/// Water and lava block IDs (flowing and still).
-const WATER: [u16; 2] = [8, 9];
-const LAVA: [u16; 2] = [10, 11];
 
 /// 1.0.0 mixes this much of the sky color into the fog at its "far" render
 /// distance: 1 − (1/4)^0.25.
@@ -33,14 +21,11 @@ const WATER_FOG: (f32, Vec3) = (0.1, Vec3::new(0.02, 0.02, 0.2));
 const LAVA_FOG: (f32, Vec3) = (2.0, Vec3::new(0.6, 0.1, 0.0));
 
 impl Game {
-    /// What the camera's eyes are in.
-    pub fn eye_in(&self) -> EyeIn {
+    /// The liquid the camera is in, if any.
+    pub fn eye_in(&self) -> Option<Fluid> {
         let p = self.camera.position.floor().as_ivec3();
-        match self.chunks.world().block(p.x, p.y, p.z).map(|b| b.id()) {
-            Some(id) if WATER.contains(&id) => EyeIn::Water,
-            Some(id) if LAVA.contains(&id) => EyeIn::Lava,
-            _ => EyeIn::Air,
-        }
+        let block = self.chunks.world().block(p.x, p.y, p.z)?;
+        self.items.blocks.get(block.id())?.fluid
     }
 
     pub fn environment(&self) -> Environment {
@@ -57,7 +42,13 @@ impl Game {
 }
 
 /// The environment at game time `time` (plus `partial` of a tick).
-pub fn environment(time: u64, partial: f32, biome: Biome, look: Vec3, eye: EyeIn) -> Environment {
+pub fn environment(
+    time: u64,
+    partial: f32,
+    biome: Biome,
+    look: Vec3,
+    eye: Option<Fluid>,
+) -> Environment {
     let angle = daytime::celestial_angle(time, partial);
     let sky_color = daytime::sky_color(angle, biome.climate().0);
     let mut fog_color = daytime::fog_color(angle);
@@ -75,9 +66,9 @@ pub fn environment(time: u64, partial: f32, biome: Biome, look: Vec3, eye: EyeIn
     }
     let fog_end = (RENDER_DISTANCE * CHUNK_SIZE as i32) as f32;
     let (fog_density, fog_color) = match eye {
-        EyeIn::Air => (0.0, fog_color),
-        EyeIn::Water => WATER_FOG,
-        EyeIn::Lava => LAVA_FOG,
+        None => (0.0, fog_color),
+        Some(Fluid::Water) => WATER_FOG,
+        Some(Fluid::Lava) => LAVA_FOG,
     };
     Environment {
         time: time as f32 + partial,
@@ -101,12 +92,12 @@ mod tests {
 
     #[test]
     fn noon_is_bright_and_midnight_dark() {
-        let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, EyeIn::Air);
+        let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
         assert_eq!(noon.sun_brightness, 1.0);
         assert_eq!(noon.star_brightness, 0.0);
         assert!(noon.sky_color.z > 0.9);
         assert_eq!((noon.fog_start, noon.fog_end), (36.0, 144.0));
-        let midnight = environment(18000, 0.0, Biome::Plains, Vec3::NEG_Z, EyeIn::Air);
+        let midnight = environment(18000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
         assert!(midnight.sun_brightness < 0.21);
         assert_eq!(midnight.sky_color, Vec3::ZERO);
         assert!(midnight.fog_color.length() < 0.2);
@@ -114,17 +105,17 @@ mod tests {
 
     #[test]
     fn under_water_the_fog_is_thick_and_blue() {
-        let env = environment(6000, 0.0, Biome::Ocean, Vec3::NEG_Z, EyeIn::Water);
+        let env = environment(6000, 0.0, Biome::Ocean, Vec3::NEG_Z, Some(Fluid::Water));
         assert_eq!((env.fog_density, env.fog_color), WATER_FOG);
-        let lava = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, EyeIn::Lava);
+        let lava = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, Some(Fluid::Lava));
         assert_eq!(lava.fog_density, 2.0);
     }
 
     #[test]
     fn looking_at_the_sunset_tints_the_fog() {
         // About 12700 is sunset: the sun at the western horizon.
-        let west = environment(12700, 0.0, Biome::Plains, Vec3::NEG_X, EyeIn::Air);
-        let east = environment(12700, 0.0, Biome::Plains, Vec3::X, EyeIn::Air);
+        let west = environment(12700, 0.0, Biome::Plains, Vec3::NEG_X, None);
+        let east = environment(12700, 0.0, Biome::Plains, Vec3::X, None);
         assert!(west.sunrise.is_some());
         assert!(
             west.fog_color.x > east.fog_color.x + 0.1,
