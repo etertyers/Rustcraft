@@ -65,6 +65,7 @@ One line per decision: date, decision, reason.
   - It uses the "Moody" brightness setting.
   - The sun is at full daylight until the day/night cycle (M8).
   — 1.0.0 formula.
+- 2026-10-17 — The block shader multiplies the texture by tint, shade and lightmap in exact sRGB values (converting the texel back to sRGB and the result to linear), replacing the `pow(color, 2.2)` approximation from M1. — The approximation crushed light level 0 to pure black (Kenzo's cave screenshot was all 0,0,0); 1.0.0 gives about 2–4/255 there.
 - 2026-10-17 — Torches and redstone torches (`placement: Torch` in `blocks.ron`):
   - **Attaching:** they attach to the clicked face with 1.0.0's data values: 1–4 walls (attached west, east, north, south), 5 floor. They need an opaque cube to attach to and can't go on ceilings.
   - **Model:** they draw with 1.0.0's `renderTorchAtAngle` model: a 2×2-pixel stick from four planes plus a cap. Wall torches are raised 0.2, shifted 0.1 and lean 0.4 at the base.

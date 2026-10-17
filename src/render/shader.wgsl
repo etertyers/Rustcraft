@@ -57,8 +57,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if texel.a < 0.5 {
         discard;
     }
-    // The vertex color is sRGB like Minecraft's tint and shade factors; the
-    // texel is already linear, so linearize the color before multiplying.
+    // Minecraft multiplies the texture by its tint, shade and lightmap in
+    // sRGB values, so do the same: back to sRGB, multiply, then linear again
+    // for the sRGB target. Multiplying in linear space crushes the darkest
+    // light levels to pure black.
     let color = in.color * lightmap(in.light);
-    return vec4<f32>(texel.rgb * pow(color, vec3<f32>(2.2)), 1.0);
+    return vec4<f32>(srgb_to_linear(linear_to_srgb(texel.rgb) * color), 1.0);
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let curve = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(curve, c * 12.92, c <= vec3<f32>(0.0031308));
+}
+
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let curve = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(curve, c / 12.92, c <= vec3<f32>(0.04045));
 }
