@@ -823,6 +823,21 @@ impl BlockDef {
                 && state.get(Prop::SlabType) == super::props::slab_type::DOUBLE)
     }
 
+    /// Whether its state hangs on its neighbors and is worked out again
+    /// when they change: fence, pane and vine connections, stair corners,
+    /// redstone dust, fence gates in walls and snowy grass.
+    pub fn shaped_by_neighbors(&self) -> bool {
+        matches!(
+            self.shape,
+            Shape::Fence
+                | Shape::Pane
+                | Shape::Stairs
+                | Shape::RedstoneWire
+                | Shape::Vine
+                | Shape::FenceGate
+        ) || self.props.contains(&Prop::Snowy)
+    }
+
     /// Whether placing something may overwrite `state`: a snow layer only
     /// while it's one layer thin.
     pub fn is_replaceable(&self, state: BlockState) -> bool {

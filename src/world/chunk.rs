@@ -54,6 +54,10 @@ pub struct Chunk {
     /// Biome of each column, indexed `z * 16 + x`.
     biomes: [Biome; CHUNK_SIZE * CHUNK_SIZE],
     block_entities: BTreeMap<LocalPos, BlockEntity>,
+    /// Blocks whose state hangs on their neighbors (fence connections,
+    /// stair corners) and must be worked out again once the chunks around
+    /// are loaded: those upgraded from v1.0, which didn't store it.
+    pub post_process: Vec<LocalPos>,
 }
 
 impl Chunk {
@@ -63,6 +67,7 @@ impl Chunk {
             sections: Default::default(),
             biomes: [Biome::default(); CHUNK_SIZE * CHUNK_SIZE],
             block_entities: BTreeMap::new(),
+            post_process: Vec::new(),
         }
     }
 

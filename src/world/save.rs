@@ -44,6 +44,8 @@ struct ChunkData {
     biomes: Vec<u8>,
     /// Chests and furnaces, by position in the chunk.
     block_entities: Vec<(LocalPos, BlockEntity)>,
+    /// `Chunk::post_process`.
+    post_process: Vec<LocalPos>,
 }
 
 /// A section's blocks as indices into its own list of states, which are
@@ -104,6 +106,7 @@ pub fn encode_chunk(chunk: &Chunk) -> Vec<u8> {
             .block_entities()
             .map(|(at, entity)| (at, entity.clone()))
             .collect(),
+        post_process: chunk.post_process.clone(),
     };
     let bytes = bincode::serde::encode_to_vec(&data, bincode_config())
         .expect("encoding to memory can't fail");
@@ -148,12 +151,13 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
         }
         chunk.set_block_entity(at, Some(entity));
     }
+    chunk.post_process = data.post_process;
     Ok(chunk)
 }
 
 /// Chunks per region side, like 1.0.0's McRegion files.
 pub const REGION_SIZE: i32 = 32;
-const REGION_CHUNKS: usize = (REGION_SIZE * REGION_SIZE) as usize;
+pub(crate) const REGION_CHUNKS: usize = (REGION_SIZE * REGION_SIZE) as usize;
 const REGION_MAGIC: &[u8; 4] = b"RCRG";
 /// 2 since v1.1 (chunks inside are `CHUNK_VERSION` 2).
 const REGION_VERSION: u32 = 2;
@@ -178,7 +182,7 @@ impl RegionStore {
         self.dir.join(format!("r.{x}.{z}.rcr"))
     }
 
-    fn slot(pos: ChunkPos) -> usize {
+    pub(crate) fn slot(pos: ChunkPos) -> usize {
         (pos.z.rem_euclid(REGION_SIZE) * REGION_SIZE + pos.x.rem_euclid(REGION_SIZE)) as usize
     }
 
@@ -212,6 +216,43 @@ impl RegionStore {
         Ok(Some(chunk))
     }
 
+    /// Rewrites every region file still in the v1.0 format, decoding its
+    /// chunks with `decode_v1` and saving them in today's. Returns how many
+    /// chunks were upgraded.
+    pub fn upgrade_v1(
+        &self,
+        decode_v1: impl Fn(&[u8]) -> Result<Chunk, SaveError>,
+    ) -> Result<usize, SaveError> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(err.into()),
+        };
+        let mut upgraded = 0;
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().is_none_or(|ext| ext != "rcr") {
+                continue;
+            }
+            let (version, blobs) = read_region(&path)?;
+            if version != 1 {
+                continue;
+            }
+            let blobs = blobs
+                .into_iter()
+                .map(|blob| {
+                    blob.map(|old| {
+                        upgraded += 1;
+                        decode_v1(&old).map(|chunk| encode_chunk(&chunk))
+                    })
+                    .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            write_region(&path, &blobs)?;
+        }
+        Ok(upgraded)
+    }
+
     /// Writes `chunks` into their region files, keeping the other chunks
     /// already saved there.
     pub fn save<'a>(&self, chunks: impl IntoIterator<Item = &'a Chunk>) -> Result<(), SaveError> {
@@ -234,14 +275,24 @@ impl RegionStore {
     }
 }
 
-fn check_header(header: &[u8]) -> Result<(), SaveError> {
-    let version = u32::from_le_bytes(header[4..8].try_into().unwrap());
-    if &header[..4] != REGION_MAGIC || version != REGION_VERSION {
-        return Err(SaveError::Corrupt(format!(
-            "not a version {REGION_VERSION} region file"
-        )));
+/// The region file version in `header`, if it's a region file.
+fn header_version(header: &[u8]) -> Result<u32, SaveError> {
+    if &header[..4] != REGION_MAGIC {
+        return Err(SaveError::Corrupt("not a region file".into()));
     }
-    Ok(())
+    Ok(u32::from_le_bytes(header[4..8].try_into().unwrap()))
+}
+
+fn check_header(header: &[u8]) -> Result<(), SaveError> {
+    match header_version(header)? {
+        REGION_VERSION => Ok(()),
+        1 => Err(SaveError::Corrupt(
+            "a v1.0 region file (the world needs upgrading first)".into(),
+        )),
+        version => Err(SaveError::Corrupt(format!(
+            "region file version {version}, not {REGION_VERSION}"
+        ))),
+    }
 }
 
 fn parse_entry(entry: &[u8]) -> (usize, usize) {
@@ -250,18 +301,29 @@ fn parse_entry(entry: &[u8]) -> (usize, usize) {
     (offset as usize, len as usize)
 }
 
+/// Each slot's encoded chunk, if one is saved there.
+type Blobs = Vec<Option<Vec<u8>>>;
+
 /// Every saved chunk's encoded bytes, by slot (all `None` if there's no file).
-fn read_blobs(path: &Path) -> Result<Vec<Option<Vec<u8>>>, SaveError> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(vec![None; REGION_CHUNKS]),
-        Err(err) => return Err(err.into()),
-    };
+fn read_blobs(path: &Path) -> Result<Blobs, SaveError> {
+    if !path.exists() {
+        return Ok(vec![None; REGION_CHUNKS]);
+    }
+    let (version, blobs) = read_region(path)?;
+    if version != REGION_VERSION {
+        check_header(&[&REGION_MAGIC[..], &version.to_le_bytes()].concat())?;
+    }
+    Ok(blobs)
+}
+
+/// A region file's version and every saved chunk's encoded bytes, by slot.
+fn read_region(path: &Path) -> Result<(u32, Blobs), SaveError> {
+    let bytes = fs::read(path)?;
     if bytes.len() < HEADER_LEN {
         return Err(SaveError::Corrupt("truncated region header".into()));
     }
-    check_header(&bytes)?;
-    (0..REGION_CHUNKS)
+    let version = header_version(&bytes)?;
+    let blobs = (0..REGION_CHUNKS)
         .map(|slot| {
             let (offset, len) = parse_entry(&bytes[8 + slot * 8..]);
             if len == 0 {
@@ -272,16 +334,26 @@ fn read_blobs(path: &Path) -> Result<Vec<Option<Vec<u8>>>, SaveError> {
                 .ok_or_else(|| SaveError::Corrupt(format!("slot {slot} runs past the file")))?;
             Ok(Some(blob.to_vec()))
         })
-        .collect()
+        .collect::<Result<_, SaveError>>()?;
+    Ok((version, blobs))
 }
 
 /// Writes a temporary file and renames it over the old one, so a crash
 /// mid-save leaves the previous version intact.
 fn write_region(path: &Path, blobs: &[Option<Vec<u8>>]) -> Result<(), SaveError> {
+    write_region_version(path, blobs, REGION_VERSION)
+}
+
+/// `write_region` with any version number (tests write v1.0 files).
+pub(crate) fn write_region_version(
+    path: &Path,
+    blobs: &[Option<Vec<u8>>],
+    version: u32,
+) -> Result<(), SaveError> {
     let total: usize = blobs.iter().flatten().map(Vec::len).sum();
     let mut bytes = Vec::with_capacity(HEADER_LEN + total);
     bytes.extend_from_slice(REGION_MAGIC);
-    bytes.extend_from_slice(&REGION_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&version.to_le_bytes());
     let mut offset = HEADER_LEN;
     for blob in blobs {
         let len = blob.as_ref().map_or(0, Vec::len);

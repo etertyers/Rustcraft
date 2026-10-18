@@ -217,7 +217,9 @@ impl Game {
 
     /// Opens the saved world in `dir` where the player left it.
     pub fn open(dir: WorldDir, items: Items, models: Arc<BlockModels>) -> Result<Self> {
-        let level = dir.load_level()?;
+        let mut level = dir.load_level()?;
+        // A v1.0 world is upgraded the first time it's opened.
+        dir.migrate_v1(&mut level)?;
         info!(
             "opening {:?} (seed {}, {})",
             level.name,
@@ -227,7 +229,7 @@ impl Game {
         let source = ChunkSource::Terrain(Box::new(Terrain::new(level.seed)));
         let chunks = ChunkManager::with_store(
             source,
-            dir.regions(),
+            dir.regions(level.dimension),
             models,
             config::RENDER_DISTANCE,
             chunk_workers(),
