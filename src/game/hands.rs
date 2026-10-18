@@ -18,7 +18,7 @@ use crate::{
         stats::DamageSource,
     },
     world::{
-        block::{Activate, Fluid, Placement},
+        block::{Activate, Fluid},
         harvest,
         props::{Prop, door_half},
     },
@@ -420,6 +420,12 @@ impl Game {
             Activate::Furnace => self.open_furnace(cell),
             Activate::Bed => self.use_bed(cell),
             Activate::Door => self.toggle_door(cell),
+            Activate::Open => {
+                if let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z) {
+                    let open = !block.bool(Prop::Open);
+                    self.edit(&[(cell, block.with_bool(Prop::Open, open))]);
+                }
+            }
         }
         true
     }
@@ -457,39 +463,11 @@ impl Game {
         };
         let world = self.chunks.world();
         let player = self.body.aabb();
-        let Some((at, placed)) =
-            interaction::place_block(world, self.items.blocks, hit, block, &player)
+        let yaw = self.camera.yaw;
+        let Some(edits) =
+            interaction::place_block(world, self.items.blocks, hit, block, &player, yaw)
         else {
             return;
-        };
-        let placement = placed.def().placement;
-        let yaw = self.camera.yaw;
-        let edits = match placement {
-            Placement::Facing => {
-                let prop = if placed.has(Prop::FacingAll) {
-                    Prop::FacingAll
-                } else {
-                    Prop::Facing
-                };
-                let front = interaction::facing_toward(yaw);
-                vec![(at, placed.with_face(prop, front))]
-            }
-            Placement::Bed => {
-                let blocks = self.items.blocks;
-                match interaction::place_bed(world, blocks, hit, (at, placed), yaw, &player) {
-                    Some(halves) => halves.to_vec(),
-                    None => return,
-                }
-            }
-            Placement::Slab => vec![interaction::place_slab(world, (at, placed))],
-            Placement::Door => {
-                let blocks = self.items.blocks;
-                match interaction::place_door(world, blocks, hit, (at, placed), yaw, &player) {
-                    Some(halves) => halves.to_vec(),
-                    None => return,
-                }
-            }
-            _ => vec![(at, placed)],
         };
         self.edit(&edits);
         if self.mode.uses_up_items() {

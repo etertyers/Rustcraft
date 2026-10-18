@@ -88,15 +88,16 @@ impl Scene {
         let face_center = below.as_dvec3() + DVec3::new(0.5, 0.99, 0.5);
         let hit = self.aim(face_center)?;
         assert_eq!(hit.block, below, "something else is in the way");
-        let (at, block) = place_block(
+        let edits = place_block(
             &self.world,
             self.blocks,
             &hit,
             COBBLESTONE,
             &self.body.aabb(),
+            0.0,
         )?;
-        self.apply(&[(at, block)]);
-        Some(at)
+        self.apply(&edits);
+        Some(edits[0].0)
     }
 
     /// Runs `ticks` ticks of `input` facing `yaw`, checking for clipping.

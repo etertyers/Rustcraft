@@ -473,7 +473,7 @@ pub enum Shape {
     DragonEgg,
 }
 
-/// How placing a block picks its state.
+/// How placing a block picks its state (modern `getStateForPlacement`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Placement {
     /// Keeps the item's state.
@@ -484,15 +484,35 @@ pub enum Placement {
     Torch { wall: BlockId },
     /// Turns its front (`facing`) toward the player, like a furnace.
     Facing,
+    /// Faces the way the player looks (fence gates).
+    Look,
+    /// Faces a quarter turn clockwise from the way the player looks (anvils).
+    LookClockwise,
     /// A log, lying along the axis of the clicked face.
     Axis,
     /// A two-block bed on top of a block: the foot where placed and the
     /// head one block further the way the player looks.
     Bed,
-    /// A slab, joining the same slab already in the cell into a double one.
+    /// A slab on the bottom or top half of its cell, by where it was
+    /// clicked, or joining the same slab there into a double one.
     Slab,
     /// A two-block door on top of a full block.
     Door,
+    /// Stairs facing the way the player looks, upside down if placed
+    /// against the top half of a block.
+    Stairs,
+    /// A trapdoor against the clicked side, on its top or bottom half.
+    Trapdoor,
+    /// On the side of a block, facing out from it (ladders).
+    Wall,
+    /// On the floor, ceiling or side of a block (levers and buttons).
+    Attached,
+    /// Vines, on the side or underside of the clicked block.
+    Vine,
+    /// Snow layers, stacking onto the same block up to 8.
+    Layers,
+    /// Rails, along the way the player looks.
+    Rail,
 }
 
 /// The way from a bed's foot to its head.
@@ -541,6 +561,8 @@ pub enum Activate {
     Bed,
     /// Opens or closes it.
     Door,
+    /// Opens or closes it, a single block (trapdoors, fence gates).
+    Open,
 }
 
 /// How a block burns (modern `FireBlock.setFlammable`).
@@ -744,19 +766,21 @@ impl BlockDef {
 
     /// Offset to the block holding this one up, if it pops off without it.
     pub fn support(&self, state: BlockState) -> Option<IVec3> {
-        match self.placement {
+        let behind = || IVec3::from_array(state.face(Prop::Facing).opposite().normal());
+        match self.shape {
             // A wall torch hangs on the block behind it.
-            _ if state.has(Prop::Facing) && self.shape == Shape::Torch => Some(IVec3::from_array(
-                state.face(Prop::Facing).opposite().normal(),
-            )),
-            Placement::Torch { .. } => Some(IVec3::NEG_Y),
-            Placement::Plain | Placement::Facing | Placement::Axis | Placement::Slab => {
-                self.needs_ground.then_some(IVec3::NEG_Y)
-            }
+            Shape::Torch if state.has(Prop::Facing) => Some(behind()),
+            Shape::Torch => Some(IVec3::NEG_Y),
+            Shape::Ladder => Some(behind()),
+            Shape::Lever | Shape::Button => Some(match state.get(Prop::AttachFace) {
+                super::props::attach_face::FLOOR => IVec3::NEG_Y,
+                super::props::attach_face::CEILING => IVec3::Y,
+                _ => behind(),
+            }),
             // The lower half stands on the ground, the upper on the lower.
-            Placement::Door => Some(IVec3::NEG_Y),
+            Shape::Door => Some(IVec3::NEG_Y),
             // Each half goes with the other.
-            Placement::Bed => {
+            Shape::Bed => {
                 let toward_head = bed_direction(state);
                 Some(
                     if state.get(Prop::BedPart) == super::props::bed_part::FOOT {
@@ -766,6 +790,7 @@ impl BlockDef {
                     },
                 )
             }
+            _ => self.needs_ground.then_some(IVec3::NEG_Y),
         }
     }
 

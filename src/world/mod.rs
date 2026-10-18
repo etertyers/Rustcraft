@@ -5,6 +5,7 @@ pub mod block;
 pub mod block_entity;
 pub mod blocks;
 pub mod chunk;
+pub mod connect;
 pub mod daytime;
 pub mod dimension;
 pub mod fast_hash;
