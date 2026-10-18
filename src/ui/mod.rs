@@ -3,6 +3,7 @@
 mod fps;
 pub mod gui;
 pub mod menu;
+pub mod packs;
 pub mod pause;
 pub mod screens;
 
@@ -65,10 +66,15 @@ pub struct DebugUi {
 }
 
 impl DebugUi {
-    /// `atlas` is the block and item texture atlas, for item icons.
-    pub fn new(window: &Window, atlas: &image::RgbaImage) -> anyhow::Result<Self> {
+    /// `atlas` is the block and item texture atlas, for item icons; GUI
+    /// images come from `res`.
+    pub fn new(
+        window: &Window,
+        atlas: &image::RgbaImage,
+        res: &crate::pack::Resources,
+    ) -> anyhow::Result<Self> {
         let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, atlas, &crate::assets::dir().join("textures/gui"))?;
+        let textures = GuiTextures::load(&ctx, atlas, res)?;
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,
@@ -84,6 +90,21 @@ impl DebugUi {
             fps: FpsCounter::new(Instant::now()),
             visible: false,
         })
+    }
+
+    /// Reloads the GUI images after the resource packs change.
+    pub fn set_textures(
+        &mut self,
+        atlas: &image::RgbaImage,
+        res: &crate::pack::Resources,
+    ) -> anyhow::Result<()> {
+        self.textures = GuiTextures::load(&self.ctx, atlas, res)?;
+        Ok(())
+    }
+
+    /// The egui context, for loading pack icons.
+    pub fn context(&self) -> &egui::Context {
+        &self.ctx
     }
 
     /// Feeds a window event to egui so it tracks size and scale.

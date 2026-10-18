@@ -15,7 +15,7 @@ pub type MobKind = usize;
 #[serde(deny_unknown_fields)]
 pub struct MobDef {
     pub name: String,
-    /// Under `assets/textures/entity/`.
+    /// Its texture's resource location (`entity/pig/temperate_pig`).
     pub texture: String,
     pub health: i32,
     pub width: f64,
@@ -172,9 +172,9 @@ mod tests {
                 group: 4
             }
         );
-        let textures = crate::assets::dir().join("textures/entity");
+        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
         for (_, mob) in mobs.iter() {
-            assert!(textures.join(&mob.texture).is_file(), "{}", mob.texture);
+            assert!(base.texture(&mob.texture).is_some(), "{}", mob.texture);
         }
     }
 }

@@ -94,9 +94,10 @@ src/
   ui/                # HUD, hotbar, inventory screen, menus (egui)
   audio/
 assets/
-  textures/          # Kenzo's PNGs from the planning folder's assets/ → packed into an atlas at startup
+  textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
   sounds/            # Kenzo's sound files, named per docs/sounds.md
   data/              # blocks.ron, items.ron, recipes.ron
+resourcepacks/       # beside saves/: Minecraft resource packs, picked in the Resource Packs screen
 docs/
   blocks-and-items.md
   sounds.md
@@ -107,7 +108,7 @@ docs/
 **Key conventions**
 - **World size:** Y is up. Chunks are 16×16 columns made of vertical 16³ sections. World height is **256** (Y 0..255, 16 sections) since M14 (128 in v1.0), with sea level at Y 63. Default render distance is **9 chunks**. Both are constants in `config.rs`; if 60 FPS isn't reachable, lower them, note it in `DECISIONS.md`, and tell Kenzo.
 - **IDs:** Since M14, blocks and items have modern Java Edition names (`minecraft:oak_log`), defined in `assets/data/blocks.ron` and `items.ron`; `build.rs` turns the names into constants (`world::blocks::OAK_LOG`, `inventory::items::STICK`). Runtime IDs are file positions and saves store names. A `BlockState` is a block plus modern block state properties (`world::props`). `assets/data/legacy.ron` maps v1.0's numeric 1.0.0 IDs to the new names. Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type, placement, shape) live in `blocks.ron`. Never scatter block behavior across `match` arms.
-- **Textures:** Use the PNGs Kenzo provided in `assets/textures/` (from M15 on, also any resource pack Kenzo selects). At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
+- **Textures (M15):** textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/`; older names are in `assets/data/texture_names.ron`. `look::Look` builds everything texture-derived and is rebuilt when the packs change. At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
 - **Timing:** Game logic runs at a fixed 20 ticks/second, like Minecraft. Rendering runs at the display refresh rate with interpolation.
 - **Threading:** Chunk generation and meshing run on worker threads. The main thread never blocks on them; it uploads finished meshes to the GPU.
 - **Physics constants (Minecraft values, per tick):** gravity 0.08 blocks/tick², vertical drag ×0.98 per tick, jump velocity 0.42, walk ≈4.317 blocks/s, sprint ≈5.612, sneak ≈1.31, player hitbox 0.6×1.8, eye height 1.62, step height 0.5, block reach 5 (survival), 20 health points (10 hearts), 20 hunger points.
@@ -269,6 +270,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - At the end of each checkpoint, **stop**. Post a summary table (milestone, pass/fail, PR link, known issues) and wait for Kenzo. After Kenzo approves, merge the checkpoint's PRs into `main` in order with merge commits, tag each `m<N>`, and push the tags.
 - If something blocks a milestone (a design question, a failing test you can't fix), stop early and ask rather than pushing on.
 - **Performance gate (from M15 on):** at the end of every milestone, run `cargo bench` and the `--perf-test` from M14 and save the results to `docs/perf/m<N>.md`. If average FPS drops below 60, the 1% low drops below 40, or any benchmark is more than 15% slower than the previous milestone, fix it before moving on (or stop and ask if you can't). Include the FPS numbers in each PR and in the checkpoint summary table.
+- **Model recommendation:** At the end of each milestone, recommend Sonnet or Opus for the next one. Pick Opus only for world generation, structures, or complex systems like the Ender Dragon fight; otherwise Sonnet.
 - After M30 merges, tag `v1.1.0` and rebuild the `.app`.
 
 #### Checkpoint A — Foundations
@@ -287,7 +289,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
   - `docs/perf/baseline.md` records the numbers from the end of M14.
 - **Done when:** a v1.0 world opens unchanged in v1.1, you can build up to Y 255, blocks with states place and save correctly, you can walk through a torch and stand on a slab, sand above a dug-out hole falls, migration round-trip tests pass, and the perf test shows 60+ FPS at render distance 9.
 
-### - [ ] M15 — Resource pack support
+### - [x] M15 — Resource pack support
 - Load Minecraft Java resource packs from a `resourcepacks/` folder, as a `.zip` or a folder with `pack.mcmeta`. Read `assets/minecraft/textures/{block,item,entity,environment,gui}/...` by their modern names.
 - Animated textures (`.png.mcmeta`), and block/item model JSON where practical (at least `cube_all`, `cube_column`, `cross`, `orientable`, and the item model `display` transforms used in M16).
 - Packs stack in priority order, with Kenzo's v1.0 assets as the base layer. Any texture a pack doesn't cover falls back to the layer below.

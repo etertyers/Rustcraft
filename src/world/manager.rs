@@ -75,8 +75,9 @@ impl ChunkSource {
 
 enum Job {
     Generate(ChunkPos),
-    /// The chunk's edit revision when the job was sent.
-    Mesh(ChunkPos, ChunkArea, u32),
+    /// The chunk's edit revision when the job was sent, and the models
+    /// to mesh with (they change when the resource packs do).
+    Mesh(ChunkPos, ChunkArea, u32, Arc<BlockModels>),
 }
 
 enum Done {
@@ -222,14 +223,12 @@ impl ChunkManager {
         let stats = Arc::new(WorkStats::default());
         let workers = (0..workers.max(1))
             .map(|i| {
-                let (jobs, done, source, store, worker_models) = (
+                let (jobs, done, source, store) = (
                     job_rx.clone(),
                     done_tx.clone(),
                     source.clone(),
                     store.clone(),
-                    models.clone(),
                 );
-                let models = worker_models;
                 let stats = stats.clone();
                 std::thread::Builder::new()
                     .name(format!("chunk-worker-{i}"))
@@ -242,7 +241,7 @@ impl ChunkManager {
                                     stats.generated.record(started.elapsed());
                                     Done::Generated(Box::new(chunk))
                                 }
-                                Job::Mesh(pos, area, revision) => {
+                                Job::Mesh(pos, area, revision, models) => {
                                     let light = light_chunk(&models, &area);
                                     let mesh = mesh_chunk(&models, &area, &light);
                                     stats.meshed.record(started.elapsed());
@@ -405,10 +404,26 @@ impl ChunkManager {
                 && let Some(area) = self.world.area(pos)
             {
                 self.meshing.insert(pos);
-                let _ = jobs.send(Job::Mesh(pos, area, self.revision(pos)));
+                let _ = jobs.send(Job::Mesh(
+                    pos,
+                    area,
+                    self.revision(pos),
+                    self.models.clone(),
+                ));
             }
         }
         changes
+    }
+
+    /// Meshes with new block models from now on (after the resource packs
+    /// change), remeshing every drawn chunk in the background. Old meshes
+    /// stay up until their replacements arrive.
+    pub fn set_models(&mut self, models: Arc<BlockModels>) {
+        self.models = models;
+        for &pos in &self.meshed {
+            *self.revisions.entry(pos).or_default() += 1;
+            self.relight.insert(pos);
+        }
     }
 
     fn revision(&self, pos: ChunkPos) -> u32 {
@@ -647,6 +662,40 @@ mod tests {
         );
         // Generated one ring further than meshed, for neighbor culling.
         assert_eq!(manager.world().len(), 49);
+    }
+
+    #[test]
+    fn new_models_remesh_every_drawn_chunk_with_them() {
+        let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 1, 2);
+        let center = ChunkPos::new(0, 0);
+        run_until(&mut manager, center, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        let marked = Arc::new(BlockModels::new(
+            crate::world::block::registry(),
+            |_| Some([0.25; 4]),
+            [0.25; 4],
+            BiomeColors::uniform(),
+        ));
+        manager.set_models(marked);
+        let mut remeshed = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while remeshed.len() < 9 || manager.in_flight() > 0 {
+            assert!(Instant::now() < deadline, "chunks were never remeshed");
+            for (pos, mesh) in manager.update(center).meshes {
+                assert!(
+                    mesh.vertices
+                        .iter()
+                        .all(|v| v.uv[0] == 0.25 || v.uv[0] == 0.0),
+                    "meshed with the old models"
+                );
+                assert!(mesh.vertices.iter().any(|v| v.uv[0] == 0.25));
+                remeshed.push(pos);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let unique: HashSet<_> = remeshed.iter().copied().collect();
+        assert_eq!((remeshed.len(), unique.len()), (9, 9));
     }
 
     #[test]

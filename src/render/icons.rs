@@ -4,9 +4,10 @@
 
 use std::sync::Arc;
 
-use super::atlas::{Atlas, ITEM_PREFIX, MISSING_TILE};
+use super::atlas::{Atlas, MISSING_TILE};
 use crate::{
     inventory::{item::ItemRegistry, stack::ItemStack},
+    pack::model::ItemModels,
     world::{
         Face,
         block::{BlockState, Shape},
@@ -41,13 +42,14 @@ pub struct ItemIcons {
 }
 
 impl ItemIcons {
-    pub fn new(atlas: &Atlas, models: Arc<BlockModels>, registry: &ItemRegistry) -> Self {
+    /// `item_models` swaps in the sprites packs' item models give.
+    pub fn new(
+        atlas: &Atlas,
+        models: Arc<BlockModels>,
+        registry: &ItemRegistry,
+        item_models: &ItemModels,
+    ) -> Self {
         let missing = atlas.uv_rect(MISSING_TILE);
-        let uv = |texture: &str| {
-            atlas
-                .get(&format!("{ITEM_PREFIX}{texture}"))
-                .map_or(missing, |tile| atlas.uv_rect(tile))
-        };
         let mut icons = Self {
             models,
             icons: Vec::with_capacity(registry.len()),
@@ -56,7 +58,11 @@ impl ItemIcons {
         for item in registry.iter() {
             let icon = match (&item.texture, item.places) {
                 (Some(texture), _) => ItemIcon::Flat(IconFace {
-                    uv: uv(texture),
+                    uv: atlas.uv_or_missing(
+                        &item_models
+                            .texture(&item.name)
+                            .map_or_else(|| format!("item/{texture}"), str::to_owned),
+                    ),
                     color: [1.0; 3],
                 }),
                 // Facing the viewer, as an icon shows the south face.

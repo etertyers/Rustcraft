@@ -1,15 +1,14 @@
-//! Drawing Minecraft-style GUI with the texture pack's `gui/` images:
+//! Drawing Minecraft-style GUI with the resource packs' `gui/` images:
 //! the GUI scale, item icons (flat pictures or little isometric cubes),
 //! stack counts and durability bars, and the hotbar.
 
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use egui::{Color32, Mesh, Painter, Pos2, Rect, Shape, TextureHandle, TextureId, pos2, vec2};
-use image::RgbaImage;
+use image::{RgbaImage, imageops};
 
 use crate::{
     inventory::stack::{ItemStack, Items},
+    pack::Resources,
     render::icons::{IconFace, ItemIcon, ItemIcons},
 };
 
@@ -52,32 +51,126 @@ pub struct GuiTextures {
 /// GUI images are 256×256 sheets.
 const SHEET: f32 = 256.0;
 
+/// Most pixels per GUI pixel kept in a sheet (1024×1024); sharper packs
+/// are scaled down to it.
+pub const MAX_SHEET_SCALE: u32 = 4;
+
+/// A modern pack's sprite (`gui/sprites/...`, since 1.20.2) and the
+/// region `[x, y, w, h]` it fills on the old 256×256 sheet.
+type Sprite = (&'static str, [u32; 4]);
+
+const WIDGETS: &[Sprite] = &[
+    ("gui/sprites/hud/hotbar", [0, 0, 182, 22]),
+    ("gui/sprites/hud/hotbar_selection", [0, 22, 24, 24]),
+];
+const ICONS: &[Sprite] = &[
+    ("gui/sprites/hud/heart/container", [16, 0, 9, 9]),
+    ("gui/sprites/hud/heart/full", [52, 0, 9, 9]),
+    ("gui/sprites/hud/heart/half", [61, 0, 9, 9]),
+    ("gui/sprites/hud/air", [16, 18, 9, 9]),
+    ("gui/sprites/hud/air_bursting", [25, 18, 9, 9]),
+    ("gui/sprites/hud/food_empty", [16, 27, 9, 9]),
+    ("gui/sprites/hud/food_full", [52, 27, 9, 9]),
+    ("gui/sprites/hud/food_half", [61, 27, 9, 9]),
+];
+const FURNACE: &[Sprite] = &[
+    (
+        "gui/sprites/container/furnace/lit_progress",
+        [176, 0, 14, 14],
+    ),
+    (
+        "gui/sprites/container/furnace/burn_progress",
+        [176, 14, 24, 17],
+    ),
+];
+const TABS: &[Sprite] = &[(
+    "gui/sprites/container/creative_inventory/scroller",
+    [232, 0, 12, 15],
+)];
+
 impl GuiTextures {
-    pub fn load(ctx: &egui::Context, atlas: &RgbaImage, gui_dir: &Path) -> Result<Self> {
+    /// Builds each sheet from the resource layers (see `compose_sheet`).
+    pub fn load(ctx: &egui::Context, atlas: &RgbaImage, res: &Resources) -> Result<Self> {
         let load = |name: &str, image: &RgbaImage| {
             let size = [image.width() as usize, image.height() as usize];
             let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
             ctx.load_texture(name, pixels, egui::TextureOptions::NEAREST)
         };
-        let file = |path: &str| -> Result<TextureHandle> {
-            let full = gui_dir.join(path);
-            let image = image::open(&full)
-                .with_context(|| format!("loading {}", full.display()))?
-                .into_rgba8();
-            Ok(load(path, &image))
+        let widths = std::cell::RefCell::new(Vec::new());
+        let sheet = |name: &str, sprites: &[Sprite]| -> Result<TextureHandle> {
+            let image = compose_sheet(res, name, sprites)
+                .with_context(|| format!("no GUI image {name}"))?;
+            let short = name.rsplit('/').next().unwrap_or(name);
+            widths
+                .borrow_mut()
+                .push(format!("{short} {}", image.width()));
+            Ok(load(name, &image))
         };
-        Ok(Self {
+        let textures = Self {
             atlas: load("atlas", atlas),
-            widgets: file("widgets.png")?,
-            inventory: file("container/inventory.png")?,
-            crafting: file("container/crafting_table.png")?,
-            chest: file("container/generic_54.png")?,
-            furnace: file("container/furnace.png")?,
-            creative: file("container/creative_inventory/tab_items.png")?,
-            tabs: file("container/creative_inventory/tabs.png")?,
-            icons: file("icons.png")?,
-        })
+            widgets: sheet("gui/widgets", WIDGETS)?,
+            inventory: sheet("gui/container/inventory", &[])?,
+            crafting: sheet("gui/container/crafting_table", &[])?,
+            chest: sheet("gui/container/generic_54", &[])?,
+            furnace: sheet("gui/container/furnace", FURNACE)?,
+            creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
+            tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
+            icons: sheet("gui/icons", ICONS)?,
+        };
+        log::info!("GUI sheets (px wide): {}", widths.borrow().join(", "));
+        Ok(textures)
     }
+}
+
+/// One of the old 256×256 GUI sheets, built up from the bottom layer:
+/// a layer's own copy of the sheet replaces everything below it, then its
+/// modern sprites are drawn over their regions. So a 1.20.2+ pack, which
+/// splits the HUD into sprites, still re-skins the sheet, and anything it
+/// leaves out shows the layer below. `None` if no layer has any of it.
+pub fn compose_sheet(res: &Resources, sheet: &str, sprites: &[Sprite]) -> Option<RgbaImage> {
+    let mut canvas: Option<RgbaImage> = None;
+    for layer in 0..res.layers().len() {
+        if let Some(texture) = res.texture_in(layer, sheet) {
+            let image = texture.first_frame();
+            let scale = (image.width() / 256).clamp(1, MAX_SHEET_SCALE);
+            canvas = Some(resized(&image, 256 * scale, 256 * scale));
+        }
+        for &(name, [x, y, w, h]) in sprites {
+            let Some(texture) = res.texture_in(layer, name) else {
+                continue;
+            };
+            let sprite = texture.first_frame();
+            let canvas = canvas.get_or_insert_with(|| RgbaImage::new(256, 256));
+            // The sheet grows to the sharpest picture drawn on it.
+            let wanted = (sprite.width() / w).clamp(1, MAX_SHEET_SCALE);
+            if wanted * 256 > canvas.width() {
+                *canvas = resized(canvas, 256 * wanted, 256 * wanted);
+            }
+            let scale = canvas.width() / 256;
+            // Clear the old region, then draw the sprite at its own shape.
+            let clear = RgbaImage::new(w * scale, h * scale);
+            imageops::replace(canvas, &clear, (x * scale).into(), (y * scale).into());
+            let height = (sprite.height() * w * scale)
+                .div_ceil(sprite.width())
+                .max(1);
+            let sprite = resized(&sprite, w * scale, height.min(h * scale));
+            imageops::replace(canvas, &sprite, (x * scale).into(), (y * scale).into());
+        }
+    }
+    canvas
+}
+
+/// `image` at `width`×`height`: blocky when growing, smooth when shrinking.
+fn resized(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
+    if image.dimensions() == (width, height) {
+        return image.clone();
+    }
+    let filter = if width < image.width() {
+        imageops::FilterType::Triangle
+    } else {
+        imageops::FilterType::Nearest
+    };
+    imageops::resize(image, width, height, filter)
 }
 
 /// Minecraft's "auto" GUI scale: the largest whole number of screen points
@@ -294,7 +387,101 @@ pub fn paint_hotbar(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
+    use crate::pack::{Pack, tests::*};
+
+    fn png(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        RgbaImage::from_pixel(width, height, image::Rgba(rgba))
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn modern_sprites_draw_over_the_sheet_below() {
+        let dir = crate::world::save::TempDir::new("gui");
+        let base = dir.path().join("base");
+        std::fs::create_dir_all(base.join("textures/gui")).unwrap();
+        std::fs::write(
+            base.join("textures/gui/widgets.png"),
+            png(256, 256, [1, 1, 1, 255]),
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("textures/gui/icons.png"),
+            png(256, 256, [5, 5, 5, 255]),
+        )
+        .unwrap();
+        // A 1.20.2+ pack at 2×: a hotbar sprite but no selection sprite.
+        let zip = dir.path().join("modern.zip");
+        let hotbar = png(364, 44, [2, 2, 2, 255]);
+        write_zip(
+            &zip,
+            &[
+                ("pack.mcmeta", MCMETA),
+                (
+                    "assets/minecraft/textures/gui/sprites/hud/hotbar.png",
+                    &hotbar,
+                ),
+            ],
+        );
+        let res = Resources::new(
+            Pack::base(&base),
+            vec![Pack::open(&zip).unwrap()],
+            Default::default(),
+        );
+        let sheet = compose_sheet(&res, "gui/widgets", WIDGETS).unwrap();
+        assert_eq!(sheet.dimensions(), (512, 512));
+        assert_eq!(sheet.get_pixel(0, 0).0, [2, 2, 2, 255]);
+        assert_eq!(sheet.get_pixel(363, 43).0, [2, 2, 2, 255]);
+        // The selection box falls back to the base sheet, scaled up.
+        assert_eq!(sheet.get_pixel(10, 50).0, [1, 1, 1, 255]);
+        // Untouched sheets come straight from the layer that has them.
+        let icons = compose_sheet(&res, "gui/icons", ICONS).unwrap();
+        assert_eq!(icons.dimensions(), (256, 256));
+        assert!(compose_sheet(&res, "gui/nothing", &[]).is_none());
+    }
+
+    #[test]
+    fn very_sharp_packs_are_capped() {
+        let dir = crate::world::save::TempDir::new("gui-hd");
+        let base = dir.path().join("base");
+        std::fs::create_dir_all(base.join("textures/gui")).unwrap();
+        std::fs::write(
+            base.join("textures/gui/icons.png"),
+            png(4096, 4096, [7, 7, 7, 255]),
+        )
+        .unwrap();
+        let res = Resources::new(Pack::base(&base), Vec::new(), Default::default());
+        let sheet = compose_sheet(&res, "gui/icons", ICONS).unwrap();
+        assert_eq!(sheet.width(), 256 * MAX_SHEET_SCALE);
+    }
+
+    #[test]
+    fn kenzos_packs_reskin_the_gui() {
+        let assets = crate::assets::dir();
+        let base = Resources::load(&assets, Vec::new()).unwrap();
+        let sheets = [
+            ("gui/widgets", WIDGETS),
+            ("gui/icons", ICONS),
+            ("gui/container/inventory", &[][..]),
+            ("gui/container/furnace", FURNACE),
+        ];
+        for name in ["Ashen_1.8.3.zip", "Prime's HD Textures (FREE)"] {
+            let pack = Pack::open(&assets.join(name)).unwrap();
+            let res = Resources::load(&assets, vec![pack]).unwrap();
+            for (sheet, sprites) in sheets {
+                let plain = compose_sheet(&base, sheet, sprites).unwrap();
+                let image = compose_sheet(&res, sheet, sprites).unwrap();
+                // Compared at the base sheet's size.
+                let image = resized(&image, plain.width(), plain.height());
+                assert_ne!(image, plain, "{name} doesn't change {sheet}");
+            }
+        }
+    }
 
     #[test]
     fn gui_scale_is_minecrafts_auto_scale() {

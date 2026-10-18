@@ -1,10 +1,11 @@
 //! The pause menu Escape opens in a world (1.0.0's GuiIngameMenu: Back to
 //! Game, Options..., Save and Quit to Title) and the Options screen it
 //! shares with the title screen (1.0.0's GuiOptions and GuiVideoSettings,
-//! cut down to the settings this game has).
+//! cut down to the settings this game has, plus modern Resource Packs...).
 
 use egui::{Align2, Button, Color32, RichText, Slider};
 
+use super::packs::PackScreen;
 use crate::options::{FOVS, Options, RENDER_DISTANCES, SENSITIVITIES};
 
 const BUTTON: [f32; 2] = [260.0, 32.0];
@@ -16,16 +17,27 @@ pub enum PauseAction {
     SaveAndQuit,
 }
 
-/// The pause menu, or its Options page.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// What the Options page's buttons asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionsAction {
+    Done,
+    ResourcePacks,
+}
+
+/// The pause menu, or its Options page, or the Resource Packs screen.
+#[derive(Default)]
 pub struct PauseMenu {
     pub options_open: bool,
+    pub packs: Option<PackScreen>,
 }
 
 impl PauseMenu {
-    /// Escape: from Options back to the menu, from the menu back to the game.
+    /// Escape: from Resource Packs back to Options without applying, from
+    /// Options back to the menu, from the menu back to the game.
     pub fn back(&mut self) -> Option<PauseAction> {
-        if self.options_open {
+        if self.packs.take().is_some() {
+            None
+        } else if self.options_open {
             self.options_open = false;
             None
         } else {
@@ -47,9 +59,23 @@ impl PauseMenu {
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
+                    if let Some(packs) = self.packs.as_mut() {
+                        if let Some(selection) = packs.show(ui) {
+                            options.resource_packs = selection;
+                            self.packs = None;
+                        }
+                        return;
+                    }
                     if self.options_open {
-                        if options_page(ui, options) {
-                            self.options_open = false;
+                        match options_page(ui, options) {
+                            Some(OptionsAction::Done) => self.options_open = false,
+                            Some(OptionsAction::ResourcePacks) => {
+                                self.packs = Some(PackScreen::new(
+                                    crate::pack::packs_dir(),
+                                    &options.resource_packs,
+                                ));
+                            }
+                            None => {}
                         }
                         return;
                     }
@@ -75,9 +101,8 @@ impl PauseMenu {
 }
 
 /// The Options page: sliders for render distance, field of view, mouse
-/// sensitivity and volume, a vsync toggle and Done. Returns true when Done
-/// is clicked.
-pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> bool {
+/// sensitivity and volume, a vsync toggle, Resource Packs... and Done.
+pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsAction> {
     heading(ui, "Options");
     let width = BUTTON[0];
     ui.spacing_mut().slider_width = width;
@@ -118,8 +143,17 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> bool {
     if ui.add_sized(BUTTON, Button::new(vsync)).clicked() {
         options.vsync = !options.vsync;
     }
+    ui.add_space(8.0);
+    let packs = ui
+        .add_sized(BUTTON, Button::new("Resource Packs..."))
+        .clicked();
     ui.add_space(16.0);
-    ui.add_sized(BUTTON, Button::new("Done")).clicked()
+    let done = ui.add_sized(BUTTON, Button::new("Done")).clicked();
+    if packs {
+        Some(OptionsAction::ResourcePacks)
+    } else {
+        done.then_some(OptionsAction::Done)
+    }
 }
 
 /// 1.0.0's names for the ends and middle of the FOV slider.
@@ -146,8 +180,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn escape_steps_back_out_of_options_then_resumes() {
-        let mut pause = PauseMenu { options_open: true };
+    fn escape_steps_back_out_of_packs_and_options_then_resumes() {
+        let dir = crate::world::save::TempDir::new("pause-packs");
+        let mut pause = PauseMenu {
+            options_open: true,
+            packs: Some(PackScreen::new(dir.path().to_owned(), &[])),
+        };
+        assert_eq!(pause.back(), None);
+        assert!(pause.packs.is_none() && pause.options_open);
         assert_eq!(pause.back(), None);
         assert!(!pause.options_open);
         assert_eq!(pause.back(), Some(PauseAction::Resume));

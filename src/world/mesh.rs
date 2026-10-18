@@ -5,7 +5,10 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
-    block::{BlockRegistry, BlockState, FaceTint, Fluid, RenderLayer, Shape, door_box, door_side},
+    block::{
+        BlockRegistry, BlockState, FaceTint, Fluid, RenderLayer, Shape, Textures, door_box,
+        door_side, texture_location,
+    },
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     fluid::{self, Cell},
     light::ChunkLight,
@@ -14,6 +17,7 @@ use super::{
 };
 use crate::{
     config::{CHUNK_SIZE, WORLD_HEIGHT},
+    pack::model::BlockOverrides,
     render::vertex::Vertex,
 };
 
@@ -69,78 +73,64 @@ pub struct BlockModels {
     registry: &'static BlockRegistry,
     /// By `BlockRegistry::state_index`.
     models: Vec<BlockModel>,
+    /// By `BlockRegistry::state_index`: the looks a pack's blockstate file
+    /// picks between by position, with running weight totals; empty for
+    /// most states.
+    choices: Vec<Vec<(u32, BlockModel)>>,
     colors: BiomeColors,
 }
 
 impl BlockModels {
-    /// `uv` maps a texture name to its atlas rect, or `None` if it's missing;
-    /// missing textures use `missing_uv`.
+    /// `uv` maps a texture location (`block/stone`) to its atlas rect, or
+    /// `None` if it's missing; missing textures use `missing_uv`.
     pub fn new(
         registry: &'static BlockRegistry,
         uv: impl Fn(&str) -> Option<[f32; 4]>,
         missing_uv: [f32; 4],
         colors: BiomeColors,
     ) -> Self {
+        Self::with_packs(registry, uv, missing_uv, colors, &BlockOverrides::default())
+    }
+
+    /// Like `new`, with textures from resource pack models where they
+    /// cover a state.
+    pub fn with_packs(
+        registry: &'static BlockRegistry,
+        uv: impl Fn(&str) -> Option<[f32; 4]>,
+        missing_uv: [f32; 4],
+        colors: BiomeColors,
+        overrides: &BlockOverrides,
+    ) -> Self {
         let mut models = Vec::with_capacity(registry.state_count());
+        let mut choices = Vec::with_capacity(registry.state_count());
         for state in registry.states() {
             let def = state.def();
-            let textures = def.textures_for(state);
-            let tint = def.tint_for(state);
-            let texture = |face: Face| FaceTexture {
-                uv: textures
-                    .as_ref()
-                    .and_then(|t| t.get(face))
-                    .and_then(&uv)
-                    .unwrap_or(missing_uv),
-                tint: tint.for_face(face),
-                rotation: 0,
-            };
-            let mut faces = Face::ALL.map(texture);
-            // Blocks facing a way turn their south face that way.
-            if let Some(front) = def.front(state) {
-                faces.swap(Face::South.index(), front.index());
-            }
-            // A log lying along x or z shows its ends on that axis and its
-            // bark turned to run along it.
-            if state.has(Prop::Axis) {
-                let (end, side) = (faces[Face::Top.index()], faces[Face::North.index()]);
-                let turned = FaceTexture {
-                    rotation: 1,
-                    ..side
-                };
-                match state.get(Prop::Axis) {
-                    axis::X => {
-                        faces = Face::ALL.map(|face| match face {
-                            Face::East | Face::West => end,
-                            _ => turned,
-                        });
-                    }
-                    axis::Z => {
-                        faces = Face::ALL.map(|face| match face {
-                            Face::North | Face::South => end,
-                            Face::East | Face::West => turned,
-                            _ => side,
-                        });
-                    }
-                    _ => {}
+            let ours = def.textures_for(state);
+            let build = |textures: Option<&Textures>| build_model(state, textures, &uv, missing_uv);
+            match overrides.get(state) {
+                Some(list) => {
+                    let mut total = 0;
+                    let looks: Vec<(u32, BlockModel)> = list
+                        .iter()
+                        .map(|choice| {
+                            // Every template names all six faces.
+                            total += choice.weight;
+                            (total, build(choice.textures.as_ref().or(ours.as_ref())))
+                        })
+                        .collect();
+                    models.push(looks[0].1.clone());
+                    choices.push(if looks.len() > 1 { looks } else { Vec::new() });
+                }
+                None => {
+                    models.push(build(ours.as_ref()));
+                    choices.push(Vec::new());
                 }
             }
-            models.push(BlockModel {
-                shape: def.shape,
-                opaque_cube: def.is_opaque_cube_state(state),
-                cull_same: def.cull_same,
-                opacity: def.light_opacity_for(state),
-                emission: def.light_for(state),
-                translucent: def.layer == RenderLayer::Translucent,
-                fluid: def.fluid,
-                stops_fluid: def.stops_fluid(),
-                faces,
-                boxes: shape::render_boxes(state),
-            });
         }
         Self {
             registry,
             models,
+            choices,
             colors,
         }
     }
@@ -163,6 +153,95 @@ impl BlockModels {
 
     pub fn get(&self, block: BlockState) -> &BlockModel {
         &self.models[self.registry.state_index(block)]
+    }
+
+    /// The model of `block` at a position: a pack can give a state several
+    /// weighted looks, picked by position as vanilla does (stone with
+    /// random variations).
+    pub fn get_at(&self, block: BlockState, x: i32, y: i32, z: i32) -> &BlockModel {
+        let index = self.registry.state_index(block);
+        let choices = &self.choices[index];
+        let Some(&(total, _)) = choices.last() else {
+            return &self.models[index];
+        };
+        let pick = (position_seed(x, y, z) as u64 % total as u64) as u32;
+        choices
+            .iter()
+            .find(|(running, _)| pick < *running)
+            .map_or(&self.models[index], |(_, model)| model)
+    }
+}
+
+/// Vanilla's `Mth.getSeed`: a hash of a block position that picks its
+/// random model.
+fn position_seed(x: i32, y: i32, z: i32) -> i64 {
+    let mut l =
+        (x.wrapping_mul(3_129_871) as i64) ^ (z as i64).wrapping_mul(116_129_781) ^ y as i64;
+    l = l
+        .wrapping_mul(l)
+        .wrapping_mul(42_317_861)
+        .wrapping_add(l.wrapping_mul(11));
+    (l >> 16).wrapping_abs()
+}
+
+/// One block state's model from its textures.
+fn build_model(
+    state: BlockState,
+    textures: Option<&Textures>,
+    uv: &impl Fn(&str) -> Option<[f32; 4]>,
+    missing_uv: [f32; 4],
+) -> BlockModel {
+    let def = state.def();
+    let tint = def.tint_for(state);
+    let texture = |face: Face| FaceTexture {
+        uv: textures
+            .and_then(|t| t.get(face))
+            .and_then(|name| uv(&texture_location(name)))
+            .unwrap_or(missing_uv),
+        tint: tint.for_face(face),
+        rotation: 0,
+    };
+    let mut faces = Face::ALL.map(texture);
+    // Blocks facing a way turn their south face that way.
+    if let Some(front) = def.front(state) {
+        faces.swap(Face::South.index(), front.index());
+    }
+    // A log lying along x or z shows its ends on that axis and its
+    // bark turned to run along it.
+    if state.has(Prop::Axis) {
+        let (end, side) = (faces[Face::Top.index()], faces[Face::North.index()]);
+        let turned = FaceTexture {
+            rotation: 1,
+            ..side
+        };
+        match state.get(Prop::Axis) {
+            axis::X => {
+                faces = Face::ALL.map(|face| match face {
+                    Face::East | Face::West => end,
+                    _ => turned,
+                });
+            }
+            axis::Z => {
+                faces = Face::ALL.map(|face| match face {
+                    Face::North | Face::South => end,
+                    Face::East | Face::West => turned,
+                    _ => side,
+                });
+            }
+            _ => {}
+        }
+    }
+    BlockModel {
+        shape: def.shape,
+        opaque_cube: def.is_opaque_cube_state(state),
+        cull_same: def.cull_same,
+        opacity: def.light_opacity_for(state),
+        emission: def.light_for(state),
+        translucent: def.layer == RenderLayer::Translucent,
+        fluid: def.fluid,
+        stops_fluid: def.stops_fluid(),
+        faces,
+        boxes: shape::render_boxes(state),
     }
 }
 
@@ -1062,13 +1141,13 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                     if block.is_air() {
                         continue;
                     }
-                    let model = models.get(block);
-                    mesh.adding_translucent = model.translucent;
                     let origin = [
                         (min_x + x as i32) as f32,
                         y as f32,
                         (min_z + z as i32) as f32,
                     ];
+                    let model = models.get_at(block, min_x + x as i32, y as i32, min_z + z as i32);
+                    mesh.adding_translucent = model.translucent;
                     let biome = chunk.biome(x, z);
                     let side = model.faces[Face::North.index()];
                     let side_color = models.tint_color(side.tint, biome);
@@ -1598,9 +1677,68 @@ mod tests {
     }
 
     #[test]
+    fn pack_blockstates_give_weighted_looks_by_position() {
+        use crate::pack::{Pack, Resources, model::BlockOverrides, tests::*};
+        let dir = crate::world::save::TempDir::new("looks");
+        let zip = dir.path().join("looks.zip");
+        write_zip(
+            &zip,
+            &[
+                ("pack.mcmeta", MCMETA),
+                (
+                    "assets/minecraft/blockstates/stone.json",
+                    br#"{"variants": {"": [{"model": "block/stone"}, {"model": "block/stone_b", "weight": 3}]}}"#,
+                ),
+                (
+                    "assets/minecraft/models/block/stone_b.json",
+                    br#"{"parent": "block/cube_all", "textures": {"all": "block/stone_b"}}"#,
+                ),
+            ],
+        );
+        let base = dir.path().join("base");
+        std::fs::create_dir_all(&base).unwrap();
+        let res = Resources::new(
+            Pack::base(&base),
+            vec![Pack::open(&zip).unwrap()],
+            Default::default(),
+        );
+        let overrides = BlockOverrides::load(&res, crate::world::block::registry());
+        let uv = |name: &str| match name {
+            "block/stone" => Some([1.0; 4]),
+            "block/stone_b" => Some([2.0; 4]),
+            _ => None,
+        };
+        let models = BlockModels::with_packs(
+            crate::world::block::registry(),
+            uv,
+            [0.0; 4],
+            BiomeColors::uniform(),
+            &overrides,
+        );
+        let mut seen = [0; 3];
+        for x in 0..40 {
+            for z in 0..40 {
+                let model = models.get_at(STONE, x, 64, z);
+                seen[model.faces[0].uv[0] as usize] += 1;
+                // The same spot always looks the same.
+                assert_eq!(models.get_at(STONE, x, 64, z), model);
+            }
+        }
+        // Vanilla's own look keeps blocks.ron's texture; about 3 in 4 take
+        // the heavier one.
+        assert_eq!(seen[0], 0);
+        assert!(seen[1] > 200 && seen[2] > 1000, "{seen:?}");
+        // Blocks no pack covers have one look everywhere.
+        assert_eq!(
+            models.get_at(BlockState::of(blocks::DIRT), 5, 64, 9),
+            models.get(BlockState::of(blocks::DIRT))
+        );
+    }
+
+    #[test]
     fn faces_get_their_texture_and_biome_tint() {
         let uv = |name: &str| {
-            Some(if name == "grass_top" {
+            Some(if name == "block/grass_block_top" {
                 [0.5, 0.0, 1.0, 0.5]
             } else {
                 [0.0; 4]

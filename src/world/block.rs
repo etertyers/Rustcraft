@@ -330,6 +330,17 @@ impl Condition {
     }
 }
 
+/// A texture name from `blocks.ron` as a resource location: bare names
+/// (`stone`) are under `block/`; names with a folder (from pack models)
+/// are kept.
+pub fn texture_location(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.contains('/') {
+        name.into()
+    } else {
+        format!("block/{name}").into()
+    }
+}
+
 /// Texture names per face. The most specific field wins:
 /// a direction (`north`, …), then `top`/`bottom`, then `end` (top and bottom)
 /// or `side` (the four sides), then `all`.
@@ -626,7 +637,7 @@ pub struct BlockDef {
     /// Whether it has an item of its own (read by build.rs).
     #[serde(default = "default_true")]
     pub item: bool,
-    /// The texture in `textures/items/` its item shows, instead of the
+    /// The texture in `textures/item/` its item shows, instead of the
     /// block drawn as an icon.
     #[serde(default)]
     pub item_texture: Option<String>,
@@ -1022,6 +1033,21 @@ impl BlockRegistry {
     }
 
     /// Texture names referenced by some block or variant that `exists` rejects.
+    /// Every texture location (`block/stone`) the blocks name.
+    pub fn texture_locations(&self) -> std::collections::BTreeSet<String> {
+        self.iter()
+            .flat_map(|def| {
+                def.textures
+                    .iter()
+                    .chain(def.variants.iter().filter_map(|(_, v)| v.textures.as_ref()))
+            })
+            .flat_map(|textures| Face::ALL.map(|face| textures.get(face)))
+            .flatten()
+            .map(|name| texture_location(name).into_owned())
+            .collect()
+    }
+
+    /// The texture locations the blocks name that `exists` says are missing.
     pub fn missing_textures(
         &self,
         exists: impl Fn(&str) -> bool,
@@ -1034,8 +1060,9 @@ impl BlockRegistry {
             })
             .flat_map(|textures| Face::ALL.map(|face| textures.get(face)))
             .flatten()
+            .map(texture_location)
             .filter(|name| !exists(name))
-            .map(str::to_owned)
+            .map(|name| name.into_owned())
             .collect()
     }
 }
@@ -1159,7 +1186,7 @@ mod tests {
         let ripe = BlockState::of(blocks::WHEAT).with_number(Prop::Age7, 7);
         assert_eq!(
             wheat.textures_for(ripe).unwrap().get(Face::North),
-            Some("wheat_stage_7")
+            Some("wheat_stage7")
         );
         let furnace = registry().def(blocks::FURNACE);
         let lit = BlockState::of(blocks::FURNACE).with_bool(Prop::Lit, true);
@@ -1234,10 +1261,10 @@ mod tests {
     /// Keep in sync with the missing-texture list in docs/DECISIONS.md.
     #[test]
     fn only_known_block_textures_are_missing() {
-        let dir = crate::assets::dir().join("textures/blocks");
-        let missing = registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
-        let mut expected = vec!["end_portal".to_owned(), "sign".to_owned()];
-        // Concrete isn't in Kenzo's textures; a resource pack (M15) brings it.
+        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let missing = registry().missing_textures(|name| base.texture(name).is_some());
+        let mut expected = vec!["block/end_portal".to_owned(), "block/sign".to_owned()];
+        // Concrete isn't in Kenzo's textures; a resource pack brings it.
         for color in [
             "white",
             "orange",
@@ -1256,8 +1283,8 @@ mod tests {
             "red",
             "black",
         ] {
-            expected.push(format!("concrete_{color}"));
-            expected.push(format!("concrete_powder_{color}"));
+            expected.push(format!("block/{color}_concrete"));
+            expected.push(format!("block/{color}_concrete_powder"));
         }
         assert_eq!(missing, expected.into_iter().collect());
     }

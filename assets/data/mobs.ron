@@ -2,7 +2,7 @@
 // behaves differently, an AI module in src/entity/ai.rs.
 //
 // Fields:
-//   name, texture (under assets/textures/entity/), health
+//   name, texture (a resource location: entity/pig/temperate_pig), health
 //   width, height    hitbox in blocks (1.0.0's setSize)
 //   speed            walking speed as a fraction of the player's (moveSpeed)
 //   ai               Passive (wanders, flees when hurt) or
@@ -21,7 +21,7 @@
 [
     (
         name: "pig",
-        texture: "pig/pig.png",
+        texture: "entity/pig/temperate_pig",
         health: 10,
         width: 0.9,
         height: 0.9,
@@ -44,7 +44,7 @@
     ),
     (
         name: "zombie",
-        texture: "zombie/zombie.png",
+        texture: "entity/zombie/zombie",
         health: 20,
         width: 0.6,
         height: 1.8,
