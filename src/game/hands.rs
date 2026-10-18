@@ -92,6 +92,15 @@ impl Game {
             // Letting go or looking away starts the block over (1.0.0).
             self.mining = None;
         }
+        if using && !wants_break && self.holding_bucket() {
+            // A bucket works on a fresh click, unless it's on a chest or
+            // door, which opens as usual.
+            let used = hit.is_some_and(|hit| self.activate(hit.block, place_pressed));
+            if !used && place_pressed {
+                self.use_bucket(eye);
+            }
+            return;
+        }
         let Some(hit) = hit else {
             return;
         };
