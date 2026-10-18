@@ -146,6 +146,47 @@ mod tests {
     }
 
     #[test]
+    fn view_bob_shakes_the_view_and_no_bob_changes_nothing() {
+        let camera = Camera::new(Vec3::new(0.0, 64.0, 0.0), 0.0, 0.0);
+        let ndc = |camera: &Camera| {
+            let clip = camera.view_proj(16.0 / 9.0) * glam::Vec4::new(0.0, 64.0, -10.0, 1.0);
+            clip.truncate() / clip.w
+        };
+        assert_eq!(ViewBob::NONE.matrix(), Mat4::IDENTITY);
+        let rest = ndc(&camera);
+        // The view is shifted down a little (vanilla's bob moves what is
+        // drawn, not the eye): what it looks at moves down the screen.
+        let down = Camera {
+            bob: ViewBob {
+                down: -0.1,
+                ..ViewBob::NONE
+            },
+            ..camera
+        };
+        assert!(ndc(&down).y < rest.y - 0.01);
+        // Shifted right, the world moves right.
+        let right = Camera {
+            bob: ViewBob {
+                sideways: 0.5,
+                ..ViewBob::NONE
+            },
+            ..camera
+        };
+        assert!(ndc(&right).x > rest.x + 0.01);
+        // Rolling and pitching keep the middle of the view roughly in place
+        // but not exactly.
+        let rolled = Camera {
+            bob: ViewBob {
+                roll: 0.05,
+                pitch: 0.03,
+                ..ViewBob::NONE
+            },
+            ..camera
+        };
+        assert!((ndc(&rolled) - rest).length() > 0.01);
+    }
+
+    #[test]
     fn pitch_is_clamped_and_yaw_wraps() {
         let mut camera = Camera::new(Vec3::ZERO, 0.0, 0.0);
         camera.rotate(-0.5, 10.0);

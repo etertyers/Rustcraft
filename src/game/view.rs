@@ -737,6 +737,119 @@ mod tests {
     }
 
     #[test]
+    fn the_third_person_camera_backs_off_four_blocks_and_stops_at_walls() {
+        use crate::{
+            game::tests::flat_game,
+            player::mode::GameMode,
+            world::{block::BlockState, blocks},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        game.camera.pitch = 0.0;
+        game.advance(0.0);
+        let eye = game.camera.position;
+        // First person is the eyes themselves.
+        assert_eq!(game.view_camera().position, eye);
+
+        // Behind: four blocks back along the look direction (facing north,
+        // that's south).
+        game.cycle_view();
+        let behind = game.view_camera();
+        assert!(
+            (behind.position - eye - Vec3::new(0.0, 0.0, 4.0)).length() < 1e-4,
+            "{eye} {}",
+            behind.position
+        );
+        assert_eq!(behind.yaw, game.camera.yaw);
+        assert_eq!(behind.pitch, game.camera.pitch);
+
+        // A wall two blocks behind pulls the camera in front of it.
+        let wall: Vec<_> = (-2..=3)
+            .flat_map(|x| {
+                (63..=68).map(move |y| (IVec3::new(x, y, 2), BlockState::of(blocks::STONE)))
+            })
+            .collect();
+        game.set_blocks(&wall);
+        let pulled = game.view_camera();
+        let distance = (pulled.position - eye).length();
+        assert!(distance > 1.2 && distance < 1.5, "{distance}");
+        assert!(pulled.position.z < 2.0, "{}", pulled.position);
+
+        // In front, looking back at the player.
+        game.cycle_view();
+        let front = game.view_camera();
+        assert!((front.position - eye - Vec3::new(0.0, 0.0, -4.0)).length() < 1e-4);
+        assert!((front.forward() + game.camera.forward()).length() < 1e-4);
+
+        // And around to first person again.
+        game.cycle_view();
+        assert_eq!(game.view().mode, ViewMode::First);
+        assert_eq!(game.view_camera().position, eye);
+    }
+
+    #[test]
+    fn the_pose_follows_what_the_player_does() {
+        use crate::{game::tests::flat_game, player::mode::GameMode};
+        let mut game = flat_game(GameMode::Survival);
+        let pose = game.player_pose();
+        assert!(!pose.crouching && pose.swim_amount == 0.0 && pose.attack == 0.0);
+        assert_eq!(pose.right, ArmPose::Empty);
+        // Looking straight down: the head pitches down (vanilla positive).
+        assert!((pose.head_pitch - std::f32::consts::FRAC_PI_2).abs() < 0.01);
+
+        game.sneak_for_shot();
+        assert!(game.player_pose().crouching);
+        game.keys.clear();
+        game.run_ticks(3);
+
+        game.view.swing();
+        game.run_ticks(3);
+        assert!(game.player_pose().attack > 0.0);
+        game.run_ticks(10);
+        assert_eq!(game.player_pose().attack, 0.0);
+
+        game.inventory.set(
+            0,
+            Some(crate::inventory::stack::ItemStack::new(
+                crate::inventory::items::IRON_SWORD,
+                1,
+            )),
+        );
+        game.inventory.selected = 0;
+        assert_eq!(game.player_pose().right, ArmPose::Item);
+    }
+
+    #[test]
+    fn left_clicks_and_placing_swing_the_arm() {
+        use crate::{game::tests::flat_game, player::mode::GameMode};
+        let mut game = flat_game(GameMode::Creative);
+        assert!(!game.view().is_swinging());
+        // A click that hits nothing still swings.
+        game.camera.pitch = 0.5;
+        game.on_mouse_button(winit::event::MouseButton::Left, true);
+        game.on_mouse_button(winit::event::MouseButton::Left, false);
+        game.run_ticks(1);
+        assert!(game.view().is_swinging());
+        game.run_ticks(8);
+        assert!(!game.view().is_swinging());
+        // Placing a block swings.
+        // Looking at the ground a couple of blocks ahead.
+        game.camera.pitch = -0.6;
+        game.advance(0.0);
+        game.inventory.set(
+            0,
+            Some(crate::inventory::stack::ItemStack::new(
+                crate::inventory::items::STONE,
+                4,
+            )),
+        );
+        game.inventory.selected = 0;
+        game.on_mouse_button(winit::event::MouseButton::Right, true);
+        game.on_mouse_button(winit::event::MouseButton::Right, false);
+        game.run_ticks(1);
+        assert!(game.view().is_swinging());
+    }
+
+    #[test]
     fn f5_cycles_the_three_views() {
         let mut mode = ViewMode::First;
         let mut seen = Vec::new();

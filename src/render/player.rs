@@ -832,6 +832,45 @@ mod tests {
     }
 
     #[test]
+    fn looking_down_tips_the_head_forward_and_looking_up_tips_it_back() {
+        // The top of the head swings north (forward at yaw 0) when it nods.
+        let top_z = |pitch: f32| {
+            let pose = PlayerPose {
+                head_pitch: pitch,
+                ..standing()
+            };
+            let mesh = model(&pose, 0.0);
+            let top: Vec<f32> = mesh
+                .vertices
+                .iter()
+                .map(|v| Vec3::from(v.position))
+                .filter(|p| p.y > 1.8)
+                .map(|p| p.z)
+                .collect();
+            top.iter().sum::<f32>() / top.len() as f32
+        };
+        let level = top_z(0.0);
+        assert!(top_z(0.7) < level - 0.1, "looking down tips it north");
+        assert!(top_z(-0.7) > level + 0.1, "looking up tips it back");
+        // And the head turns toward east with positive yaw.
+        let turned = model(
+            &PlayerPose {
+                head_yaw: 0.8,
+                ..standing()
+            },
+            0.0,
+        );
+        let east_of_neck = turned
+            .vertices
+            .iter()
+            .map(|v| Vec3::from(v.position))
+            .filter(|p| p.y > 1.75)
+            .map(|p| p.x)
+            .fold(f32::MIN, f32::max);
+        assert!(east_of_neck > 0.3, "{east_of_neck}");
+    }
+
+    #[test]
     fn the_model_matrix_agrees_with_the_point_mapping() {
         let pose = PlayerPose {
             swim_amount: 0.7,
@@ -842,7 +881,11 @@ mod tests {
         let frame = body_frame(&pose, 1.1);
         let feet = Vec3::new(10.0, 64.0, -3.0);
         let matrix = model_matrix(&frame, feet);
-        for p in [Vec3::ZERO, Vec3::new(3.0, 20.0, -5.0), Vec3::new(-8.0, 5.0, 9.0)] {
+        for p in [
+            Vec3::ZERO,
+            Vec3::new(3.0, 20.0, -5.0),
+            Vec3::new(-8.0, 5.0, 9.0),
+        ] {
             let a = matrix.transform_point3(p / PIXELS);
             let b = model_to_world(&frame, feet, p);
             assert!((a - b).length() < 1e-4, "{a} {b}");

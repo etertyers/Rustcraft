@@ -30,6 +30,9 @@ pub struct HandItem<'a> {
 /// Everything the hand's pose depends on.
 #[derive(Debug, Clone, Copy)]
 pub struct HandInput<'a> {
+    /// The left hand (the off-hand) instead of the right: everything
+    /// is mirrored.
+    pub left: bool,
     /// Swing progress, 0–1.
     pub swing: f32,
     /// How far the hand is lowered, 0 when raised.
@@ -66,19 +69,19 @@ fn shift(x: f32, y: f32, z: f32) -> Mat4 {
 }
 
 /// `applyItemArmTransform`: the item's resting place at the lower right.
-fn item_arm_transform(equip: f32) -> Mat4 {
-    shift(0.56, -0.52 + equip * -0.6, -0.72)
+fn item_arm_transform(equip: f32, i: f32) -> Mat4 {
+    shift(i * 0.56, -0.52 + equip * -0.6, -0.72)
 }
 
 /// `applyItemArmAttackTransform`: the chop of a swing.
-fn item_attack_transform(swing: f32) -> Mat4 {
+fn item_attack_transform(swing: f32, i: f32) -> Mat4 {
     let f = (swing * swing * PI).sin();
     let g = (swing.sqrt() * PI).sin();
-    rot_y(45.0 + f * -20.0) * rot_z(g * -20.0) * rot_x(g * -80.0) * rot_y(-45.0)
+    rot_y(i * (45.0 + f * -20.0)) * rot_z(i * g * -20.0) * rot_x(g * -80.0) * rot_y(i * -45.0)
 }
 
 /// `applyEatTransform`: the food comes up to the mouth and bobs.
-fn eat_transform(remaining: f32, total: f32) -> Mat4 {
+fn eat_transform(remaining: f32, total: f32, side: f32) -> Mat4 {
     let f = remaining + 1.0;
     let g = f / total;
     let bob = if g < 0.8 {
@@ -88,18 +91,18 @@ fn eat_transform(remaining: f32, total: f32) -> Mat4 {
     };
     let i = 1.0 - g.max(0.0).powi(27);
     shift(0.0, bob, 0.0)
-        * shift(i * 0.6, i * -0.5, 0.0)
-        * rot_y(i * 90.0)
+        * shift(side * i * 0.6, i * -0.5, 0.0)
+        * rot_y(side * i * 90.0)
         * rot_x(i * 10.0)
-        * rot_z(i * 30.0)
+        * rot_z(side * i * 30.0)
 }
 
 /// The bow pulling back as it's drawn.
-fn bow_transform(drawn: f32) -> Mat4 {
-    let mut m = shift(-0.278_568_2, 0.183_443_87, 0.157_315_31)
+fn bow_transform(drawn: f32, i: f32) -> Mat4 {
+    let mut m = shift(i * -0.278_568_2, 0.183_443_87, 0.157_315_31)
         * rot_x(-13.935)
-        * rot_y(35.3)
-        * rot_z(-9.785);
+        * rot_y(i * 35.3)
+        * rot_z(i * -9.785);
     let g = drawn / 20.0;
     let g = ((g * g + g * 2.0) / 3.0).min(1.0);
     if g > 0.1 {
@@ -115,40 +118,45 @@ fn bow_transform(drawn: f32) -> Mat4 {
 /// The pose of the hand for `input`, as a transform of camera space.
 pub fn hand_pose(input: &HandInput) -> Mat4 {
     let swing = input.swing;
+    let i = if input.left { -1.0 } else { 1.0 };
     let root = input.bob.matrix() * rot_x(-input.lag.0) * rot_y(input.lag.1);
     if input.item.is_none() {
         // The bare arm (`renderPlayerArm`).
         let g = swing.sqrt();
         let h = -0.3 * (g * PI).sin();
-        let i = 0.4 * (g * 2.0 * PI).sin();
+        let k = 0.4 * (g * 2.0 * PI).sin();
         let j = -0.4 * (swing * PI).sin();
-        let k = (swing * swing * PI).sin();
+        let m = (swing * swing * PI).sin();
         let l = (g * PI).sin();
         return root
             * shift(
-                h + 0.640_000_05,
-                i - 0.6 + input.equip * -0.6,
+                i * (h + 0.640_000_05),
+                k - 0.6 + input.equip * -0.6,
                 j - 0.719_999_97,
             )
-            * rot_y(45.0)
-            * rot_y(l * 70.0)
-            * rot_z(k * -20.0)
-            * shift(-1.0, 3.6, 3.5)
-            * rot_z(120.0)
+            * rot_y(i * 45.0)
+            * rot_y(i * l * 70.0)
+            * rot_z(i * m * -20.0)
+            * shift(-i, 3.6, 3.5)
+            * rot_z(i * 120.0)
             * rot_x(200.0)
-            * rot_y(-135.0)
-            * shift(5.6, 0.0, 0.0);
+            * rot_y(i * -135.0)
+            * shift(i * 5.6, 0.0, 0.0);
     }
     match input.using {
         HandUse::Eat { remaining, total } => {
-            root * eat_transform(remaining, total) * item_arm_transform(input.equip)
+            root * eat_transform(remaining, total, i) * item_arm_transform(input.equip, i)
         }
-        HandUse::Bow { drawn, .. } => root * item_arm_transform(input.equip) * bow_transform(drawn),
+        HandUse::Bow { drawn, .. } => {
+            root * item_arm_transform(input.equip, i) * bow_transform(drawn, i)
+        }
         HandUse::None => {
             let f = -0.4 * (swing.sqrt() * PI).sin();
             let g = 0.2 * (swing.sqrt() * PI * 2.0).sin();
             let h = -0.2 * (swing * PI).sin();
-            root * shift(f, g, h) * item_arm_transform(input.equip) * item_attack_transform(swing)
+            root * shift(i * f, g, h)
+                * item_arm_transform(input.equip, i)
+                * item_attack_transform(swing, i)
         }
     }
 }
@@ -159,7 +167,7 @@ pub fn build(input: &HandInput) -> HandMeshes {
     let mut meshes = HandMeshes::default();
     match input.item {
         Some(item) => {
-            let matrix = pose * display_matrix(&item.display, false);
+            let matrix = pose * display_matrix(&item.display, input.left);
             item.geometry
                 .add_to(&mut meshes.item, &matrix, [1.0; 3], input.light);
         }
@@ -171,11 +179,16 @@ pub fn build(input: &HandInput) -> HandMeshes {
 /// The right arm and its sleeve in the hand's pose. The arm is built
 /// standing still with no swing, as vanilla's `renderHand` does.
 fn add_arm(mesh: &mut Mesh, pose: &Mat4, input: &HandInput) {
-    let mut limb = *rig(&PlayerPose::default(), input.slim).get(Limb::RightArm);
+    let which = if input.left {
+        Limb::LeftArm
+    } else {
+        Limb::RightArm
+    };
+    let mut limb = *rig(&PlayerPose::default(), input.slim).get(which);
     limb.rot.x = 0.0;
     let arm = limb.matrix();
     let light = [input.light.0 as f32, input.light.1 as f32];
-    for (b, grow) in Limb::RightArm.boxes(input.slim) {
+    for (b, grow) in which.boxes(input.slim) {
         add_box(
             mesh,
             SKIN_SIZE,
@@ -212,6 +225,7 @@ mod tests {
 
     fn input<'a>(item: Option<HandItem<'a>>) -> HandInput<'a> {
         HandInput {
+            left: false,
             swing: 0.0,
             equip: 0.0,
             lag: (0.0, 0.0),
@@ -292,6 +306,45 @@ mod tests {
             .fold(Vec3::splat(f32::MAX), |a, b| a.min(b));
         assert!(near.y < -0.5, "reaches the bottom: {near}");
         assert!(near.x > -0.2, "stays on the right: {near}");
+    }
+
+    #[test]
+    fn the_left_hand_mirrors_the_right() {
+        let geometry = sword();
+        let item = HandItem {
+            geometry: &geometry,
+            display: Transform {
+                rotation: [0.0, 0.0, 0.0],
+                translation: [0.0; 3],
+                scale: [0.5; 3],
+            },
+        };
+        for held in [None, Some(item)] {
+            for swing in [0.0, 0.3, 0.7] {
+                let right = build(&HandInput {
+                    swing,
+                    ..input(held)
+                });
+                let left = build(&HandInput {
+                    left: true,
+                    swing,
+                    ..input(held)
+                });
+                let (r, l) = if held.is_some() {
+                    (bounds(&right.item), bounds(&left.item))
+                } else {
+                    (bounds(&right.arm), bounds(&left.arm))
+                };
+                // Mirrored across the middle of the screen.
+                assert!((r.0.y - l.0.y).abs() < 0.05 && (r.1.y - l.1.y).abs() < 0.05);
+                assert!((r.0.z - l.0.z).abs() < 0.05 && (r.1.z - l.1.z).abs() < 0.05);
+                assert!(
+                    (r.0.x + l.1.x).abs() < 0.05 && (r.1.x + l.0.x).abs() < 0.05,
+                    "held {} swing {swing}: {r:?} {l:?}",
+                    held.is_some()
+                );
+            }
+        }
     }
 
     #[test]

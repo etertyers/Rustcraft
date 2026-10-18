@@ -17,6 +17,15 @@ fn main() -> Result<()> {
 /// The scene to capture and where to save it.
 type ShotArgs = (&'static shots::Shot, std::path::PathBuf);
 
+/// What the command line asked for: the world, a bench, a scene to
+/// capture and the view to start in.
+type Parsed = (
+    Option<app::WorldKind>,
+    Option<bench::Bench>,
+    Option<ShotArgs>,
+    ViewMode,
+);
+
 /// No arguments opens the main menu. `--world <name>` opens a saved world
 /// (creating it with `--seed <n>` and `--creative` if it doesn't exist).
 /// The unsaved test worlds are `--gallery`, `--flat`, and generated terrain
@@ -25,14 +34,7 @@ type ShotArgs = (&'static shots::Shot, std::path::PathBuf);
 /// given. `--shot <name> [--out <file>]` captures a scene (see `shots`);
 /// `--shot list` lists them. `--view first|back|front` starts in that view
 /// (F5 cycles them).
-fn parse_args(
-    args: impl Iterator<Item = String>,
-) -> Result<(
-    Option<app::WorldKind>,
-    Option<bench::Bench>,
-    Option<ShotArgs>,
-    ViewMode,
-)> {
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     let mut args = args.peekable();
     let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
     let mut bench = None;

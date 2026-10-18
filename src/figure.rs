@@ -67,12 +67,14 @@ pub fn build(
                     .filter(|stack| stack.id == id)
                     .unwrap_or_else(|| ItemStack::new(id, 1))
             });
-            let geometry = shown.map(|stack| (held.get(&fig.icons.icon(&stack), fig.atlas).clone(), stack));
+            let geometry =
+                shown.map(|stack| (held.get(&fig.icons.icon(&stack), fig.atlas).clone(), stack));
             let item = geometry.as_ref().map(|(geometry, stack)| HandItem {
                 geometry,
                 display: display_of(fig, stack, DisplayContext::FirstPersonRightHand),
             });
             let input = HandInput {
+                left: false,
                 swing: view.attack_anim(alpha),
                 equip: view.equip_progress(alpha),
                 lag: view.hand_lag(alpha, game.camera.yaw, game.camera.pitch),
@@ -138,10 +140,9 @@ mod tests {
     };
 
     fn look() -> Look {
-        let mobs = crate::entity::mobs::MobRegistry::load(
-            &crate::assets::dir().join("data/mobs.ron"),
-        )
-        .unwrap();
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
         Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap()
     }
 
@@ -169,7 +170,8 @@ mod tests {
         assert!(m.body.is_empty() && m.items.is_empty());
 
         // With a sword: the item and no arm.
-        game.inventory.set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
         game.inventory.selected = 0;
         game.run_ticks(10);
         let m = build(&game, &mut held, &fig, (15, 0), (15, 0));
@@ -187,7 +189,10 @@ mod tests {
         let (min, max) = bounds(&m.items);
         let middle = (min + max) / 2.0 - feet;
         assert!(middle.y > 0.4 && middle.y < 1.6, "{middle}");
-        assert!(middle.x > 0.1, "on the right, east when facing north: {middle}");
+        assert!(
+            middle.x > 0.1,
+            "on the right, east when facing north: {middle}"
+        );
     }
 
     #[test]
