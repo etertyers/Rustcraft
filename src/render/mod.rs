@@ -119,6 +119,13 @@ struct ChunkBuffers {
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
+    /// Draw into `offscreen` when the window has no frame to give (it's
+    /// hidden or the screen is locked), waiting for the GPU, so `--bench`
+    /// still measures real frames.
+    offscreen_fallback: bool,
+    offscreen: Option<wgpu::Texture>,
+    /// The last frame went to `offscreen`.
+    drew_offscreen: bool,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -277,6 +284,9 @@ impl Renderer {
 
         Ok(Self {
             surface,
+            offscreen_fallback: false,
+            offscreen: None,
+            drew_offscreen: false,
             device,
             queue,
             config,
@@ -438,10 +448,52 @@ impl Renderer {
         result
     }
 
+    /// Draws into a texture instead of the window when it has no frame
+    /// to give (for `--bench`).
+    pub fn set_offscreen_fallback(&mut self, on: bool) {
+        self.offscreen_fallback = on;
+    }
+
+    /// Whether the last frame was drawn off screen.
+    pub fn drew_offscreen(&self) -> bool {
+        self.drew_offscreen
+    }
+
+    /// A texture like the window's frames, for drawing off screen.
+    fn offscreen_target(&mut self) -> wgpu::Texture {
+        let size = wgpu::Extent3d {
+            width: self.config.width,
+            height: self.config.height,
+            depth_or_array_layers: 1,
+        };
+        if let Some(texture) = &self.offscreen
+            && texture.size() == size
+        {
+            return texture.clone();
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[self.config.format.remove_srgb_suffix()],
+        });
+        self.offscreen = Some(texture.clone());
+        texture
+    }
+
     fn draw(&mut self, camera: &Camera, environment: &Environment, ui: &UiPaint) -> Result<bool> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded
+                if self.offscreen_fallback =>
+            {
+                None
+            }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Ok(false);
             }
@@ -451,10 +503,13 @@ impl Renderer {
             }
             wgpu::CurrentSurfaceTexture::Validation => bail!("surface validation error"),
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+        self.drew_offscreen = frame.is_none();
+        let target = match &frame {
+            Some(frame) => frame.texture.clone(),
+            None => self.offscreen_target(),
+        };
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_view = target.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.config.format.remove_srgb_suffix()),
             ..Default::default()
         });
@@ -589,7 +644,14 @@ impl Renderer {
         }
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
-        self.queue.present(frame);
+        match frame {
+            Some(frame) => self.queue.present(frame),
+            None => {
+                self.device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .context("waiting for an offscreen frame")?;
+            }
+        }
         Ok(true)
     }
 }

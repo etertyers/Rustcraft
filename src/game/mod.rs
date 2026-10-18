@@ -436,6 +436,20 @@ impl Game {
         self.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
 
+    /// Flies the player `distance` blocks north at feet height `height`, in
+    /// creative, looking a little down (`--bench`'s route).
+    pub fn glide(&mut self, distance: f64, height: f64) {
+        self.mode = GameMode::Creative;
+        self.body.flying = true;
+        let mut feet = self.body.position();
+        feet.y = height;
+        feet.z -= distance;
+        self.body.set_position(feet);
+        self.prev_feet = feet;
+        self.camera.yaw = 0.0;
+        self.camera.pitch = -0.35;
+    }
+
     /// Advances the game by `dt` seconds of real time: runs any ticks due,
     /// then places the camera between the last two ticks.
     pub fn advance(&mut self, dt: f32) {

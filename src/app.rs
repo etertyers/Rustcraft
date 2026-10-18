@@ -19,7 +19,9 @@ use winit::{
 };
 
 use crate::{
-    assets, config,
+    assets,
+    bench::{self, Bench, FrameTimes},
+    config,
     entity::mobs::MobRegistry,
     game::{Container, Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
@@ -115,6 +117,8 @@ pub struct App {
     frame_skipped: bool,
     /// First fatal error; the event loop exits and `main` returns it.
     error: Option<anyhow::Error>,
+    /// `--bench`: the flight being timed.
+    bench: Option<Bench>,
 }
 
 impl App {
@@ -141,7 +145,16 @@ impl App {
             occluded: false,
             frame_skipped: false,
             error: None,
+            bench: None,
         }
+    }
+
+    pub fn with_bench(mut self, bench: Option<Bench>) -> Self {
+        if let Some(distance) = bench.as_ref().and_then(|bench| bench.distance) {
+            self.options.render_distance = distance;
+        }
+        self.bench = bench;
+        self
     }
 
     pub fn into_result(self) -> Result<()> {
@@ -212,7 +225,9 @@ impl App {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
-        renderer.set_vsync(self.options.vsync);
+        // The bench measures how fast frames can go.
+        renderer.set_vsync(self.options.vsync && self.bench.is_none());
+        renderer.set_offscreen_fallback(self.bench.is_some());
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -569,8 +584,12 @@ impl App {
         ) else {
             return;
         };
+        if self.bench.is_some() {
+            game.glide(bench::SPEED * dt as f64, bench::HEIGHT);
+        }
         // The pause menu stops the game; the camera still follows it.
         game.advance(if self.pause.is_some() { 0.0 } else { dt });
+        let ticked = Instant::now();
 
         let p = game.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
@@ -582,6 +601,7 @@ impl App {
         for pos in changes.unloaded {
             renderer.remove_chunk(pos);
         }
+        let uploaded = Instant::now();
         renderer.set_outline(game.target.map(|hit| hit.block));
         let crack = game.mining_progress().and_then(|(cell, progress)| {
             let uv = *self.crack_uvs.get(crack::stage(progress))?;
@@ -699,7 +719,30 @@ impl App {
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
         let result = renderer.render(&game.camera, &game.environment(), ui);
+        let render_distance = game.chunks.radius();
+        let place = format!(
+            "ended at {:.0}, {} chunks loaded, {} drawn",
+            game.camera.position,
+            game.chunks.world().len(),
+            renderer.chunks_drawn()
+        );
+        let offscreen = renderer.drew_offscreen();
         self.finish_frame(event_loop, now, result);
+        if let Some(bench) = self.bench.as_mut() {
+            bench.record(FrameTimes {
+                frame: dt,
+                game: ticked - now,
+                chunks: uploaded - ticked,
+                draw: uploaded.elapsed(),
+                offscreen,
+            });
+            if bench.done() {
+                let report = format!("{}\n  {place}", bench.report(render_distance));
+                info!("{report}");
+                println!("{report}");
+                event_loop.exit();
+            }
+        }
         if self.options != options_before {
             self.options_changed();
         }
