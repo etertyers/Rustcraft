@@ -1,7 +1,8 @@
-//! Health, hunger, air, fire and falling, following 1.0.0's `FoodStats`,
-//! `EntityLiving.attackEntityFrom` and `Entity.onEntityUpdate`. The game
-//! feeds in what happened each tick; these rules turn it into damage and
-//! healing.
+//! Health, hunger, air, fire and falling, following 1.0.0's
+//! `EntityLiving.attackEntityFrom` and `Entity.onEntityUpdate`, with
+//! modern Java Edition's `FoodData` for hunger (Kenzo's call: 1.0.0's food
+//! bar drained too quickly). The game feeds in what happened each tick;
+//! these rules turn it into damage and healing.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,11 @@ pub const MAX_AIR: i32 = 300;
 const EXHAUSTION_PER_POINT: f32 = 4.0;
 /// Ticks between healing (food ≥ 18) or starving (food 0) by one point.
 const FOOD_TIMER_TICKS: u32 = 80;
+/// With a full food bar and saturation left, healing comes this often
+/// instead, spending up to `SATURATED_HEAL_MAX` saturation's worth of
+/// exhaustion at a time.
+const SATURATED_HEAL_TICKS: u32 = 10;
+const SATURATED_HEAL_MAX: f32 = 6.0;
 /// Food needed to heal over time.
 const HEALING_FOOD: i32 = 18;
 /// Starving stops at this much health on normal difficulty.
@@ -34,9 +40,10 @@ const LAVA_FIRE_TICKS: i32 = 300;
 /// Burning hurts this much once a second.
 const FIRE_DAMAGE: i32 = 1;
 /// Exhaustion each healed point costs, so healing uses up food.
-const HEAL_EXHAUSTION: f32 = 3.0;
-/// Exhaustion added by taking damage (1.0.0's `DamageSource.hungerDamage`).
-const DAMAGE_EXHAUSTION: f32 = 0.3;
+const HEAL_EXHAUSTION: f32 = 6.0;
+/// Most hits tire the player this much; falling, drowning, burning and
+/// starving don't (modern damage types' `exhaustion`).
+const DAMAGE_EXHAUSTION: f32 = 0.1;
 
 /// What hurt the player, for the death message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +70,17 @@ impl DamageSource {
             DamageSource::Arrow => "was shot",
         }
     }
+
+    /// Exhaustion a hit from this adds.
+    fn exhaustion(self) -> f32 {
+        match self {
+            DamageSource::Lava | DamageSource::Mob | DamageSource::Arrow => DAMAGE_EXHAUSTION,
+            DamageSource::Fall
+            | DamageSource::Drowning
+            | DamageSource::Fire
+            | DamageSource::Starving => 0.0,
+        }
+    }
 }
 
 /// What the player was in and doing this tick.
@@ -87,6 +105,9 @@ pub struct Stats {
     pub saturation: f32,
     pub exhaustion: f32,
     food_timer: u32,
+    /// Health healed so far short of a whole point, from saturated healing.
+    #[serde(default)]
+    partial_heal: f32,
     pub air: i32,
     /// Ticks left burning.
     pub fire: i32,
@@ -108,6 +129,7 @@ impl Default for Stats {
             saturation: START_SATURATION,
             exhaustion: 0.0,
             food_timer: 0,
+            partial_heal: 0.0,
             air: MAX_AIR,
             fire: 0,
             fall_distance: 0.0,
@@ -137,7 +159,7 @@ impl Stats {
         self.exhaustion = (self.exhaustion + amount).min(40.0);
     }
 
-    /// 1.0.0's `FoodStats.addStats`: food up to 20, saturation up to the
+    /// `FoodData.eat`: food up to 20, saturation up to the
     /// food level.
     pub fn eat(&mut self, food: i32, saturation: f32) {
         self.food = (self.food + food).min(MAX_FOOD);
@@ -178,7 +200,7 @@ impl Stats {
         };
         self.last_damage = amount;
         self.last_source = Some(source);
-        self.add_exhaustion(DAMAGE_EXHAUSTION);
+        self.add_exhaustion(source.exhaustion());
         fresh
     }
 
@@ -230,7 +252,9 @@ impl Stats {
         }
     }
 
-    /// A tick of hunger: 1.0.0's `FoodStats.onUpdate` on normal difficulty.
+    /// A tick of hunger: modern `FoodData.tick` on normal difficulty.
+    /// A full bar with saturation heals fast and burns the saturation; 18+
+    /// food heals a point every 4 seconds; an empty bar starves.
     pub fn tick_food(&mut self) {
         if self.exhaustion > EXHAUSTION_PER_POINT {
             self.exhaustion -= EXHAUSTION_PER_POINT;
@@ -240,7 +264,16 @@ impl Stats {
                 self.food = (self.food - 1).max(0);
             }
         }
-        if self.food >= HEALING_FOOD && self.health < MAX_HEALTH {
+        let hurt = self.health < MAX_HEALTH;
+        if hurt && self.food >= MAX_FOOD && self.saturation > 0.0 {
+            self.food_timer += 1;
+            if self.food_timer >= SATURATED_HEAL_TICKS {
+                let spent = self.saturation.min(SATURATED_HEAL_MAX);
+                self.heal_partly(spent / HEAL_EXHAUSTION);
+                self.add_exhaustion(spent);
+                self.food_timer = 0;
+            }
+        } else if hurt && self.food >= HEALING_FOOD {
             self.food_timer += 1;
             if self.food_timer >= FOOD_TIMER_TICKS {
                 self.heal(1);
@@ -258,6 +291,16 @@ impl Stats {
         } else {
             self.food_timer = 0;
         }
+    }
+
+    /// Heals `amount` points, carrying any fraction over to the next heal
+    /// since health here is whole points.
+    fn heal_partly(&mut self, amount: f32) {
+        // A little slack so sixths that add up to a point count as one.
+        let total = self.partial_heal + amount + 1e-4;
+        let whole = total.floor();
+        self.heal(whole as i32);
+        self.partial_heal = (total - whole - 1e-4).max(0.0);
     }
 }
 
@@ -397,6 +440,8 @@ mod tests {
     fn food_heals_when_high_and_starves_when_empty() {
         let mut stats = Stats {
             health: 10,
+            food: 18,
+            saturation: 0.0,
             ..Stats::default()
         };
         for _ in 0..FOOD_TIMER_TICKS {
@@ -419,6 +464,33 @@ mod tests {
             starving.health, STARVING_FLOOR,
             "normal difficulty stops at half a heart"
         );
+    }
+
+    #[test]
+    fn a_full_bar_with_saturation_heals_a_point_every_half_second() {
+        let mut stats = Stats {
+            health: 10,
+            saturation: 20.0,
+            ..Stats::default()
+        };
+        for _ in 0..SATURATED_HEAL_TICKS {
+            stats.tick_food();
+        }
+        assert_eq!((stats.health, stats.exhaustion), (11, 6.0));
+        // Less than 6 saturation heals a fraction, carried to the next heal.
+        let mut stats = Stats {
+            health: 10,
+            saturation: 3.0,
+            ..Stats::default()
+        };
+        for _ in 0..SATURATED_HEAL_TICKS {
+            stats.tick_food();
+        }
+        assert_eq!(stats.health, 10);
+        for _ in 0..SATURATED_HEAL_TICKS {
+            stats.tick_food();
+        }
+        assert_eq!(stats.health, 11, "half a point, then the other half");
     }
 
     #[test]
@@ -447,19 +519,30 @@ mod tests {
     }
 
     #[test]
-    fn healing_ten_points_after_a_fall_costs_visible_food() {
+    fn healing_spends_6_exhaustion_a_point_and_stops_below_18_food() {
         let mut stats = Stats {
             health: 10,
             ..Stats::default()
         };
-        // Ten heals, then a few ticks for the last one's exhaustion to drain.
-        for _ in 0..FOOD_TIMER_TICKS * 10 + 5 {
+        for _ in 0..FOOD_TIMER_TICKS * 20 {
             stats.tick(&GROUND, true);
             stats.tick_food();
         }
-        assert_eq!(stats.health, MAX_HEALTH);
-        // 30 exhaustion: all 5 saturation, then 2 food points.
-        assert_eq!(stats.saturation, 0.0);
-        assert_eq!(stats.food, 18);
+        // 5 saturation and 3 food (32 exhaustion) heal 5 and a third
+        // points; at 17 food healing stops.
+        assert_eq!((stats.food, stats.saturation), (17, 0.0));
+        assert_eq!(stats.health, 15);
+    }
+
+    #[test]
+    fn only_real_hits_tire_the_player() {
+        let mut stats = Stats::default();
+        stats.damage(2, DamageSource::Fall);
+        assert_eq!(stats.exhaustion, 0.0);
+        for _ in 0..HURT_COOLDOWN {
+            stats.tick(&GROUND, true);
+        }
+        stats.damage(2, DamageSource::Mob);
+        assert!((stats.exhaustion - DAMAGE_EXHAUSTION).abs() < 1e-6);
     }
 }

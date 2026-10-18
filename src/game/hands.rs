@@ -26,16 +26,16 @@ use crate::{
 /// The arrow item, given back when a stuck arrow is picked up.
 const ARROW: u16 = 262;
 
-/// Exhaustion per block broken (1.0.0's `harvestBlock`).
-const BREAK_EXHAUSTION: f32 = 0.025;
+/// Exhaustion per block broken (modern `Block.playerDestroy`).
+const BREAK_EXHAUSTION: f32 = 0.005;
 /// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
 const EAT_TICKS: u32 = 32;
 /// Mobs can be hit this far away (1.0.0 limits entity reach to 3).
 const ATTACK_REACH: f64 = 3.0;
 /// Mob hitboxes grow by this for aiming (1.0.0's `getCollisionBorderSize`).
 const TARGET_BORDER: f64 = 0.1;
-/// Exhaustion per attack (1.0.0).
-const ATTACK_EXHAUSTION: f32 = 0.3;
+/// Exhaustion per attack (modern `Player.attack`).
+const ATTACK_EXHAUSTION: f32 = 0.1;
 /// Extra push and lift of a sprinting hit (1.0.0's knockback bonus).
 const SPRINT_KNOCKBACK: f64 = 0.5;
 const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
