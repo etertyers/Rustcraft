@@ -81,6 +81,9 @@ pub enum WorldKind {
     Gallery,
 }
 
+/// Mobs farther than this from the camera aren't drawn (1.0.0's
+/// `isInRangeToRenderDist` for a mob about a block across).
+const MOB_DRAW_DISTANCE: f64 = 64.0;
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
 
@@ -648,7 +651,11 @@ impl App {
             renderer.set_entities(&mesh);
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();
-            for mob in &game.mobs {
+            let eye = game.camera.position.as_dvec3();
+            let near = |mob: &&crate::entity::mob::Mob| {
+                mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE
+            };
+            for mob in game.mobs.iter().filter(near) {
                 let index = match meshes.iter().position(|(kind, _)| *kind == mob.kind) {
                     Some(index) => index,
                     None => {

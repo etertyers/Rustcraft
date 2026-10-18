@@ -327,21 +327,68 @@ impl Renderer {
     /// Replaces the mob meshes (one per kind that's present) drawn from
     /// the next frame on.
     pub fn set_mobs(&mut self, meshes: &[(usize, Mesh)]) {
+        let mut old = std::mem::take(&mut self.mobs);
         self.mobs = meshes
             .iter()
             .filter(|(_, mesh)| !mesh.is_empty())
-            .map(|(kind, mesh)| (*kind, self.buffers("mob", mesh)))
+            .map(|(kind, mesh)| {
+                let reuse = old
+                    .iter()
+                    .position(|(k, _)| k == kind)
+                    .map(|i| old.swap_remove(i).1);
+                (*kind, self.rewrite(reuse, "mob", mesh))
+            })
             .collect();
     }
 
     /// Replaces the mining crack drawn from the next frame on.
     pub fn set_crack(&mut self, mesh: Option<&Mesh>) {
-        self.crack = mesh.map(|mesh| self.buffers("crack", mesh));
+        let old = self.crack.take();
+        self.crack = mesh.map(|mesh| self.rewrite(old, "crack", mesh));
     }
 
     /// Replaces the dropped-item mesh drawn from the next frame on.
     pub fn set_entities(&mut self, mesh: &Mesh) {
-        self.entities = (!mesh.is_empty()).then(|| self.buffers("entity", mesh));
+        let old = self.entities.take();
+        self.entities = (!mesh.is_empty()).then(|| self.rewrite(old, "entity", mesh));
+    }
+
+    /// Buffers for a mesh that changes every frame: `old`'s, written over,
+    /// if they're big enough, or new ones with room to grow.
+    fn rewrite(&self, old: Option<ChunkBuffers>, label: &str, mesh: &Mesh) -> ChunkBuffers {
+        let vertices: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        let mut indices = Vec::with_capacity(mesh.indices.len() + mesh.translucent.len());
+        indices.extend_from_slice(&mesh.indices);
+        indices.extend_from_slice(&mesh.translucent);
+        let indices: &[u8] = bytemuck::cast_slice(&indices);
+        let fits = |buffer: &wgpu::Buffer, bytes: &[u8]| buffer.size() >= bytes.len() as u64;
+        let (vertex_buffer, index_buffer) = match old {
+            Some(old) if fits(&old.vertices, vertices) && fits(&old.indices, indices) => {
+                (old.vertices, old.indices)
+            }
+            _ => {
+                let buffer = |size: usize, usage| {
+                    self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(label),
+                        size: (size.next_power_of_two() as u64).max(256),
+                        usage: usage | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    })
+                };
+                (
+                    buffer(vertices.len(), wgpu::BufferUsages::VERTEX),
+                    buffer(indices.len(), wgpu::BufferUsages::INDEX),
+                )
+            }
+        };
+        self.queue.write_buffer(&vertex_buffer, 0, vertices);
+        self.queue.write_buffer(&index_buffer, 0, indices);
+        ChunkBuffers {
+            vertices: vertex_buffer,
+            indices: index_buffer,
+            opaque: mesh.indices.len() as u32,
+            translucent: mesh.translucent.len() as u32,
+        }
     }
 
     fn buffers(&self, label: &str, mesh: &Mesh) -> ChunkBuffers {
