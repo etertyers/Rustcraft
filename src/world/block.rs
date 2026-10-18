@@ -852,13 +852,14 @@ impl BlockDef {
     }
 
     /// Whether its state hangs on its neighbors and is worked out again
-    /// when they change: fence, pane and vine connections, stair corners,
+    /// when they change: fence, pane, wall and vine connections, stair corners,
     /// redstone dust, fence gates in walls and snowy grass.
     pub fn shaped_by_neighbors(&self) -> bool {
         matches!(
             self.shape,
             Shape::Fence
                 | Shape::Pane
+                | Shape::Wall
                 | Shape::Stairs
                 | Shape::RedstoneWire
                 | Shape::Vine

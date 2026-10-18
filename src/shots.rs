@@ -16,9 +16,7 @@ use crate::{
         Face,
         block::{BlockId, BlockState},
         blocks::*,
-        props::{
-            Prop, attach_face, axis, bed_part, door_half, half, hinge, slab_type, stairs_shape,
-        },
+        props::{Prop, attach_face, axis, bed_part, door_half, half, hinge, slab_type},
     },
 };
 
@@ -31,9 +29,10 @@ pub struct Shot {
     /// Feet, yaw and pitch to view the scene from; `None` keeps the
     /// player where the world left them.
     pub view: Option<([f64; 3], f32, f32)>,
-    /// Time of day in ticks (6000 is noon).
-    pub time: u64,
-    pub mode: GameMode,
+    /// Time of day in ticks (6000 is noon), and the game mode; `None`
+    /// keeps a saved world's.
+    pub time: Option<u64>,
+    pub mode: Option<GameMode>,
     /// Shows the F3 overlay.
     pub overlay: bool,
     /// Places the scene's blocks and runs its ticks, once the chunks
@@ -48,40 +47,70 @@ pub static SHOTS: &[Shot] = &[
         about: "every block in its default state and each variant",
         world: Some(WorldKind::Gallery),
         view: Some(([22.5, 64.0, -4.0], std::f32::consts::PI, -0.3)),
-        time: 6000,
-        mode: GameMode::Creative,
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
         overlay: false,
         stage: nothing,
     },
     Shot {
         name: "m14-block-states",
-        about: "stairs, logs, slabs, doors, trapdoors, torches and more in modern block states",
+        about: "stairs (corners worked out from their neighbors), logs on each axis, slabs, doors, trapdoors, torches, levers and rails",
         world: Some(WorldKind::Flat),
-        view: Some(([7.0, 69.0, -4.5], std::f32::consts::PI, -0.62)),
-        time: 6000,
-        mode: GameMode::Creative,
+        view: Some(([7.0, 68.0, -4.5], std::f32::consts::PI, -0.55)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
         overlay: false,
         stage: block_states,
     },
     Shot {
-        name: "dev-rows-closeup",
-        about: "a close look at the rows behind the stairs",
+        name: "m14-block-states-2",
+        about: "fences, panes and walls joined up, gates, snow layers, cake, chest, beds, carpets, anvils and more",
         world: Some(WorldKind::Flat),
-        view: Some(([6.5, 67.5, 1.0], std::f32::consts::PI, -0.6)),
-        time: 6000,
-        mode: GameMode::Creative,
+        view: Some(([7.0, 68.0, 6.0], std::f32::consts::PI, -0.6)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
         overlay: false,
         stage: block_states,
     },
     Shot {
-        name: "dev-stairs-closeup",
-        about: "a close look at stairs (for checking shading)",
+        name: "m14-v1-world-upgraded",
+        about: "a v1.0 world (open with --world) after its one-time upgrade, as the player left it",
+        world: None,
+        view: None,
+        time: None,
+        mode: None,
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m14-build-limit",
+        about: "a pillar built from the ground to Y 255, the new top of the world",
         world: Some(WorldKind::Flat),
-        view: Some(([11.5, 66.0, -2.5], std::f32::consts::PI - 0.3, -0.45)),
-        time: 6000,
-        mode: GameMode::Creative,
+        view: Some(([-15.5, 222.0, 15.5], 0.785, 0.32)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: build_limit,
+    },
+    Shot {
+        name: "m14-slab-and-torch",
+        about: "standing on a bottom slab (feet at Y 64.5), the crosshair on a torch's small outline",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.5, -1.5], 0.0, -1.07)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: true,
+        stage: slab_and_torch,
+    },
+    Shot {
+        name: "m14-falling-sand",
+        about: "a sand pillar falling into the hole dug out under it",
+        world: Some(WorldKind::Flat),
+        view: Some(([3.5, 65.0, 0.5], -0.6, -0.15)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
         overlay: false,
-        stage: block_states,
+        stage: falling_sand,
     },
 ];
 
@@ -104,16 +133,16 @@ fn block_states(game: &mut Game) {
         edits.push((at(i as i32, 64, 0), stairs));
         edits.push((at(i as i32 + 5, 64, 0), stairs.with(Prop::Half, half::TOP)));
     }
-    let corners = [
-        stairs_shape::OUTER_LEFT,
-        stairs_shape::OUTER_RIGHT,
-        stairs_shape::INNER_LEFT,
-        stairs_shape::INNER_RIGHT,
-    ];
-    for (i, shape) in corners.into_iter().enumerate() {
-        let stairs = facing(COBBLESTONE_STAIRS, Face::North).with(Prop::StairsShape, shape);
-        edits.push((at(i as i32 + 10, 64, 0), stairs));
-    }
+    // Corners, worked out from their neighbors: stairs facing north with
+    // west-facing stairs behind (an outer corner) and in front (inner).
+    let north = facing(COBBLESTONE_STAIRS, Face::North);
+    let west = facing(COBBLESTONE_STAIRS, Face::West);
+    edits.extend([
+        (at(11, 64, 0), north),
+        (at(11, 64, -1), west),
+        (at(14, 64, 0), north),
+        (at(14, 64, 1), west),
+    ]);
     // Row 2: logs along each axis, slabs on the bottom, top and doubled.
     for (i, a) in [axis::Y, axis::X, axis::Z].into_iter().enumerate() {
         edits.push((
@@ -186,17 +215,11 @@ fn block_states(game: &mut Game) {
         BlockState::of(POWERED_RAIL).with_bool(Prop::Powered, true),
     ));
     // Row 8: fences, panes and bars joined in lines, a gate shut and open.
+    // They join each other as they go down.
     for x in 0..3 {
-        let mut fence = BlockState::of(OAK_FENCE);
-        if x > 0 {
-            fence = fence.with_bool(Prop::West, true);
-        }
-        if x < 2 {
-            fence = fence.with_bool(Prop::East, true);
-        }
-        edits.push((at(x, 64, 8), fence));
-        edits.push((at(x + 4, 64, 8), with_sides(GLASS_PANE, fence)));
-        edits.push((at(x + 8, 64, 8), with_sides(IRON_BARS, fence)));
+        edits.push((at(x, 64, 8), BlockState::of(OAK_FENCE)));
+        edits.push((at(x + 4, 64, 8), BlockState::of(GLASS_PANE)));
+        edits.push((at(x + 8, 64, 8), BlockState::of(IRON_BARS)));
     }
     edits.push((at(12, 64, 8), facing(OAK_FENCE_GATE, Face::South)));
     edits.push((
@@ -247,14 +270,52 @@ fn block_states(game: &mut Game) {
         at(8, 64, 13),
         BlockState::of(VINE).with_bool(Prop::North, true),
     ));
+    // Row 14: carpets, walls joining in an L, anvils, red sand, concrete
+    // powder.
+    for (i, id) in [WHITE_CARPET, RED_CARPET, BLUE_CARPET, LIME_CARPET]
+        .into_iter()
+        .enumerate()
+    {
+        edits.push((at(i as i32, 64, 14), BlockState::of(id)));
+    }
+    for (x, z) in [(5, 14), (6, 14), (7, 14), (7, 15)] {
+        edits.push((at(x, 64, z), BlockState::of(COBBLESTONE_WALL)));
+    }
+    edits.push((at(9, 64, 14), facing(ANVIL, Face::East)));
+    edits.push((at(10, 64, 14), facing(DAMAGED_ANVIL, Face::North)));
+    edits.push((at(12, 64, 14), BlockState::of(RED_SAND)));
+    edits.push((at(13, 64, 14), BlockState::of(ORANGE_CONCRETE_POWDER)));
     game.set_blocks(&edits);
 }
 
-/// `id` connected on the same sides as `like`.
-fn with_sides(id: BlockId, like: BlockState) -> BlockState {
-    SIDES.iter().fold(BlockState::of(id), |state, &face| {
-        state.with_bool(Prop::side(face), like.bool(Prop::side(face)))
-    })
+/// Stone from the ground to the top of the world, banded with wool every
+/// 32 blocks (orange at 128, v1.0's limit) and glowstone at Y 255.
+fn build_limit(game: &mut Game) {
+    let mut edits = line(at(0, 64, 0), IVec3::Y, 192, BlockState::of(STONE));
+    for y in (96..255).step_by(32) {
+        let band = if y == 128 { ORANGE_WOOL } else { WHITE_WOOL };
+        edits.push((at(0, y, 0), BlockState::of(band)));
+    }
+    edits.push((at(0, 255, 0), BlockState::of(GLOWSTONE)));
+    game.set_blocks(&edits);
+}
+
+/// A path of bottom slabs to stand on, and a torch on the ground ahead.
+fn slab_and_torch(game: &mut Game) {
+    let slab = BlockState::of(OAK_SLAB);
+    let mut edits = line(at(0, 64, 0), IVec3::NEG_Z, 3, slab);
+    edits.push((at(0, 64, -3), BlockState::of(TORCH)));
+    edits.push((at(1, 64, -3), BlockState::of(DANDELION)));
+    game.set_blocks(&edits);
+}
+
+/// Sand stacked three high on the grass, then the ground under it dug out
+/// three deep, a few ticks into its fall.
+fn falling_sand(game: &mut Game) {
+    let sand = BlockState::of(SAND);
+    game.set_blocks(&line(at(0, 64, -4), IVec3::Y, 3, sand));
+    game.set_blocks(&line(at(0, 63, -4), IVec3::NEG_Y, 3, BlockState::AIR));
+    game.run_ticks(9);
 }
 
 pub fn find(name: &str) -> Option<&'static Shot> {

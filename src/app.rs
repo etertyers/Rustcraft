@@ -299,7 +299,10 @@ impl App {
         game.apply_options(&self.options);
         if let Some(run) = &self.shot {
             let shot = run.shot;
-            game.set_time_and_mode(shot.time, shot.mode);
+            game.set_time_and_mode(
+                shot.time.unwrap_or(game.time()),
+                shot.mode.unwrap_or(game.mode),
+            );
             if let Some((feet, yaw, pitch)) = shot.view {
                 game.teleport(DVec3::from_array(feet), yaw, pitch);
             }
