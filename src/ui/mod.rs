@@ -3,6 +3,7 @@
 mod fps;
 pub mod gui;
 pub mod menu;
+pub mod packs;
 pub mod pause;
 pub mod screens;
 

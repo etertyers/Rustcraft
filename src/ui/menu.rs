@@ -1,6 +1,7 @@
 //! The main menu, following 1.0.0's screens: the title screen
-//! (Singleplayer, Quit Game), Select World (each world's mode and when it
-//! was last played) and Create New World (name, seed, game mode).
+//! (Singleplayer, Options, Resource Packs, Quit Game), Select World (each
+//! world's mode and when it was last played) and Create New World (name,
+//! seed, game mode).
 
 use std::{
     path::PathBuf,
@@ -9,6 +10,10 @@ use std::{
 
 use egui::{Align, Button, Color32, Frame, Layout, RichText};
 
+use super::{
+    packs::PackScreen,
+    pause::{OptionsAction, options_page},
+};
 use crate::{
     level::{self, Level, WorldDir},
     options::Options,
@@ -29,6 +34,8 @@ pub enum MenuAction {
 enum Screen {
     Title,
     Options,
+    /// Resource Packs, and the screen to go back to.
+    ResourcePacks(PackScreen, Box<Screen>),
     SelectWorld,
     CreateWorld,
 }
@@ -69,11 +76,25 @@ impl Menu {
             .frame(Frame::new().fill(BACKGROUND).inner_margin(24.0))
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    action = match self.screen {
-                        Screen::Title => self.title(ui),
+                    action = match &mut self.screen {
+                        Screen::Title => self.title(ui, options),
                         Screen::Options => {
-                            if super::pause::options_page(ui, options) {
-                                self.screen = Screen::Title;
+                            match options_page(ui, options) {
+                                Some(OptionsAction::Done) => self.screen = Screen::Title,
+                                Some(OptionsAction::ResourcePacks) => {
+                                    self.open_packs(options, Screen::Options)
+                                }
+                                None => {}
+                            }
+                            None
+                        }
+                        Screen::ResourcePacks(packs, _) => {
+                            if let Some(selection) = packs.show(ui) {
+                                options.resource_packs = selection;
+                                let back = std::mem::replace(&mut self.screen, Screen::Title);
+                                if let Screen::ResourcePacks(_, back) = back {
+                                    self.screen = *back;
+                                }
                             }
                             None
                         }
@@ -92,7 +113,12 @@ impl Menu {
         action
     }
 
-    fn title(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
+    fn open_packs(&mut self, options: &Options, back: Screen) {
+        let packs = PackScreen::new(crate::pack::packs_dir(), &options.resource_packs);
+        self.screen = Screen::ResourcePacks(packs, Box::new(back));
+    }
+
+    fn title(&mut self, ui: &mut egui::Ui, options: &Options) -> Option<MenuAction> {
         ui.add_space(ui.available_height() * 0.2);
         ui.label(
             RichText::new("Rustcraft")
@@ -109,6 +135,13 @@ impl Menu {
         ui.add_space(8.0);
         if ui.add_sized(BUTTON, Button::new("Options...")).clicked() {
             self.screen = Screen::Options;
+        }
+        ui.add_space(8.0);
+        if ui
+            .add_sized(BUTTON, Button::new("Resource Packs..."))
+            .clicked()
+        {
+            self.open_packs(options, Screen::Title);
         }
         ui.add_space(8.0);
         ui.add_sized(BUTTON, Button::new("Quit Game"))
