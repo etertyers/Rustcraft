@@ -4,6 +4,7 @@
 
 mod containers;
 pub mod environment;
+mod fluids;
 mod hands;
 mod mobs;
 #[cfg(test)]
@@ -36,7 +37,7 @@ use crate::{
     level::{Level, PlayerData, WorldDir},
     options::Options,
     player::{
-        collision::WorldCollider,
+        collision::{Collider, WorldCollider},
         input::MoveKeys,
         mode::GameMode,
         physics::Body,
@@ -47,6 +48,8 @@ use crate::{
     world::{
         block::Fluid,
         chunk::ChunkPos,
+        fire::Fires,
+        fluid::{self, Fluids},
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -128,6 +131,9 @@ pub struct Game {
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
     mining: Option<(glam::IVec3, f32)>,
+    /// Scheduled water and lava updates.
+    fluids: Fluids,
+    fires: Fires,
     /// For drops and throws.
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
@@ -197,6 +203,8 @@ impl Game {
             populated: HashSet::new(),
             mining: None,
             eating: None,
+            fluids: Fluids::default(),
+            fires: Fires::default(),
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
@@ -481,6 +489,8 @@ impl Game {
         self.tick_particles();
         self.tick_arrows();
         self.tick_mobs();
+        self.tick_fluids();
+        self.tick_fires();
         self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;
@@ -518,11 +528,15 @@ impl Game {
         }
     }
 
-    /// The liquid at `point`, if any.
+    /// The liquid at `point`, if it's below the surface (1.0.0's
+    /// `isInsideOfMaterial`, which counts a source's whole cell and the
+    /// lower part of a shallower flow's).
     fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
         let p = point.floor().as_ivec3();
         let block = self.chunks.world().block(p.x, p.y, p.z)?;
-        self.items.blocks.get(block.id())?.fluid
+        let fluid = self.items.blocks.get(block.id())?.fluid?;
+        let surface = (p.y + 1) as f64 - (fluid::height_percent(block.data()) - 1.0 / 9.0) as f64;
+        (point.y < surface).then_some(fluid)
     }
 
     /// Exhaustion from moving, then a tick of health, hunger, air and fire
@@ -558,6 +572,11 @@ impl Game {
             fell: -moved.y as f32,
             in_water: liquid == Some(Fluid::Water),
             in_lava: liquid == Some(Fluid::Lava),
+            in_fire: WorldCollider {
+                world: self.chunks.world(),
+                blocks: &self.items.blocks,
+            }
+            .in_fire(&self.body.aabb()),
             eyes_in_water,
             flying: self.body.flying,
         };

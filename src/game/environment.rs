@@ -23,9 +23,7 @@ const LAVA_FOG: (f32, Vec3) = (2.0, Vec3::new(0.6, 0.1, 0.0));
 impl Game {
     /// The liquid the camera is in, if any.
     pub fn eye_in(&self) -> Option<Fluid> {
-        let p = self.camera.position.floor().as_ivec3();
-        let block = self.chunks.world().block(p.x, p.y, p.z)?;
-        self.items.blocks.get(block.id())?.fluid
+        self.fluid_at(self.camera.position.as_dvec3())
     }
 
     pub fn environment(&self) -> Environment {

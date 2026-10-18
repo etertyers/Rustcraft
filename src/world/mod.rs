@@ -5,6 +5,8 @@ pub mod block;
 pub mod block_entity;
 pub mod chunk;
 pub mod daytime;
+pub mod fire;
+pub mod fluid;
 pub mod harvest;
 pub mod light;
 pub mod manager;

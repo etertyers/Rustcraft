@@ -17,6 +17,8 @@
 //               right-click for 32 ticks (1.0.0's ItemFood values)
 //   leftover    item left after use (stew eaten → bowl, lava bucket burned → bucket)
 //   shoots      ammunition used up by drawing and releasing (bow → arrow)
+//   bucket      Empty, or Holds(Water) or Holds(Lava): picks up or pours a
+//               fluid source by right-clicking
 #![enable(implicit_some)]
 [
     (id: 256, name: "iron_shovel", texture: "iron_shovel", max_stack: 1, tool: (kind: Shovel, tier: Iron, attack: 3)),
@@ -88,9 +90,9 @@
     (id: 322, name: "golden_apple", texture: "apple_golden", food: (hunger: 10, saturation: 1.2, always_edible: true)),
     (id: 323, name: "sign", texture: "sign", max_stack: 1),
     (id: 324, name: "wooden_door", texture: "door_wood", places: 64, max_stack: 1),
-    (id: 325, name: "bucket", texture: "bucket_empty", max_stack: 1),
-    (id: 326, name: "water_bucket", texture: "bucket_water", max_stack: 1),
-    (id: 327, name: "lava_bucket", texture: "bucket_lava", leftover: 325, max_stack: 1),
+    (id: 325, name: "bucket", texture: "bucket_empty", max_stack: 1, bucket: Empty),
+    (id: 326, name: "water_bucket", texture: "bucket_water", max_stack: 1, bucket: Holds(Water)),
+    (id: 327, name: "lava_bucket", texture: "bucket_lava", leftover: 325, max_stack: 1, bucket: Holds(Lava)),
     (id: 328, name: "minecart", texture: "minecart_normal", max_stack: 1),
     (id: 329, name: "saddle", texture: "saddle", max_stack: 1),
     (id: 330, name: "iron_door", texture: "door_iron", places: 71, max_stack: 1),

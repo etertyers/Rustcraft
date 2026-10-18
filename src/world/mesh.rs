@@ -6,10 +6,11 @@ use super::{
     Face,
     biome::{Biome, BiomeColors},
     block::{
-        BlockRegistry, BlockState, DATA_VALUES, FaceTint, RenderLayer, Shape, bed_direction,
+        BlockRegistry, BlockState, DATA_VALUES, FaceTint, Fluid, RenderLayer, Shape, bed_direction,
         door_box, door_side,
     },
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
+    fluid::{self, Cell},
     light::ChunkLight,
 };
 use crate::{
@@ -39,6 +40,10 @@ pub struct BlockModel {
     pub emission: u8,
     /// Drawn in the blended pass (water, ice, glass).
     pub translucent: bool,
+    /// Water or lava, flowing or still.
+    pub fluid: Option<Fluid>,
+    /// Holds fluids back (`BlockDef::stops_fluid`).
+    pub stops_fluid: bool,
     /// Indexed by `Face::index`.
     pub faces: [FaceTexture; 6],
 }
@@ -67,6 +72,8 @@ impl BlockModels {
             opacity: 15,
             emission: 0,
             translucent: false,
+            fluid: None,
+            stops_fluid: true,
             faces: [FaceTexture {
                 uv: missing_uv,
                 tint: FaceTint::None,
@@ -100,6 +107,8 @@ impl BlockModels {
                     opacity: def.light_opacity(),
                     emission: def.light,
                     translucent: def.layer == RenderLayer::Translucent,
+                    fluid: def.fluid,
+                    stops_fluid: def.stops_fluid(),
                     faces,
                 });
             }
@@ -204,6 +213,17 @@ impl Mesh {
     ) {
         let [u0, v0, u1, v1] = uv;
         let uvs = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+        self.quad_uvs(corners, uvs, colors, lights);
+    }
+
+    /// `quad` with a texture coordinate per corner.
+    fn quad_uvs(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uvs: [[f32; 2]; 4],
+        colors: [[f32; 3]; 4],
+        lights: [[f32; 2]; 4],
+    ) {
         let base = self.vertices.len() as u32;
         for i in 0..4 {
             self.vertices.push(Vertex {
@@ -326,6 +346,35 @@ const CROSS_PLANES: [[[f32; 3]; 4]; 2] = [
     [[0., 0., 0.], [1., 0., 1.], [1., 1., 1.], [0., 1., 0.]],
     [[0., 0., 1.], [1., 0., 0.], [1., 1., 0.], [0., 1., 1.]],
 ];
+
+/// How tall fire's planes reach, into the cell above (1.0.0's 1.4).
+const FIRE_HEIGHT: f32 = 1.4;
+
+/// Fire's planes (1.0.0's `renderBlockFire`): on a floor, four planes
+/// rising from its edges and leaning in; otherwise one leaning out from
+/// each solid wall beside it (`walls` in −x, +x, −z, +z order).
+fn fire_planes(floor: bool, walls: [bool; 4]) -> Vec<[[f32; 3]; 4]> {
+    let h = FIRE_HEIGHT;
+    if floor || !walls.contains(&true) {
+        return vec![
+            [[0., 0., 0.], [0., 0., 1.], [0.7, h, 1.], [0.7, h, 0.]],
+            [[1., 0., 1.], [1., 0., 0.], [0.3, h, 0.], [0.3, h, 1.]],
+            [[0., 0., 1.], [1., 0., 1.], [1., h, 0.3], [0., h, 0.3]],
+            [[1., 0., 0.], [0., 0., 0.], [0., h, 0.7], [1., h, 0.7]],
+        ];
+    }
+    let leaning = [
+        [[0., 0., 1.], [0., 0., 0.], [0.2, h, 0.], [0.2, h, 1.]],
+        [[1., 0., 0.], [1., 0., 1.], [0.8, h, 1.], [0.8, h, 0.]],
+        [[0., 0., 0.], [1., 0., 0.], [1., h, 0.2], [0., h, 0.2]],
+        [[1., 0., 1.], [0., 0., 1.], [0., h, 0.8], [1., h, 0.8]],
+    ];
+    leaning
+        .into_iter()
+        .zip(walls)
+        .filter_map(|(plane, wall)| wall.then_some(plane))
+        .collect()
+}
 
 /// Planes of the #-shaped crop model, 4 pixels in from each edge.
 const CROP_PLANES: [[[f32; 3]; 4]; 4] = [
@@ -525,28 +574,135 @@ fn door_mirrored(data: u8, side: u8, face: Face) -> bool {
 /// Height of a slab (the bottom half of its cell).
 const SLAB_HEIGHT: f32 = 0.5;
 
-/// Height of a block's top: 1, or for a liquid with no liquid of its kind
-/// above it, 1.0.0's 8/9 for a source block.
-fn liquid_height(
+/// Water or lava at chunk-local `cell` (1.0.0's
+/// `RenderBlocks.renderBlockFluids`): each corner of the surface at its
+/// own height, the flowing texture turned to run downstream at half
+/// scale (still fluid shows the still texture), and sides cut to the
+/// surface. The surface is seen from below too.
+fn mesh_liquid(
+    mesh: &mut Mesh,
+    models: &BlockModels,
     area: &ChunkArea,
-    block: BlockState,
-    model: &BlockModel,
-    [x, y, z]: [usize; 3],
-) -> f32 {
-    if model.shape != Shape::Liquid {
-        return 1.0;
-    }
-    let above = area.get(x as i32, y as i32 + 1, z as i32);
-    if above.is_some_and(|above| above.id() == block.id()) {
-        1.0
-    } else {
-        LIQUID_SURFACE
+    light: &ChunkLight,
+    cell: [i32; 3],
+    origin: [f32; 3],
+    biome: Biome,
+) {
+    let [x, y, z] = cell;
+    let Some(block) = area.get(x, y, z) else {
+        return;
+    };
+    let model = models.get(block);
+    let Some(fluid) = model.fluid else {
+        return;
+    };
+    let lookup = |at: glam::IVec3| {
+        let block = area.get(at.x, at.y, at.z)?;
+        let model = models.get(block);
+        Some(Cell {
+            block,
+            fluid: model.fluid,
+            stops: model.stops_fluid,
+        })
+    };
+    let at = glam::IVec3::from_array(cell);
+    let heights = [[0, 0], [0, 1], [1, 0], [1, 1]]
+        .map(|[cx, cz]| fluid::corner_height(fluid, at + glam::IVec3::new(cx, 0, cz), &lookup));
+    let height = |cx: f32, cz: f32| heights[(cx as usize) * 2 + cz as usize];
+    let flow = fluid::flow_vector(fluid, at, &lookup);
+    for face in Face::ALL {
+        let [dx, dy, dz] = face.normal();
+        let neighbor = area.get(x + dx, y + dy, z + dz);
+        let same_above = face == Face::Top
+            && neighbor.is_some_and(|above| models.get(above).fluid == Some(fluid));
+        // The surface shows under any block unless the fluid goes on up.
+        let visible = if face == Face::Top {
+            !same_above && neighbor.is_some()
+        } else {
+            face_visible(models, block, model, neighbor)
+        };
+        if !visible {
+            continue;
+        }
+        let corners = face_corners(face).map(|[cx, cy, cz]| {
+            let top = if cy > 0.0 { height(cx, cz) } else { 0.0 };
+            [cx, top, cz]
+        });
+        let texture = model.faces[face.index()];
+        let flowing = model.faces[Face::North.index()].uv;
+        let uvs = match face {
+            Face::Top => surface_uvs(corners, texture.uv, flowing, flow),
+            Face::Bottom => {
+                let [u0, v0, u1, v1] = texture.uv;
+                [[u0, v1], [u1, v1], [u1, v0], [u0, v0]]
+            }
+            // Sides show the flowing texture at half scale, cut at the
+            // surface.
+            _ => {
+                let [u0, v0, u1, v1] = texture.uv;
+                let (half_u, half_v) = ((u1 - u0) / 2.0, (v1 - v0) / 2.0);
+                [0, 1, 2, 3].map(|i| {
+                    let u = if i == 1 || i == 2 { u0 + half_u } else { u0 };
+                    let v = if i >= 2 {
+                        v0 + (1.0 - corners[i][1]) * half_v
+                    } else {
+                        v0 + half_v
+                    };
+                    [u, v]
+                })
+            }
+        };
+        let color = models
+            .tint_color(texture.tint, biome)
+            .map(|c| c * face.shade());
+        let lit = smooth_face(models, area, light, cell, face);
+        let colors = lit.map(|(ao, _)| color.map(|c| c * ao));
+        let lights = lit.map(|(_, l)| l);
+        let corners = translate(corners, origin);
+        mesh.quad_uvs(corners, uvs, colors, lights);
+        if face == Face::Top {
+            let [a, b, c, d] = corners;
+            let [ua, ub, uc, ud] = uvs;
+            let [ca, cb, cc, cd] = colors;
+            let [la, lb, lc, ld] = lights;
+            mesh.quad_uvs(
+                [b, a, d, c],
+                [ub, ua, ud, uc],
+                [cb, ca, cd, cc],
+                [lb, la, ld, lc],
+            );
+        }
     }
 }
 
-/// A still liquid's surface, 1/9 below the top of its block (1.0.0's
-/// `BlockFluid.getFluidHeightPercent` for a source).
-const LIQUID_SURFACE: f32 = 8.0 / 9.0;
+/// Texture coordinates for a fluid surface's corners: the still texture
+/// `still` filling the face if there's no `flow`, or else the middle half
+/// of the flowing texture `flowing` turned to run along it (1.0.0 rotates
+/// by the flow's angle around the texture's middle).
+fn surface_uvs(
+    corners: [[f32; 3]; 4],
+    still: [f32; 4],
+    flowing: [f32; 4],
+    flow: glam::DVec3,
+) -> [[f32; 2]; 4] {
+    let (rect, reach, angle) = if flow.x == 0.0 && flow.z == 0.0 {
+        (still, 0.5, 0.0)
+    } else {
+        let angle = flow.z.atan2(flow.x) as f32 - std::f32::consts::FRAC_PI_2;
+        (flowing, 0.25, angle)
+    };
+    let [u0, v0, u1, v1] = rect;
+    let (mid_u, mid_v) = ((u0 + u1) / 2.0, (v0 + v1) / 2.0);
+    let (sin, cos) = angle.sin_cos();
+    let (s, c) = (sin * reach, cos * reach);
+    corners.map(|[cx, _, cz]| {
+        let (sx, sz) = (cx * 2.0 - 1.0, cz * 2.0 - 1.0);
+        [
+            mid_u + (u1 - u0) * (c * sx + s * sz),
+            mid_v + (v1 - v0) * (c * sz - s * sx),
+        ]
+    })
+}
 
 fn translate(corners: [[f32; 3]; 4], origin: [f32; 3]) -> [[f32; 3]; 4] {
     corners.map(|c| [c[0] + origin[0], c[1] + origin[1], c[2] + origin[2]])
@@ -567,7 +723,12 @@ fn face_visible(
     if neighbor.is_air() {
         return true;
     }
-    if models.get(neighbor).opaque_cube {
+    let other = models.get(neighbor);
+    if other.opaque_cube {
+        return false;
+    }
+    // Flowing and still water hide each other's faces too.
+    if model.fluid.is_some() && other.fluid == model.fluid {
         return false;
     }
     !(model.cull_same && neighbor.id() == block.id())
@@ -667,15 +828,36 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 );
                             }
                         }
+                        Shape::Fire => {
+                            let solid = |dx: i32, dy: i32, dz: i32| {
+                                let next = area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                                next.is_some_and(|next| models.get(next).opaque_cube)
+                            };
+                            let floor = solid(0, -1, 0);
+                            let walls = [
+                                solid(-1, 0, 0),
+                                solid(1, 0, 0),
+                                solid(0, 0, -1),
+                                solid(0, 0, 1),
+                            ];
+                            for plane in fire_planes(floor, walls) {
+                                mesh.double_sided_quad(
+                                    translate(plane, origin),
+                                    side.uv,
+                                    side_color,
+                                    own_light,
+                                );
+                            }
+                        }
+                        Shape::Liquid => {
+                            let cell = [x as i32, y as i32, z as i32];
+                            mesh_liquid(&mut mesh, models, area, light, cell, origin, biome);
+                        }
                         // Every other shape is a full cube until its model is
-                        // built; liquids lower their surface.
+                        // built.
                         _ => {
                             let slab = model.shape == Shape::Slab;
-                            let height = if slab {
-                                SLAB_HEIGHT
-                            } else {
-                                liquid_height(area, block, model, [x, y, z])
-                            };
+                            let height = if slab { SLAB_HEIGHT } else { 1.0 };
                             for face in Face::ALL {
                                 let [dx, dy, dz] = face.normal();
                                 let neighbor =
@@ -702,19 +884,6 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 let lights = lit.map(|(_, l)| l);
                                 let corners = translate(corners, origin);
                                 mesh.quad(corners, texture.uv, colors, lights);
-                                if face == Face::Top && model.shape == Shape::Liquid && height < 1.0
-                                {
-                                    // A liquid's surface is seen from below too.
-                                    let [a, b, c, d] = corners;
-                                    let [ca, cb, cc, cd] = colors;
-                                    let [la, lb, lc, ld] = lights;
-                                    mesh.quad(
-                                        [b, a, d, c],
-                                        texture.uv,
-                                        [cb, ca, cd, cc],
-                                        [lb, la, ld, lc],
-                                    );
-                                }
                             }
                         }
                     }
@@ -750,7 +919,8 @@ mod tests {
             (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
             (id: 85, name: "fence", hardness: 2.0, shape: Fence),
             (id: 126, name: "wooden_slab", hardness: 2.0, shape: Slab),
-            (id: 9, name: "water", hardness: 100.0, shape: Liquid, layer: Translucent, solid: false, cull_same: true),
+            (id: 8, name: "flowing_water", hardness: 100.0, fluid: Some(Water), shape: Liquid, layer: Translucent, solid: false, cull_same: true),
+            (id: 9, name: "water", hardness: 100.0, fluid: Some(Water), shape: Liquid, layer: Translucent, solid: false, cull_same: true),
         ]"#;
         let registry = BlockRegistry::from_ron(ron).unwrap();
         BlockModels::new(
@@ -1170,7 +1340,26 @@ mod tests {
             .iter()
             .map(|v| v.position[1])
             .fold(f32::MIN, f32::max);
-        assert_eq!(top, 60.0 + LIQUID_SURFACE);
+        // 1.0.0's corner average of one source (weighted 11/9) and three
+        // open cells.
+        let corner = 1.0 - (11.0 / 9.0 + 3.0) / 14.0;
+        assert!((top - (60.0 + corner)).abs() < 1e-5, "{top}");
+    }
+
+    #[test]
+    fn still_and_flowing_water_join_and_the_surface_slopes_downstream() {
+        let flowing = BlockState::new(8, 3);
+        let mesh = mesh_with(&[(4, 60, 4, WATER), (5, 60, 4, flowing)], true);
+        // Each: the surface both ways, the bottom and three sides.
+        assert_eq!(mesh.translucent.len() / 6, 12);
+        let height_at = |x: f32| {
+            mesh.vertices
+                .iter()
+                .filter(|v| v.position[0] == x && v.position[1] > 60.0)
+                .map(|v| v.position[1])
+                .fold(f32::MIN, f32::max)
+        };
+        assert!(height_at(4.0) > height_at(6.0) + 0.1);
     }
 
     #[test]

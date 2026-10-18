@@ -35,6 +35,9 @@ const LAVA_DRAG: f64 = 0.5;
 /// Sinking per tick in a liquid, and rising per tick holding jump.
 const SWIM_SINK: f64 = 0.02;
 const SWIM_UP: f64 = 0.04;
+/// Speed added each tick along the water's flow (1.0.0's
+/// `handleMaterialAcceleration`).
+pub const CURRENT_PUSH: f64 = 0.014;
 /// Upward speed when swimming into a ledge with room above it.
 const LEDGE_HOP: f64 = 0.3;
 /// A second jump press within this many ticks toggles creative flight.
@@ -157,6 +160,9 @@ impl Body {
             self.find_liquid(world)
         };
         self.liquid = liquid;
+        if liquid == Some(Fluid::Water) {
+            self.velocity += world.current(&self.water_box()) * CURRENT_PUSH;
+        }
         self.jumped = false;
 
         let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
@@ -220,16 +226,23 @@ impl Body {
     /// top and bottom, or lava reaching it also shrunk 0.1 sideways
     /// (1.0.0's `isInWater` and `handleLavaMovement`).
     fn find_liquid(&self, world: &impl Collider) -> Option<Fluid> {
-        let shrink = |side: f64| {
-            let by = DVec3::new(side, 0.4, side);
-            Aabb::new(self.bb.min + by, self.bb.max - by)
-        };
-        match world.liquid(&shrink(0.001)) {
+        match world.liquid(&self.water_box()) {
             Some(Fluid::Water) => Some(Fluid::Water),
             _ => world
-                .liquid(&shrink(0.1))
+                .liquid(&self.shrunk(0.1))
                 .filter(|&fluid| fluid == Fluid::Lava),
         }
+    }
+
+    /// The hitbox shrunk by 0.4 top and bottom and `side` sideways.
+    fn shrunk(&self, side: f64) -> Aabb {
+        let by = DVec3::new(side, 0.4, side);
+        Aabb::new(self.bb.min + by, self.bb.max - by)
+    }
+
+    /// The part of the body water has to reach to count.
+    fn water_box(&self) -> Aabb {
+        self.shrunk(0.001)
     }
 
     /// Moves through water or lava: thick drag, slow sinking, and a hop out

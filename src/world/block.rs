@@ -255,6 +255,16 @@ pub enum Activate {
     Door,
 }
 
+/// How a block burns (modern `FireBlock.setFlammable`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Burns {
+    /// How readily fire spreads into air next to it.
+    pub encourage: u8,
+    /// How readily it catches and burns away, out of 300 a fire tick.
+    pub catch: u8,
+}
+
 /// The liquid a block is (flowing or still).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Fluid {
@@ -326,6 +336,14 @@ pub struct BlockDef {
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,
+    /// Holds back water and lava without being solid to walk into (signs,
+    /// pressure plates, cobwebs, sugar cane: 1.0.0's solid materials and
+    /// `blockBlocksFlow` list). Solid blocks always do.
+    #[serde(default)]
+    pub blocks_flow: bool,
+    /// How fire treats it; `None` doesn't burn.
+    #[serde(default)]
+    pub burns: Option<Burns>,
     /// The tool that mines it fast (1.0.0's effective tool lists and
     /// materials).
     #[serde(default)]
@@ -440,6 +458,11 @@ impl BlockDef {
     /// Whether the crosshair can select it (everything but air and fluids).
     pub fn is_targetable(&self) -> bool {
         !matches!(self.shape, Shape::None | Shape::Liquid)
+    }
+
+    /// Whether water and lava stop at it rather than wash it away.
+    pub fn stops_fluid(&self) -> bool {
+        self.fluid.is_none() && (self.solid || self.blocks_flow)
     }
 
     /// A full opaque cube hides the faces of whatever touches it.

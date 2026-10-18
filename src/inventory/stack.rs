@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     crafting::Recipes,
-    item::{FIRST_ITEM_ID, ItemDef, ItemId, ItemRegistry, Tool},
+    item::{Bucket, FIRST_ITEM_ID, ItemDef, ItemId, ItemRegistry, Tool},
 };
 use crate::world::block::{BlockRegistry, BlockState};
 
@@ -87,6 +87,19 @@ impl Items {
 
     pub fn tool(&self, id: ItemId) -> Option<&Tool> {
         self.item(id)?.tool.as_ref()
+    }
+
+    /// What the item is as a bucket, if it is one.
+    pub fn bucket(&self, id: ItemId) -> Option<Bucket> {
+        self.item(id)?.bucket
+    }
+
+    /// The bucket item holding `bucket`'s contents.
+    pub fn bucket_item(&self, bucket: Bucket) -> Option<ItemId> {
+        self.items
+            .iter()
+            .find(|item| item.bucket == Some(bucket))
+            .map(|item| item.id)
     }
 
     /// The block this stack places, if any: blocks place themselves (with

@@ -92,6 +92,15 @@ impl Game {
             // Letting go or looking away starts the block over (1.0.0).
             self.mining = None;
         }
+        if using && !wants_break && self.holding_bucket() {
+            // A bucket works on a fresh click, unless it's on a chest or
+            // door, which opens as usual.
+            let used = hit.is_some_and(|hit| self.activate(hit.block, place_pressed));
+            if !used && place_pressed {
+                self.use_bucket(eye);
+            }
+            return;
+        }
         let Some(hit) = hit else {
             return;
         };
@@ -213,7 +222,7 @@ impl Game {
         {
             self.inventory.damage_selected(wear, &self.items);
         }
-        self.chunks.set_blocks(&edits);
+        self.edit(&edits);
     }
 
     /// Draws a bow while `using` (right-click held) with ammunition, and
@@ -439,7 +448,7 @@ impl Game {
                 (half.id() == block.id()).then(|| (at, BlockState::new(half.id(), half.data() ^ 4)))
             })
             .collect();
-        self.chunks.set_blocks(&edits);
+        self.edit(&edits);
     }
 
     /// Places the selected stack's block against the clicked face.
@@ -485,7 +494,7 @@ impl Game {
             }
             _ => vec![(at, placed)],
         };
-        self.chunks.set_blocks(&edits);
+        self.edit(&edits);
         if self.mode.uses_up_items() {
             self.inventory.take(self.inventory.selected, 1);
         }

@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::world::block::BlockId;
+use crate::world::block::{BlockId, Fluid};
 
 pub type ItemId = u16;
 
@@ -44,6 +44,17 @@ pub struct ItemDef {
     /// Ammunition this shoots, drawn by holding right-click (a bow).
     #[serde(default)]
     pub shoots: Option<ItemId>,
+    /// A bucket, and what it holds.
+    #[serde(default)]
+    pub bucket: Option<Bucket>,
+}
+
+/// What a bucket holds (1.0.0's `ItemBucket.isFull`): an empty one picks
+/// up a source block, a full one pours one out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Bucket {
+    Empty,
+    Holds(Fluid),
 }
 
 /// What eating restores (1.0.0's `ItemFood`).
