@@ -43,9 +43,11 @@ impl Game {
         let mut queue: VecDeque<IVec3> = changed.iter().copied().collect();
         let mut updates = 0;
         while let Some(at) = queue.pop_front() {
+            self.harden(at);
             self.schedule_fall(at);
             for face in Face::ALL {
                 let next = at + IVec3::from_array(face.normal());
+                self.harden(next);
                 self.schedule_fall(next);
                 let world = self.chunks.world();
                 let Some(state) = world.block(next.x, next.y, next.z) else {
@@ -61,6 +63,27 @@ impl Game {
                     queue.push_back(next);
                 }
             }
+        }
+    }
+
+    /// Concrete powder at `at` touching water turns to concrete (modern
+    /// `ConcretePowderBlock.touchesLiquid`).
+    fn harden(&mut self, at: IVec3) {
+        let world = self.chunks.world();
+        let Some(state) = world.block(at.x, at.y, at.z) else {
+            return;
+        };
+        let Some(hard) = state.def().hardens else {
+            return;
+        };
+        let wet = Face::ALL.iter().any(|face| {
+            let next = at + IVec3::from_array(face.normal());
+            world
+                .block(next.x, next.y, next.z)
+                .is_some_and(|b| b.def().fluid == Some(crate::world::block::Fluid::Water))
+        });
+        if wet {
+            self.chunks.set_blocks(&[(at, BlockState::of(hard))]);
         }
     }
 
@@ -139,7 +162,15 @@ impl Game {
             let fits = here.is_some_and(|here| here.def().is_replaceable(here));
             let held = below.is_some_and(|below| !is_free(below));
             if fits && held {
-                self.edit(&[(at, state)]);
+                // Concrete powder landing in water sets at once.
+                let in_water = here.is_some_and(|here| {
+                    here.def().fluid == Some(crate::world::block::Fluid::Water)
+                });
+                let placed = match state.def().hardens {
+                    Some(hard) if in_water => BlockState::of(hard),
+                    _ => state,
+                };
+                self.edit(&[(at, placed)]);
                 return;
             }
         }
@@ -268,6 +299,30 @@ mod tests {
         assert_eq!(world.block(6, 64, 4), Some(slab));
         let dropped: Vec<_> = game.entities.iter().map(|item| item.stack.id).collect();
         assert!(dropped.contains(&items::SAND) && dropped.contains(&items::GRAVEL));
+    }
+
+    #[test]
+    fn concrete_powder_sets_beside_water_and_anvils_fall() {
+        let mut game = flat_game(GameMode::Creative);
+        let powder = BlockState::of(blocks::RED_CONCRETE_POWDER);
+        game.set_blocks(&[(IVec3::new(2, 64, 2), powder)]);
+        game.run_ticks(5);
+        assert_eq!(
+            game.chunks.world().block(2, 64, 2),
+            Some(powder),
+            "dry, it stays"
+        );
+        game.set_blocks(&[(IVec3::new(3, 64, 2), BlockState::of(blocks::WATER))]);
+        game.run_ticks(1);
+        assert_eq!(
+            game.chunks.world().block(2, 64, 2),
+            Some(BlockState::of(blocks::RED_CONCRETE))
+        );
+        // An anvil placed in the air falls like sand.
+        let anvil = BlockState::of(blocks::ANVIL);
+        game.set_blocks(&[(IVec3::new(6, 70, 6), anvil)]);
+        game.run_ticks(60);
+        assert_eq!(game.chunks.world().block(6, 64, 6), Some(anvil));
     }
 
     #[test]

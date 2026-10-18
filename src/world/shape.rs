@@ -160,6 +160,14 @@ fn connected(state: BlockState, face: Face) -> bool {
     state.bool(Prop::side(face))
 }
 
+/// Whether a wall shows its post: when `up`, or with no sides to stand on.
+fn wall_post(state: BlockState) -> bool {
+    state.bool(Prop::Up)
+        || [Face::North, Face::East, Face::South, Face::West]
+            .iter()
+            .all(|&face| state.get(Prop::wall_side(face)) == wall_side::NONE)
+}
+
 /// A wall side's height in pixels, `low` or `tall`, or `None` if open.
 fn wall_height(state: BlockState, face: Face, low: f32, tall: f32) -> Option<f32> {
     match state.get(Prop::wall_side(face)) {
@@ -254,7 +262,7 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
             3.0,
             16.0,
             |f| wall_height(state, f, 14.0, 16.0),
-            state.bool(Prop::Up),
+            wall_post(state),
         ),
         Shape::FenceGate => {
             let low = if state.bool(Prop::InWall) { 3.0 } else { 0.0 };
@@ -539,7 +547,7 @@ fn collision_of(state: BlockState, outline: &[Cuboid]) -> Vec<Cuboid> {
             3.0,
             24.0,
             |f| wall_height(state, f, 24.0, 24.0),
-            state.bool(Prop::Up),
+            wall_post(state),
         ),
         Shape::FenceGate => {
             if state.bool(Prop::Open) {

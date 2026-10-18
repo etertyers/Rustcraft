@@ -123,6 +123,26 @@
         (result: (item: "paper", count: 3), pattern: ["###"], key: {'#': (item: "sugar_cane")}),  // paper
         (result: (item: "book", count: 1), pattern: ["#", "#", "#"], key: {'#': (item: "paper")}),  // book
         (result: (item: "golden_apple", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: "gold_block"), 'X': (item: "apple")}),  // golden apple
+        // v1.1 (modern recipes)
+        (result: (item: "white_carpet", count: 3), pattern: ["##"], key: {'#': (item: "white_wool")}),
+        (result: (item: "orange_carpet", count: 3), pattern: ["##"], key: {'#': (item: "orange_wool")}),
+        (result: (item: "magenta_carpet", count: 3), pattern: ["##"], key: {'#': (item: "magenta_wool")}),
+        (result: (item: "light_blue_carpet", count: 3), pattern: ["##"], key: {'#': (item: "light_blue_wool")}),
+        (result: (item: "yellow_carpet", count: 3), pattern: ["##"], key: {'#': (item: "yellow_wool")}),
+        (result: (item: "lime_carpet", count: 3), pattern: ["##"], key: {'#': (item: "lime_wool")}),
+        (result: (item: "pink_carpet", count: 3), pattern: ["##"], key: {'#': (item: "pink_wool")}),
+        (result: (item: "gray_carpet", count: 3), pattern: ["##"], key: {'#': (item: "gray_wool")}),
+        (result: (item: "light_gray_carpet", count: 3), pattern: ["##"], key: {'#': (item: "light_gray_wool")}),
+        (result: (item: "cyan_carpet", count: 3), pattern: ["##"], key: {'#': (item: "cyan_wool")}),
+        (result: (item: "purple_carpet", count: 3), pattern: ["##"], key: {'#': (item: "purple_wool")}),
+        (result: (item: "blue_carpet", count: 3), pattern: ["##"], key: {'#': (item: "blue_wool")}),
+        (result: (item: "brown_carpet", count: 3), pattern: ["##"], key: {'#': (item: "brown_wool")}),
+        (result: (item: "green_carpet", count: 3), pattern: ["##"], key: {'#': (item: "green_wool")}),
+        (result: (item: "red_carpet", count: 3), pattern: ["##"], key: {'#': (item: "red_wool")}),
+        (result: (item: "black_carpet", count: 3), pattern: ["##"], key: {'#': (item: "black_wool")}),
+        (result: (item: "cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "cobblestone")}),
+        (result: (item: "mossy_cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "mossy_cobblestone")}),
+        (result: (item: "anvil", count: 1), pattern: ["###", " i ", "iii"], key: {'#': (item: "iron_block"), 'i': (item: "iron_ingot")}),
     ],
     shapeless: [
         (result: (item: "gold_ingot", count: 9), ingredients: [(item: "gold_block")]),  // gold from its block
@@ -165,6 +185,24 @@
         (result: (item: "magenta_wool", count: 1), ingredients: [(item: "magenta_dye"), (item: "white_wool")]),
         (result: (item: "orange_wool", count: 1), ingredients: [(item: "orange_dye"), (item: "white_wool")]),
         (result: (item: "white_wool", count: 1), ingredients: [(item: "bone_meal"), (item: "white_wool")]),
+        // v1.1: concrete powder, dyed with 1.0.0's dyes (bone meal for white,
+        // ink sac, cocoa beans and lapis lazuli for black, brown and blue).
+        (result: (item: "white_concrete_powder", count: 8), ingredients: [(item: "bone_meal"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "orange_concrete_powder", count: 8), ingredients: [(item: "orange_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "magenta_concrete_powder", count: 8), ingredients: [(item: "magenta_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "light_blue_concrete_powder", count: 8), ingredients: [(item: "light_blue_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "yellow_concrete_powder", count: 8), ingredients: [(item: "yellow_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "lime_concrete_powder", count: 8), ingredients: [(item: "lime_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "pink_concrete_powder", count: 8), ingredients: [(item: "pink_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "gray_concrete_powder", count: 8), ingredients: [(item: "gray_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "light_gray_concrete_powder", count: 8), ingredients: [(item: "light_gray_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "cyan_concrete_powder", count: 8), ingredients: [(item: "cyan_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "purple_concrete_powder", count: 8), ingredients: [(item: "purple_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "blue_concrete_powder", count: 8), ingredients: [(item: "lapis_lazuli"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "brown_concrete_powder", count: 8), ingredients: [(item: "cocoa_beans"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "green_concrete_powder", count: 8), ingredients: [(item: "green_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "red_concrete_powder", count: 8), ingredients: [(item: "red_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        (result: (item: "black_concrete_powder", count: 8), ingredients: [(item: "ink_sac"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
     ],
     smelting: [
         (input: (item: "iron_ore"), result: (item: "iron_ingot", count: 1)),  // iron

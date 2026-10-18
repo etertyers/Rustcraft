@@ -442,6 +442,47 @@ mod tests {
     }
 
     #[test]
+    fn carpets_walls_concrete_powder_and_anvils_are_craftable() {
+        let recipes = recipes();
+        let wool = items::LIME_WOOL;
+        let carpet = grid(2, &[(0, 1, wool), (1, 1, wool)]);
+        assert_eq!(
+            recipes.craft(&carpet, 2),
+            Some(ItemStack::new(items::LIME_CARPET, 3))
+        );
+        let cobble = items::COBBLESTONE;
+        let wall: Vec<_> = (0..6).map(|i| (i % 3, i / 3, cobble)).collect();
+        assert_eq!(
+            recipes.craft(&grid(3, &wall), 3),
+            Some(ItemStack::new(items::COBBLESTONE_WALL, 6))
+        );
+        let mut powder: Vec<_> = (0..4).map(|i| (i % 3, i / 3, items::SAND)).collect();
+        powder.extend((4..8).map(|i| (i % 3, i / 3, items::GRAVEL)));
+        powder.push((2, 2, items::RED_DYE));
+        assert_eq!(
+            recipes.craft(&grid(3, &powder), 3),
+            Some(ItemStack::new(items::RED_CONCRETE_POWDER, 8))
+        );
+        let (block, ingot) = (items::IRON_BLOCK, items::IRON_INGOT);
+        let anvil = grid(
+            3,
+            &[
+                (0, 0, block),
+                (1, 0, block),
+                (2, 0, block),
+                (1, 1, ingot),
+                (0, 2, ingot),
+                (1, 2, ingot),
+                (2, 2, ingot),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&anvil, 3),
+            Some(ItemStack::new(items::ANVIL, 1))
+        );
+    }
+
+    #[test]
     fn smelting_and_fuels_follow_1_0_0() {
         let recipes = recipes();
         assert_eq!(

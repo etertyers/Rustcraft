@@ -670,6 +670,9 @@ pub struct BlockDef {
     /// update: being placed, or a neighbor changing.
     #[serde(default)]
     pub falls: bool,
+    /// The block it turns into touching water (concrete powder).
+    #[serde(default)]
+    pub hardens: Option<BlockId>,
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,
@@ -1232,7 +1235,29 @@ mod tests {
     fn only_known_block_textures_are_missing() {
         let dir = crate::assets::dir().join("textures/blocks");
         let missing = registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
-        let expected = ["end_portal", "sign"];
-        assert_eq!(missing, expected.map(String::from).into());
+        let mut expected = vec!["end_portal".to_owned(), "sign".to_owned()];
+        // Concrete isn't in Kenzo's textures; a resource pack (M15) brings it.
+        for color in [
+            "white",
+            "orange",
+            "magenta",
+            "light_blue",
+            "yellow",
+            "lime",
+            "pink",
+            "gray",
+            "light_gray",
+            "cyan",
+            "purple",
+            "blue",
+            "brown",
+            "green",
+            "red",
+            "black",
+        ] {
+            expected.push(format!("concrete_{color}"));
+            expected.push(format!("concrete_powder_{color}"));
+        }
+        assert_eq!(missing, expected.into_iter().collect());
     }
 }
