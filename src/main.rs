@@ -1,18 +1,5 @@
-mod app;
-mod assets;
-mod bench;
-mod config;
-mod entity;
-mod game;
-mod inventory;
-mod level;
-mod options;
-mod player;
-mod render;
-mod ui;
-mod world;
-
 use anyhow::{Context, Result};
+use rustcraft::{app, bench, player};
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {

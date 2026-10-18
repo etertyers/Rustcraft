@@ -217,6 +217,10 @@ impl ItemRegistry {
         self.items.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
     pub fn get(&self, id: ItemId) -> Option<&ItemDef> {
         let index = self.items.binary_search_by_key(&id, |item| item.id).ok()?;
         Some(&self.items[index])
