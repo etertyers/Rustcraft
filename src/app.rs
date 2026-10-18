@@ -40,7 +40,7 @@ use crate::{
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
         crack,
-        entities::item_mesh,
+        entities::{add_particles, item_mesh},
         icons::ItemIcons,
         models::{add_arrow, add_mob},
     },
@@ -608,13 +608,23 @@ impl App {
                 let p = p.floor().as_ivec3();
                 chunks.light_at(p.x, p.y, p.z).unwrap_or((15, 0))
             };
-            let mesh = item_mesh(
+            let mut mesh = item_mesh(
                 &game.entities,
                 icons,
                 &game.camera,
                 game.tick_alpha(),
                 light_at,
             );
+            if let Some(models) = &self.models {
+                add_particles(
+                    &mut mesh,
+                    &game.particles,
+                    models,
+                    &game.camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
+            }
             renderer.set_entities(&mesh);
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();

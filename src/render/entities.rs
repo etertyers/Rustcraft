@@ -8,7 +8,10 @@ use super::{
     camera::Camera,
     icons::{IconFace, ItemIcon, ItemIcons},
 };
-use crate::{entity::item::ItemEntity, world::mesh::Mesh};
+use crate::{
+    entity::{item::ItemEntity, particle::Particle},
+    world::mesh::{BlockModels, Mesh},
+};
 
 const CUBE_HALF: f32 = 0.125;
 const SPRITE_HALF_WIDTH: f32 = 0.25;
@@ -48,6 +51,48 @@ pub fn item_mesh(
         }
     }
     mesh
+}
+
+/// 1.0.0 darkens digging particles to 60% (then tints them as their block,
+/// except grass, whose particles come from its untinted bottom).
+const PARTICLE_SHADE: f32 = 0.6;
+
+/// Adds block-breaking particles: squares facing the camera, each showing
+/// a quarter-size window of its block face's texture.
+pub fn add_particles(
+    mesh: &mut Mesh,
+    particles: &[Particle],
+    models: &BlockModels,
+    camera: &Camera,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+    let up = right.cross(camera.forward()).normalize();
+    for particle in particles {
+        let center = particle.position_between_ticks(alpha);
+        let (sky, block) = light_at(center);
+        let texture = models.get(particle.block).faces[particle.face.index()];
+        let color = models.icon_color(texture.tint).map(|c| c * PARTICLE_SHADE);
+        let [u0, v0, u1, v1] = texture.uv;
+        let [wu, wv] = particle.window;
+        let (du, dv) = (u1 - u0, v1 - v0);
+        let uv = [
+            u0 + du * wu,
+            v0 + dv * wv,
+            u0 + du * (wu + 0.25),
+            v0 + dv * (wv + 0.25),
+        ];
+        let (r, u) = (right * particle.half_width, up * particle.half_width);
+        let c = center.as_vec3();
+        let corners = [c - r - u, c + r - u, c + r + u, c - r + u];
+        mesh.quad(
+            corners.map(|p| p.to_array()),
+            uv,
+            [color; 4],
+            [[sky as f32, block as f32]; 4],
+        );
+    }
 }
 
 fn add_cube(
@@ -124,6 +169,44 @@ fn add_sprite(mesh: &mut Mesh, origin: Vec3, yaw: f32, face: IconFace, light: [f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn particles_face_the_camera_even_looking_up_or_down() {
+        use crate::world::{Face, biome::BiomeColors, block::BlockRegistry, block::BlockState};
+        let blocks = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        let models = BlockModels::new(
+            &blocks,
+            |_| None,
+            [0.0, 0.0, 1.0, 1.0],
+            BiomeColors::uniform(),
+        );
+        let mut random = || 0.5;
+        let chip = Particle::chip(
+            glam::IVec3::new(0, 64, 0),
+            Face::Top,
+            BlockState::new(1, 0),
+            &mut random,
+        );
+        for (yaw, pitch) in [(0.0f32, 0.0f32), (1.0, 0.8), (2.5, -1.2), (-2.0, 0.3)] {
+            let camera = Camera::new(Vec3::new(0.5, 70.0, 0.5), yaw, pitch);
+            let mut mesh = Mesh::default();
+            add_particles(
+                &mut mesh,
+                std::slice::from_ref(&chip),
+                &models,
+                &camera,
+                1.0,
+                |_| (15, 0),
+            );
+            let p = |i: usize| Vec3::from_array(mesh.vertices[i].position);
+            let normal = (p(1) - p(0)).cross(p(3) - p(0)).normalize();
+            assert!(normal.dot(camera.forward()) < -0.99, "{yaw} {pitch}");
+            // A quarter of the texture, darkened to 60%.
+            let (u0, u1) = (mesh.vertices[0].uv[0], mesh.vertices[1].uv[0]);
+            assert!(((u1 - u0) - 0.25).abs() < 1e-6);
+            assert_eq!(mesh.vertices[0].color, [0.6; 3]);
+        }
+    }
 
     #[test]
     fn sprites_face_the_camera() {

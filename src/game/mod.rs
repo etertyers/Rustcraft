@@ -28,7 +28,7 @@ use winit::{
 
 use crate::{
     config,
-    entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry},
+    entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry, particle::Particle},
     inventory::{
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
@@ -114,6 +114,8 @@ pub struct Game {
     pub message: Option<(String, u32)>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    /// Bits of broken and mined blocks.
+    pub particles: Vec<Particle>,
     pub arrows: Vec<Arrow>,
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
@@ -187,6 +189,7 @@ impl Game {
             bed: None,
             message: None,
             entities: Vec::new(),
+            particles: Vec::new(),
             arrows: Vec::new(),
             drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
@@ -476,6 +479,7 @@ impl Game {
             }
         }
         self.tick_items();
+        self.tick_particles();
         self.tick_arrows();
         self.tick_mobs();
         self.tick_furnaces();
@@ -952,6 +956,24 @@ pub(crate) mod tests {
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
         assert_eq!(game.entities[0].stack, ItemStack::new(4, 1), "cobblestone");
         assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "one use worn");
+    }
+
+    #[test]
+    fn mining_chips_and_breaking_bursts_into_particles_that_fade() {
+        let mut game = flat_game(GameMode::Survival);
+        game.breaking = true;
+        game.tick();
+        assert_eq!(game.particles.len(), 1, "a chip from the face being mined");
+        for _ in 0..17 {
+            game.tick();
+        }
+        assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
+        assert!(game.particles.len() >= 64, "{}", game.particles.len());
+        game.breaking = false;
+        for _ in 0..100 {
+            game.tick();
+        }
+        assert!(game.particles.is_empty());
     }
 
     #[test]

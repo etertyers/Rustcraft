@@ -5,4 +5,5 @@ pub mod arrow;
 pub mod item;
 pub mod mob;
 pub mod mobs;
+pub mod particle;
 pub mod path;

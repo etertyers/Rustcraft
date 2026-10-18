@@ -9,6 +9,7 @@ use crate::{
     entity::{
         arrow::{self, Arrow, ArrowEvent},
         item::ItemEntity,
+        particle::{MAX_PARTICLES, Particle},
     },
     inventory::{item::Tool, player::HOTBAR_SLOTS, stack::ItemStack},
     player::{
@@ -96,6 +97,19 @@ impl Game {
         };
         if wants_break {
             self.mine(hit.block);
+            // Chips fly off the face while it's being mined.
+            if self.mining.is_some()
+                && let Some(face) = hit.face
+                && let Some(block) =
+                    self.chunks
+                        .world()
+                        .block(hit.block.x, hit.block.y, hit.block.z)
+            {
+                let rng = &mut self.rng;
+                let mut random = || rng.next_f64() as f32;
+                let chip = Particle::chip(hit.block, face, block, &mut random);
+                self.add_particles([chip]);
+            }
         } else if using && !self.activate(hit.block, place_pressed) && wants_place {
             self.place(&hit);
         }
@@ -146,6 +160,13 @@ impl Game {
         if edits.is_empty() {
             return;
         }
+        if let Some(broken) = world.block(cell.x, cell.y, cell.z) {
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            let burst = Particle::burst(cell, broken, &mut random);
+            self.add_particles(burst);
+        }
+        let world = self.chunks.world();
         if self.mode.drops_items() {
             let tool = self
                 .inventory
@@ -533,6 +554,25 @@ impl Game {
             }
         }
         log::info!("dev kit given");
+    }
+
+    /// Adds particles, dropping the oldest past 1.0.0's limit.
+    fn add_particles(&mut self, particles: impl IntoIterator<Item = Particle>) {
+        self.particles.extend(particles);
+        let over = self.particles.len().saturating_sub(MAX_PARTICLES);
+        self.particles.drain(..over);
+    }
+
+    /// Moves block-breaking particles and removes the faded ones.
+    pub(super) fn tick_particles(&mut self) {
+        let collider = crate::player::collision::WorldCollider {
+            world: self.chunks.world(),
+            blocks: &self.items.blocks,
+        };
+        for particle in &mut self.particles {
+            particle.tick(&collider);
+        }
+        self.particles.retain(|particle| !particle.expired());
     }
 
     /// Throws one of the selected item forward (1.0.0's Q).
