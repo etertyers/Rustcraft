@@ -379,6 +379,17 @@ impl ChunkManager {
     /// touched chunk, plus the neighbor across any border an edit sits on,
     /// is remeshed now; chunks only within light range are relit soon after.
     pub fn set_blocks(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.apply_edits(edits, true);
+    }
+
+    /// Like `set_blocks`, but the touched chunks are remeshed on the worker
+    /// threads too, a frame or two later: for changes the world makes on
+    /// its own (flowing fluids, fire), which can touch many chunks a tick.
+    pub fn set_blocks_later(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.apply_edits(edits, false);
+    }
+
+    fn apply_edits(&mut self, edits: &[(IVec3, BlockState)], remesh_now: bool) {
         let size = CHUNK_SIZE as i32;
         let mut touched = HashSet::new();
         let mut lit = HashSet::new();
@@ -414,6 +425,12 @@ impl ChunkManager {
         }
         for &pos in &touched {
             *self.revisions.entry(pos).or_default() += 1;
+            if !remesh_now {
+                if self.meshed.contains(&pos) {
+                    self.relight.insert(pos);
+                }
+                continue;
+            }
             // Chunks not drawn yet get meshed by `update` as usual.
             if self.meshed.contains(&pos)
                 && let Some(area) = self.world.area(pos)
@@ -625,6 +642,18 @@ mod tests {
         let remeshed: HashSet<ChunkPos> = changes.meshes.iter().map(|(pos, _)| *pos).collect();
         let expected = [(0, 0), (-1, 0), (0, 1)].map(|(x, z)| ChunkPos::new(x, z));
         assert_eq!(remeshed, expected.into_iter().collect());
+    }
+
+    #[test]
+    fn edits_made_later_are_remeshed_in_the_background() {
+        let mut manager = loaded_flat();
+        manager.set_blocks_later(&[(IVec3::new(5, 70, 5), STONE)]);
+        assert_eq!(manager.world().block(5, 70, 5), Some(STONE));
+        assert!(manager.remeshed.is_empty(), "nothing meshed on this thread");
+        let (meshed, _) = run_until(&mut manager, ChunkPos::new(0, 0), |m, meshed| {
+            !meshed.is_empty() && m.in_flight() == 0 && m.relight.is_empty()
+        });
+        assert!(meshed.contains(&ChunkPos::new(0, 0)));
     }
 
     #[test]
