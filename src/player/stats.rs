@@ -39,6 +39,10 @@ const LAVA_DAMAGE: i32 = 4;
 const LAVA_FIRE_TICKS: i32 = 300;
 /// Burning hurts this much once a second.
 const FIRE_DAMAGE: i32 = 1;
+/// Standing in fire hurts this much a tick (through the hurt cooldown) and
+/// sets the player burning for at least 8 s.
+const IN_FIRE_DAMAGE: i32 = 1;
+const IN_FIRE_TICKS: i32 = 160;
 /// Exhaustion each healed point costs, so healing uses up food.
 const HEAL_EXHAUSTION: f32 = 6.0;
 /// Most hits tire the player this much; falling, drowning, burning and
@@ -51,6 +55,9 @@ pub enum DamageSource {
     Fall,
     Drowning,
     Lava,
+    /// Standing in a fire block.
+    InFire,
+    /// Burning after leaving fire or lava.
     Fire,
     Starving,
     Mob,
@@ -64,6 +71,7 @@ impl DamageSource {
             DamageSource::Fall => "hit the ground too hard",
             DamageSource::Drowning => "drowned",
             DamageSource::Lava => "tried to swim in lava",
+            DamageSource::InFire => "went up in flames",
             DamageSource::Fire => "burned to death",
             DamageSource::Starving => "starved to death",
             DamageSource::Mob => "was slain",
@@ -74,7 +82,9 @@ impl DamageSource {
     /// Exhaustion a hit from this adds.
     fn exhaustion(self) -> f32 {
         match self {
-            DamageSource::Lava | DamageSource::Mob | DamageSource::Arrow => DAMAGE_EXHAUSTION,
+            DamageSource::Lava | DamageSource::InFire | DamageSource::Mob | DamageSource::Arrow => {
+                DAMAGE_EXHAUSTION
+            }
             DamageSource::Fall
             | DamageSource::Drowning
             | DamageSource::Fire
@@ -92,6 +102,8 @@ pub struct Surroundings {
     /// The body is in water or lava.
     pub in_water: bool,
     pub in_lava: bool,
+    /// The body touches a fire block.
+    pub in_fire: bool,
     /// The eyes are under water.
     pub eyes_in_water: bool,
     /// Flying in creative, which never builds up a fall.
@@ -221,6 +233,12 @@ impl Stats {
         if around.in_water {
             self.fire = 0;
         }
+        if around.in_fire && vulnerable {
+            self.damage(IN_FIRE_DAMAGE, DamageSource::InFire);
+            if !around.in_water {
+                self.fire = self.fire.max(IN_FIRE_TICKS);
+            }
+        }
         if around.in_lava && vulnerable {
             self.damage(LAVA_DAMAGE, DamageSource::Lava);
             self.fire = LAVA_FIRE_TICKS;
@@ -313,6 +331,7 @@ mod tests {
         fell: 0.0,
         in_water: false,
         in_lava: false,
+        in_fire: false,
         eyes_in_water: false,
         flying: false,
     };

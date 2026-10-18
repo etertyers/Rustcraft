@@ -229,6 +229,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lava_and_fire_burn_up_items_and_fire_hurts_the_player() {
+        let mut game = flat_game(GameMode::Survival);
+        let lava = IVec3::new(3, 64, 3);
+        let fire = IVec3::new(-3, 64, 3);
+        game.edit(&[
+            (lava, BlockState::new(11, 0)),
+            (fire, BlockState::new(crate::world::fire::FIRE, 0)),
+        ]);
+        game.entities.clear();
+        for x in [3.5, -2.5, 0.5] {
+            game.entities.push(ItemEntity::new(
+                ItemStack::new(4, 1),
+                DVec3::new(x, 64.2, 3.5),
+                DVec3::ZERO,
+                0.0,
+            ));
+        }
+        for _ in 0..6 {
+            game.tick();
+        }
+        let left: Vec<_> = game.entities.iter().map(|item| item.center().x).collect();
+        assert_eq!(left.len(), 1, "only the item on bare ground is left");
+        assert!((left[0] - 0.5).abs() < 0.1);
+
+        // Standing in the fire hurts and sets the player alight.
+        let feet = DVec3::new(-2.5, 64.0, 3.5);
+        game.body = Body::new(feet);
+        game.prev_feet = feet;
+        let health = game.stats.health;
+        game.tick();
+        assert_eq!(game.stats.health, health - 1);
+        assert!(game.stats.fire >= 150);
+    }
+
     /// Right-clicks once with `id` in the first hotbar slot, standing at
     /// the origin looking north and down at `pitch`: −0.51 looks through
     /// (0, 64, −2) to the ground beyond, −0.68 through it to the ground

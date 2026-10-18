@@ -150,6 +150,7 @@ impl Mob {
             fell: -moved.y as f32,
             in_water: self.body.liquid == Some(Fluid::Water),
             in_lava: self.body.liquid == Some(Fluid::Lava),
+            in_fire: world.in_fire(&self.body.aabb()),
             eyes_in_water,
             flying: false,
         };

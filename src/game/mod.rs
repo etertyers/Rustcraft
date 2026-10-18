@@ -37,7 +37,7 @@ use crate::{
     level::{Level, PlayerData, WorldDir},
     options::Options,
     player::{
-        collision::WorldCollider,
+        collision::{Collider, WorldCollider},
         input::MoveKeys,
         mode::GameMode,
         physics::Body,
@@ -572,6 +572,11 @@ impl Game {
             fell: -moved.y as f32,
             in_water: liquid == Some(Fluid::Water),
             in_lava: liquid == Some(Fluid::Lava),
+            in_fire: WorldCollider {
+                world: self.chunks.world(),
+                blocks: &self.items.blocks,
+            }
+            .in_fire(&self.body.aabb()),
             eyes_in_water,
             flying: self.body.flying,
         };

@@ -28,6 +28,11 @@ const LIFETIME: u32 = 6000;
 const BLOCK_DROP_DELAY: u32 = 10;
 /// Ticks before an item the player threw can be picked back up.
 const THROW_DELAY: u32 = 40;
+/// An item's health (1.0.0's `EntityItem.health`), and what lava and fire
+/// take from it each tick.
+const HEALTH: i32 = 5;
+const LAVA_DAMAGE: i32 = 4;
+const FIRE_DAMAGE: i32 = 1;
 /// Items this close sideways to the player's box are picked up
 /// (1.0.0's `boundingBox.expand(1, 0, 1)`).
 const PICKUP_REACH: f64 = 1.0;
@@ -45,6 +50,8 @@ pub struct ItemEntity {
     pickup_delay: u32,
     /// Random phase for the spin and bob when drawn (1.0.0's `hoverStart`).
     pub hover: f32,
+    /// Burns away at 0.
+    health: i32,
 }
 
 impl ItemEntity {
@@ -60,6 +67,7 @@ impl ItemEntity {
             age: 0,
             pickup_delay: 0,
             hover,
+            health: HEALTH,
         }
     }
 
@@ -130,7 +138,7 @@ impl ItemEntity {
         self.age >= LIFETIME || self.stack.count == 0
     }
 
-    /// One tick of 1.0.0's `EntityItem.onUpdate`.
+    /// One tick of 1.0.0's `EntityItem.onUpdate`, burning in lava and fire.
     pub fn tick(&mut self, world: &impl Collider) {
         self.prev_center = self.center();
         // Water carries items along (around their middle, as 1.0.0's box
@@ -159,6 +167,15 @@ impl ItemEntity {
         }
         self.age += 1;
         self.pickup_delay = self.pickup_delay.saturating_sub(1);
+        // Lava and fire burn it up.
+        if world.in_lava(&self.bb) {
+            self.health -= LAVA_DAMAGE;
+        } else if world.in_fire(&self.bb) {
+            self.health -= FIRE_DAMAGE;
+        }
+        if self.health <= 0 {
+            self.stack.count = 0;
+        }
     }
 
     /// Moves as much of the stack as fits into `inventory` if the item is

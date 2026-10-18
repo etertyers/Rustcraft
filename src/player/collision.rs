@@ -4,9 +4,9 @@ use glam::{DVec3, IVec3, Vec3};
 
 use crate::world::{
     World,
-    block::{BlockRegistry, Fluid},
+    block::{BlockRegistry, BlockState, Fluid},
     chunk::ChunkPos,
-    fluid,
+    fire, fluid,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,6 +113,18 @@ pub trait Collider {
     fn current(&self, _region: &Aabb) -> DVec3 {
         DVec3::ZERO
     }
+
+    /// Whether `region` touches a fire block (1.0.0's
+    /// `isBoundingBoxBurning`, without lava, which `liquid` covers).
+    fn in_fire(&self, _region: &Aabb) -> bool {
+        false
+    }
+
+    /// Whether `region` overlaps any lava, however shallow (1.0.0's
+    /// `isMaterialInBB`, which burns items).
+    fn in_lava(&self, _region: &Aabb) -> bool {
+        false
+    }
 }
 
 /// The loaded world's solid blocks. Unloaded chunks are walls, so nothing
@@ -137,6 +149,16 @@ impl WorldCollider<'_> {
 }
 
 impl WorldCollider<'_> {
+    /// Whether any block in a cell `region` overlaps passes `test`.
+    fn any_cell(&self, region: &Aabb, test: impl Fn(BlockState) -> bool) -> bool {
+        let min = (region.min + 0.001).floor().as_ivec3();
+        let max = (region.max - 0.001).floor().as_ivec3();
+        (min.y..=max.y).any(|y| {
+            (min.z..=max.z)
+                .any(|z| (min.x..=max.x).any(|x| self.world.block(x, y, z).is_some_and(&test)))
+        })
+    }
+
     /// The liquid cells `region` reaches into: those whose surface (1.0.0's
     /// `getFluidHeightPercent` below the top) its top is level with.
     fn liquid_cells<'b>(&'b self, region: &'b Aabb) -> impl Iterator<Item = (IVec3, Fluid)> + 'b {
@@ -199,6 +221,18 @@ impl Collider for WorldCollider<'_> {
         found
     }
 
+    fn in_fire(&self, region: &Aabb) -> bool {
+        self.any_cell(region, |block| block.id() == fire::FIRE)
+    }
+
+    fn in_lava(&self, region: &Aabb) -> bool {
+        self.any_cell(region, |block| {
+            self.blocks
+                .get(block.id())
+                .is_some_and(|def| def.fluid == Some(Fluid::Lava))
+        })
+    }
+
     fn current(&self, region: &Aabb) -> DVec3 {
         let cell = |at: IVec3| {
             let block = self.world.block(at.x, at.y, at.z)?;
@@ -216,7 +250,7 @@ impl Collider for WorldCollider<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{block::BlockState, chunk::Chunk};
+    use crate::world::chunk::Chunk;
 
     fn player_at(x: f64, y: f64, z: f64) -> Aabb {
         Aabb::new(
