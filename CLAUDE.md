@@ -92,6 +92,11 @@ src/
   entity/            # mobs, item drops
   inventory/         # items, stacks, inventory, crafting recipes
   ui/                # HUD, hotbar, inventory screen, menus (egui)
+  pack/              # resource packs: layers, animations, block and item models
+  look.rs            # everything texture-derived, rebuilt when the packs change
+  figure.rs          # the player as drawn: the hand, or the model and what it holds
+  game/view.rs       # swing, hand dip, bobbing, body turn, F5 views
+  render/{player,hand,held}.rs   # player model and poses, first-person hand, held item geometry
   audio/
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
@@ -296,7 +301,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Resource Packs screen in the main menu and settings: pick, reorder and apply without restarting.
 - **Done when:** loading a vanilla-style 16× pack and a 32× pack each re-textures the world, items, mobs and GUI, and missing textures fall back cleanly.
 
-### - [ ] M16 — Player model, first-person hand, and third-person view
+### - [x] M16 — Player model, first-person hand, and third-person view
 - Player skin: a 64×64 Minecraft skin PNG in `assets/skins/` (Steve-style by default). A skin in the active resource pack's `entity/player/` overrides it.
 - **First person:** right arm from the skin; held blocks as small 3D cubes and flat items as extruded sprites, positioned with modern `firstperson_righthand` display transforms (from the pack's model JSON if present, otherwise built-in defaults matching vanilla). Off-hand rendering ready for M18.
 - **Full player model** with modern animations: walking, sprinting, sneaking, swimming, crawling, swinging, eating, bow draw, holding items in both hands, and elytra flight (used in M28).
