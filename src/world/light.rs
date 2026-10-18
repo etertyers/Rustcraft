@@ -164,23 +164,23 @@ fn spread(levels: &mut [u8], opacity: &[u8], mut queue: VecDeque<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
     use crate::world::{
         biome::BiomeColors,
-        block::BlockRegistry,
         chunk::{Chunk, ChunkPos},
     };
     use std::{collections::HashMap, sync::Arc};
 
-    const STONE: BlockState = BlockState::new(1, 0);
-    const GLOWSTONE: BlockState = BlockState::new(89, 0);
-    const TORCH: BlockState = BlockState::new(50, 0);
-    const LEAVES: BlockState = BlockState::new(18, 0);
-    const WATER: BlockState = BlockState::new(9, 0);
-    const GLASS: BlockState = BlockState::new(20, 0);
+    const STONE: BlockState = BlockState::of(blocks::STONE);
+    const GLOWSTONE: BlockState = BlockState::of(blocks::GLOWSTONE);
+    const TORCH: BlockState = BlockState::of(blocks::TORCH);
+    const LEAVES: BlockState = BlockState::of(blocks::OAK_LEAVES);
+    const WATER: BlockState = BlockState::of(blocks::WATER);
+    const GLASS: BlockState = BlockState::of(blocks::GLASS);
 
     fn models() -> BlockModels {
-        let registry = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
-        BlockModels::new(&registry, |_| None, [0.0; 4], BiomeColors::uniform())
+        let registry = crate::world::block::registry();
+        BlockModels::new(registry, |_| None, [0.0; 4], BiomeColors::uniform())
     }
 
     /// A 3×3 chunk area centered on chunk (0, 0), with `fill` choosing each

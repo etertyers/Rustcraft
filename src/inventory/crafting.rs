@@ -7,31 +7,37 @@ use std::{collections::BTreeMap, path::Path};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use super::{
-    item::{FIRST_ITEM_ID, ItemId},
-    stack::ItemStack,
-};
+use super::{item::ItemId, stack::ItemStack};
 
-/// One cell of a recipe: an item, with a data value or (if left out) any
-/// data for blocks and 0 for items.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+/// One cell of a recipe as written: an item, or a tag naming a group of
+/// items (any log, any wool, as 1.0.0 matched any data value).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Ingredient {
-    pub item: ItemId,
+struct IngredientDef {
     #[serde(default)]
-    pub data: Option<u16>,
+    item: Option<ItemId>,
+    #[serde(default)]
+    tag: Option<String>,
 }
 
+/// One cell of a recipe: the items that fit it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ingredient(Vec<ItemId>);
+
 impl Ingredient {
+    fn resolve(def: &IngredientDef, tags: &BTreeMap<String, Vec<ItemId>>) -> Result<Self> {
+        match (def.item, &def.tag) {
+            (Some(item), None) => Ok(Self(vec![item])),
+            (None, Some(tag)) => match tags.get(tag) {
+                Some(items) => Ok(Self(items.clone())),
+                None => bail!("unknown tag {tag:?}"),
+            },
+            _ => bail!("an ingredient needs an item or a tag: {def:?}"),
+        }
+    }
+
     fn matches(&self, stack: &ItemStack) -> bool {
-        if stack.id != self.item {
-            return false;
-        }
-        match self.data {
-            Some(data) => stack.damage == data,
-            None if self.item < FIRST_ITEM_ID => true,
-            None => stack.damage == 0,
-        }
+        self.0.contains(&stack.id)
     }
 }
 
@@ -40,13 +46,11 @@ impl Ingredient {
 pub struct Output {
     pub item: ItemId,
     pub count: u8,
-    #[serde(default)]
-    pub data: u16,
 }
 
 impl Output {
     pub fn stack(&self) -> ItemStack {
-        ItemStack::with_damage(self.item, self.count, self.data)
+        ItemStack::with_damage(self.item, self.count, 0)
     }
 }
 
@@ -55,37 +59,48 @@ impl Output {
 struct ShapedDef {
     result: Output,
     pattern: Vec<String>,
-    key: BTreeMap<char, Ingredient>,
+    key: BTreeMap<char, IngredientDef>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShapelessDef {
     result: Output,
-    ingredients: Vec<Ingredient>,
+    ingredients: Vec<IngredientDef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct SmeltingDef {
+    input: IngredientDef,
+    result: Output,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Smelting {
     pub input: Ingredient,
     pub result: Output,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Fuel {
-    item: ItemId,
+struct FuelDef {
+    #[serde(default)]
+    item: Option<ItemId>,
+    #[serde(default)]
+    tag: Option<String>,
     ticks: u32,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RecipesFile {
+    /// Groups of items recipes can name (modern Minecraft's item tags).
+    tags: BTreeMap<String, Vec<ItemId>>,
     shaped: Vec<ShapedDef>,
     shapeless: Vec<ShapelessDef>,
-    smelting: Vec<Smelting>,
-    fuels: Vec<Fuel>,
+    smelting: Vec<SmeltingDef>,
+    fuels: Vec<FuelDef>,
 }
 
 /// A shaped recipe as a width × height grid of optional ingredients.
@@ -102,7 +117,7 @@ pub struct Recipes {
     shaped: Vec<Shaped>,
     shapeless: Vec<(Vec<Ingredient>, Output)>,
     smelting: Vec<Smelting>,
-    fuels: Vec<Fuel>,
+    fuels: Vec<(Ingredient, u32)>,
 }
 
 impl Recipes {
@@ -114,6 +129,7 @@ impl Recipes {
 
     pub fn from_ron(text: &str) -> Result<Self> {
         let file: RecipesFile = ron::from_str(text)?;
+        let tags = &file.tags;
         let mut shaped = Vec::new();
         for def in file.shaped {
             let height = def.pattern.len();
@@ -131,10 +147,13 @@ impl Recipes {
                     if c == ' ' {
                         cells.push(None);
                     } else {
-                        let Some(&ingredient) = def.key.get(&c) else {
-                            bail!("recipe for item {} uses unknown key {c:?}", def.result.item);
+                        let Some(ingredient) = def.key.get(&c) else {
+                            bail!(
+                                "recipe for {} uses unknown key {c:?}",
+                                def.result.item.name()
+                            );
                         };
-                        cells.push(Some(ingredient));
+                        cells.push(Some(Ingredient::resolve(ingredient, tags)?));
                     }
                 }
             }
@@ -145,15 +164,44 @@ impl Recipes {
                 result: def.result,
             });
         }
+        let shapeless = file
+            .shapeless
+            .iter()
+            .map(|def| {
+                let ingredients = def
+                    .ingredients
+                    .iter()
+                    .map(|i| Ingredient::resolve(i, tags))
+                    .collect::<Result<_>>()?;
+                Ok((ingredients, def.result))
+            })
+            .collect::<Result<_>>()?;
+        let smelting = file
+            .smelting
+            .iter()
+            .map(|def| {
+                Ok(Smelting {
+                    input: Ingredient::resolve(&def.input, tags)?,
+                    result: def.result,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let fuels = file
+            .fuels
+            .iter()
+            .map(|def| {
+                let fuel = IngredientDef {
+                    item: def.item,
+                    tag: def.tag.clone(),
+                };
+                Ok((Ingredient::resolve(&fuel, tags)?, def.ticks))
+            })
+            .collect::<Result<_>>()?;
         Ok(Self {
             shaped,
-            shapeless: file
-                .shapeless
-                .into_iter()
-                .map(|def| (def.ingredients, def.result))
-                .collect(),
-            smelting: file.smelting,
-            fuels: file.fuels,
+            shapeless,
+            smelting,
+            fuels,
         })
     }
 
@@ -209,8 +257,8 @@ impl Recipes {
     pub fn burn_ticks(&self, item: ItemId) -> u32 {
         self.fuels
             .iter()
-            .find(|fuel| fuel.item == item)
-            .map_or(0, |fuel| fuel.ticks)
+            .find(|(fuel, _)| fuel.0.contains(&item))
+            .map_or(0, |&(_, ticks)| ticks)
     }
 }
 
@@ -229,15 +277,16 @@ fn shapeless_matches(ingredients: &[Ingredient], stacks: &[&ItemStack]) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::items;
 
     fn recipes() -> Recipes {
         Recipes::load(&crate::assets::dir().join("data/recipes.ron")).unwrap()
     }
 
-    fn grid(size: usize, cells: &[(usize, usize, u16, u16)]) -> Vec<Option<ItemStack>> {
+    fn grid(size: usize, cells: &[(usize, usize, ItemId)]) -> Vec<Option<ItemStack>> {
         let mut grid = vec![None; size * size];
-        for &(x, y, id, data) in cells {
-            grid[y * size + x] = Some(ItemStack::with_damage(id, 1, data));
+        for &(x, y, id) in cells {
+            grid[y * size + x] = Some(ItemStack::new(id, 1));
         }
         grid
     }
@@ -245,105 +294,149 @@ mod tests {
     #[test]
     fn planks_from_any_log_anywhere_in_either_grid() {
         let recipes = recipes();
-        let birch = grid(2, &[(1, 1, 17, 2)]);
-        assert_eq!(recipes.craft(&birch, 2), Some(ItemStack::new(5, 4)));
-        let corner = grid(3, &[(0, 2, 17, 0)]);
-        assert_eq!(recipes.craft(&corner, 3), Some(ItemStack::new(5, 4)));
+        let birch = grid(2, &[(1, 1, items::BIRCH_LOG)]);
+        assert_eq!(
+            recipes.craft(&birch, 2),
+            Some(ItemStack::new(items::OAK_PLANKS, 4))
+        );
+        let corner = grid(3, &[(0, 2, items::OAK_LOG)]);
+        assert_eq!(
+            recipes.craft(&corner, 3),
+            Some(ItemStack::new(items::OAK_PLANKS, 4))
+        );
         assert_eq!(recipes.craft(&grid(2, &[]), 2), None);
     }
 
     #[test]
     fn shaped_recipes_need_their_shape_and_may_be_mirrored() {
         let recipes = recipes();
+        let (planks, stick, cobble) = (items::OAK_PLANKS, items::STICK, items::COBBLESTONE);
         // A wooden pickaxe: planks across the top, sticks down the middle.
         let pickaxe = grid(
             3,
             &[
-                (0, 0, 5, 0),
-                (1, 0, 5, 0),
-                (2, 0, 5, 0),
-                (1, 1, 280, 0),
-                (1, 2, 280, 0),
+                (0, 0, planks),
+                (1, 0, planks),
+                (2, 0, planks),
+                (1, 1, stick),
+                (1, 2, stick),
             ],
         );
-        assert_eq!(recipes.craft(&pickaxe, 3), Some(ItemStack::new(270, 1)));
+        assert_eq!(
+            recipes.craft(&pickaxe, 3),
+            Some(ItemStack::new(items::WOODEN_PICKAXE, 1))
+        );
         // The axe and its mirror image both work.
         let axe = grid(
             3,
             &[
-                (0, 0, 4, 0),
-                (1, 0, 4, 0),
-                (0, 1, 4, 0),
-                (1, 1, 280, 0),
-                (1, 2, 280, 0),
+                (0, 0, cobble),
+                (1, 0, cobble),
+                (0, 1, cobble),
+                (1, 1, stick),
+                (1, 2, stick),
             ],
         );
         let mirrored = grid(
             3,
             &[
-                (1, 0, 4, 0),
-                (2, 0, 4, 0),
-                (2, 1, 4, 0),
-                (1, 1, 280, 0),
-                (1, 2, 280, 0),
+                (1, 0, cobble),
+                (2, 0, cobble),
+                (2, 1, cobble),
+                (1, 1, stick),
+                (1, 2, stick),
             ],
         );
-        assert_eq!(recipes.craft(&axe, 3), Some(ItemStack::new(275, 1)));
-        assert_eq!(recipes.craft(&mirrored, 3), Some(ItemStack::new(275, 1)));
+        assert_eq!(
+            recipes.craft(&axe, 3),
+            Some(ItemStack::new(items::STONE_AXE, 1))
+        );
+        assert_eq!(
+            recipes.craft(&mirrored, 3),
+            Some(ItemStack::new(items::STONE_AXE, 1))
+        );
         // Sticks need to be stacked vertically, not side by side.
-        let sideways = grid(2, &[(0, 0, 5, 0), (1, 0, 5, 0)]);
+        let sideways = grid(2, &[(0, 0, planks), (1, 0, planks)]);
         assert_eq!(recipes.craft(&sideways, 2), None);
-        // A 3×3 recipe doesn't fit the 2×2 grid.
-        let table = grid(2, &[(0, 0, 5, 0), (1, 0, 5, 0), (0, 1, 5, 0), (1, 1, 5, 0)]);
-        assert_eq!(recipes.craft(&table, 2), Some(ItemStack::new(58, 1)));
+        let table = grid(
+            2,
+            &[
+                (0, 0, planks),
+                (1, 0, planks),
+                (0, 1, planks),
+                (1, 1, planks),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&table, 2),
+            Some(ItemStack::new(items::CRAFTING_TABLE, 1))
+        );
     }
 
     #[test]
-    fn item_data_values_matter_but_block_variants_dont() {
+    fn charcoal_works_like_coal_and_any_wool_makes_a_bed() {
         let recipes = recipes();
-        // Charcoal torches; a dye in place of coal makes nothing.
-        let charcoal = grid(2, &[(0, 0, 263, 1), (0, 1, 280, 0)]);
-        assert_eq!(recipes.craft(&charcoal, 2), Some(ItemStack::new(50, 4)));
-        let dye = grid(2, &[(0, 0, 351, 1), (0, 1, 280, 0)]);
+        let charcoal = grid(2, &[(0, 0, items::CHARCOAL), (0, 1, items::STICK)]);
+        assert_eq!(
+            recipes.craft(&charcoal, 2),
+            Some(ItemStack::new(items::TORCH, 4))
+        );
+        let dye = grid(2, &[(0, 0, items::RED_DYE), (0, 1, items::STICK)]);
         assert_eq!(recipes.craft(&dye, 2), None);
         // A bed from mixed wool colors.
+        let planks = items::OAK_PLANKS;
         let bed = grid(
             3,
             &[
-                (0, 0, 35, 14),
-                (1, 0, 35, 0),
-                (2, 0, 35, 4),
-                (0, 1, 5, 0),
-                (1, 1, 5, 0),
-                (2, 1, 5, 0),
+                (0, 0, items::RED_WOOL),
+                (1, 0, items::WHITE_WOOL),
+                (2, 0, items::YELLOW_WOOL),
+                (0, 1, planks),
+                (1, 1, planks),
+                (2, 1, planks),
             ],
         );
-        assert_eq!(recipes.craft(&bed, 3), Some(ItemStack::new(355, 1)));
+        assert_eq!(
+            recipes.craft(&bed, 3),
+            Some(ItemStack::new(items::RED_BED, 1))
+        );
     }
 
     #[test]
     fn planks_make_wooden_slabs_not_stone_ones() {
         let recipes = recipes();
-        let row = grid(3, &[(0, 1, 5, 0), (1, 1, 5, 0), (2, 1, 5, 0)]);
-        assert_eq!(recipes.craft(&row, 3), Some(ItemStack::new(126, 3)));
-        assert_eq!(recipes.burn_ticks(126), 150);
+        let planks = items::OAK_PLANKS;
+        let row = grid(3, &[(0, 1, planks), (1, 1, planks), (2, 1, planks)]);
+        assert_eq!(
+            recipes.craft(&row, 3),
+            Some(ItemStack::new(items::OAK_SLAB, 3))
+        );
+        assert_eq!(recipes.burn_ticks(items::OAK_SLAB), 150);
     }
 
     #[test]
     fn shapeless_recipes_take_any_arrangement() {
         let recipes = recipes();
-        let stew = grid(3, &[(2, 2, 281, 0), (0, 1, 40, 0), (1, 0, 39, 0)]);
-        assert_eq!(recipes.craft(&stew, 3), Some(ItemStack::new(282, 1)));
-        // Red dye on white wool makes red wool (data 14).
-        let red = grid(2, &[(1, 1, 351, 1), (0, 0, 35, 0)]);
+        let (bowl, red, brown) = (items::BOWL, items::RED_MUSHROOM, items::BROWN_MUSHROOM);
+        let stew = grid(3, &[(2, 2, bowl), (0, 1, red), (1, 0, brown)]);
         assert_eq!(
-            recipes.craft(&red, 2),
-            Some(ItemStack::with_damage(35, 1, 14))
+            recipes.craft(&stew, 3),
+            Some(ItemStack::new(items::MUSHROOM_STEW, 1))
+        );
+        let red_wool = grid(2, &[(1, 1, items::RED_DYE), (0, 0, items::WHITE_WOOL)]);
+        assert_eq!(
+            recipes.craft(&red_wool, 2),
+            Some(ItemStack::new(items::RED_WOOL, 1))
         );
         // An extra item spoils it.
         let spoiled = grid(
             3,
-            &[(2, 2, 281, 0), (0, 1, 40, 0), (1, 0, 39, 0), (0, 0, 3, 0)],
+            &[
+                (2, 2, bowl),
+                (0, 1, red),
+                (1, 0, brown),
+                (0, 0, items::DIRT),
+            ],
         );
         assert_eq!(recipes.craft(&spoiled, 3), None);
     }
@@ -352,44 +445,20 @@ mod tests {
     fn smelting_and_fuels_follow_1_0_0() {
         let recipes = recipes();
         assert_eq!(
-            recipes.smelt(&ItemStack::new(15, 1)),
-            Some(ItemStack::new(265, 1))
+            recipes.smelt(&ItemStack::new(items::IRON_ORE, 1)),
+            Some(ItemStack::new(items::IRON_INGOT, 1))
         );
         assert_eq!(
-            recipes.smelt(&ItemStack::with_damage(17, 1, 2)),
-            Some(ItemStack::with_damage(263, 1, 1))
+            recipes.smelt(&ItemStack::new(items::BIRCH_LOG, 1)),
+            Some(ItemStack::new(items::CHARCOAL, 1))
         );
-        assert_eq!(recipes.smelt(&ItemStack::new(3, 1)), None);
-        assert_eq!(recipes.burn_ticks(263), 1600);
-        assert_eq!(recipes.burn_ticks(5), 300);
-        assert_eq!(recipes.burn_ticks(280), 100);
-        assert_eq!(recipes.burn_ticks(1), 0);
-    }
-
-    #[test]
-    fn every_recipe_names_real_items() {
-        let assets = crate::assets::dir();
-        let items = crate::inventory::stack::Items::new(
-            crate::world::block::BlockRegistry::load(&assets.join("data/blocks.ron"))
-                .unwrap()
-                .into(),
-            crate::inventory::item::ItemRegistry::load(&assets.join("data/items.ron"))
-                .unwrap()
-                .into(),
-        );
-        let recipes = recipes();
-        let mut ids: Vec<ItemId> = Vec::new();
-        for recipe in &recipes.shaped {
-            ids.push(recipe.result.item);
-            ids.extend(recipe.cells.iter().flatten().map(|i| i.item));
-        }
-        for (ingredients, result) in &recipes.shapeless {
-            ids.push(result.item);
-            ids.extend(ingredients.iter().map(|i| i.item));
-        }
-        for id in ids {
-            assert!(items.exists(id), "recipe uses unknown item {id}");
-        }
+        assert_eq!(recipes.smelt(&ItemStack::new(items::DIRT, 1)), None);
+        assert_eq!(recipes.burn_ticks(items::COAL), 1600);
+        assert_eq!(recipes.burn_ticks(items::CHARCOAL), 1600);
+        assert_eq!(recipes.burn_ticks(items::SPRUCE_LOG), 300);
+        assert_eq!(recipes.burn_ticks(items::OAK_PLANKS), 300);
+        assert_eq!(recipes.burn_ticks(items::STICK), 100);
+        assert_eq!(recipes.burn_ticks(items::STONE), 0);
         assert!(recipes.shaped.len() > 90);
     }
 }

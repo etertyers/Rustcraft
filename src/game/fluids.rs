@@ -62,7 +62,7 @@ impl Game {
             return;
         };
         let world = self.chunks.world();
-        let blocks = &self.items.blocks;
+        let blocks = self.items.blocks;
         let def_at = |at: IVec3| blocks.get(world.block(at.x, at.y, at.z)?.id());
         let (edit, after) = match bucket {
             Bucket::Empty => {
@@ -72,7 +72,7 @@ impl Game {
                         return false;
                     };
                     blocks.get(block.id()).is_some_and(|def| {
-                        def.is_targetable() || (def.fluid.is_some() && block.data() == 0)
+                        def.is_targetable() || (def.fluid.is_some() && fluid::level(block) == 0)
                     })
                 };
                 let Some(hit) = raycast::raycast(eye, dir, config::REACH, source) else {
@@ -90,7 +90,7 @@ impl Game {
                 if def_at(at).is_none_or(|def| def.stops_fluid()) {
                     return;
                 }
-                let source = BlockState::new(fluid::flowing(fluid), 0);
+                let source = fluid::at_level(fluid, 0);
                 ((at, source), Bucket::Empty)
             }
         };
@@ -109,7 +109,7 @@ impl Game {
         let mut random = |n: u32| rng.below(n);
         let outcome = self.fluids.tick(
             self.chunks.world(),
-            &self.items.blocks,
+            self.items.blocks,
             self.time,
             &mut random,
         );
@@ -118,12 +118,9 @@ impl Game {
         }
         // Washed-away blocks drop whatever breaking them by hand would.
         for (at, block) in outcome.washed {
-            let Some(def) = self.items.blocks.get(block.id()) else {
-                continue;
-            };
             let rng = &mut self.rng;
             let mut random = || rng.next_f64() as f32;
-            for stack in harvest::drops(def, block.data(), None, &mut random) {
+            for stack in harvest::drops(block, None, &mut random) {
                 self.entities
                     .push(ItemEntity::from_block(stack, at, &mut random));
             }
@@ -147,7 +144,7 @@ impl Game {
         let mut random = |n: u32| rng.below(n);
         let edits = self.fires.tick(
             self.chunks.world(),
-            &self.items.blocks,
+            self.items.blocks,
             self.time,
             &near,
             &mut random,
@@ -174,16 +171,20 @@ mod tests {
 
     use super::*;
     use crate::{
-        game::tests::flat_game, inventory::stack::ItemStack, player::mode::GameMode,
+        game::tests::flat_game,
+        inventory::{item::ItemId, items, stack::ItemStack},
+        player::mode::GameMode,
         player::physics::Body,
+        world::blocks,
     };
 
-    const GLASS: BlockState = BlockState::new(20, 0);
-    const SOURCE: BlockState = BlockState::new(8, 0);
+    const GLASS: BlockState = BlockState::of(blocks::GLASS);
+    const SOURCE: BlockState = BlockState::of(blocks::WATER);
 
-    fn water_id(game: &Game, x: i32, z: i32) -> Option<u16> {
+    /// The level of the water at (x, 64, z), if there's water there.
+    fn water_level(game: &Game, x: i32, z: i32) -> Option<u8> {
         let block = game.chunks.world().block(x, 64, z)?;
-        matches!(block.id(), 8 | 9).then_some(block.id())
+        block.is(blocks::WATER).then(|| fluid::level(block))
     }
 
     #[test]
@@ -198,13 +199,13 @@ mod tests {
         for _ in 0..40 {
             game.tick();
         }
-        assert_eq!(water_id(&game, 4, 4), Some(9), "settled in its box");
-        assert_eq!(water_id(&game, 6, 4), None);
+        assert_eq!(water_level(&game, 4, 4), Some(0), "a source in its box");
+        assert_eq!(water_level(&game, 6, 4), None);
         game.break_block(source + IVec3::X);
         for _ in 0..40 {
             game.tick();
         }
-        assert!(water_id(&game, 6, 4).is_some(), "out through the gap");
+        assert!(water_level(&game, 6, 4).is_some(), "out through the gap");
     }
 
     #[test]
@@ -214,13 +215,13 @@ mod tests {
         for _ in 0..100 {
             game.tick();
         }
-        assert!(water_id(&game, 0, 0).is_some());
+        assert!(water_level(&game, 0, 0).is_some());
         let start = DVec3::new(0.5, 64.0, 0.5);
         game.body = Body::new(start);
         game.prev_feet = start;
         game.entities.clear();
         game.entities.push(ItemEntity::new(
-            ItemStack::new(4, 1),
+            ItemStack::new(items::COBBLESTONE, 1),
             DVec3::new(0.5, 64.2, 2.5),
             DVec3::ZERO,
             0.0,
@@ -247,13 +248,13 @@ mod tests {
         let lava = IVec3::new(3, 64, 3);
         let fire = IVec3::new(-3, 64, 3);
         game.edit(&[
-            (lava, BlockState::new(11, 0)),
-            (fire, BlockState::new(crate::world::fire::FIRE, 0)),
+            (lava, BlockState::of(blocks::LAVA)),
+            (fire, BlockState::of(blocks::FIRE)),
         ]);
         game.entities.clear();
         for x in [3.5, -2.5, 0.5] {
             game.entities.push(ItemEntity::new(
-                ItemStack::new(4, 1),
+                ItemStack::new(items::COBBLESTONE, 1),
                 DVec3::new(x, 64.2, 3.5),
                 DVec3::ZERO,
                 0.0,
@@ -280,7 +281,7 @@ mod tests {
     /// the origin looking north and down at `pitch`: −0.51 looks through
     /// (0, 64, −2) to the ground beyond, −0.68 through it to the ground
     /// below it.
-    fn click_with(game: &mut Game, id: u16, pitch: f32) {
+    fn click_with(game: &mut Game, id: ItemId, pitch: f32) {
         let feet = DVec3::new(0.5, 64.0, 0.5);
         game.body = Body::new(feet);
         game.prev_feet = feet;
@@ -297,39 +298,51 @@ mod tests {
     fn buckets_scoop_up_and_pour_out_sources() {
         let mut game = flat_game(GameMode::Survival);
         let at = IVec3::new(0, 64, -2);
-        game.edit(&[(at, BlockState::new(9, 0))]);
-        click_with(&mut game, 325, -0.51);
+        game.edit(&[(at, BlockState::of(blocks::WATER))]);
+        click_with(&mut game, items::BUCKET, -0.51);
         assert_eq!(game.chunks.world().block(0, 64, -2), Some(BlockState::AIR));
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(326, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::WATER_BUCKET, 1))
+        );
 
         // Poured onto the ground just beyond.
-        click_with(&mut game, 326, -0.51);
+        click_with(&mut game, items::WATER_BUCKET, -0.51);
         let poured = game.chunks.world().block(0, 64, -3).unwrap();
-        assert_eq!((poured.id(), poured.data()), (8, 0));
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(325, 1)));
+        assert_eq!(poured, SOURCE);
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::BUCKET, 1))
+        );
         for _ in 0..60 {
             game.tick();
         }
-        assert_eq!(water_id(&game, 0, -6), Some(9), "it spread");
+        assert!(water_level(&game, 0, -6).is_some(), "it spread");
 
         // Flowing water can't be scooped up; the bucket passes through it.
+        assert_eq!(water_level(&game, 0, -2), Some(1));
+        click_with(&mut game, items::BUCKET, -0.68);
         assert_eq!(
-            game.chunks.world().block(0, 64, -2),
-            Some(BlockState::new(9, 1))
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::BUCKET, 1))
         );
-        click_with(&mut game, 325, -0.68);
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(325, 1)));
 
         // Lava in creative: pouring keeps the bucket full, and scooping
         // fills an empty one.
         let mut game = flat_game(GameMode::Creative);
-        click_with(&mut game, 327, -0.51);
+        click_with(&mut game, items::LAVA_BUCKET, -0.51);
         let poured = game.chunks.world().block(0, 64, -3).unwrap();
-        assert_eq!(poured.id(), 10);
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(327, 1)));
-        game.edit(&[(at, BlockState::new(11, 0))]);
-        click_with(&mut game, 325, -0.51);
+        assert_eq!(poured.id(), blocks::LAVA);
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::LAVA_BUCKET, 1))
+        );
+        game.edit(&[(at, BlockState::of(blocks::LAVA))]);
+        click_with(&mut game, items::BUCKET, -0.51);
         assert_eq!(game.chunks.world().block(0, 64, -2), Some(BlockState::AIR));
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(327, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::LAVA_BUCKET, 1))
+        );
     }
 }

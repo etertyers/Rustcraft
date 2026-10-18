@@ -13,15 +13,15 @@ use crate::{
     world::{
         World,
         block::{BlockDef, BlockRegistry, bed_direction},
+        blocks,
         chunk::ChunkPos,
         daytime::{self, DAY_TICKS},
+        props::{Prop, bed_part},
     },
 };
 
 /// Ticks asleep before morning comes (1.0.0's `sleepTimer` reaching 100).
 pub const SLEEP_TICKS: u32 = 100;
-/// The bed block.
-const BED: u16 = 26;
 /// Monsters this close to the bed (sideways, up or down) keep the player
 /// awake.
 const MONSTER_REACH: DVec3 = DVec3::new(8.0, 5.0, 8.0);
@@ -60,8 +60,8 @@ impl Game {
         let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z) else {
             return;
         };
-        let head = if block.data() & 8 == 0 {
-            cell + bed_direction(block.data())
+        let head = if block.get(Prop::BedPart) == bed_part::FOOT {
+            cell + bed_direction(block)
         } else {
             cell
         };
@@ -88,7 +88,7 @@ impl Game {
         self.body = Body::new(center.with_y(head.y as f64 + 0.5625));
         self.prev_feet = self.body.position();
         // Looking from the pillow toward the foot.
-        let foot = -bed_direction(block.data()).as_vec3();
+        let foot = -bed_direction(block).as_vec3();
         self.camera.yaw = foot.x.atan2(-foot.z);
         self.sleep = Some(Sleep { head, ticks: 0 });
     }
@@ -136,11 +136,11 @@ impl Game {
     fn bed_exit(&self, head: IVec3) -> Option<DVec3> {
         let world = self.chunks.world();
         let block = world.block(head.x, head.y, head.z)?;
-        if block.id() != BED {
+        if !block.is(blocks::RED_BED) {
             return None;
         }
-        let foot = head - bed_direction(block.data());
-        free_spot(world, &self.items.blocks, [foot, head])
+        let foot = head - bed_direction(block);
+        free_spot(world, self.items.blocks, [foot, head])
     }
 
     /// Where the player comes back after dying: beside their bed if it's
@@ -205,6 +205,7 @@ mod tests {
     use glam::{DVec3, IVec3};
 
     use super::*;
+    use crate::world::blocks;
     use crate::{
         entity::mob::Mob,
         game::tests::{flat_game, mob_registry},
@@ -219,10 +220,10 @@ mod tests {
         game.mob_defs = mob_registry();
         let foot = IVec3::new(0, 64, -1);
         let head = IVec3::new(0, 64, -2);
-        game.chunks.set_blocks(&[
-            (foot, BlockState::new(BED, 2)),
-            (head, BlockState::new(BED, 2 | 8)),
-        ]);
+        let bed =
+            BlockState::of(blocks::RED_BED).with_face(Prop::Facing, crate::world::Face::North);
+        game.chunks
+            .set_blocks(&[(foot, bed), (head, bed.with(Prop::BedPart, bed_part::HEAD))]);
         game.time = time;
         (game, head)
     }

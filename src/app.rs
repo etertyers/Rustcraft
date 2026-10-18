@@ -24,7 +24,7 @@ use crate::{
     config,
     entity::mobs::MobRegistry,
     game::{Container, Game, chunk_workers, environment::environment},
-    inventory::item::ItemRegistry,
+    inventory::item,
     inventory::{
         crafting::Recipes,
         player::HOTBAR_SLOTS,
@@ -55,7 +55,7 @@ use crate::{
     },
     world::{
         biome::{Biome, BiomeColors},
-        block::BlockRegistry,
+        block,
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
@@ -181,8 +181,8 @@ impl App {
             .with_inner_size(LogicalSize::new(width, height));
         let window = Arc::new(event_loop.create_window(attrs)?);
         let assets = assets::dir();
-        let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
-        let items = ItemRegistry::load(&assets.join("data/items.ron"))?;
+        let blocks = block::registry();
+        let items = item::registry();
         let textures = assets.join("textures");
         let atlas = Atlas::load(&[
             (&textures.join("blocks"), ""),
@@ -234,15 +234,15 @@ impl App {
         renderer.set_vsync(self.options.vsync && self.bench.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some());
         let models = BlockModels::new(
-            &blocks,
+            blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
             atlas.uv_rect(MISSING_TILE),
             biome_colors,
         );
         let models = Arc::new(models);
-        let icons = ItemIcons::new(&atlas, models.clone(), &items);
+        let icons = ItemIcons::new(&atlas, models.clone(), items);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
-        let items = Items::new(Arc::new(blocks), Arc::new(items)).with_recipes(Arc::new(recipes));
+        let items = Items::new().with_recipes(Arc::new(recipes));
         self.catalog = catalog(&items, &icons);
         self.icons = Some(Arc::new(icons));
         self.items = Some(items);
@@ -296,7 +296,7 @@ impl App {
             // In front of the first gallery row, looking south along it.
             WorldKind::Gallery => (
                 ChunkSource::Fixed(
-                    gallery::gallery_chunks(&items.blocks)
+                    gallery::gallery_chunks(items.blocks)
                         .into_iter()
                         .map(|chunk| (chunk.pos, chunk))
                         .collect(),
@@ -619,11 +619,9 @@ impl App {
             let block = game.chunks.world().block(cell.x, cell.y, cell.z)?;
             // Over the block's own box (a slab's half, a door's slab), or
             // the whole cell for blocks without one.
-            let (min, max) = game
-                .items()
-                .blocks
-                .get(block.id())
-                .and_then(|def| def.collision_box(block.data()))
+            let (min, max) = block
+                .def()
+                .collision_box(block)
                 .unwrap_or(([0.0; 3], [1.0; 3]));
             let cell = cell.as_vec3();
             Some(crack::crack_mesh(
@@ -912,25 +910,13 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Every block and item with each data-value variant, for the creative
-/// inventory, with how it looks and its name.
+/// Every item, blocks first, for the creative inventory, with how it looks
+/// and its name.
 fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
-    let blocks = items
-        .blocks
+    items
+        .items
         .iter()
-        .filter(|def| def.id != 0)
-        .flat_map(|def| {
-            std::iter::once(0)
-                .chain(def.variants.keys().copied().filter(|&data| data != 0))
-                .map(|data| ItemStack::with_damage(def.id, 1, data as u16))
-        });
-    let others = items.items.iter().flat_map(|item| {
-        std::iter::once(0)
-            .chain(item.variants.keys().copied().filter(|&data| data != 0))
-            .map(|data| ItemStack::with_damage(item.id, 1, data as u16))
-    });
-    blocks
-        .chain(others)
+        .map(|item| ItemStack::with_damage(item.id, 1, 0))
         .map(|stack| {
             (
                 stack,

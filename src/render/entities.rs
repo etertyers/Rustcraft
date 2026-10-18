@@ -169,13 +169,14 @@ fn add_sprite(mesh: &mut Mesh, origin: Vec3, yaw: f32, face: IconFace, light: [f
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
     #[test]
     fn particles_face_the_camera_even_looking_up_or_down() {
-        use crate::world::{Face, biome::BiomeColors, block::BlockRegistry, block::BlockState};
-        let blocks = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        use crate::world::{Face, biome::BiomeColors, block::BlockState};
+        let blocks = crate::world::block::registry();
         let models = BlockModels::new(
-            &blocks,
+            blocks,
             |_| None,
             [0.0, 0.0, 1.0, 1.0],
             BiomeColors::uniform(),
@@ -184,7 +185,7 @@ mod tests {
         let chip = Particle::chip(
             glam::IVec3::new(0, 64, 0),
             Face::Top,
-            BlockState::new(1, 0),
+            BlockState::of(blocks::STONE),
             &mut random,
         );
         for (yaw, pitch) in [(0.0f32, 0.0f32), (1.0, 0.8), (2.5, -1.2), (-2.0, 0.3)] {

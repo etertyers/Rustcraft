@@ -5,8 +5,9 @@ use glam::{DVec3, IVec3, Vec3};
 use crate::world::{
     World,
     block::{BlockRegistry, BlockState, Fluid},
+    blocks,
     chunk::ChunkPos,
-    fire, fluid,
+    fluid,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -169,7 +170,8 @@ impl WorldCollider<'_> {
                 (min.x..=max.x).filter_map(move |x| {
                     let block = self.world.block(x, y, z)?;
                     let fluid = self.blocks.get(block.id())?.fluid?;
-                    let surface = (y + 1) as f64 - fluid::height_percent(block.data()) as f64;
+                    let surface =
+                        (y + 1) as f64 - fluid::height_percent(fluid::level(block)) as f64;
                     (region.max.y >= surface).then_some((IVec3::new(x, y, z), fluid))
                 })
             })
@@ -187,10 +189,7 @@ impl Collider for WorldCollider<'_> {
                     // Unloaded chunks are walls.
                     let bounds = match self.world.block(x, y, z) {
                         None => Some(([0.0; 3], [1.0; 3])),
-                        Some(block) => self
-                            .blocks
-                            .get(block.id())
-                            .and_then(|def| def.collision_box(block.data())),
+                        Some(block) => block.def().collision_box(block),
                     };
                     if let Some((min, max)) = bounds {
                         let cell = DVec3::new(x as f64, y as f64, z as f64);
@@ -222,7 +221,7 @@ impl Collider for WorldCollider<'_> {
     }
 
     fn in_fire(&self, region: &Aabb) -> bool {
-        self.any_cell(region, |block| block.id() == fire::FIRE)
+        self.any_cell(region, |block| block.is(blocks::FIRE))
     }
 
     fn in_lava(&self, region: &Aabb) -> bool {
@@ -250,6 +249,7 @@ impl Collider for WorldCollider<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
     use crate::world::chunk::Chunk;
 
     fn player_at(x: f64, y: f64, z: f64) -> Aabb {
@@ -296,16 +296,16 @@ mod tests {
 
     #[test]
     fn world_collider_returns_solid_blocks_and_walls_off_unloaded_chunks() {
-        let blocks = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        let registry = crate::world::block::registry();
         let mut world = World::default();
         let mut chunk = Chunk::new(ChunkPos::new(0, 0));
-        chunk.set(1, 63, 1, BlockState::new(1, 0)); // stone
-        chunk.set(2, 63, 1, BlockState::new(37, 0)); // dandelion, not solid
-        chunk.set(3, 63, 1, BlockState::new(79, 0)); // ice
+        chunk.set(1, 63, 1, BlockState::of(blocks::STONE)); // stone
+        chunk.set(2, 63, 1, BlockState::of(blocks::DANDELION)); // dandelion, not solid
+        chunk.set(3, 63, 1, BlockState::of(blocks::ICE)); // ice
         world.insert(chunk);
         let collider = WorldCollider {
             world: &world,
-            blocks: &blocks,
+            blocks: registry,
         };
         let mut boxes = Vec::new();
         let region = Aabb::new(DVec3::new(1.0, 63.0, 1.0), DVec3::new(2.9, 63.9, 1.9));

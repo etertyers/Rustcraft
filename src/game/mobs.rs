@@ -18,7 +18,7 @@ use crate::{
     player::{collision::WorldCollider, raycast, stats::DamageSource},
     world::{
         World,
-        block::{BlockRegistry, Fluid},
+        block::{BlockId, BlockRegistry, Fluid},
         chunk::ChunkPos,
         daytime,
         worldgen::rng::Rng,
@@ -103,7 +103,7 @@ impl Game {
     /// Whether nothing opaque lies between `from` and `to`.
     fn clear_line(&self, from: DVec3, to: DVec3) -> bool {
         let world = self.chunks.world();
-        let blocks = &self.items.blocks;
+        let blocks = self.items.blocks;
         let distance = from.distance(to);
         let hit = raycast::raycast(from, to - from, distance, |cell| {
             world
@@ -133,7 +133,7 @@ impl Game {
             });
             let terrain = WorldTerrain {
                 world: self.chunks.world(),
-                blocks: &self.items.blocks,
+                blocks: self.items.blocks,
             };
             let weight = |cell: IVec3| self.spot_weight(&def.spawn, def.ai, cell);
             let view = View {
@@ -145,7 +145,7 @@ impl Game {
             let intent = ai::think(mob, def, &view, &mut random);
             let collider = WorldCollider {
                 world: self.chunks.world(),
-                blocks: &self.items.blocks,
+                blocks: self.items.blocks,
             };
             let eyes = self.fluid_at(mob.eye()) == Some(Fluid::Water);
             mob.tick(&intent.input, &collider, eyes);
@@ -313,9 +313,9 @@ impl Game {
 
     /// Feet position on top of column (x, z) if its surface is one of
     /// `ground` with two free blocks above.
-    fn ground_spot(&self, x: i32, z: i32, ground: &[u16]) -> Option<DVec3> {
+    fn ground_spot(&self, x: i32, z: i32, ground: &[BlockId]) -> Option<DVec3> {
         let world = self.chunks.world();
-        let top = (0..128)
+        let top = (0..crate::config::WORLD_HEIGHT as i32)
             .rev()
             .find(|&y| world.block(x, y, z).is_some_and(|b| !b.is_air()))?;
         let surface = world.block(x, top, z)?;
@@ -387,7 +387,7 @@ impl Game {
     fn can_monster_spawn(&mut self, cell: IVec3, max_light: u8) -> bool {
         let terrain = WorldTerrain {
             world: self.chunks.world(),
-            blocks: &self.items.blocks,
+            blocks: self.items.blocks,
         };
         let free = |c: IVec3| terrain.passable(c) && !terrain.water(c) && !terrain.lava(c);
         let below = cell - IVec3::Y;

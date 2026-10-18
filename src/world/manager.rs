@@ -516,16 +516,17 @@ impl Drop for ChunkManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{biome::BiomeColors, block::BlockRegistry, save::TempDir};
+    use crate::world::blocks;
+    use crate::world::{biome::BiomeColors, save::TempDir};
     use std::{
         collections::HashSet,
         time::{Duration, Instant},
     };
 
     fn models() -> Arc<BlockModels> {
-        let registry = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        let registry = crate::world::block::registry();
         Arc::new(BlockModels::new(
-            &registry,
+            registry,
             |_| Some([0.0; 4]),
             [0.0; 4],
             BiomeColors::uniform(),
@@ -620,8 +621,8 @@ mod tests {
         manager
     }
 
-    const STONE: BlockState = BlockState::new(1, 0);
-    const TORCH: BlockState = BlockState::new(50, 0);
+    const STONE: BlockState = BlockState::of(blocks::STONE);
+    const TORCH: BlockState = BlockState::of(blocks::TORCH);
 
     #[test]
     fn edits_remesh_the_chunk_and_border_neighbors() {

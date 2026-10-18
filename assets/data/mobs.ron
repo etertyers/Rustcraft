@@ -27,8 +27,8 @@
         height: 0.9,
         speed: 0.7,
         ai: Passive,
-        drops: [(item: 319, min: 0, max: 2, cooked: 320)],
-        spawn: Ground(blocks: [2], min_light: 9, chance: 0.1, group: 4),
+        drops: [(item: "porkchop", min: 0, max: 2, cooked: "cooked_porkchop")],
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -51,7 +51,7 @@
         speed: 0.5,
         ai: Hostile(attack: 4),
         burns_in_daylight: true,
-        drops: [(item: 367, min: 0, max: 2)],
+        drops: [(item: "rotten_flesh", min: 0, max: 2)],
         spawn: Dark(max_light: 7, group: 4),
         model: (
             texture_size: (64, 64),

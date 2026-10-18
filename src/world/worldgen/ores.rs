@@ -13,16 +13,17 @@ use crate::{
     config::{CHUNK_SIZE, WORLD_HEIGHT},
     world::{
         block::BlockState,
+        blocks,
         chunk::{Chunk, ChunkPos},
     },
 };
 
-const COAL_ORE: BlockState = BlockState::new(16, 0);
-const IRON_ORE: BlockState = BlockState::new(15, 0);
-const GOLD_ORE: BlockState = BlockState::new(14, 0);
-const REDSTONE_ORE: BlockState = BlockState::new(73, 0);
-const DIAMOND_ORE: BlockState = BlockState::new(56, 0);
-const LAPIS_ORE: BlockState = BlockState::new(21, 0);
+const COAL_ORE: BlockState = BlockState::of(blocks::COAL_ORE);
+const IRON_ORE: BlockState = BlockState::of(blocks::IRON_ORE);
+const GOLD_ORE: BlockState = BlockState::of(blocks::GOLD_ORE);
+const REDSTONE_ORE: BlockState = BlockState::of(blocks::REDSTONE_ORE);
+const DIAMOND_ORE: BlockState = BlockState::of(blocks::DIAMOND_ORE);
+const LAPIS_ORE: BlockState = BlockState::of(blocks::LAPIS_ORE);
 
 /// How veins of one block are spread through a chunk.
 struct VeinKind {

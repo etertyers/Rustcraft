@@ -9,25 +9,30 @@ use super::{Game, tests::flat_game};
 use crate::{
     inventory::{
         furnace,
+        item::ItemId,
+        items,
         slots::{Click, SlotRef},
     },
     player::{mode::GameMode, physics::Body},
-    world::block::BlockState,
+    world::{
+        block::{BlockId, BlockState},
+        blocks,
+    },
 };
 
-const LOG: u16 = 17;
-const PLANKS: u16 = 5;
-const STICK: u16 = 280;
-const TABLE: u16 = 58;
-const COBBLESTONE: u16 = 4;
-const FURNACE: u16 = 61;
-const COAL: u16 = 263;
-const IRON_ORE: u16 = 15;
-const IRON: u16 = 265;
-const DIAMOND: u16 = 264;
-const WOODEN_PICKAXE: u16 = 270;
-const STONE_PICKAXE: u16 = 274;
-const IRON_PICKAXE: u16 = 257;
+const LOG: ItemId = items::OAK_LOG;
+const PLANKS: ItemId = items::OAK_PLANKS;
+const STICK: ItemId = items::STICK;
+const TABLE: ItemId = items::CRAFTING_TABLE;
+const COBBLESTONE: ItemId = items::COBBLESTONE;
+const FURNACE: ItemId = items::FURNACE;
+const COAL: ItemId = items::COAL;
+const IRON_ORE: ItemId = items::IRON_ORE;
+const IRON: ItemId = items::IRON_INGOT;
+const DIAMOND: ItemId = items::DIAMOND;
+const WOODEN_PICKAXE: ItemId = items::WOODEN_PICKAXE;
+const STONE_PICKAXE: ItemId = items::STONE_PICKAXE;
+const IRON_PICKAXE: ItemId = items::IRON_PICKAXE;
 
 /// The block under the player's feet, which they mine looking down.
 const UNDERFOOT: IVec3 = IVec3::new(0, 63, 0);
@@ -39,7 +44,7 @@ fn stand_at_origin(game: &mut Game) {
     game.prev_feet = feet;
 }
 
-fn count(game: &Game, id: u16) -> u32 {
+fn count(game: &Game, id: ItemId) -> u32 {
     (0..36)
         .filter_map(|i| game.inventory.slot(i))
         .filter(|stack| stack.id == id)
@@ -48,7 +53,7 @@ fn count(game: &Game, id: u16) -> u32 {
 }
 
 /// Selects a hotbar slot holding `id`, moving it into the hotbar first.
-fn hold(game: &mut Game, id: u16) {
+fn hold(game: &mut Game, id: ItemId) {
     let slot = game.inventory.find(id).expect("the item to hold");
     if slot >= 9 {
         let stack = game.inventory.slot(slot).copied();
@@ -63,9 +68,9 @@ fn hold(game: &mut Game, id: u16) {
 
 /// Stands on `block` (with `tool` in hand, or nothing), mines it by
 /// holding the button and picks up what drops.
-fn mine(game: &mut Game, block: u16, tool: Option<u16>) {
+fn mine(game: &mut Game, block: BlockId, tool: Option<ItemId>) {
     game.chunks
-        .set_blocks(&[(UNDERFOOT, BlockState::new(block, 0))]);
+        .set_blocks(&[(UNDERFOOT, BlockState::of(block))]);
     stand_at_origin(game);
     game.camera.pitch = -std::f32::consts::FRAC_PI_2;
     match tool {
@@ -88,7 +93,8 @@ fn mine(game: &mut Game, block: u16, tool: Option<u16>) {
     assert_eq!(
         game.chunks.world().block(0, 63, 0),
         Some(BlockState::AIR),
-        "mined {block}"
+        "mined {}",
+        block.name()
     );
     game.breaking = false;
     for _ in 0..40 {
@@ -98,7 +104,7 @@ fn mine(game: &mut Game, block: u16, tool: Option<u16>) {
 
 /// Puts one `id` from the inventory into each grid cell in `cells`, then
 /// shift-clicks the result.
-fn craft(game: &mut Game, cells: &[(usize, u16)]) {
+fn craft(game: &mut Game, cells: &[(usize, ItemId)]) {
     for &(cell, id) in cells {
         let from = game.inventory.find(id).expect("an ingredient");
         game.click_slot(SlotRef::Inventory(from), Click::Left);
@@ -114,9 +120,9 @@ fn craft(game: &mut Game, cells: &[(usize, u16)]) {
 
 /// Places the held block on the ground two blocks ahead, looking along
 /// `yaw`, and returns where it went.
-fn place_ahead(game: &mut Game, id: u16, yaw: f32) -> IVec3 {
+fn place_ahead(game: &mut Game, id: ItemId, yaw: f32) -> IVec3 {
     game.chunks
-        .set_blocks(&[(UNDERFOOT, BlockState::new(2, 0))]);
+        .set_blocks(&[(UNDERFOOT, BlockState::of(blocks::GRASS_BLOCK))]);
     stand_at_origin(game);
     hold(game, id);
     game.camera.yaw = yaw;
@@ -127,7 +133,7 @@ fn place_ahead(game: &mut Game, id: u16, yaw: f32) -> IVec3 {
     game.tick();
     assert_eq!(
         game.chunks.world().block(at.x, at.y, at.z).map(|b| b.id()),
-        Some(id)
+        game.items.item(id).and_then(|item| item.places)
     );
     at
 }
@@ -154,7 +160,7 @@ fn wood_to_stone_to_iron_to_diamond() {
 
     // Wood: three logs by hand make twelve planks.
     for _ in 0..3 {
-        mine(&mut game, LOG, None);
+        mine(&mut game, blocks::OAK_LOG, None);
     }
     assert_eq!(count(&game, LOG), 3);
     game.open_inventory();
@@ -190,7 +196,7 @@ fn wood_to_stone_to_iron_to_diamond() {
 
     // Stone: cobblestone for a stone pickaxe and a furnace.
     for _ in 0..11 {
-        mine(&mut game, 1, Some(WOODEN_PICKAXE));
+        mine(&mut game, blocks::STONE, Some(WOODEN_PICKAXE));
     }
     assert_eq!(count(&game, COBBLESTONE), 11);
     use_block(&mut game, table);
@@ -210,9 +216,9 @@ fn wood_to_stone_to_iron_to_diamond() {
     assert_eq!((count(&game, STONE_PICKAXE), count(&game, FURNACE)), (1, 1));
 
     // Iron: ore and coal need the stone pickaxe, then the furnace.
-    mine(&mut game, 16, Some(STONE_PICKAXE));
+    mine(&mut game, blocks::COAL_ORE, Some(STONE_PICKAXE));
     for _ in 0..3 {
-        mine(&mut game, IRON_ORE, Some(STONE_PICKAXE));
+        mine(&mut game, blocks::IRON_ORE, Some(STONE_PICKAXE));
     }
     assert_eq!((count(&game, COAL), count(&game, IRON_ORE)), (1, 3));
     let furnace_at = place_ahead(&mut game, FURNACE, std::f32::consts::FRAC_PI_2);
@@ -240,8 +246,8 @@ fn wood_to_stone_to_iron_to_diamond() {
     assert_eq!(count(&game, IRON_PICKAXE), 1);
 
     // Diamond: the stone pickaxe can't get it, the iron one can.
-    mine(&mut game, 56, Some(STONE_PICKAXE));
+    mine(&mut game, blocks::DIAMOND_ORE, Some(STONE_PICKAXE));
     assert_eq!(count(&game, DIAMOND), 0);
-    mine(&mut game, 56, Some(IRON_PICKAXE));
+    mine(&mut game, blocks::DIAMOND_ORE, Some(IRON_PICKAXE));
     assert_eq!(count(&game, DIAMOND), 1);
 }

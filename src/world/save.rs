@@ -18,6 +18,7 @@ use super::{
     block::BlockState,
     block_entity::BlockEntity,
     chunk::{Chunk, ChunkPos, LocalPos, SECTION_COUNT, SECTION_VOLUME},
+    fast_hash::FastMap,
 };
 
 #[derive(Debug, Error)]
@@ -28,32 +29,32 @@ pub enum SaveError {
     Corrupt(String),
 }
 
+/// The chunk format: 2 stores blocks by name (v1.1); 1 was v1.0's numeric
+/// 1.0.0 IDs, which `legacy` upgrades.
+pub const CHUNK_VERSION: u32 = 2;
+
 /// A chunk as stored on disk. All-air sections are left out.
 #[derive(Serialize, Deserialize)]
 struct ChunkData {
+    version: u32,
     x: i32,
     z: i32,
     sections: Vec<SectionData>,
     /// `Biome::id` per column, `z * 16 + x`.
     biomes: Vec<u8>,
-    /// Chests and furnaces, by position in the chunk (added in M10).
+    /// Chests and furnaces, by position in the chunk.
     block_entities: Vec<(LocalPos, BlockEntity)>,
 }
 
-/// A chunk saved before block entities existed.
-#[derive(Deserialize)]
-struct OldChunkData {
-    x: i32,
-    z: i32,
-    sections: Vec<SectionData>,
-    biomes: Vec<u8>,
-}
-
+/// A section's blocks as indices into its own list of states, which are
+/// saved by name (`minecraft:oak_stairs[facing=east,...]`), so runtime
+/// IDs can change between versions.
 #[derive(Serialize, Deserialize)]
 struct SectionData {
     /// 0 = bottom.
     index: u8,
-    /// `BlockState` bits in `y, z, x` order.
+    palette: Vec<BlockState>,
+    /// Palette indices in `y, z, x` order.
     blocks: Vec<u16>,
 }
 
@@ -62,14 +63,31 @@ fn bincode_config() -> impl bincode::config::Config {
     bincode::config::standard().with_fixed_int_encoding()
 }
 
+/// A section's palette and indices.
+fn palettize(blocks: &[BlockState]) -> (Vec<BlockState>, Vec<u16>) {
+    let mut palette: Vec<BlockState> = Vec::new();
+    let mut lookup: FastMap<BlockState, u16> = FastMap::default();
+    let indices = blocks
+        .iter()
+        .map(|&block| {
+            *lookup.entry(block).or_insert_with(|| {
+                palette.push(block);
+                (palette.len() - 1) as u16
+            })
+        })
+        .collect();
+    (palette, indices)
+}
+
 /// Encodes and compresses a chunk.
 pub fn encode_chunk(chunk: &Chunk) -> Vec<u8> {
     let sections = (0..SECTION_COUNT)
         .filter_map(|index| {
-            let blocks = chunk.section(index)?;
+            let (palette, blocks) = palettize(chunk.section(index)?);
             Some(SectionData {
                 index: index as u8,
-                blocks: blocks.iter().map(|block| block.to_bits()).collect(),
+                palette,
+                blocks,
             })
         })
         .collect();
@@ -77,6 +95,7 @@ pub fn encode_chunk(chunk: &Chunk) -> Vec<u8> {
         .map(|i| chunk.biome(i % CHUNK_SIZE, i / CHUNK_SIZE).id())
         .collect();
     let data = ChunkData {
+        version: CHUNK_VERSION,
         x: chunk.pos.x,
         z: chunk.pos.z,
         sections,
@@ -96,34 +115,23 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
     let corrupt = |what: String| SaveError::Corrupt(what);
     let bytes = lz4_flex::decompress_size_prepended(bytes)
         .map_err(|err| corrupt(format!("chunk decompression: {err}")))?;
-    let decoded = bincode::serde::decode_from_slice(&bytes, bincode_config());
-    let data: ChunkData = match decoded {
-        Ok((data, _)) => data,
-        // Chunks saved before M10 end before the block entity list.
-        Err(err) => {
-            let (old, _): (OldChunkData, usize) =
-                bincode::serde::decode_from_slice(&bytes, bincode_config())
-                    .map_err(|_| corrupt(format!("chunk decoding: {err}")))?;
-            ChunkData {
-                x: old.x,
-                z: old.z,
-                sections: old.sections,
-                biomes: old.biomes,
-                block_entities: Vec::new(),
-            }
-        }
-    };
+    let (data, _): (ChunkData, usize) = bincode::serde::decode_from_slice(&bytes, bincode_config())
+        .map_err(|err| corrupt(format!("chunk decoding: {err}")))?;
+    if data.version != CHUNK_VERSION {
+        return Err(corrupt(format!("chunk version {}", data.version)));
+    }
     let mut chunk = Chunk::new(ChunkPos::new(data.x, data.z));
     for section in data.sections {
         let index = section.index as usize;
         if index >= SECTION_COUNT || section.blocks.len() != SECTION_VOLUME {
             return Err(corrupt(format!("bad section {index}")));
         }
-        let blocks: Vec<BlockState> = section
+        let blocks = section
             .blocks
-            .into_iter()
-            .map(BlockState::from_bits)
-            .collect();
+            .iter()
+            .map(|&i| section.palette.get(i as usize).copied())
+            .collect::<Option<Vec<BlockState>>>()
+            .ok_or_else(|| corrupt(format!("section {index} indexes past its palette")))?;
         chunk.set_section(index, &blocks);
     }
     if data.biomes.len() != CHUNK_SIZE * CHUNK_SIZE {
@@ -147,7 +155,8 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
 pub const REGION_SIZE: i32 = 32;
 const REGION_CHUNKS: usize = (REGION_SIZE * REGION_SIZE) as usize;
 const REGION_MAGIC: &[u8; 4] = b"RCRG";
-const REGION_VERSION: u32 = 1;
+/// 2 since v1.1 (chunks inside are `CHUNK_VERSION` 2).
+const REGION_VERSION: u32 = 2;
 /// Magic and version, then an (offset, length) pair per chunk.
 const HEADER_LEN: usize = 8 + REGION_CHUNKS * 8;
 
@@ -323,7 +332,10 @@ impl Drop for TempDir {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::WORLD_HEIGHT, world::worldgen::terrain::Terrain};
+    use crate::{
+        config::WORLD_HEIGHT,
+        world::{Face, blocks, props::Prop, worldgen::terrain::Terrain},
+    };
 
     pub(super) fn assert_same_chunk(a: &Chunk, b: &Chunk) {
         assert_eq!(a.pos, b.pos);
@@ -346,36 +358,18 @@ mod tests {
     }
 
     #[test]
-    fn chests_round_trip_and_older_chunks_still_load() {
+    fn chests_round_trip() {
         let mut chunk = Chunk::new(ChunkPos::new(1, 1));
-        chunk.set(2, 70, 3, BlockState::new(54, 3));
-        let mut chest = BlockEntity::chest();
-        chest.slots_mut()[26] = Some(crate::inventory::stack::ItemStack::with_damage(278, 1, 40));
-        chunk.set_block_entity([2, 70, 3], Some(chest));
+        let chest = BlockState::of(blocks::CHEST).with_face(Prop::Facing, Face::South);
+        chunk.set(2, 70, 3, chest);
+        let mut entity = BlockEntity::chest();
+        entity.slots_mut()[26] = Some(crate::inventory::stack::ItemStack::with_damage(
+            crate::inventory::items::DIAMOND_PICKAXE,
+            1,
+            40,
+        ));
+        chunk.set_block_entity([2, 70, 3], Some(entity));
         assert_same_chunk(&decode_chunk(&encode_chunk(&chunk)).unwrap(), &chunk);
-
-        // A chunk as saved before block entities existed.
-        #[derive(Serialize)]
-        struct Old {
-            x: i32,
-            z: i32,
-            sections: Vec<SectionData>,
-            biomes: Vec<u8>,
-        }
-        let old = Old {
-            x: 1,
-            z: 1,
-            sections: vec![SectionData {
-                index: 4,
-                blocks: vec![BlockState::new(1, 0).to_bits(); SECTION_VOLUME],
-            }],
-            biomes: vec![Biome::Forest.id(); CHUNK_SIZE * CHUNK_SIZE],
-        };
-        let bytes = bincode::serde::encode_to_vec(&old, bincode_config()).unwrap();
-        let decoded = decode_chunk(&lz4_flex::compress_prepend_size(&bytes)).unwrap();
-        assert_eq!(decoded.get(0, 64, 0), BlockState::new(1, 0));
-        assert_eq!(decoded.biome(3, 3), Biome::Forest);
-        assert_eq!(decoded.block_entities().count(), 0);
     }
 
     #[test]
@@ -393,8 +387,8 @@ mod tests {
     #[test]
     fn data_values_biomes_and_empty_sections_round_trip() {
         let mut chunk = Chunk::new(ChunkPos::new(3, -2));
-        chunk.set(0, 0, 0, BlockState::new(35, 14));
-        chunk.set(15, 127, 15, BlockState::new(50, 5));
+        chunk.set(0, 0, 0, BlockState::of(blocks::RED_WOOL));
+        chunk.set(15, 127, 15, BlockState::of(blocks::TORCH));
         chunk.set_biome(4, 9, Biome::Desert);
         chunk.set_biome(15, 15, Biome::Ocean);
         let decoded = decode_chunk(&encode_chunk(&chunk)).unwrap();
@@ -416,7 +410,8 @@ mod tests {
 
     fn chunk_with_marker(pos: ChunkPos, marker: u8) -> Chunk {
         let mut chunk = Chunk::new(pos);
-        chunk.set(1, 64, 2, BlockState::new(35, marker));
+        let wheat = BlockState::of(blocks::WHEAT).with_number(Prop::Age7, marker);
+        chunk.set(1, 64, 2, wheat);
         chunk
     }
 

@@ -3,6 +3,7 @@
 pub mod crafting;
 pub mod furnace;
 pub mod item;
+pub mod items;
 pub mod player;
 pub mod slots;
 pub mod stack;

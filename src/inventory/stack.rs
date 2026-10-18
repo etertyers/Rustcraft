@@ -6,23 +6,21 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     crafting::Recipes,
-    item::{Bucket, FIRST_ITEM_ID, ItemDef, ItemId, ItemRegistry, Tool},
+    item::{self, Bucket, ItemDef, ItemId, ItemRegistry, Tool},
 };
-use crate::world::block::{BlockRegistry, BlockState};
+use crate::world::block::{self, BlockRegistry, BlockState};
 
-/// Some of one item, like 1.0.0's `ItemStack`.
+/// Some of one item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemStack {
     pub id: ItemId,
     pub count: u8,
-    /// The data value (block variant, dye color), or for items that wear
-    /// out, the damage taken.
+    /// For items that wear out, the damage taken.
     pub damage: u16,
 }
 
 impl ItemStack {
-    /// Undamaged, data value 0 (used by the debug dev kit and tests).
-    #[cfg(any(debug_assertions, test))]
+    /// Undamaged.
     pub fn new(id: ItemId, count: u8) -> Self {
         Self {
             id,
@@ -35,26 +33,32 @@ impl ItemStack {
         Self { id, count, damage }
     }
 
-    /// Whether the two can share a slot (same item and data value).
+    /// Whether the two can share a slot (same item and damage).
     pub fn stacks_with(&self, other: &ItemStack) -> bool {
         self.id == other.id && self.damage == other.damage
     }
 }
 
-/// Item facts for any ID, block or item.
+/// Item facts, and the blocks and recipes behind them.
 #[derive(Clone)]
 pub struct Items {
-    pub blocks: Arc<BlockRegistry>,
-    pub items: Arc<ItemRegistry>,
+    pub blocks: &'static BlockRegistry,
+    pub items: &'static ItemRegistry,
     pub recipes: Arc<Recipes>,
+}
+
+impl Default for Items {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Items {
     /// Without recipes; see `with_recipes`.
-    pub fn new(blocks: Arc<BlockRegistry>, items: Arc<ItemRegistry>) -> Self {
+    pub fn new() -> Self {
         Self {
-            blocks,
-            items,
+            blocks: block::registry(),
+            items: item::registry(),
             recipes: Arc::new(Recipes::default()),
         }
     }
@@ -63,17 +67,13 @@ impl Items {
         Self { recipes, ..self }
     }
 
-    /// The item definition, for IDs that aren't blocks.
     pub fn item(&self, id: ItemId) -> Option<&ItemDef> {
-        if id < FIRST_ITEM_ID {
-            return None;
-        }
         self.items.get(id)
     }
 
-    /// Whether `id` names a block or item that exists.
+    /// Whether `id` names an item that exists.
     pub fn exists(&self, id: ItemId) -> bool {
-        self.item(id).is_some() || (id < FIRST_ITEM_ID && self.blocks.get(id).is_some())
+        self.item(id).is_some()
     }
 
     pub fn max_stack(&self, id: ItemId) -> u8 {
@@ -102,34 +102,17 @@ impl Items {
             .map(|item| item.id)
     }
 
-    /// The block this stack places, if any: blocks place themselves (with
-    /// the stack's data value), some items place a block.
+    /// The block this stack places, if any, in the state a player places it.
     pub fn places(&self, stack: &ItemStack) -> Option<BlockState> {
-        if stack.id < FIRST_ITEM_ID {
-            let def = self.blocks.get(stack.id)?;
-            let data = if def.variants.is_empty() {
-                0
-            } else {
-                stack.damage as u8
-            };
-            return Some(BlockState::new(stack.id, data));
-        }
-        self.item(stack.id)?
-            .places
-            .map(|block| BlockState::new(block, 0))
+        let block = self.item(stack.id)?.places?;
+        Some(self.blocks.def(block).placed_state())
     }
 
-    /// Display name, e.g. "stone" or "lapis_lazuli".
+    /// Display name, e.g. "stone" or "lapis lazuli".
     pub fn name(&self, stack: &ItemStack) -> String {
-        if stack.id < FIRST_ITEM_ID {
-            return self
-                .blocks
-                .display_name(BlockState::new(stack.id, stack.damage as u8));
-        }
         match self.item(stack.id) {
-            Some(item) if item.max_damage().is_some() => item.name.clone(),
-            Some(item) => item.variant(stack.damage as u8).0.to_owned(),
-            None => format!("unknown item {}", stack.id),
+            Some(item) => item.name.replace('_', " "),
+            None => format!("unknown item {}", stack.id.index()),
         }
     }
 }

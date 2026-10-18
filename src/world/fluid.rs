@@ -1,10 +1,11 @@
 //! Flowing water and lava, following 1.0.0's `BlockFluid`, `BlockFlowing`
-//! and `BlockStationary`. A fluid's data value is its level: 0 for a
-//! source, 1–7 for flowing water further from one (lava steps by 2), and 8
-//! plus the level above for fluid falling down. Flowing blocks run on
-//! scheduled ticks (every 5 game ticks for water, 30 for lava) until they
-//! settle into still blocks; a still block starts flowing again when
-//! anything next to it changes.
+//! and `BlockStationary`, with modern Minecraft's blocks: one `water` and
+//! one `lava` block whose `level` is 0 for a source, 1–7 for flowing water
+//! further from one (lava steps by 2), and 8 plus the level above for fluid
+//! falling down. A fluid updates on scheduled ticks (every 5 game ticks for
+//! water, 30 for lava) while it's spreading, and is scheduled again when
+//! anything next to it changes (where 1.0.0 swapped still and flowing
+//! blocks).
 //!
 //! Lava meeting water follows modern Minecraft instead, so cobblestone
 //! generators work: any lava touching water hardens (a source to obsidian,
@@ -18,18 +19,16 @@ use glam::{DVec3, IVec3};
 use super::{
     World,
     block::{BlockId, BlockRegistry, BlockState, Fluid},
+    blocks,
     chunk::{Chunk, SECTION_COUNT, SECTION_SIZE},
     fast_hash::{FastMap, FastSet},
+    props::Prop,
 };
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
-const FLOWING_WATER: BlockId = 8;
-const WATER: BlockId = 9;
-const FLOWING_LAVA: BlockId = 10;
-const LAVA: BlockId = 11;
-const STONE: BlockState = BlockState::new(1, 0);
-const COBBLESTONE: BlockState = BlockState::new(4, 0);
-const OBSIDIAN: BlockState = BlockState::new(49, 0);
+const STONE: BlockState = BlockState::of(blocks::STONE);
+const COBBLESTONE: BlockState = BlockState::of(blocks::COBBLESTONE);
+const OBSIDIAN: BlockState = BlockState::of(blocks::OBSIDIAN);
 
 /// 1.0.0 runs at most this many scheduled ticks per game tick.
 const MAX_UPDATES: usize = 1000;
@@ -45,20 +44,22 @@ const SIDEWAYS: [IVec3; 4] = [
     IVec3::new(0, 0, 1),
 ];
 
-/// The flowing block of a fluid, which is placed and spreads.
-pub fn flowing(fluid: Fluid) -> BlockId {
+/// A fluid's block.
+pub fn block(fluid: Fluid) -> BlockId {
     match fluid {
-        Fluid::Water => FLOWING_WATER,
-        Fluid::Lava => FLOWING_LAVA,
+        Fluid::Water => blocks::WATER,
+        Fluid::Lava => blocks::LAVA,
     }
 }
 
-/// The still block a fluid settles into.
-fn still(fluid: Fluid) -> BlockId {
-    match fluid {
-        Fluid::Water => WATER,
-        Fluid::Lava => LAVA,
-    }
+/// `fluid` at `level`.
+pub fn at_level(fluid: Fluid, level: u8) -> BlockState {
+    BlockState::of(block(fluid)).with_number(Prop::Level, level)
+}
+
+/// A fluid block's level (0 for a source).
+pub fn level(block: BlockState) -> u8 {
+    block.number(Prop::Level)
 }
 
 /// Game ticks between a flowing block's updates.
@@ -86,11 +87,11 @@ fn level_step(fluid: Fluid) -> i32 {
     }
 }
 
-/// How much of its cell a fluid at `data` fills (1.0.0's
+/// How much of its cell a fluid at `level` doesn't fill (1.0.0's
 /// `getFluidHeightPercent`, which is the empty part): a source or a fall
 /// leaves 1/9 empty, the last flowing level 8/9.
-pub fn height_percent(data: u8) -> f32 {
-    let level = if data >= FALLING as u8 { 0 } else { data };
+pub fn height_percent(level: u8) -> f32 {
+    let level = if level >= FALLING as u8 { 0 } else { level };
     (level as f32 + 1.0) / 9.0
 }
 
@@ -119,8 +120,8 @@ impl Cell {
     fn effective_level(cell: Option<Self>, fluid: Fluid) -> i32 {
         match cell {
             Some(cell) if cell.fluid == Some(fluid) => {
-                let data = cell.block.data() as i32;
-                if data >= FALLING { 0 } else { data }
+                let level = level(cell.block) as i32;
+                if level >= FALLING { 0 } else { level }
             }
             _ => -1,
         }
@@ -148,7 +149,7 @@ pub fn flow_vector(fluid: Fluid, at: IVec3, cell: &impl Fn(IVec3) -> Option<Cell
             }
         }
     }
-    let falling = cell(at).is_some_and(|c| c.block.data() as i32 >= FALLING);
+    let falling = cell(at).is_some_and(|c| c.fluid.is_some() && level(c.block) as i32 >= FALLING);
     if falling {
         let walled = SIDEWAYS.iter().any(|&side| {
             [at + side, at + side + IVec3::Y]
@@ -179,9 +180,9 @@ pub fn corner_height(fluid: Fluid, corner: IVec3, cell: &impl Fn(IVec3) -> Optio
             continue;
         };
         if here.fluid == Some(fluid) {
-            let data = here.block.data();
-            let empty = height_percent(data);
-            if data as i32 >= FALLING || data == 0 {
+            let level = level(here.block);
+            let empty = height_percent(level);
+            if level as i32 >= FALLING || level == 0 {
                 total += empty * 10.0;
                 count += 10.0;
             }
@@ -201,7 +202,8 @@ pub fn corner_height(fluid: Fluid, corner: IVec3, cell: &impl Fn(IVec3) -> Optio
 
 /// Scheduled fluid updates, and blocks the game changed since the last
 /// tick (1.0.0's `scheduleBlockUpdate` and neighbor notifications). Not
-/// saved: flowing blocks in a chunk are scheduled again when it loads.
+/// saved: flowing fluid in a chunk (any level but a source's) is scheduled
+/// again when it loads.
 #[derive(Debug, Default)]
 pub struct Fluids {
     /// By (due tick, order scheduled).
@@ -209,6 +211,23 @@ pub struct Fluids {
     scheduled: FastSet<(IVec3, BlockId)>,
     next: u64,
     changed: Vec<IVec3>,
+}
+
+/// Whether fluid at local (x, y, z) could flow into a cell beside or below
+/// it in the same chunk (cells in other chunks count as closed).
+fn open_beside(chunk: &Chunk, x: usize, y: usize, z: usize) -> bool {
+    let own = chunk.get(x, y, z).id();
+    [(-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1), (0, -1, 0)]
+        .into_iter()
+        .any(|(dx, dy, dz)| {
+            let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
+            let size = CHUNK_SIZE as i32;
+            if !(0..size).contains(&nx) || !(0..size).contains(&nz) || ny < 0 {
+                return false;
+            }
+            let next = chunk.get(nx as usize, ny as usize, nz as usize);
+            next.id() != own && !next.def().stops_fluid() && next.def().fluid.is_none()
+        })
 }
 
 /// What a tick of fluids did.
@@ -240,14 +259,19 @@ impl Fluids {
             for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
-                        let id = chunk.get(x, y, z).id();
-                        let fluid = match id {
-                            FLOWING_WATER => Fluid::Water,
-                            FLOWING_LAVA => Fluid::Lava,
+                        let block = chunk.get(x, y, z);
+                        let fluid = match block.id() {
+                            blocks::WATER => Fluid::Water,
+                            blocks::LAVA => Fluid::Lava,
                             _ => continue,
                         };
+                        // A source only if it has somewhere to go (one poured
+                        // just before the chunk was saved); oceans don't.
+                        if level(block) == 0 && !open_beside(chunk, x, y, z) {
+                            continue;
+                        }
                         let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
-                        self.schedule(at, id, time + tick_rate(fluid));
+                        self.schedule(at, block.id(), time + tick_rate(fluid));
                     }
                 }
             }
@@ -351,7 +375,7 @@ impl Step<'_> {
     /// `getFlowDecay`).
     fn level(&self, at: IVec3, fluid: Fluid) -> i32 {
         match self.cell(at) {
-            Some(cell) if cell.fluid == Some(fluid) => cell.block.data() as i32,
+            Some(cell) if cell.fluid == Some(fluid) => level(cell.block) as i32,
             _ => -1,
         }
     }
@@ -377,18 +401,16 @@ impl Step<'_> {
         self.notify_neighbors(at);
     }
 
-    /// A fluid block just placed: lava may harden, and flowing blocks get
-    /// their first update (1.0.0's `onBlockAdded`).
+    /// A fluid block just placed: lava may harden, and the fluid gets its
+    /// first update (1.0.0's `onBlockAdded`).
     fn added(&mut self, at: IVec3) {
         let Some(fluid) = self.fluid(at) else {
             return;
         };
         self.harden(at);
-        if let Some(block) = self.get(at)
-            && block.id() == flowing(fluid)
-        {
+        if self.fluid(at) == Some(fluid) {
             self.fluids
-                .schedule(at, block.id(), self.time + tick_rate(fluid));
+                .schedule(at, block(fluid), self.time + tick_rate(fluid));
         }
     }
 
@@ -405,19 +427,16 @@ impl Step<'_> {
         }
     }
 
-    /// Something next to `at` changed: lava there may harden, and still
-    /// fluid starts flowing (1.0.0's `onNeighborBlockChange`).
+    /// Something next to `at` changed: lava there may harden, and the
+    /// fluid gets an update (1.0.0 turned still fluid into flowing here).
     fn neighbor_changed(&mut self, at: IVec3) {
         let Some(fluid) = self.fluid(at) else {
             return;
         };
         self.harden(at);
-        if let Some(block) = self.get(at)
-            && block.id() == still(fluid)
-        {
-            let id = flowing(fluid);
-            self.set(at, BlockState::new(id, block.data()));
-            self.fluids.schedule(at, id, self.time + tick_rate(fluid));
+        if self.fluid(at) == Some(fluid) {
+            self.fluids
+                .schedule(at, block(fluid), self.time + tick_rate(fluid));
         }
     }
 
@@ -438,7 +457,7 @@ impl Step<'_> {
         if !water_near {
             return;
         }
-        let hardened = if block.data() == 0 {
+        let hardened = if level(block) == 0 {
             OBSIDIAN
         } else {
             COBBLESTONE
@@ -455,6 +474,9 @@ impl Step<'_> {
         };
         let step = level_step(fluid);
         let mut level = self.level(at, fluid);
+        // 1.0.0 turned a flow still when nothing changed; here it just
+        // isn't scheduled again, but lava that waited its turn does
+        // nothing at all.
         let mut settle = true;
         if level > 0 {
             let mut lowest = -100;
@@ -498,15 +520,15 @@ impl Step<'_> {
                     self.set_and_notify(at, BlockState::AIR);
                     return;
                 }
-                let id = flowing(fluid);
-                self.set(at, BlockState::new(id, level as u8));
-                self.fluids.schedule(at, id, self.time + tick_rate(fluid));
+                self.set(at, at_level(fluid, level as u8));
+                self.fluids
+                    .schedule(at, block(fluid), self.time + tick_rate(fluid));
                 self.notify_neighbors(at);
             } else if settle {
-                self.settle(at, fluid, level);
+                self.harden(at);
             }
         } else {
-            self.settle(at, fluid, level);
+            self.harden(at);
         }
         if self.fluid(at) != Some(fluid) {
             // It hardened.
@@ -569,12 +591,6 @@ impl Step<'_> {
         }
     }
 
-    /// Turns the flowing block at `at` still (1.0.0's `updateFlow`).
-    fn settle(&mut self, at: IVec3, fluid: Fluid, level: i32) {
-        self.set(at, BlockState::new(still(fluid), level as u8));
-        self.harden(at);
-    }
-
     /// Whether `fluid` may flow into `at`, `down` or sideways: not its own
     /// kind or lava, water only for lava falling onto it (modern
     /// `canBeReplacedWith`), and nothing that holds it back (1.0.0's
@@ -602,7 +618,7 @@ impl Step<'_> {
         {
             self.washed.push((at, old));
         }
-        self.set_and_notify(at, BlockState::new(flowing(fluid), level as u8));
+        self.set_and_notify(at, at_level(fluid, level as u8));
     }
 
     /// Which sideways neighbors to spread into: those with the shortest
@@ -652,15 +668,16 @@ impl Step<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
     use crate::world::chunk::ChunkPos;
 
     const AIR: BlockState = BlockState::AIR;
-    const GLASS: BlockState = BlockState::new(20, 0);
+    const GLASS: BlockState = BlockState::of(blocks::GLASS);
     const FLOOR: i32 = 63;
 
     struct Pond {
         world: World,
-        blocks: BlockRegistry,
+        blocks: &'static BlockRegistry,
         fluids: Fluids,
         time: u64,
         seed: u32,
@@ -683,11 +700,9 @@ mod tests {
                     world.insert(chunk);
                 }
             }
-            let blocks =
-                BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
             Self {
                 world,
-                blocks,
+                blocks: crate::world::block::registry(),
                 fluids: Fluids::default(),
                 time: 0,
                 seed: 7,
@@ -714,7 +729,7 @@ mod tests {
         }
 
         fn pour(&mut self, x: i32, y: i32, z: i32, fluid: Fluid) {
-            self.set(x, y, z, BlockState::new(flowing(fluid), 0));
+            self.set(x, y, z, at_level(fluid, 0));
         }
 
         fn run(&mut self, ticks: u32) -> Vec<(IVec3, BlockState)> {
@@ -727,7 +742,7 @@ mod tests {
                 };
                 let outcome = self
                     .fluids
-                    .tick(&self.world, &self.blocks, self.time, &mut random);
+                    .tick(&self.world, self.blocks, self.time, &mut random);
                 for (at, block) in outcome.edits {
                     self.write(at, block);
                 }
@@ -741,7 +756,7 @@ mod tests {
         /// none.
         fn level(&self, x: i32, z: i32) -> Option<u8> {
             let block = self.get(x, FLOOR + 1, z);
-            matches!(block.id(), 8..=11).then_some(block.data())
+            matches!(block.id(), blocks::WATER | blocks::LAVA).then_some(level(block))
         }
     }
 
@@ -752,8 +767,8 @@ mod tests {
         pond.run(300);
         assert_eq!(
             pond.get(0, 64, 0),
-            BlockState::new(WATER, 0),
-            "a still source"
+            BlockState::of(blocks::WATER),
+            "a source"
         );
         for x in 1..=7 {
             assert_eq!(pond.level(x, 0), Some(x as u8), "x {x}");
@@ -763,7 +778,7 @@ mod tests {
         assert_eq!(pond.level(3, 4), Some(7));
         assert_eq!(pond.level(4, 4), None);
         assert_eq!(pond.fluids.pending(), 0, "everything settled");
-        assert_eq!(pond.get(5, 64, -2).id(), WATER);
+        assert_eq!(pond.get(5, 64, -2).id(), blocks::WATER);
     }
 
     #[test]
@@ -776,7 +791,7 @@ mod tests {
         assert_eq!(pond.level(1, 0), Some(2));
         assert_eq!(pond.level(3, 0), Some(6));
         assert_eq!(pond.level(4, 0), None);
-        assert_eq!(pond.get(3, 64, 0).id(), LAVA);
+        assert_eq!(pond.get(3, 64, 0).id(), blocks::LAVA);
     }
 
     #[test]
@@ -822,8 +837,8 @@ mod tests {
         // open.
         for x in 3..=5 {
             for z in -1..=1 {
-                let id = pond.get(x, 62, z).id();
-                assert!(matches!(id, 8 | 9), "({x}, 62, {z}) is {id}");
+                let block = pond.get(x, 62, z);
+                assert!(block.is(blocks::WATER), "({x}, 62, {z}) is {block}");
             }
         }
         assert_eq!(pond.get(4, 63, 0), AIR);
@@ -831,14 +846,14 @@ mod tests {
         assert_eq!(pond.level(-2, 0), None);
         assert_eq!(pond.level(0, 3), None);
         // Falling water is level 8 and up.
-        assert!(pond.get(3, 63, 0).data() >= 8);
+        assert!(level(pond.get(3, 63, 0)) >= 8);
     }
 
     #[test]
     fn water_washes_away_torches_and_flowers() {
         let mut pond = Pond::new();
-        let torch = BlockState::new(50, 5);
-        let flower = BlockState::new(37, 0);
+        let torch = BlockState::of(blocks::TORCH);
+        let flower = BlockState::of(blocks::DANDELION);
         pond.set(2, 64, 0, torch);
         pond.set(0, 64, 2, flower);
         pond.set(-2, 64, 0, GLASS);
@@ -880,11 +895,15 @@ mod tests {
         pond.pour(3, 64, 0, Fluid::Water);
         pond.run(20);
         assert_eq!(pond.get(2, 64, 0), COBBLESTONE);
-        assert_eq!(pond.get(0, 64, 0).id(), LAVA, "the source is boxed off");
+        assert_eq!(
+            pond.get(0, 64, 0).id(),
+            blocks::LAVA,
+            "the source is boxed off"
+        );
 
         // Lava flowing over water below turns it to stone.
         let mut pond = Pond::new();
-        pond.set(2, 63, 0, BlockState::new(WATER, 0));
+        pond.set(2, 63, 0, BlockState::of(blocks::WATER));
         pond.pour(0, 64, 0, Fluid::Lava);
         pond.run(3000);
         assert_eq!(pond.get(2, 63, 0), STONE);
@@ -926,7 +945,7 @@ mod tests {
                 let Some(x) = cobble else {
                     panic!("no cobblestone in round {round}, lava first {lava_first}");
                 };
-                assert_eq!(pond.get(0, 64, 0).id(), LAVA, "the source survives");
+                assert_eq!(pond.get(0, 64, 0).id(), blocks::LAVA, "the source survives");
                 pond.set(x, 64, 0, AIR);
             }
         }
@@ -937,7 +956,7 @@ mod tests {
         let mut pond = Pond::new();
         pond.pour(0, 64, 0, Fluid::Water);
         pond.run(300);
-        let blocks = &pond.blocks;
+        let blocks = pond.blocks;
         let world = &pond.world;
         let cell = |at: IVec3| world.block(at.x, at.y, at.z).map(|b| Cell::new(b, blocks));
         // The flow runs away from the source.
@@ -960,11 +979,19 @@ mod tests {
     #[test]
     fn flowing_blocks_in_a_loaded_chunk_are_rescheduled() {
         let mut pond = Pond::new();
-        pond.write(IVec3::new(0, 64, 0), BlockState::new(FLOWING_WATER, 0));
+        pond.write(IVec3::new(0, 64, 0), BlockState::of(blocks::WATER));
         let chunk = pond.world.get(ChunkPos::new(0, 0)).unwrap().clone();
         pond.fluids.chunk_loaded(&chunk, 0);
-        assert_eq!(pond.fluids.pending(), 1);
+        assert_eq!(pond.fluids.pending(), 1, "a source with room to flow");
         pond.run(100);
         assert_eq!(pond.level(3, 0), Some(3));
+        // Water with nowhere to go, like an ocean, stays asleep.
+        let mut pond = Pond::new();
+        for y in 61..=63 {
+            pond.write(IVec3::new(4, y, 4), BlockState::of(blocks::WATER));
+        }
+        let chunk = pond.world.get(ChunkPos::new(0, 0)).unwrap().clone();
+        pond.fluids.chunk_loaded(&chunk, 0);
+        assert_eq!(pond.fluids.pending(), 0);
     }
 }

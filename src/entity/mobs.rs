@@ -157,7 +157,10 @@ mod tests {
         let pig = mobs.get(mobs.find("pig").unwrap());
         assert_eq!((pig.health, pig.width, pig.height), (10, 0.9, 0.9));
         assert_eq!(pig.ai, Ai::Passive);
-        assert_eq!(pig.drops[0].cooked, Some(320));
+        assert_eq!(
+            pig.drops[0].cooked,
+            Some(crate::inventory::items::COOKED_PORKCHOP)
+        );
         assert_eq!(pig.model.parts.len(), 6);
         let zombie = mobs.get(mobs.find("zombie").unwrap());
         assert_eq!(zombie.ai, Ai::Hostile { attack: 4 });

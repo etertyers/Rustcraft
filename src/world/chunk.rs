@@ -158,6 +158,7 @@ impl Chunk {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
     #[test]
     fn chunk_pos_rounds_toward_negative_infinity() {
@@ -177,11 +178,22 @@ mod tests {
             (15, 127, 15),
             (7, 64, 3),
         ];
+        let marker = |i: usize| {
+            BlockState::of(
+                [
+                    blocks::STONE,
+                    blocks::DIRT,
+                    blocks::SAND,
+                    blocks::BRICKS,
+                    blocks::GLASS,
+                ][i],
+            )
+        };
         for (i, &(x, y, z)) in corners.iter().enumerate() {
-            chunk.set(x, y, z, BlockState::new(1, i as u8));
+            chunk.set(x, y, z, marker(i));
         }
         for (i, &(x, y, z)) in corners.iter().enumerate() {
-            assert_eq!(chunk.get(x, y, z), BlockState::new(1, i as u8));
+            assert_eq!(chunk.get(x, y, z), marker(i));
         }
         assert_eq!(chunk.get(1, 0, 0), BlockState::AIR);
     }
@@ -191,7 +203,7 @@ mod tests {
         let mut chunk = Chunk::new(ChunkPos::new(0, 0));
         chunk.set(0, 40, 0, BlockState::AIR);
         assert!((0..SECTION_COUNT).all(|s| chunk.section_is_empty(s)));
-        chunk.set(0, 40, 0, BlockState::new(1, 0));
+        chunk.set(0, 40, 0, BlockState::of(blocks::STONE));
         assert!(!chunk.section_is_empty(2));
         assert!(chunk.section_is_empty(1));
     }

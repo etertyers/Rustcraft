@@ -1,59 +1,332 @@
-//! Block definitions loaded from `assets/data/blocks.ron`.
+//! Block definitions loaded from `assets/data/blocks.ron`, and block states.
 //!
-//! IDs are Minecraft 1.0.0's numeric block IDs (`docs/blocks-and-items.md`).
+//! Blocks are named as in modern Java Edition (`minecraft:oak_log`) and
+//! numbered by their place in the file; the numbers are runtime IDs only
+//! (saves store names). A `BlockState` is a block plus a value for each of
+//! its properties (`facing=east`, `half=top`...), packed so that all zeros
+//! is the block's default state.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{fmt, sync::LazyLock};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use glam::IVec3;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
     Face,
     biome::rgb,
     harvest::{Drops, Harvest},
+    props::Prop,
 };
 use crate::inventory::item::ToolKind;
 
-pub type BlockId = u16;
+/// A block's runtime ID: its index in `blocks.ron`. The named constants
+/// are in `world::blocks`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockId(pub(crate) u16);
 
-/// Number of distinct data values (1.0.0 stores 4 bits per block).
-pub const DATA_VALUES: usize = 16;
+impl BlockId {
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
 
-/// A block in the world: its ID plus a 4-bit data value (wool color, log type,
-/// crop stage...), packed into 16 bits like 1.0.0's 12-bit ID + 4-bit data.
+    /// The block's name without the namespace, e.g. `oak_log`.
+    pub fn name(self) -> &'static str {
+        super::blocks::NAMES
+            .get(self.index())
+            .copied()
+            .unwrap_or("unknown")
+    }
+}
+
+/// Block IDs are written by name (`"oak_log"`, or `"minecraft:oak_log"`).
+impl<'de> Deserialize<'de> for BlockId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        super::blocks::by_name(strip_namespace(&name))
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown block {name:?}")))
+    }
+}
+
+impl Serialize for BlockId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&format_args!("{NAMESPACE}:{}", self.name()))
+    }
+}
+
+/// The namespace every block and item is in.
+pub const NAMESPACE: &str = "minecraft";
+
+/// `name` without a leading `minecraft:`.
+pub fn strip_namespace(name: &str) -> &str {
+    name.strip_prefix("minecraft:").unwrap_or(name)
+}
+
+/// A block in the world: its ID plus a value for each of its properties.
+/// The property values are packed into `props` as mixed-radix digits, each
+/// counted from the block's default value, so `props == 0` is the default
+/// state.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BlockState(u16);
+pub struct BlockState {
+    id: BlockId,
+    props: u16,
+}
 
 impl BlockState {
-    pub const AIR: BlockState = BlockState(0);
+    pub const AIR: BlockState = BlockState::of(super::blocks::AIR);
 
-    pub const fn new(id: BlockId, data: u8) -> Self {
-        Self((id & 0x0FFF) | ((data as u16 & 0xF) << 12))
+    /// The default state of block `id`.
+    pub const fn of(id: BlockId) -> Self {
+        Self { id, props: 0 }
     }
 
     pub const fn id(self) -> BlockId {
-        self.0 & 0x0FFF
-    }
-
-    pub const fn data(self) -> u8 {
-        (self.0 >> 12) as u8
+        self.id
     }
 
     pub const fn is_air(self) -> bool {
-        self.id() == 0
+        self.id.0 == super::blocks::AIR.0
     }
 
-    /// The packed 16 bits, for saving.
-    pub const fn to_bits(self) -> u16 {
-        self.0
+    /// Whether this is a state of block `id`.
+    pub const fn is(self, id: BlockId) -> bool {
+        self.id.0 == id.0
     }
 
-    pub const fn from_bits(bits: u16) -> Self {
-        Self(bits)
+    /// The packed property values, for tables indexed by state.
+    pub const fn props(self) -> u16 {
+        self.props
+    }
+
+    pub fn def(self) -> &'static BlockDef {
+        registry().def(self.id)
+    }
+
+    /// Whether the block has property `prop`.
+    pub fn has(self, prop: Prop) -> bool {
+        registry().layout(self.id).slot(prop).is_some()
+    }
+
+    /// The index of `prop`'s value (into `prop.values()`). Blocks without
+    /// the property read as its default.
+    pub fn get(self, prop: Prop) -> u8 {
+        let layout = registry().layout(self.id);
+        match layout.slot(prop) {
+            Some(slot) => layout.read(self.props, slot),
+            None => prop.default_index(),
+        }
+    }
+
+    /// This state with `prop` set to value `index`; unchanged if the block
+    /// doesn't have the property.
+    pub fn with(self, prop: Prop, index: u8) -> Self {
+        let layout = registry().layout(self.id);
+        match layout.slot(prop) {
+            Some(slot) => Self {
+                props: layout.write(self.props, slot, index),
+                ..self
+            },
+            None => self,
+        }
+    }
+
+    pub fn bool(self, prop: Prop) -> bool {
+        self.get(prop) == 1
+    }
+
+    pub fn with_bool(self, prop: Prop, value: bool) -> Self {
+        self.with(prop, value as u8)
+    }
+
+    /// A numeric property's value (`age`, `layers`...).
+    pub fn number(self, prop: Prop) -> u8 {
+        prop.number(self.get(prop))
+    }
+
+    /// This state with a numeric property set, clamped to its range.
+    pub fn with_number(self, prop: Prop, number: u8) -> Self {
+        let last = prop.values().len() as u8 - 1;
+        let index = prop
+            .index_of_number(number)
+            .unwrap_or(if number == 0 { 0 } else { last });
+        self.with(prop, index)
+    }
+
+    /// The direction a `facing` property points.
+    pub fn face(self, prop: Prop) -> Face {
+        prop.face(self.get(prop))
+    }
+
+    /// This state facing `face`; unchanged if `prop` can't point that way.
+    pub fn with_face(self, prop: Prop, face: Face) -> Self {
+        match prop.index_of_face(face) {
+            Some(index) => self.with(prop, index),
+            None => self,
+        }
+    }
+
+    /// Whether this state meets `condition`.
+    pub fn matches(self, condition: &Condition) -> bool {
+        let layout = registry().layout(self.id);
+        condition
+            .0
+            .iter()
+            .all(|&(slot, allowed)| allowed & (1 << layout.read(self.props, slot)) != 0)
+    }
+
+    /// Reads a state written as by `Display`: `minecraft:oak_stairs[facing=east]`.
+    /// The namespace is optional and properties left out keep their default.
+    pub fn parse(text: &str) -> Result<Self> {
+        let (name, props) = match text.split_once('[') {
+            Some((name, rest)) => {
+                let Some(props) = rest.strip_suffix(']') else {
+                    bail!("block state {text:?} is missing its ']'");
+                };
+                (name, props)
+            }
+            None => (text, ""),
+        };
+        let Some(id) = super::blocks::by_name(strip_namespace(name)) else {
+            bail!("unknown block {name:?}");
+        };
+        let mut state = Self::of(id);
+        let layout = registry().layout(id);
+        for pair in props.split(',').filter(|pair| !pair.is_empty()) {
+            let Some((key, value)) = pair.split_once('=') else {
+                bail!("bad property {pair:?} in {text:?}");
+            };
+            let Some(slot) = layout.slot_named(key) else {
+                bail!("{name} has no property {key:?}");
+            };
+            let prop = layout.props[slot];
+            let Some(index) = prop.index_of(value) else {
+                bail!("{name}'s {key} can't be {value:?}");
+            };
+            state.props = layout.write(state.props, slot, index);
+        }
+        Ok(state)
+    }
+}
+
+/// `minecraft:name[prop=value,...]`, with every property, in the order
+/// `blocks.ron` lists them.
+impl fmt::Display for BlockState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{NAMESPACE}:{}", self.id.name())?;
+        let layout = registry().layout(self.id);
+        if layout.props.is_empty() {
+            return Ok(());
+        }
+        f.write_str("[")?;
+        for (slot, prop) in layout.props.iter().enumerate() {
+            if slot > 0 {
+                f.write_str(",")?;
+            }
+            let value = prop.values()[layout.read(self.props, slot) as usize];
+            write!(f, "{}={value}", prop.name())?;
+        }
+        f.write_str("]")
+    }
+}
+
+/// States are saved as their `Display` text.
+impl Serialize for BlockState {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockState {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// How a block's properties are packed into `BlockState::props`.
+#[derive(Debug, Clone, Default)]
+pub struct Layout {
+    pub props: Vec<Prop>,
+    /// Per property: its default value's index and the number of values.
+    defaults: Vec<u8>,
+    sizes: Vec<u8>,
+    strides: Vec<u16>,
+    /// The number of states (the product of `sizes`).
+    pub states: u32,
+}
+
+impl Layout {
+    fn new(props: Vec<Prop>, defaults: Vec<u8>) -> Self {
+        let sizes: Vec<u8> = props.iter().map(|p| p.values().len() as u8).collect();
+        let mut strides = Vec::with_capacity(props.len());
+        let mut states = 1u32;
+        for &size in &sizes {
+            strides.push(states as u16);
+            states *= size as u32;
+        }
+        Self {
+            props,
+            defaults,
+            sizes,
+            strides,
+            states,
+        }
+    }
+
+    pub fn slot(&self, prop: Prop) -> Option<usize> {
+        self.props.iter().position(|&p| p == prop)
+    }
+
+    fn slot_named(&self, name: &str) -> Option<usize> {
+        self.props.iter().position(|p| p.name() == name)
+    }
+
+    fn read(&self, props: u16, slot: usize) -> u8 {
+        let size = self.sizes[slot] as u16;
+        let digit = (props / self.strides[slot]) % size;
+        ((digit + self.defaults[slot] as u16) % size) as u8
+    }
+
+    fn write(&self, props: u16, slot: usize, index: u8) -> u16 {
+        let size = self.sizes[slot] as u16;
+        let stride = self.strides[slot];
+        let old = (props / stride) % size;
+        let digit = (index as u16 % size + size - self.defaults[slot] as u16) % size;
+        props - old * stride + digit * stride
+    }
+
+    /// The packed props of every state, in order.
+    fn all_states(&self) -> impl Iterator<Item = u16> + use<> {
+        0..self.states as u16
+    }
+}
+
+/// A test on a block's state, written `facing=east,half=top` (every pair
+/// must hold) with `|` between alternative values (`shape=north_east|south_east`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Condition(Vec<(usize, u32)>);
+
+impl Condition {
+    pub fn parse(text: &str, layout: &Layout, block: &str) -> Result<Self> {
+        let mut tests = Vec::new();
+        for pair in text.split(',').filter(|pair| !pair.is_empty()) {
+            let Some((key, values)) = pair.split_once('=') else {
+                bail!("bad condition {pair:?} on {block}");
+            };
+            let Some(slot) = layout.slot_named(key) else {
+                bail!("{block} has no property {key:?}");
+            };
+            let prop = layout.props[slot];
+            let mut allowed = 0u32;
+            for value in values.split('|') {
+                let Some(index) = prop.index_of(value) else {
+                    bail!("{block}'s {key} can't be {value:?}");
+                };
+                allowed |= 1 << index;
+            }
+            tests.push((slot, allowed));
+        }
+        Ok(Self(tests))
     }
 }
 
@@ -89,6 +362,22 @@ impl Textures {
             .or(group.as_ref())
             .or(self.all.as_ref())
             .map(String::as_str)
+    }
+
+    /// These textures with every field `over` sets replaced.
+    fn overlaid(&self, over: &Textures) -> Textures {
+        let pick = |base: &Option<String>, over: &Option<String>| over.clone().or(base.clone());
+        Textures {
+            all: pick(&self.all, &over.all),
+            end: pick(&self.end, &over.end),
+            side: pick(&self.side, &over.side),
+            top: pick(&self.top, &over.top),
+            bottom: pick(&self.bottom, &over.bottom),
+            north: pick(&self.north, &over.north),
+            south: pick(&self.south, &over.south),
+            east: pick(&self.east, &over.east),
+            west: pick(&self.west, &over.west),
+        }
     }
 }
 
@@ -179,68 +468,62 @@ pub enum Shape {
     DragonEgg,
 }
 
-/// How placing a block sets its data value.
+/// How placing a block picks its state.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Placement {
-    /// Keeps the data value it was placed with.
+    /// Keeps the item's state.
     #[default]
     Plain,
-    /// Attaches to the clicked face like a 1.0.0 torch: data 1–4 for walls
-    /// (attached to the block to the west, east, north, south), 5 for floors.
-    /// Can't hang from ceilings.
-    Torch,
-    /// Turns its front (the `south` texture) toward the player, like
-    /// 1.0.0's furnace: data 2–5 for a front facing north, south, west, east.
+    /// A torch on the floor, or `wall` (facing away from the wall) on the
+    /// side of a block. Can't hang from ceilings.
+    Torch { wall: BlockId },
+    /// Turns its front (`facing`) toward the player, like a furnace.
     Facing,
-    /// A two-block bed on top of a block (1.0.0's `ItemBed`): the foot where
-    /// placed and the head one block further the way the player looks.
-    /// Data 0–3 is that way (south, west, north, east); the head adds 8.
+    /// A log, lying along the axis of the clicked face.
+    Axis,
+    /// A two-block bed on top of a block: the foot where placed and the
+    /// head one block further the way the player looks.
     Bed,
-    /// A slab, which turns the same slab under it into `double` (keeping
-    /// the data value) instead of stacking on it (1.0.0's `BlockStep`).
-    Slab { double: BlockId },
-    /// A two-block door on top of a full block (1.0.0's `ItemDoor`): data
-    /// 0–3 is its direction, 4 is open and 8 the upper half.
+    /// A slab, joining the same slab already in the cell into a double one.
+    Slab,
+    /// A two-block door on top of a full block.
     Door,
 }
 
-/// The way from a bed's foot to its head for direction `dir` (0–3: south,
-/// west, north, east, as in 1.0.0).
-pub fn bed_direction(dir: u8) -> IVec3 {
-    match dir & 3 {
-        0 => IVec3::Z,
-        1 => IVec3::NEG_X,
-        2 => IVec3::NEG_Z,
-        _ => IVec3::X,
-    }
+/// The way from a bed's foot to its head.
+pub fn bed_direction(state: BlockState) -> IVec3 {
+    IVec3::from_array(state.face(Prop::Facing).normal())
 }
 
-/// A door's thickness (1.0.0's 0.1875).
+/// A door's thickness (3/16).
 const DOOR_THICKNESS: f32 = 3.0 / 16.0;
 
-/// Which side of its cell a door covers, 0–3 (1.0.0's `getState`): its
-/// direction less one while closed, its direction while open.
-pub fn door_side(data: u8) -> u8 {
-    if data & 4 == 0 {
-        (data + 3) & 3
+/// The side of its cell a door covers: closed, the side opposite its
+/// `facing` (nearest the player who placed it); open, a quarter turn
+/// round its hinge (modern `DoorBlock.getShape`).
+pub fn door_side(state: BlockState) -> Face {
+    let facing = state.face(Prop::Facing);
+    if !state.bool(Prop::Open) {
+        facing.opposite()
+    } else if state.get(Prop::Hinge) == super::props::hinge::LEFT {
+        facing.rotate_ccw()
     } else {
-        data & 3
+        facing.rotate_cw()
     }
 }
 
-/// A door's slab within its cell, as (min, max) (1.0.0's
-/// `setDoorRotation`): along the north, east, south or west side.
-pub fn door_box(data: u8) -> ([f32; 3], [f32; 3]) {
+/// A door's slab within its cell, as (min, max).
+pub fn door_box(state: BlockState) -> ([f32; 3], [f32; 3]) {
     let t = DOOR_THICKNESS;
-    match door_side(data) {
-        0 => ([0.0, 0.0, 0.0], [1.0, 1.0, t]),
-        1 => ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]),
-        2 => ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]),
+    match door_side(state) {
+        Face::North => ([0.0, 0.0, 0.0], [1.0, 1.0, t]),
+        Face::East => ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        Face::South => ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]),
         _ => ([0.0, 0.0, 0.0], [t, 1.0, 1.0]),
     }
 }
 
-/// What right-clicking a block does (1.0.0's `blockActivated`).
+/// What right-clicking a block does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Activate {
     /// Opens a 3×3 crafting grid.
@@ -265,7 +548,7 @@ pub struct Burns {
     pub catch: u8,
 }
 
-/// The liquid a block is (flowing or still).
+/// The liquid a block is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Fluid {
     Water,
@@ -279,27 +562,50 @@ pub enum RenderLayer {
     Opaque,
     /// Pixels are fully opaque or fully transparent (leaves, glass, plants).
     Cutout,
-    /// Partly see-through (water, ice, portal). Drawn as cutout until the
-    /// blended pass exists (M8).
+    /// Partly see-through (water, ice, portal).
     Translucent,
 }
 
-/// Overrides for one data value.
+/// Overrides for the states meeting a condition.
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Variant {
-    pub name: Option<String>,
+    /// Replaces the faces it names.
     pub textures: Option<Textures>,
     pub tint: Option<Tint>,
+    pub light: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDef {
+    /// Set from the block's place in the file.
+    #[serde(skip)]
     pub id: BlockId,
+    /// Modern Minecraft's name, without the namespace.
     pub name: String,
     /// Mining hardness from 1.0.0; negative means unbreakable.
     pub hardness: f32,
+    /// Its properties, in the order states list them.
+    #[serde(default)]
+    pub props: Vec<Prop>,
+    /// Default values unlike the properties' usual ones, as a condition
+    /// (`lit=true`).
+    #[serde(default)]
+    pub defaults: String,
+    /// Values a player-placed block gets (`persistent=true` for leaves).
+    #[serde(default)]
+    pub placed: String,
+    /// Whether it has an item of its own (read by build.rs).
+    #[serde(default = "default_true")]
+    pub item: bool,
+    /// The texture in `textures/items/` its item shows, instead of the
+    /// block drawn as an icon.
+    #[serde(default)]
+    pub item_texture: Option<String>,
+    /// Most of its item in a stack.
+    #[serde(default = "default_stack")]
+    pub stack: u8,
     #[serde(default)]
     pub shape: Shape,
     #[serde(default)]
@@ -307,7 +613,7 @@ pub struct BlockDef {
     /// Whether entities collide with it.
     #[serde(default = "default_true")]
     pub solid: bool,
-    /// Light emitted, 0–15.
+    /// Light emitted, 0–15 (variants may change it).
     #[serde(default)]
     pub light: u8,
     /// Light lost passing through, 0–15 (1.0.0's `lightOpacity`, with 255 as
@@ -357,13 +663,17 @@ pub struct BlockDef {
     pub textures: Option<Textures>,
     #[serde(default)]
     pub tint: Tint,
-    /// Per-data-value overrides; data values not listed use the defaults above.
+    /// Overrides for states meeting a condition, applied in order.
     #[serde(default)]
-    pub variants: BTreeMap<u8, Variant>,
+    pub variants: Vec<(String, Variant)>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_stack() -> u8 {
+    64
 }
 
 fn default_slipperiness() -> f32 {
@@ -371,18 +681,45 @@ fn default_slipperiness() -> f32 {
 }
 
 impl BlockDef {
-    pub fn textures_for(&self, data: u8) -> Option<&Textures> {
+    /// The variants `state` meets.
+    fn variants_of(&self, state: BlockState) -> impl Iterator<Item = &Variant> {
+        let conditions = registry().conditions(self.id);
         self.variants
-            .get(&data)
-            .and_then(|v| v.textures.as_ref())
-            .or(self.textures.as_ref())
+            .iter()
+            .zip(conditions)
+            .filter(move |(_, condition)| state.matches(condition))
+            .map(|((_, variant), _)| variant)
     }
 
-    pub fn tint_for(&self, data: u8) -> Tint {
-        self.variants
-            .get(&data)
-            .and_then(|v| v.tint)
+    /// Whether `state` meets the condition of variant number `variant`.
+    pub fn shows_variant(&self, state: BlockState, variant: usize) -> bool {
+        registry()
+            .conditions(self.id)
+            .get(variant)
+            .is_some_and(|condition| state.matches(condition))
+    }
+
+    pub fn textures_for(&self, state: BlockState) -> Option<Textures> {
+        let mut textures = self.textures.clone();
+        for over in self.variants_of(state).filter_map(|v| v.textures.as_ref()) {
+            textures = Some(textures.unwrap_or_default().overlaid(over));
+        }
+        textures
+    }
+
+    pub fn tint_for(&self, state: BlockState) -> Tint {
+        self.variants_of(state)
+            .filter_map(|v| v.tint)
+            .last()
             .unwrap_or(self.tint)
+    }
+
+    /// Light `state` gives off, 0–15.
+    pub fn light_for(&self, state: BlockState) -> u8 {
+        self.variants_of(state)
+            .filter_map(|v| v.light)
+            .last()
+            .unwrap_or(self.light)
     }
 
     pub fn light_opacity(&self) -> u8 {
@@ -391,68 +728,75 @@ impl BlockDef {
     }
 
     /// Offset to the block holding this one up, if it pops off without it.
-    pub fn support(&self, data: u8) -> Option<IVec3> {
+    pub fn support(&self, state: BlockState) -> Option<IVec3> {
         match self.placement {
-            Placement::Torch => Some(match data {
-                1 => IVec3::NEG_X,
-                2 => IVec3::X,
-                3 => IVec3::NEG_Z,
-                4 => IVec3::Z,
-                _ => IVec3::NEG_Y,
-            }),
-            Placement::Plain | Placement::Facing | Placement::Slab { .. } => {
+            // A wall torch hangs on the block behind it.
+            _ if state.has(Prop::Facing) && self.shape == Shape::Torch => Some(IVec3::from_array(
+                state.face(Prop::Facing).opposite().normal(),
+            )),
+            Placement::Torch { .. } => Some(IVec3::NEG_Y),
+            Placement::Plain | Placement::Facing | Placement::Axis | Placement::Slab => {
                 self.needs_ground.then_some(IVec3::NEG_Y)
             }
             // The lower half stands on the ground, the upper on the lower.
             Placement::Door => Some(IVec3::NEG_Y),
             // Each half goes with the other.
             Placement::Bed => {
-                let toward_head = bed_direction(data & 3);
-                Some(if data & 8 == 0 {
-                    toward_head
-                } else {
-                    -toward_head
-                })
+                let toward_head = bed_direction(state);
+                Some(
+                    if state.get(Prop::BedPart) == super::props::bed_part::FOOT {
+                        toward_head
+                    } else {
+                        -toward_head
+                    },
+                )
             }
         }
     }
 
     /// Every neighbor whose removal takes this block with it: what holds
     /// it up, plus a door's upper half for its lower half.
-    pub fn held_by(&self, data: u8) -> Vec<IVec3> {
-        let mut by: Vec<IVec3> = self.support(data).into_iter().collect();
-        if self.placement == Placement::Door && data & 8 == 0 {
+    pub fn held_by(&self, state: BlockState) -> Vec<IVec3> {
+        let mut by: Vec<IVec3> = self.support(state).into_iter().collect();
+        if self.placement == Placement::Door
+            && state.get(Prop::DoubleBlockHalf) == super::props::door_half::LOWER
+        {
             by.push(IVec3::Y);
         }
         by
     }
 
     /// The part of its cell entities bump into, as (min, max) within the
-    /// cell, or `None` if they pass through (1.0.0's collision bounds; a
-    /// bed is 9/16 tall and a door a 3/16 slab on one side).
-    pub fn collision_box(&self, data: u8) -> Option<([f32; 3], [f32; 3])> {
+    /// cell, or `None` if they pass through (a bed is 9/16 tall and a door
+    /// a 3/16 slab on one side).
+    pub fn collision_box(&self, state: BlockState) -> Option<([f32; 3], [f32; 3])> {
         if !self.solid {
             return None;
         }
         Some(match self.shape {
             Shape::Bed => ([0.0; 3], [1.0, 9.0 / 16.0, 1.0]),
-            Shape::Slab => ([0.0; 3], [1.0, 0.5, 1.0]),
-            Shape::Door => door_box(data),
+            Shape::Slab => match state.get(Prop::SlabType) {
+                super::props::slab_type::BOTTOM => ([0.0; 3], [1.0, 0.5, 1.0]),
+                super::props::slab_type::TOP => ([0.0, 0.5, 0.0], [1.0; 3]),
+                _ => ([0.0; 3], [1.0; 3]),
+            },
+            Shape::Door => door_box(state),
             _ => ([0.0; 3], [1.0; 3]),
         })
     }
 
     /// The face its front texture is on, for blocks placed facing the player.
-    pub fn front(&self, data: u8) -> Option<Face> {
+    pub fn front(&self, state: BlockState) -> Option<Face> {
         if self.placement != Placement::Facing {
             return None;
         }
-        Some(match data {
-            2 => Face::North,
-            4 => Face::West,
-            5 => Face::East,
-            _ => Face::South,
-        })
+        let face = state.face(if state.has(Prop::FacingAll) {
+            Prop::FacingAll
+        } else {
+            Prop::Facing
+        });
+        // The front of a dispenser facing up or down is drawn by a variant.
+        matches!(face, Face::North | Face::South | Face::East | Face::West).then_some(face)
     }
 
     /// Whether the crosshair can select it (everything but air and fluids).
@@ -469,81 +813,180 @@ impl BlockDef {
     pub fn is_opaque_cube(&self) -> bool {
         self.shape == Shape::Cube && self.layer == RenderLayer::Opaque
     }
+
+    /// Whether `state` fills its whole cell with opaque faces (a double
+    /// slab does, a single one doesn't).
+    pub fn is_opaque_cube_state(&self, state: BlockState) -> bool {
+        self.is_opaque_cube()
+            || (self.shape == Shape::Slab
+                && self.layer == RenderLayer::Opaque
+                && state.get(Prop::SlabType) == super::props::slab_type::DOUBLE)
+    }
+
+    /// Whether placing something may overwrite `state`: a snow layer only
+    /// while it's one layer thin.
+    pub fn is_replaceable(&self, state: BlockState) -> bool {
+        self.replaceable && (!state.has(Prop::Layers) || state.number(Prop::Layers) == 1)
+    }
+
+    /// The state a player places: the default, with `placed` applied.
+    pub fn placed_state(&self) -> BlockState {
+        registry().placed[self.id.index()]
+    }
 }
 
 /// All block definitions, indexed by ID.
 pub struct BlockRegistry {
-    blocks: Vec<Option<BlockDef>>,
+    blocks: Vec<BlockDef>,
+    layouts: Vec<Layout>,
+    /// Parsed `variants` conditions per block.
+    conditions: Vec<Vec<Condition>>,
+    /// Each block's first state in dense per-state tables.
+    bases: Vec<u32>,
+    states: u32,
+    /// Each block's player-placed state.
+    placed: Vec<BlockState>,
+}
+
+/// The registry for `assets/data/blocks.ron`, built into the game (its
+/// names are compiled in as constants, see build.rs).
+pub fn registry() -> &'static BlockRegistry {
+    static REGISTRY: LazyLock<BlockRegistry> = LazyLock::new(|| {
+        BlockRegistry::from_ron(include_str!("../../assets/data/blocks.ron"))
+            .expect("assets/data/blocks.ron is valid")
+    });
+    &REGISTRY
 }
 
 impl BlockRegistry {
-    pub fn load(path: &Path) -> Result<Self> {
-        let text =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        Self::from_ron(&text).with_context(|| format!("parsing {}", path.display()))
-    }
-
-    pub fn from_ron(text: &str) -> Result<Self> {
-        let defs: Vec<BlockDef> = ron::from_str(text)?;
-        let mut blocks: Vec<Option<BlockDef>> = Vec::new();
-        for def in defs {
-            let index = def.id as usize;
-            if let Some(&data) = def.variants.keys().find(|&&d| d as usize >= DATA_VALUES) {
-                bail!("block {} has out-of-range data value {data}", def.name);
-            }
-            if def.opacity.is_some_and(|o| o > 15) {
-                bail!("block {} has opacity above 15", def.name);
+    fn from_ron(text: &str) -> Result<Self> {
+        let mut blocks: Vec<BlockDef> = ron::from_str(text)?;
+        if blocks.len() != super::blocks::COUNT {
+            bail!(
+                "blocks.ron has {} blocks but the game was built with {}",
+                blocks.len(),
+                super::blocks::COUNT
+            );
+        }
+        let mut layouts = Vec::with_capacity(blocks.len());
+        let mut conditions = Vec::with_capacity(blocks.len());
+        let mut bases = Vec::with_capacity(blocks.len());
+        let mut placed = Vec::with_capacity(blocks.len());
+        let mut states = 0u32;
+        for (index, def) in blocks.iter_mut().enumerate() {
+            def.id = BlockId(index as u16);
+            if super::blocks::NAMES[index] != def.name {
+                bail!(
+                    "block {index} is {} but was built as {}",
+                    def.name,
+                    super::blocks::NAMES[index]
+                );
             }
             if def.light > 15 {
                 bail!("block {} has light level {} above 15", def.name, def.light);
             }
-            if blocks.len() <= index {
-                blocks.resize(index + 1, None);
+            if def.opacity.is_some_and(|o| o > 15) {
+                bail!("block {} has opacity above 15", def.name);
             }
-            if let Some(existing) = &blocks[index] {
-                bail!(
-                    "block ID {} used by both {} and {}",
-                    def.id,
-                    existing.name,
-                    def.name
-                );
+            let mut layout = Layout::new(
+                def.props.clone(),
+                def.props.iter().map(|p| p.default_index()).collect(),
+            );
+            if layout.states > u16::MAX as u32 {
+                bail!("block {} has too many states", def.name);
             }
-            blocks[index] = Some(def);
+            // Defaults unlike the usual ones.
+            let given = Condition::parse(&def.defaults, &layout, &def.name)?;
+            for &(slot, allowed) in &given.0 {
+                layout.defaults[slot] = allowed.trailing_zeros() as u8;
+            }
+            for drop in def.drops.list_mut() {
+                drop.condition = Condition::parse(&drop.when, &layout, &def.name)?;
+            }
+            let parsed = def
+                .variants
+                .iter()
+                .map(|(condition, _)| Condition::parse(condition, &layout, &def.name))
+                .collect::<Result<Vec<_>>>()?;
+            let mut placed_props = 0;
+            for &(slot, allowed) in &Condition::parse(&def.placed, &layout, &def.name)?.0 {
+                placed_props = layout.write(placed_props, slot, allowed.trailing_zeros() as u8);
+            }
+            placed.push(BlockState {
+                id: def.id,
+                props: placed_props,
+            });
+            bases.push(states);
+            states += layout.states;
+            layouts.push(layout);
+            conditions.push(parsed);
         }
-        Ok(Self { blocks })
+        let registry = Self {
+            blocks,
+            layouts,
+            conditions,
+            bases,
+            states,
+            placed,
+        };
+        Ok(registry)
     }
 
     pub fn get(&self, id: BlockId) -> Option<&BlockDef> {
-        self.blocks.get(id as usize)?.as_ref()
+        self.blocks.get(id.index())
     }
 
-    /// A readable name like "planks" or "wool (orange)"; unknown IDs show the number.
+    /// The definition of a block that exists (every `BlockId` does).
+    pub fn def(&self, id: BlockId) -> &BlockDef {
+        &self.blocks[id.index()]
+    }
+
+    pub fn layout(&self, id: BlockId) -> &Layout {
+        &self.layouts[id.index()]
+    }
+
+    fn conditions(&self, id: BlockId) -> &[Condition] {
+        &self.conditions[id.index()]
+    }
+
+    /// The number of states of all blocks together.
+    pub fn state_count(&self) -> usize {
+        self.states as usize
+    }
+
+    /// `state`'s position in dense per-state tables, 0..`state_count`.
+    pub fn state_index(&self, state: BlockState) -> usize {
+        (self.bases[state.id.index()] + state.props as u32) as usize
+    }
+
+    /// Every state of every block, in `state_index` order.
+    pub fn states(&self) -> impl Iterator<Item = BlockState> + '_ {
+        self.blocks.iter().flat_map(|def| {
+            self.layout(def.id)
+                .all_states()
+                .map(move |props| BlockState { id: def.id, props })
+        })
+    }
+
+    /// A readable name like "oak planks" or "orange wool".
     pub fn display_name(&self, block: BlockState) -> String {
-        let Some(def) = self.get(block.id()) else {
-            return format!("block {}", block.id());
-        };
-        let base = def.name.replace('_', " ");
-        match def
-            .variants
-            .get(&block.data())
-            .and_then(|v| v.name.as_deref())
-        {
-            Some(variant) => format!("{base} ({})", variant.replace('_', " ")),
-            None => base,
-        }
+        self.def(block.id).name.replace('_', " ")
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &BlockDef> {
-        self.blocks.iter().flatten()
+        self.blocks.iter()
     }
 
     /// Texture names referenced by some block or variant that `exists` rejects.
-    pub fn missing_textures(&self, exists: impl Fn(&str) -> bool) -> BTreeSet<String> {
+    pub fn missing_textures(
+        &self,
+        exists: impl Fn(&str) -> bool,
+    ) -> std::collections::BTreeSet<String> {
         self.iter()
             .flat_map(|def| {
                 def.textures
                     .iter()
-                    .chain(def.variants.values().filter_map(|v| v.textures.as_ref()))
+                    .chain(def.variants.iter().filter_map(|(_, v)| v.textures.as_ref()))
             })
             .flat_map(|textures| Face::ALL.map(|face| textures.get(face)))
             .flatten()
@@ -556,32 +999,88 @@ impl BlockRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::{blocks, props::Prop};
 
     #[test]
     fn display_names_are_readable() {
-        let registry = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
-        assert_eq!(registry.display_name(BlockState::new(98, 0)), "stonebrick");
+        let registry = registry();
         assert_eq!(
-            registry.display_name(BlockState::new(35, 1)),
-            "wool (orange)"
+            registry.display_name(BlockState::of(blocks::STONE_BRICKS)),
+            "stone bricks"
         );
         assert_eq!(
-            registry.display_name(BlockState::new(31, 1)),
-            "tallgrass (grass)"
-        );
-        assert_eq!(
-            registry.display_name(BlockState::new(4000, 0)),
-            "block 4000"
+            registry.display_name(BlockState::of(blocks::ORANGE_WOOL)),
+            "orange wool"
         );
     }
 
     #[test]
-    fn block_state_packs_id_and_data() {
-        let state = BlockState::new(35, 14);
-        assert_eq!((state.id(), state.data()), (35, 14));
-        assert_eq!(BlockState::new(4095, 15).id(), 4095);
-        assert!(BlockState::AIR.is_air());
-        assert!(!state.is_air());
+    fn states_pack_property_values_with_the_default_at_zero() {
+        let stairs = BlockState::of(blocks::OAK_STAIRS);
+        assert_eq!(stairs.face(Prop::Facing), Face::North);
+        assert_eq!(stairs.get(Prop::Half), super::super::props::half::BOTTOM);
+        let turned = stairs
+            .with_face(Prop::Facing, Face::East)
+            .with(Prop::Half, super::super::props::half::TOP);
+        assert_eq!(turned.face(Prop::Facing), Face::East);
+        assert_eq!(turned.get(Prop::Half), super::super::props::half::TOP);
+        assert!(!turned.bool(Prop::Waterlogged));
+        assert_ne!(turned, stairs);
+        // Properties a block doesn't have read as their default and can't be set.
+        let stone = BlockState::of(blocks::STONE);
+        assert_eq!(stone.with(Prop::Facing, 3), stone);
+        assert!(!stone.has(Prop::Facing));
+        // A log stands upright by default.
+        let log = BlockState::of(blocks::OAK_LOG);
+        assert_eq!(log.get(Prop::Axis), super::super::props::axis::Y);
+    }
+
+    #[test]
+    fn states_print_and_parse_like_minecraft() {
+        let state = BlockState::of(blocks::OAK_STAIRS)
+            .with_face(Prop::Facing, Face::East)
+            .with(Prop::Half, super::super::props::half::TOP);
+        let text = state.to_string();
+        assert_eq!(
+            text,
+            "minecraft:oak_stairs[facing=east,half=top,shape=straight,waterlogged=false]"
+        );
+        assert_eq!(BlockState::parse(&text).unwrap(), state);
+        assert_eq!(
+            BlockState::parse("oak_stairs[half=top,facing=east]").unwrap(),
+            state
+        );
+        assert_eq!(
+            BlockState::parse("minecraft:stone").unwrap().to_string(),
+            "minecraft:stone"
+        );
+        assert!(BlockState::parse("minecraft:stone[facing=north]").is_err());
+        assert!(BlockState::parse("minecraft:oak_stairs[facing=up]").is_err());
+        assert!(BlockState::parse("minecraft:no_such_block").is_err());
+    }
+
+    #[test]
+    fn every_state_round_trips_through_its_text() {
+        let registry = registry();
+        let mut count = 0;
+        for state in registry.states() {
+            assert_eq!(BlockState::parse(&state.to_string()).unwrap(), state);
+            count += 1;
+        }
+        assert_eq!(count, registry.state_count());
+    }
+
+    #[test]
+    fn defaults_unlike_the_usual_ones_come_first() {
+        // Redstone torches start lit.
+        assert!(BlockState::of(blocks::REDSTONE_TORCH).bool(Prop::Lit));
+        // Mushroom blocks show their skin on every side.
+        let cap = BlockState::of(blocks::BROWN_MUSHROOM_BLOCK);
+        assert!(Face::ALL.iter().all(|&face| cap.bool(Prop::side(face))));
+        // Leaves placed by a player don't decay.
+        let leaves = registry().def(blocks::OAK_LEAVES).placed_state();
+        assert!(leaves.bool(Prop::Persistent));
+        assert!(!BlockState::of(blocks::OAK_LEAVES).bool(Prop::Persistent));
     }
 
     #[test]
@@ -611,101 +1110,105 @@ mod tests {
     }
 
     #[test]
-    fn variants_override_textures_and_tint() {
-        let ron = r#"#![enable(implicit_some)]
-            [(id: 18, name: "leaves", hardness: 0.2, textures: (all: "oak"), tint: Foliage,
-              variants: {2: (textures: (all: "birch"), tint: Fixed(0x80A755))})]"#;
-        let registry = BlockRegistry::from_ron(ron).unwrap();
-        let leaves = registry.get(18).unwrap();
-        assert_eq!(leaves.textures_for(0).unwrap().get(Face::Top), Some("oak"));
+    fn variants_change_textures_and_light_by_state() {
+        let wheat = registry().def(blocks::WHEAT);
+        let ripe = BlockState::of(blocks::WHEAT).with_number(Prop::Age7, 7);
         assert_eq!(
-            leaves.textures_for(2).unwrap().get(Face::Top),
-            Some("birch")
+            wheat.textures_for(ripe).unwrap().get(Face::North),
+            Some("wheat_stage_7")
         );
-        assert_eq!(leaves.tint_for(0), Tint::Foliage);
-        assert_eq!(leaves.tint_for(2), Tint::Fixed(0x80A755));
+        let furnace = registry().def(blocks::FURNACE);
+        let lit = BlockState::of(blocks::FURNACE).with_bool(Prop::Lit, true);
+        assert_eq!(furnace.light_for(lit), 13);
+        assert_eq!(furnace.light_for(BlockState::of(blocks::FURNACE)), 0);
+        assert_eq!(
+            furnace.textures_for(lit).unwrap().get(Face::South),
+            Some("furnace_front_on")
+        );
+        let grass = registry().def(blocks::GRASS_BLOCK);
+        let snowy = BlockState::of(blocks::GRASS_BLOCK).with_bool(Prop::Snowy, true);
+        assert_eq!(grass.tint_for(snowy), Tint::None);
+        assert_eq!(
+            grass.textures_for(snowy).unwrap().get(Face::Bottom),
+            Some("dirt")
+        );
     }
 
     #[test]
-    fn invalid_definitions_are_rejected() {
-        let duplicate = r#"[(id: 1, name: "a", hardness: 1.0), (id: 1, name: "b", hardness: 1.0)]"#;
-        assert!(BlockRegistry::from_ron(duplicate).is_err());
-        let bad_data = r#"[(id: 1, name: "a", hardness: 1.0, variants: {16: ()})]"#;
-        assert!(BlockRegistry::from_ron(bad_data).is_err());
-        let bad_light = r#"[(id: 1, name: "a", hardness: 1.0, light: 16)]"#;
-        assert!(BlockRegistry::from_ron(bad_light).is_err());
-    }
-
-    fn real_registry() -> BlockRegistry {
-        BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap()
-    }
-
-    #[test]
-    fn every_1_0_0_block_id_is_defined() {
-        let registry = real_registry();
-        for id in 0..=122 {
-            assert!(
-                registry.get(id).is_some(),
-                "block {id} missing from blocks.ron"
-            );
-        }
-        // Plus the wooden slabs from 1.3 (125, 126).
-        assert_eq!(registry.iter().count(), 125);
-        assert_eq!(registry.get(126).unwrap().name, "wooden_slab");
-        assert_eq!(registry.get(2).unwrap().name, "grass");
+    fn spot_check_properties() {
+        let block = |id| registry().def(id);
+        assert_eq!(block(blocks::STONE).hardness, 1.5);
+        assert!(
+            block(blocks::BEDROCK).hardness < 0.0,
+            "bedrock is unbreakable"
+        );
+        assert_eq!(block(blocks::OBSIDIAN).hardness, 50.0);
+        assert_eq!(block(blocks::TORCH).light, 14);
+        assert_eq!(block(blocks::GLOWSTONE).light, 15);
+        assert!(block(blocks::STONE).is_opaque_cube());
+        assert!(
+            !block(blocks::GLASS).is_opaque_cube(),
+            "glass is see-through"
+        );
+        assert!(!block(blocks::DANDELION).solid, "flowers have no collision");
+        assert_eq!(block(blocks::DANDELION).shape, Shape::Cross);
+        assert_eq!(block(blocks::AIR).shape, Shape::None);
+        assert_eq!(BlockState::AIR.id(), blocks::AIR);
     }
 
     #[test]
-    fn spot_check_1_0_0_properties() {
-        let registry = real_registry();
-        let block = |id| registry.get(id).unwrap();
-        assert_eq!(block(1).hardness, 1.5);
-        assert!(block(7).hardness < 0.0, "bedrock is unbreakable");
-        assert_eq!(block(49).hardness, 50.0);
-        assert_eq!(block(50).light, 14);
-        assert_eq!(block(89).light, 15);
-        assert!(block(1).is_opaque_cube());
-        assert!(!block(20).is_opaque_cube(), "glass is see-through");
-        assert!(!block(37).solid, "flowers have no collision");
-        assert_eq!(block(37).shape, Shape::Cross);
-        assert_eq!(block(0).shape, Shape::None);
-    }
-
-    #[test]
-    fn doors_cover_one_side_and_swing_a_quarter_when_opened() {
+    fn doors_cover_one_side_and_swing_a_quarter_round_their_hinge() {
         let t = 3.0 / 16.0;
-        // Direction 3 (placed looking north) closes along the south side.
-        assert_eq!(door_box(3), ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]));
-        // Open, it swings to the west side; the upper half matches.
-        assert_eq!(door_box(3 | 4), ([0.0; 3], [t, 1.0, 1.0]));
-        assert_eq!(door_box(3 | 4 | 8), door_box(3 | 4));
-        let blocks = real_registry();
-        let door = blocks.get(64).unwrap();
-        assert_eq!(door.collision_box(0), Some(door_box(0)));
-        let bed = blocks.get(26).unwrap();
-        assert_eq!(bed.collision_box(8).unwrap().1[1], 9.0 / 16.0);
-        assert_eq!(blocks.get(37).unwrap().collision_box(0), None);
-        assert_eq!(door.held_by(0), [IVec3::NEG_Y, IVec3::Y]);
-        assert_eq!(door.held_by(8), [IVec3::NEG_Y]);
+        let door = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
+        // Placed looking north, it closes along the south side, nearest the player.
+        assert_eq!(door_box(door), ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]));
+        // Open with the hinge on the left, it swings to the west side.
+        let open = door.with_bool(Prop::Open, true);
+        assert_eq!(door_box(open), ([0.0; 3], [t, 1.0, 1.0]));
+        let right = open.with(Prop::Hinge, super::super::props::hinge::RIGHT);
+        assert_eq!(door_box(right), ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]));
+        let def = registry().def(blocks::OAK_DOOR);
+        assert_eq!(def.collision_box(door), Some(door_box(door)));
+        let bed = registry().def(blocks::RED_BED);
+        assert_eq!(
+            bed.collision_box(BlockState::of(blocks::RED_BED))
+                .unwrap()
+                .1[1],
+            9.0 / 16.0
+        );
+        assert_eq!(
+            block_collision(blocks::DANDELION),
+            None,
+            "flowers have no collision"
+        );
+        let upper = door.with(Prop::DoubleBlockHalf, super::super::props::door_half::UPPER);
+        assert_eq!(def.held_by(door), [IVec3::NEG_Y, IVec3::Y]);
+        assert_eq!(def.held_by(upper), [IVec3::NEG_Y]);
+    }
+
+    fn block_collision(id: BlockId) -> Option<([f32; 3], [f32; 3])> {
+        registry().def(id).collision_box(BlockState::of(id))
     }
 
     #[test]
-    fn furnaces_and_chests_turn_their_front_by_data() {
-        let blocks = real_registry();
-        let furnace = blocks.get(61).unwrap();
-        assert_eq!(furnace.front(2), Some(Face::North));
-        assert_eq!(furnace.front(5), Some(Face::East));
-        assert_eq!(furnace.front(0), Some(Face::South), "the item's front");
-        assert_eq!(blocks.get(54).unwrap().front(4), Some(Face::West));
-        assert_eq!(blocks.get(1).unwrap().front(2), None);
+    fn furnaces_and_chests_turn_their_front_by_facing() {
+        let furnace = registry().def(blocks::FURNACE);
+        let facing = |face| BlockState::of(blocks::FURNACE).with_face(Prop::Facing, face);
+        assert_eq!(furnace.front(facing(Face::North)), Some(Face::North));
+        assert_eq!(furnace.front(facing(Face::East)), Some(Face::East));
+        assert_eq!(
+            registry()
+                .def(blocks::STONE)
+                .front(BlockState::of(blocks::STONE)),
+            None
+        );
     }
 
     /// Keep in sync with the missing-texture list in docs/DECISIONS.md.
     #[test]
     fn only_known_block_textures_are_missing() {
         let dir = crate::assets::dir().join("textures/blocks");
-        let missing =
-            real_registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
+        let missing = registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
         let expected = ["end_portal", "sign"];
         assert_eq!(missing, expected.map(String::from).into());
     }

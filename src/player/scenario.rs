@@ -20,11 +20,11 @@ use crate::{
     },
 };
 
-const COBBLESTONE: BlockState = BlockState::new(4, 0);
+const COBBLESTONE: BlockState = BlockState::of(crate::world::blocks::COBBLESTONE);
 
 struct Scene {
     world: World,
-    blocks: BlockRegistry,
+    blocks: &'static BlockRegistry,
     body: Body,
 }
 
@@ -37,7 +37,7 @@ impl Scene {
                 world.insert(flat_chunk(ChunkPos::new(x, z)));
             }
         }
-        let blocks = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        let blocks = crate::world::block::registry();
         let mut body = Body::new(DVec3::new(0.5, 64.0, 0.5));
         body.on_ground = true;
         Self {
@@ -53,7 +53,7 @@ impl Scene {
 
     /// Looks at `point` and returns what the crosshair hits.
     fn aim(&self, point: DVec3) -> Option<Hit> {
-        let (world, blocks) = (&self.world, &self.blocks);
+        let (world, blocks) = (&self.world, self.blocks);
         raycast(self.eye(), point - self.eye(), REACH, |cell| {
             world
                 .block(cell.x, cell.y, cell.z)
@@ -78,7 +78,7 @@ impl Scene {
     fn dig(&mut self, cell: IVec3) {
         let hit = self.aim(cell.as_dvec3() + 0.5).expect("block in reach");
         assert_eq!(hit.block, cell, "something else is in the way");
-        let edits = break_block(&self.world, &self.blocks, hit.block);
+        let edits = break_block(&self.world, self.blocks, hit.block);
         assert!(!edits.is_empty());
         self.apply(&edits);
     }
@@ -90,7 +90,7 @@ impl Scene {
         assert_eq!(hit.block, below, "something else is in the way");
         let (at, block) = place_block(
             &self.world,
-            &self.blocks,
+            self.blocks,
             &hit,
             COBBLESTONE,
             &self.body.aabb(),
@@ -104,7 +104,7 @@ impl Scene {
         for _ in 0..ticks {
             let collider = WorldCollider {
                 world: &self.world,
-                blocks: &self.blocks,
+                blocks: self.blocks,
             };
             self.body.tick(&input, yaw, &collider);
             let bb = self.body.aabb();
