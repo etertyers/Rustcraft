@@ -6,6 +6,8 @@
 // table, block/X also tries blocks/X and item/X also tries items/X, the
 // folder names before 1.13.
 {
+    "entity/player/slim/alex": ["entity/alex"],
+    "entity/player/wide/steve": ["entity/steve"],
     "block/acacia_leaves": ["blocks/leaves_acacia"],
     "block/acacia_log": ["blocks/log_acacia"],
     "block/acacia_log_top": ["blocks/log_acacia_top"],

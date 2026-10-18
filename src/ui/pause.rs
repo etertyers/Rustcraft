@@ -144,6 +144,14 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
         options.vsync = !options.vsync;
     }
     ui.add_space(8.0);
+    let bobbing = format!(
+        "View Bobbing: {}",
+        if options.view_bobbing { "ON" } else { "OFF" }
+    );
+    if ui.add_sized(BUTTON, Button::new(bobbing)).clicked() {
+        options.view_bobbing = !options.view_bobbing;
+    }
+    ui.add_space(8.0);
     let packs = ui
         .add_sized(BUTTON, Button::new("Resource Packs..."))
         .clicked();

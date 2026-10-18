@@ -20,6 +20,7 @@ use crate::{
         atlas::{Atlas, MISSING_TILE},
         crack,
         icons::ItemIcons,
+        player::prepare_skin,
     },
     world::{
         biome::BiomeColors,
@@ -39,8 +40,11 @@ pub struct Look {
     /// Item model sprites and display transforms (for the held item, M16).
     pub item_models: Arc<ItemModels>,
     pub sky: SkyImages,
-    /// One per mob kind, in registry order, then the arrow's.
+    /// One per mob kind, in registry order, then the arrow's, then the
+    /// player's skin.
     pub mob_textures: Vec<RgbaImage>,
+    /// Whether the skin has slim (3 pixel) arms.
+    pub skin_slim: bool,
     /// Atlas rects of the mining crack's stages.
     pub crack_uvs: Vec<[f32; 4]>,
 }
@@ -109,7 +113,8 @@ impl Look {
             .map(|i| atlas.uv_or_missing(&crack::texture(i)))
             .collect();
         let sky = SkyImages::load(&res)?;
-        let mob_textures = mobs
+        let (skin, skin_slim) = load_skin(&res, assets);
+        let mut mob_textures: Vec<RgbaImage> = mobs
             .iter()
             .map(|(_, def)| def.texture.as_str())
             .chain([ARROW_TEXTURE])
@@ -120,6 +125,7 @@ impl Look {
                 })
             })
             .collect();
+        mob_textures.push(skin);
         info!(
             "resources: {} over the defaults, {} blocks re-modeled, built in {} ms",
             if names.is_empty() {
@@ -138,6 +144,7 @@ impl Look {
             item_models: Arc::new(item_models),
             sky,
             mob_textures,
+            skin_slim,
             crack_uvs,
         })
     }
@@ -146,6 +153,31 @@ impl Look {
     pub fn with_packs(assets: &Path, ids: &[String], mobs: &MobRegistry) -> Result<Self> {
         Self::build(assets, open_packs(&pack::packs_dir(), ids), mobs)
     }
+}
+
+/// The player's skin: one in a resource pack's `entity/player/` (wide
+/// Steve before slim Alex, the highest pack first), else the one in
+/// `assets/skins/`. Returns the 64×64 skin and whether its arms are slim.
+pub fn load_skin(res: &Resources, assets: &Path) -> (RgbaImage, bool) {
+    const NAMES: [(&str, bool); 2] = [
+        ("entity/player/wide/steve", false),
+        ("entity/player/slim/alex", true),
+    ];
+    for layer in (1..res.layers().len()).rev() {
+        for (name, slim) in NAMES {
+            if let Some(texture) = res.texture_in(layer, name) {
+                return (prepare_skin(texture.image), slim);
+            }
+        }
+    }
+    let dir = assets.join("skins");
+    for (file, slim) in [("steve-skin.png", false), ("alex.png", true)] {
+        match image::open(dir.join(file)) {
+            Ok(image) => return (prepare_skin(image.into_rgba8()), slim),
+            Err(err) => warn!("no skin {file}: {err}"),
+        }
+    }
+    (missing_image(), false)
 }
 
 /// A small magenta and black checkerboard for a missing mob texture.
@@ -162,7 +194,10 @@ fn missing_image() -> RgbaImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{block::BlockState, blocks};
+    use crate::{
+        pack::tests::{ASHEN, PRIME, kenzos_pack},
+        world::{block::BlockState, blocks},
+    };
 
     fn mobs() -> MobRegistry {
         MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap()
@@ -175,7 +210,8 @@ mod tests {
         assert_eq!(look.atlas.tile_size(), 16);
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());
-        assert_eq!(look.mob_textures.len(), mobs().iter().count() + 1);
+        // The mobs, the arrow and the skin.
+        assert_eq!(look.mob_textures.len(), mobs().iter().count() + 2);
         assert!(look.atlas.has("block/grass_block_top"));
         assert!(look.atlas.has("block/destroy_stage_9"));
         // Concrete has no texture without a pack.
@@ -186,8 +222,10 @@ mod tests {
     #[test]
     fn a_16x_and_a_32x_pack_each_retexture_and_fall_back() {
         let assets = crate::assets::dir();
-        for (name, tile) in [("Ashen_1.8.3.zip", 16), ("Prime's HD Textures (FREE)", 32)] {
-            let pack = Pack::open(&assets.join(name)).unwrap();
+        for (name, tile) in [(ASHEN, 16), (PRIME, 32)] {
+            let Some(pack) = kenzos_pack(name) else {
+                continue;
+            };
             let look = Look::build(&assets, vec![pack], &mobs()).unwrap();
             assert_eq!(look.atlas.tile_size(), tile, "{name}");
             // Blocks and items come from the pack...
@@ -221,7 +259,9 @@ mod tests {
         let mobs = mobs();
         let base = Look::build(&assets, Vec::new(), &mobs).unwrap();
         // Ashen has the pig under 1.20's name, pig/pig.png.
-        let ashen = Pack::open(&assets.join("Ashen_1.8.3.zip")).unwrap();
+        let (Some(ashen), Some(prime)) = (kenzos_pack(ASHEN), kenzos_pack(PRIME)) else {
+            return;
+        };
         let look = Look::build(&assets, vec![ashen], &mobs).unwrap();
         assert_eq!(
             look.res.texture("entity/pig/temperate_pig").unwrap().layer,
@@ -229,10 +269,60 @@ mod tests {
         );
         assert_ne!(look.mob_textures[0], base.mob_textures[0]);
         // Prime has no pig or zombie: Kenzo's stay.
-        let prime = Pack::open(&assets.join("Prime's HD Textures (FREE)")).unwrap();
         let look = Look::build(&assets, vec![prime], &mobs).unwrap();
         assert_eq!(look.mob_textures[0], base.mob_textures[0]);
         assert_eq!(look.mob_textures[1], base.mob_textures[1]);
+    }
+
+    #[test]
+    fn the_skin_comes_from_assets_unless_a_pack_brings_one() {
+        let assets = crate::assets::dir();
+        let look = Look::build(&assets, Vec::new(), &mobs()).unwrap();
+        let skin = look.mob_textures.last().unwrap();
+        assert_eq!(skin.dimensions(), (64, 64));
+        assert!(!look.skin_slim);
+        let steve = prepare_skin(
+            image::open(assets.join("skins/steve-skin.png"))
+                .unwrap()
+                .into_rgba8(),
+        );
+        assert_eq!(skin, &steve);
+
+        // Kenzo's packs have no player skin: his stays.
+        if let Some(ashen) = kenzos_pack(ASHEN) {
+            let look = Look::build(&assets, vec![ashen], &mobs()).unwrap();
+            assert_eq!(look.mob_textures.last().unwrap(), &steve);
+        }
+
+        // A pack with a slim skin overrides it, as an old 64×32 one too.
+        let dir = crate::world::save::TempDir::new("skin-pack");
+        let mut old = image::RgbaImage::from_pixel(64, 32, image::Rgba([7, 8, 9, 255]));
+        old.put_pixel(40, 8, image::Rgba([1, 1, 1, 0]));
+        let mut bytes = Vec::new();
+        old.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        let zip = dir.path().join("skin.zip");
+        crate::pack::tests::write_zip(
+            &zip,
+            &[
+                ("pack.mcmeta", crate::pack::tests::MCMETA),
+                (
+                    "assets/minecraft/textures/entity/player/slim/alex.png",
+                    &bytes,
+                ),
+            ],
+        );
+        let pack = Pack::open(&zip).unwrap();
+        let look = Look::build(&assets, vec![pack], &mobs()).unwrap();
+        assert!(look.skin_slim);
+        let skin = look.mob_textures.last().unwrap();
+        assert_eq!(skin.dimensions(), (64, 64));
+        assert_eq!(skin.get_pixel(8, 8).0, [7, 8, 9, 255]);
+        // The legacy left leg was made from the right one.
+        assert_eq!(skin.get_pixel(20, 48).0, [7, 8, 9, 255]);
     }
 
     #[test]

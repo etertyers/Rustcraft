@@ -14,6 +14,34 @@ use crate::config;
 /// Keeps the camera from flipping over at straight up/down.
 const MAX_PITCH: f32 = FRAC_PI_2 - 0.001;
 
+/// The shake of walking, applied to the view (vanilla's `bobView`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewBob {
+    /// Sideways and downward shift in blocks.
+    pub sideways: f32,
+    pub down: f32,
+    /// Roll and pitch in radians.
+    pub roll: f32,
+    pub pitch: f32,
+}
+
+impl ViewBob {
+    pub const NONE: Self = Self {
+        sideways: 0.0,
+        down: 0.0,
+        roll: 0.0,
+        pitch: 0.0,
+    };
+
+    /// The shake as a transform of camera space: shift, then roll, then
+    /// pitch, as vanilla applies them to the view.
+    pub fn matrix(&self) -> Mat4 {
+        Mat4::from_translation(Vec3::new(self.sideways, self.down, 0.0))
+            * Mat4::from_rotation_z(self.roll)
+            * Mat4::from_rotation_x(self.pitch)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
     /// Eye position in world space.
@@ -24,6 +52,8 @@ pub struct Camera {
     pub pitch: f32,
     /// Vertical field of view in degrees.
     pub fov: f32,
+    /// The shake of walking.
+    pub bob: ViewBob,
 }
 
 impl Camera {
@@ -33,6 +63,7 @@ impl Camera {
             yaw: 0.0,
             pitch: 0.0,
             fov: config::FOV_Y_DEGREES,
+            bob: ViewBob::NONE,
         };
         camera.rotate(yaw, pitch);
         camera
@@ -65,7 +96,7 @@ impl Camera {
         let view = look_to_mat4(self.position, self.forward(), Vec3::Y);
         // wgpu clip space matches DirectX: depth 0..1, Y up.
         let proj = perspective(self.fov.to_radians(), aspect, config::Z_NEAR, config::Z_FAR);
-        proj * view
+        proj * self.bob.matrix() * view
     }
 }
 

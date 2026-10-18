@@ -337,6 +337,22 @@ pub(crate) mod tests {
         zip.finish().unwrap();
     }
 
+    /// Kenzo's 16× and 32× packs, as they sit in the packs folder.
+    pub const ASHEN: &str = "Ashen_1.8.3.zip";
+    pub const PRIME: &str = "Prime's HD Textures (FREE).zip";
+
+    /// One of Kenzo's packs from the packs folder. They are his own
+    /// downloads and aren't in the repository, so a test that needs one
+    /// says so and passes without it on a machine that doesn't have it.
+    pub fn kenzos_pack(name: &str) -> Option<Pack> {
+        let path = packs_dir().join(name);
+        if !path.exists() {
+            eprintln!("skipping: {} isn't in {}", name, packs_dir().display());
+            return None;
+        }
+        Some(Pack::open(&path).unwrap())
+    }
+
     pub const MCMETA: &[u8] = br#"{"pack": {"pack_format": 34, "description": "test"}}"#;
 
     #[test]
@@ -416,13 +432,14 @@ pub(crate) mod tests {
 
     #[test]
     fn kenzos_packs_open() {
-        let assets = crate::assets::dir();
-        for name in ["Ashen_1.8.3.zip", "Prime's HD Textures (FREE)"] {
-            let pack = Pack::open(&assets.join(name)).unwrap();
+        for name in [ASHEN, PRIME] {
+            let Some(pack) = kenzos_pack(name) else {
+                continue;
+            };
             assert!(pack.has("textures/block/stone.png"), "{name}");
             assert!(pack.read("textures/block/stone.png").is_some(), "{name}");
         }
-        let base = Pack::base(&assets);
+        let base = Pack::base(&crate::assets::dir());
         assert!(base.has("textures/blocks/stone.png"));
     }
 }
