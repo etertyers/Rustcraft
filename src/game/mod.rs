@@ -28,12 +28,13 @@ use winit::{
 
 use crate::{
     config,
-    entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry},
+    entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry, particle::Particle},
     inventory::{
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
     },
     level::{Level, PlayerData, WorldDir},
+    options::Options,
     player::{
         collision::WorldCollider,
         input::MoveKeys,
@@ -70,13 +71,12 @@ const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
 const VOID_Y: f64 = -64.0;
 const VOID_DAMAGE: i32 = 4;
 
-/// 1.0.0's exhaustion for moving: per block walked, sprinted or swum, and
-/// per jump.
-const WALK_EXHAUSTION: f32 = 0.01;
+/// Modern Java Edition's exhaustion for moving: per block sprinted or
+/// swum (walking and sneaking are free), and per jump.
 const SPRINT_EXHAUSTION: f32 = 0.1;
-const SWIM_EXHAUSTION: f32 = 0.015;
-const JUMP_EXHAUSTION: f32 = 0.2;
-const SPRINT_JUMP_EXHAUSTION: f32 = 0.8;
+const SWIM_EXHAUSTION: f32 = 0.01;
+const JUMP_EXHAUSTION: f32 = 0.05;
+const SPRINT_JUMP_EXHAUSTION: f32 = 0.2;
 
 pub struct Game {
     pub chunks: ChunkManager,
@@ -113,6 +113,8 @@ pub struct Game {
     pub message: Option<(String, u32)>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    /// Bits of broken and mined blocks.
+    pub particles: Vec<Particle>,
     pub arrows: Vec<Arrow>,
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
@@ -130,6 +132,8 @@ pub struct Game {
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
     scroll_pixels: f64,
+    /// Mouse look speed, 1 for the default.
+    sensitivity: f32,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
     tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
@@ -184,6 +188,7 @@ impl Game {
             bed: None,
             message: None,
             entities: Vec::new(),
+            particles: Vec::new(),
             arrows: Vec::new(),
             drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
@@ -194,6 +199,7 @@ impl Game {
             eating: None,
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
+            sensitivity: 1.0,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
             flying: false,
@@ -376,8 +382,16 @@ impl Game {
         self.place_clicked = false;
     }
 
+    /// Applies the player's settings: render distance, field of view and
+    /// mouse sensitivity.
+    pub fn apply_options(&mut self, options: &Options) {
+        self.chunks.set_radius(options.render_distance);
+        self.camera.fov = options.fov;
+        self.sensitivity = options.sensitivity;
+    }
+
     pub fn look(&mut self, dx: f64, dy: f64) {
-        let s = config::MOUSE_SENSITIVITY;
+        let s = config::MOUSE_SENSITIVITY * self.sensitivity;
         self.camera.rotate(dx as f32 * s, -dy as f32 * s);
     }
 
@@ -464,6 +478,7 @@ impl Game {
             }
         }
         self.tick_items();
+        self.tick_particles();
         self.tick_arrows();
         self.tick_mobs();
         self.tick_furnaces();
@@ -511,7 +526,7 @@ impl Game {
     }
 
     /// Exhaustion from moving, then a tick of health, hunger, air and fire
-    /// (1.0.0's `addMovementStat` and `onEntityUpdate`). Dying drops the
+    /// (`Player.checkMovementStatistics` and 1.0.0's `onEntityUpdate`). Dying drops the
     /// whole inventory.
     fn tick_stats(&mut self) {
         let vulnerable = self.mode.is_vulnerable();
@@ -534,13 +549,8 @@ impl Game {
                     .add_exhaustion(SWIM_EXHAUSTION * moved.length() as f32);
             } else if liquid == Some(Fluid::Water) {
                 self.stats.add_exhaustion(SWIM_EXHAUSTION * horizontal);
-            } else if self.body.on_ground {
-                let per_block = if self.body.sprinting {
-                    SPRINT_EXHAUSTION
-                } else {
-                    WALK_EXHAUSTION
-                };
-                self.stats.add_exhaustion(per_block * horizontal);
+            } else if self.body.on_ground && self.body.sprinting {
+                self.stats.add_exhaustion(SPRINT_EXHAUSTION * horizontal);
             }
         }
         let around = Surroundings {
@@ -943,6 +953,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn mining_chips_and_breaking_bursts_into_particles_that_fade() {
+        let mut game = flat_game(GameMode::Survival);
+        game.breaking = true;
+        game.tick();
+        assert_eq!(game.particles.len(), 1, "a chip from the face being mined");
+        for _ in 0..17 {
+            game.tick();
+        }
+        assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
+        assert!(game.particles.len() >= 64, "{}", game.particles.len());
+        game.breaking = false;
+        for _ in 0..100 {
+            game.tick();
+        }
+        assert!(game.particles.is_empty());
+    }
+
+    #[test]
     fn stone_mined_by_hand_drops_nothing() {
         let mut game = flat_game(GameMode::Survival);
         game.chunks
@@ -961,6 +989,8 @@ pub(crate) mod tests {
         for (mode, hurt) in [(GameMode::Survival, 7), (GameMode::Creative, 0)] {
             let mut game = flat_game(mode);
             game.body = Body::new(DVec3::new(0.5, 74.0, 0.5));
+            // No saturation, so healing doesn't start within the 3 seconds.
+            game.stats.saturation = 0.0;
             for _ in 0..60 {
                 game.tick();
             }

@@ -9,6 +9,7 @@ use crate::{
     entity::{
         arrow::{self, Arrow, ArrowEvent},
         item::ItemEntity,
+        particle::{MAX_PARTICLES, Particle},
     },
     inventory::{item::Tool, player::HOTBAR_SLOTS, stack::ItemStack},
     player::{
@@ -25,21 +26,26 @@ use crate::{
 /// The arrow item, given back when a stuck arrow is picked up.
 const ARROW: u16 = 262;
 
-/// Exhaustion per block broken (1.0.0's `harvestBlock`).
-const BREAK_EXHAUSTION: f32 = 0.025;
+/// Exhaustion per block broken (modern `Block.playerDestroy`).
+const BREAK_EXHAUSTION: f32 = 0.005;
 /// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
 const EAT_TICKS: u32 = 32;
 /// Mobs can be hit this far away (1.0.0 limits entity reach to 3).
 const ATTACK_REACH: f64 = 3.0;
 /// Mob hitboxes grow by this for aiming (1.0.0's `getCollisionBorderSize`).
 const TARGET_BORDER: f64 = 0.1;
-/// Exhaustion per attack (1.0.0).
-const ATTACK_EXHAUSTION: f32 = 0.3;
+/// Exhaustion per attack (modern `Player.attack`).
+const ATTACK_EXHAUSTION: f32 = 0.1;
 /// Extra push and lift of a sprinting hit (1.0.0's knockback bonus).
 const SPRINT_KNOCKBACK: f64 = 0.5;
 const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
 
 impl Game {
+    /// The block being mined and how far along it is (0–1), for the crack.
+    pub fn mining_progress(&self) -> Option<(IVec3, f32)> {
+        self.mining
+    }
+
     /// The tool in the selected slot, if it's a tool.
     fn selected_tool(&self) -> Option<&Tool> {
         let stack = self.inventory.selected_stack()?;
@@ -91,6 +97,19 @@ impl Game {
         };
         if wants_break {
             self.mine(hit.block);
+            // Chips fly off the face while it's being mined.
+            if self.mining.is_some()
+                && let Some(face) = hit.face
+                && let Some(block) =
+                    self.chunks
+                        .world()
+                        .block(hit.block.x, hit.block.y, hit.block.z)
+            {
+                let rng = &mut self.rng;
+                let mut random = || rng.next_f64() as f32;
+                let chip = Particle::chip(hit.block, face, block, &mut random);
+                self.add_particles([chip]);
+            }
         } else if using && !self.activate(hit.block, place_pressed) && wants_place {
             self.place(&hit);
         }
@@ -141,6 +160,13 @@ impl Game {
         if edits.is_empty() {
             return;
         }
+        if let Some(broken) = world.block(cell.x, cell.y, cell.z) {
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            let burst = Particle::burst(cell, broken, &mut random);
+            self.add_particles(burst);
+        }
+        let world = self.chunks.world();
         if self.mode.drops_items() {
             let tool = self
                 .inventory
@@ -528,6 +554,25 @@ impl Game {
             }
         }
         log::info!("dev kit given");
+    }
+
+    /// Adds particles, dropping the oldest past 1.0.0's limit.
+    fn add_particles(&mut self, particles: impl IntoIterator<Item = Particle>) {
+        self.particles.extend(particles);
+        let over = self.particles.len().saturating_sub(MAX_PARTICLES);
+        self.particles.drain(..over);
+    }
+
+    /// Moves block-breaking particles and removes the faded ones.
+    pub(super) fn tick_particles(&mut self) {
+        let collider = crate::player::collision::WorldCollider {
+            world: self.chunks.world(),
+            blocks: &self.items.blocks,
+        };
+        for particle in &mut self.particles {
+            particle.tick(&collider);
+        }
+        self.particles.retain(|particle| !particle.expired());
     }
 
     /// Throws one of the selected item forward (1.0.0's Q).

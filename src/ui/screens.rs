@@ -52,6 +52,8 @@ pub enum ScreenAction {
     Respawn,
     /// The sleep screen's Leave Bed button.
     LeaveBed,
+    /// A choice in the pause menu.
+    Pause(super::pause::PauseAction),
 }
 
 /// Everything a screen shows.

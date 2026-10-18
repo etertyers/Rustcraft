@@ -2,6 +2,7 @@
 
 pub mod atlas;
 pub mod camera;
+pub mod crack;
 pub mod entities;
 pub mod frustum;
 pub mod icons;
@@ -125,6 +126,9 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
     mob_pipeline: wgpu::RenderPipeline,
+    crack_pipeline: wgpu::RenderPipeline,
+    /// The crack over the block being mined, if any.
+    crack: Option<ChunkBuffers>,
     /// One texture per mob kind.
     mob_bind_groups: Vec<wgpu::BindGroup>,
     /// This frame's mob meshes, by kind.
@@ -253,6 +257,8 @@ impl Renderer {
             false,
             false,
         );
+        let crack_pipeline =
+            create_crack_pipeline(&device, &pipeline_layout, &shader, config.format);
         let mob_bind_groups = mob_textures
             .iter()
             .map(|image| create_texture_bind_group(&device, &queue, &texture_layout, "mob", image))
@@ -278,6 +284,8 @@ impl Renderer {
             pipeline,
             translucent_pipeline,
             mob_pipeline,
+            crack_pipeline,
+            crack: None,
             mob_bind_groups,
             mobs: Vec::new(),
             sky_pipeline,
@@ -314,6 +322,11 @@ impl Renderer {
             .filter(|(_, mesh)| !mesh.is_empty())
             .map(|(kind, mesh)| (*kind, self.buffers("mob", mesh)))
             .collect();
+    }
+
+    /// Replaces the mining crack drawn from the next frame on.
+    pub fn set_crack(&mut self, mesh: Option<&Mesh>) {
+        self.crack = mesh.map(|mesh| self.buffers("crack", mesh));
     }
 
     /// Replaces the dropped-item mesh drawn from the next frame on.
@@ -372,6 +385,25 @@ impl Renderer {
 
     pub fn aspect(&self) -> f32 {
         self.config.width as f32 / self.config.height as f32
+    }
+
+    /// Forgets the world's chunks, items and mobs (leaving a world).
+    pub fn clear_world(&mut self) {
+        self.chunks.clear();
+        self.entities = None;
+        self.crack = None;
+        self.mobs.clear();
+        self.outline.set_target(None);
+    }
+
+    /// Waits for the display's refresh (vsync) or not.
+    pub fn set_vsync(&mut self, vsync: bool) {
+        self.config.present_mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        self.surface.configure(&self.device, &self.config);
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -498,6 +530,10 @@ impl Renderer {
                     draw_range(&mut pass, mesh, 0..mesh.opaque);
                 }
                 pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            }
+            if let Some(crack) = &self.crack {
+                pass.set_pipeline(&self.crack_pipeline);
+                draw_range(&mut pass, crack, 0..crack.opaque);
             }
             // Clouds and water both blend: draw whichever is farther first.
             let above_clouds = camera.position.y > environment.cloud_height;
@@ -713,6 +749,63 @@ fn create_block_pipeline(
                 format,
                 blend,
                 write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The mining crack: multiplies into the opaque world (src × dst twice),
+/// depth-tested a little toward the camera so it shows on the block's
+/// faces, without writing depth.
+fn create_crack_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let multiply = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Dst,
+        dst_factor: wgpu::BlendFactor::Src,
+        operation: wgpu::BlendOperation::Add,
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("crack"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[Some(vertex::Vertex::layout())],
+        },
+        primitive: wgpu::PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias: wgpu::DepthBiasState {
+                constant: -2,
+                slope_scale: -1.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_crack"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState {
+                    color: multiply,
+                    alpha: wgpu::BlendComponent::OVER,
+                }),
+                write_mask: wgpu::ColorWrites::COLOR,
             })],
         }),
         multiview_mask: None,

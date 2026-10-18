@@ -22,6 +22,8 @@ pub struct Camera {
     pub yaw: f32,
     /// Radians. Positive looks up.
     pub pitch: f32,
+    /// Vertical field of view in degrees.
+    pub fov: f32,
 }
 
 impl Camera {
@@ -30,6 +32,7 @@ impl Camera {
             position,
             yaw: 0.0,
             pitch: 0.0,
+            fov: config::FOV_Y_DEGREES,
         };
         camera.rotate(yaw, pitch);
         camera
@@ -61,12 +64,7 @@ impl Camera {
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = look_to_mat4(self.position, self.forward(), Vec3::Y);
         // wgpu clip space matches DirectX: depth 0..1, Y up.
-        let proj = perspective(
-            config::FOV_Y_DEGREES.to_radians(),
-            aspect,
-            config::Z_NEAR,
-            config::Z_FAR,
-        );
+        let proj = perspective(self.fov.to_radians(), aspect, config::Z_NEAR, config::Z_FAR);
         proj * view
     }
 }

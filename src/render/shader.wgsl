@@ -71,6 +71,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(srgb_to_linear(fogged), 1.0);
 }
 
+// The crack over a block being mined: its color multiplies what's on
+// screen twice over (1.0.0's DST_COLOR × SRC_COLOR blending), so mid-gray
+// leaves it alone and darker pixels darken it. The texture's sRGB values
+// are used as they are, since blending happens on linear values.
+@fragment
+fn fs_crack(in: VertexOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    if texel.a < 0.1 {
+        discard;
+    }
+    let shade = mix(vec3<f32>(0.5), linear_to_srgb(texel.rgb), texel.a);
+    return vec4<f32>(shade, 1.0);
+}
+
 // Translucent faces (water, ice, glass): the texture's own alpha, blended.
 @fragment
 fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
