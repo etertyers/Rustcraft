@@ -48,6 +48,7 @@ use crate::{
     world::{
         block::Fluid,
         chunk::ChunkPos,
+        fire::Fires,
         fluid::{self, Fluids},
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
@@ -132,6 +133,7 @@ pub struct Game {
     mining: Option<(glam::IVec3, f32)>,
     /// Scheduled water and lava updates.
     fluids: Fluids,
+    fires: Fires,
     /// For drops and throws.
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
@@ -202,6 +204,7 @@ impl Game {
             mining: None,
             eating: None,
             fluids: Fluids::default(),
+            fires: Fires::default(),
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
@@ -487,6 +490,7 @@ impl Game {
         self.tick_arrows();
         self.tick_mobs();
         self.tick_fluids();
+        self.tick_fires();
         self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;

@@ -347,6 +347,35 @@ const CROSS_PLANES: [[[f32; 3]; 4]; 2] = [
     [[0., 0., 1.], [1., 0., 0.], [1., 1., 0.], [0., 1., 1.]],
 ];
 
+/// How tall fire's planes reach, into the cell above (1.0.0's 1.4).
+const FIRE_HEIGHT: f32 = 1.4;
+
+/// Fire's planes (1.0.0's `renderBlockFire`): on a floor, four planes
+/// rising from its edges and leaning in; otherwise one leaning out from
+/// each solid wall beside it (`walls` in −x, +x, −z, +z order).
+fn fire_planes(floor: bool, walls: [bool; 4]) -> Vec<[[f32; 3]; 4]> {
+    let h = FIRE_HEIGHT;
+    if floor || !walls.contains(&true) {
+        return vec![
+            [[0., 0., 0.], [0., 0., 1.], [0.7, h, 1.], [0.7, h, 0.]],
+            [[1., 0., 1.], [1., 0., 0.], [0.3, h, 0.], [0.3, h, 1.]],
+            [[0., 0., 1.], [1., 0., 1.], [1., h, 0.3], [0., h, 0.3]],
+            [[1., 0., 0.], [0., 0., 0.], [0., h, 0.7], [1., h, 0.7]],
+        ];
+    }
+    let leaning = [
+        [[0., 0., 1.], [0., 0., 0.], [0.2, h, 0.], [0.2, h, 1.]],
+        [[1., 0., 0.], [1., 0., 1.], [0.8, h, 1.], [0.8, h, 0.]],
+        [[0., 0., 0.], [1., 0., 0.], [1., h, 0.2], [0., h, 0.2]],
+        [[1., 0., 1.], [0., 0., 1.], [0., h, 0.8], [1., h, 0.8]],
+    ];
+    leaning
+        .into_iter()
+        .zip(walls)
+        .filter_map(|(plane, wall)| wall.then_some(plane))
+        .collect()
+}
+
 /// Planes of the #-shaped crop model, 4 pixels in from each edge.
 const CROP_PLANES: [[[f32; 3]; 4]; 4] = [
     [
@@ -796,6 +825,27 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                     uv,
                                     [side_color; 4],
                                     [own_light; 4],
+                                );
+                            }
+                        }
+                        Shape::Fire => {
+                            let solid = |dx: i32, dy: i32, dz: i32| {
+                                let next = area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                                next.is_some_and(|next| models.get(next).opaque_cube)
+                            };
+                            let floor = solid(0, -1, 0);
+                            let walls = [
+                                solid(-1, 0, 0),
+                                solid(1, 0, 0),
+                                solid(0, 0, -1),
+                                solid(0, 0, 1),
+                            ];
+                            for plane in fire_planes(floor, walls) {
+                                mesh.double_sided_quad(
+                                    translate(plane, origin),
+                                    side.uv,
+                                    side_color,
+                                    own_light,
                                 );
                             }
                         }

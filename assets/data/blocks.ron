@@ -26,6 +26,8 @@
 //             Chest or Furnace (opens its slots), Bed (sleeps) or Door
 //             (opens and closes; iron doors have none, needing redstone)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
+//   burns     (encourage, catch): how readily fire spreads beside it and
+//             how readily it burns away (modern FireBlock values)
 //   drops     Itself (default; keeps the data value if it has variants),
 //             Nothing, All([...]) every drop that rolls, or OneOf([...]) the
 //             first that rolls. A drop is (item, data, keep_data, min, max,
@@ -40,7 +42,7 @@
     (id: 2, name: "grass", hardness: 0.6, tool: Shovel, drops: All([(item: 3)]), textures: (all: "dirt", top: "grass_top", side: "grass_side"), tint: GrassTop),
     (id: 3, name: "dirt", hardness: 0.5, tool: Shovel, textures: (all: "dirt")),
     (id: 4, name: "cobblestone", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "cobblestone")),
-    (id: 5, name: "planks", hardness: 2.0, tool: Axe, textures: (all: "planks_oak")),
+    (id: 5, name: "planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "planks_oak")),
     (id: 6, name: "sapling", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "sapling_oak"),
         variants: {
             1: (name: "spruce", textures: (all: "sapling_spruce")),
@@ -56,13 +58,13 @@
     (id: 14, name: "gold_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "gold_ore")),
     (id: 15, name: "iron_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Stone), textures: (all: "iron_ore")),
     (id: 16, name: "coal_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 263)]), textures: (all: "coal_ore")),
-    (id: 17, name: "log", hardness: 2.0, tool: Axe, textures: (end: "log_oak_top", side: "log_oak"),
+    (id: 17, name: "log", hardness: 2.0, burns: (encourage: 5, catch: 5), tool: Axe, textures: (end: "log_oak_top", side: "log_oak"),
         variants: {
             1: (name: "spruce", textures: (end: "log_spruce_top", side: "log_spruce")),
             2: (name: "birch", textures: (end: "log_birch_top", side: "log_birch")),
         }),
     // 1.0.0 colors spruce and birch leaves with fixed colors instead of the biome.
-    (id: 18, name: "leaves", hardness: 0.2, drops: OneOf([(item: 18, keep_data: true, tool: Shears), (item: 6, keep_data: true, chance: 0.05, not_tool: Shears)]), opacity: 1, layer: Cutout, textures: (all: "leaves_oak"), tint: Foliage,
+    (id: 18, name: "leaves", hardness: 0.2, burns: (encourage: 30, catch: 60), drops: OneOf([(item: 18, keep_data: true, tool: Shears), (item: 6, keep_data: true, chance: 0.05, not_tool: Shears)]), opacity: 1, layer: Cutout, textures: (all: "leaves_oak"), tint: Foliage,
         variants: {
             1: (name: "spruce", textures: (all: "leaves_spruce"), tint: Fixed(0x619961)),
             2: (name: "birch", textures: (all: "leaves_birch"), tint: Fixed(0x80A755)),
@@ -84,18 +86,18 @@
     (id: 29, name: "sticky_piston", hardness: 0.5, textures: (top: "piston_top_sticky", bottom: "piston_bottom", side: "piston_side")),
     (id: 30, name: "web", hardness: 4.0, harvest: (tools: [Sword, Shears]), drops: All([(item: 287)]), opacity: 1, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "web")),
     // Data 0 is the dead shrub, 1 tall grass, 2 fern.
-    (id: 31, name: "tallgrass", hardness: 0.0, drops: All([(item: 295, chance: 0.125)]), replaceable: true, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "deadbush"),
+    (id: 31, name: "tallgrass", hardness: 0.0, burns: (encourage: 60, catch: 100), drops: All([(item: 295, chance: 0.125)]), replaceable: true, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "deadbush"),
         variants: {
             1: (name: "grass", textures: (all: "tallgrass"), tint: Grass),
             2: (name: "fern", textures: (all: "fern"), tint: Grass),
         }),
-    (id: 32, name: "deadbush", hardness: 0.0, drops: Nothing, replaceable: true, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "deadbush")),
+    (id: 32, name: "deadbush", hardness: 0.0, burns: (encourage: 60, catch: 100), drops: Nothing, replaceable: true, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "deadbush")),
     (id: 33, name: "piston", hardness: 0.5, textures: (top: "piston_top_normal", bottom: "piston_bottom", side: "piston_side")),
     (id: 34, name: "piston_head", hardness: 0.5, drops: Nothing, shape: PistonHead, textures: (end: "piston_top_normal", side: "piston_side"),
         variants: {
             8: (name: "sticky", textures: (top: "piston_top_sticky", bottom: "piston_top_normal", side: "piston_side")),
         }),
-    (id: 35, name: "wool", hardness: 0.8, textures: (all: "wool_colored_white"),
+    (id: 35, name: "wool", hardness: 0.8, burns: (encourage: 30, catch: 60), textures: (all: "wool_colored_white"),
         variants: {
             1: (name: "orange", textures: (all: "wool_colored_orange")),
             2: (name: "magenta", textures: (all: "wool_colored_magenta")),
@@ -114,8 +116,8 @@
             15: (name: "black", textures: (all: "wool_colored_black")),
         }),
     (id: 36, name: "piston_extension", hardness: -1.0, drops: Nothing, shape: None, solid: false, blocks_flow: true),
-    (id: 37, name: "yellow_flower", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "flower_dandelion")),
-    (id: 38, name: "red_flower", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "flower_rose")),
+    (id: 37, name: "yellow_flower", hardness: 0.0, burns: (encourage: 60, catch: 100), needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "flower_dandelion")),
+    (id: 38, name: "red_flower", hardness: 0.0, burns: (encourage: 60, catch: 100), needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "flower_rose")),
     (id: 39, name: "brown_mushroom", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, light: 1, textures: (all: "mushroom_brown")),
     (id: 40, name: "red_mushroom", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "mushroom_red")),
     (id: 41, name: "gold_block", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "gold_block")),
@@ -139,14 +141,14 @@
             5: (name: "stone_brick", textures: (all: "stonebrick")),
         }),
     (id: 45, name: "brick_block", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "brick")),
-    (id: 46, name: "tnt", hardness: 0.0, textures: (top: "tnt_top", bottom: "tnt_bottom", side: "tnt_side")),
-    (id: 47, name: "bookshelf", hardness: 1.5, tool: Axe, drops: Nothing, textures: (end: "planks_oak", side: "bookshelf")),
+    (id: 46, name: "tnt", hardness: 0.0, burns: (encourage: 15, catch: 100), textures: (top: "tnt_top", bottom: "tnt_bottom", side: "tnt_side")),
+    (id: 47, name: "bookshelf", hardness: 1.5, burns: (encourage: 30, catch: 20), tool: Axe, drops: Nothing, textures: (end: "planks_oak", side: "bookshelf")),
     (id: 48, name: "mossy_cobblestone", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "cobblestone_mossy")),
     (id: 49, name: "obsidian", hardness: 50.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Diamond), textures: (all: "obsidian")),
     (id: 50, name: "torch", hardness: 0.0, placement: Torch, shape: Torch, layer: Cutout, solid: false, light: 14, textures: (all: "torch_on")),
     (id: 51, name: "fire", hardness: 0.0, drops: Nothing, replaceable: true, shape: Fire, layer: Cutout, solid: false, light: 15, textures: (all: "fire_layer_0")),
     (id: 52, name: "mob_spawner", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: Nothing, layer: Cutout, textures: (all: "spawner")),
-    (id: 53, name: "oak_stairs", hardness: 2.0, opacity: 15, shape: Stairs, textures: (all: "planks_oak")),
+    (id: 53, name: "oak_stairs", hardness: 2.0, burns: (encourage: 5, catch: 20), opacity: 15, shape: Stairs, textures: (all: "planks_oak")),
     // No block texture in the pack; 1.0.0 chests are cut from entity/chest/normal.png later.
     (id: 54, name: "chest", hardness: 2.5, placement: Facing, activate: Chest, tool: Axe, shape: Chest, textures: (end: "chest_top", side: "chest_side", south: "chest_front")),
     (id: 55, name: "redstone_wire", hardness: 0.0, drops: All([(item: 331)]), needs_ground: true, shape: RedstoneWire, layer: Cutout, solid: false, textures: (all: "redstone_dust_dot")),
@@ -200,7 +202,7 @@
     (id: 82, name: "clay", hardness: 0.6, tool: Shovel, drops: All([(item: 337, min: 4)]), textures: (all: "clay")),
     (id: 83, name: "reeds", hardness: 0.0, drops: All([(item: 338)]), needs_ground: true, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "reeds")),
     (id: 84, name: "jukebox", hardness: 2.0, textures: (all: "jukebox_side", top: "jukebox_top")),
-    (id: 85, name: "fence", hardness: 2.0, shape: Fence, textures: (all: "planks_oak")),
+    (id: 85, name: "fence", hardness: 2.0, burns: (encourage: 5, catch: 20), shape: Fence, textures: (all: "planks_oak")),
     (id: 86, name: "pumpkin", hardness: 1.0, textures: (end: "pumpkin_top", side: "pumpkin_side", south: "pumpkin_face_off")),
     (id: 87, name: "netherrack", hardness: 0.4, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "netherrack")),
     (id: 88, name: "soul_sand", hardness: 0.5, tool: Shovel, textures: (all: "soul_sand")),
@@ -257,7 +259,7 @@
     (id: 103, name: "melon_block", hardness: 1.0, drops: All([(item: 360, min: 3, max: 7)]), textures: (end: "melon_top", side: "melon_side")),
     (id: 104, name: "pumpkin_stem", hardness: 0.0, drops: All([(item: 361)]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "pumpkin_stem_disconnected"), tint: Fixed(0x30C010)),
     (id: 105, name: "melon_stem", hardness: 0.0, drops: All([(item: 362)]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "melon_stem_disconnected"), tint: Fixed(0x30C010)),
-    (id: 106, name: "vine", hardness: 0.2, drops: All([(item: 106, tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, textures: (all: "vine"), tint: Foliage),
+    (id: 106, name: "vine", hardness: 0.2, burns: (encourage: 15, catch: 100), drops: All([(item: 106, tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, textures: (all: "vine"), tint: Foliage),
     (id: 107, name: "fence_gate", hardness: 2.0, shape: FenceGate, textures: (all: "planks_oak")),
     (id: 108, name: "brick_stairs", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, shape: Stairs, textures: (all: "brick")),
     (id: 109, name: "stone_brick_stairs", hardness: 1.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, shape: Stairs, textures: (all: "stonebrick")),

@@ -1,6 +1,7 @@
-//! Water and lava in the played world: the game's block edits wake the
-//! fluids around them, scheduled fluid updates run each tick, and what
-//! water washes away drops as items.
+//! Water, lava and fire in the played world: the game's block edits wake
+//! the fluids and fires around them, scheduled updates run each tick, what
+//! water washes away drops as items, and lava near the player starts
+//! fires.
 
 use glam::{DVec3, IVec3};
 
@@ -13,12 +14,17 @@ use crate::{
     world::{block::BlockState, chunk::ChunkPos, fluid, harvest},
 };
 
+/// Chunks around the player, each way, whose blocks get random ticks
+/// (modern Minecraft ticks those within 128 blocks).
+const RANDOM_TICK_CHUNKS: i32 = 8;
+
 impl Game {
-    /// Sets blocks the player changed, waking fluids next to them.
+    /// Sets blocks, waking fluids and fires next to them.
     pub(super) fn edit(&mut self, edits: &[(IVec3, BlockState)]) {
         self.chunks.set_blocks(edits);
         for &(at, _) in edits {
             self.fluids.changed(at);
+            self.fires.changed(at);
         }
     }
 
@@ -111,13 +117,40 @@ impl Game {
             }
         }
         self.chunks.set_blocks(&outcome.edits);
+        for &(at, _) in &outcome.edits {
+            self.fires.changed(at);
+        }
     }
 
-    /// Schedules the flowing fluid in chunks that just loaded.
+    /// One tick of fire, and random ticks for the lava in chunks within
+    /// `RANDOM_TICK_CHUNKS` of the player.
+    pub(super) fn tick_fires(&mut self) {
+        let feet = self.body.position().floor().as_ivec3();
+        let center = ChunkPos::of_block(feet.x, feet.z);
+        let reach = RANDOM_TICK_CHUNKS;
+        let near: Vec<_> = (-reach..=reach)
+            .flat_map(|dz| (-reach..=reach).map(move |dx| center.offset(dx, dz)))
+            .collect();
+        let rng = &mut self.rng;
+        let mut random = |n: u32| rng.below(n);
+        let edits = self.fires.tick(
+            self.chunks.world(),
+            &self.items.blocks,
+            self.time,
+            &near,
+            &mut random,
+        );
+        if !edits.is_empty() {
+            self.edit(&edits);
+        }
+    }
+
+    /// Schedules the flowing fluid and fire in chunks that just loaded.
     pub(super) fn schedule_fluids(&mut self, chunks: &[ChunkPos]) {
         for &pos in chunks {
             if let Some(chunk) = self.chunks.world().get(pos) {
                 self.fluids.chunk_loaded(chunk, self.time);
+                self.fires.chunk_loaded(chunk, self.time);
             }
         }
     }

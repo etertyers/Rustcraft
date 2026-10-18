@@ -255,6 +255,16 @@ pub enum Activate {
     Door,
 }
 
+/// How a block burns (modern `FireBlock.setFlammable`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Burns {
+    /// How readily fire spreads into air next to it.
+    pub encourage: u8,
+    /// How readily it catches and burns away, out of 300 a fire tick.
+    pub catch: u8,
+}
+
 /// The liquid a block is (flowing or still).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Fluid {
@@ -331,6 +341,9 @@ pub struct BlockDef {
     /// `blockBlocksFlow` list). Solid blocks always do.
     #[serde(default)]
     pub blocks_flow: bool,
+    /// How fire treats it; `None` doesn't burn.
+    #[serde(default)]
+    pub burns: Option<Burns>,
     /// The tool that mines it fast (1.0.0's effective tool lists and
     /// materials).
     #[serde(default)]
