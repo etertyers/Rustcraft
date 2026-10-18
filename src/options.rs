@@ -72,6 +72,9 @@ impl Options {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())?;
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
         std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
     }
 

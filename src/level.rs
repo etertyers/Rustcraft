@@ -106,9 +106,17 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-/// The saves folder: `$RUSTCRAFT_SAVES` if set, else `./saves`.
+/// The saves folder: `$RUSTCRAFT_SAVES` if set, else
+/// `~/Library/Application Support/Rustcraft/saves` in the app bundle, else
+/// `./saves`. Options are kept beside it.
 pub fn saves_dir() -> PathBuf {
-    std::env::var_os("RUSTCRAFT_SAVES").map_or_else(|| PathBuf::from("saves"), PathBuf::from)
+    if let Some(dir) = std::env::var_os("RUSTCRAFT_SAVES") {
+        return dir.into();
+    }
+    match crate::assets::support_dir().filter(|_| crate::assets::in_app_bundle()) {
+        Some(support) => support.join("saves"),
+        None => PathBuf::from("saves"),
+    }
 }
 
 /// One world's folder.
