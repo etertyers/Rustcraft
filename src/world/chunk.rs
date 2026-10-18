@@ -1,4 +1,4 @@
-//! Chunk storage: a 16×128×16 column split into 16³ sections, plus the
+//! Chunk storage: a 16×256×16 column split into 16³ sections, plus the
 //! block entities (chests, furnaces) in it.
 
 use std::collections::BTreeMap;
@@ -7,7 +7,7 @@ use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
 use super::{biome::Biome, block::BlockState, block_entity::BlockEntity};
 
-/// A block's position within its chunk: x and z in 0..16, y in 0..128.
+/// A block's position within its chunk: x and z in 0..16, y in 0..256.
 pub type LocalPos = [u8; 3];
 
 /// Edge length of a section (and width of a chunk).
@@ -54,6 +54,10 @@ pub struct Chunk {
     /// Biome of each column, indexed `z * 16 + x`.
     biomes: [Biome; CHUNK_SIZE * CHUNK_SIZE],
     block_entities: BTreeMap<LocalPos, BlockEntity>,
+    /// Blocks whose state hangs on their neighbors (fence connections,
+    /// stair corners) and must be worked out again once the chunks around
+    /// are loaded: those upgraded from v1.0, which didn't store it.
+    pub post_process: Vec<LocalPos>,
 }
 
 impl Chunk {
@@ -63,6 +67,7 @@ impl Chunk {
             sections: Default::default(),
             biomes: [Biome::default(); CHUNK_SIZE * CHUNK_SIZE],
             block_entities: BTreeMap::new(),
+            post_process: Vec::new(),
         }
     }
 
@@ -107,7 +112,7 @@ impl Chunk {
         )
     }
 
-    /// Block at local (x, z) in 0..16 and y in 0..128. Out-of-range y is air.
+    /// Block at local (x, z) in 0..16 and y in 0..256. Out-of-range y is air.
     pub fn get(&self, x: usize, y: usize, z: usize) -> BlockState {
         debug_assert!(x < CHUNK_SIZE && z < CHUNK_SIZE, "({x}, {z}) outside chunk");
         if y >= WORLD_HEIGHT {
@@ -137,6 +142,14 @@ impl Chunk {
         }
     }
 
+    /// One past the highest section holding any blocks (0 if it's all air).
+    pub fn top_section(&self) -> usize {
+        self.sections
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |index| index + 1)
+    }
+
     /// Whether section `index` (0 = bottom) holds no blocks at all.
     pub fn section_is_empty(&self, index: usize) -> bool {
         self.sections[index].is_none()
@@ -158,6 +171,7 @@ impl Chunk {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
     #[test]
     fn chunk_pos_rounds_toward_negative_infinity() {
@@ -173,15 +187,26 @@ mod tests {
         let corners = [
             (0, 0, 0),
             (15, 0, 15),
-            (0, 127, 0),
-            (15, 127, 15),
+            (0, 255, 0),
+            (15, 255, 15),
             (7, 64, 3),
         ];
+        let marker = |i: usize| {
+            BlockState::of(
+                [
+                    blocks::STONE,
+                    blocks::DIRT,
+                    blocks::SAND,
+                    blocks::BRICKS,
+                    blocks::GLASS,
+                ][i],
+            )
+        };
         for (i, &(x, y, z)) in corners.iter().enumerate() {
-            chunk.set(x, y, z, BlockState::new(1, i as u8));
+            chunk.set(x, y, z, marker(i));
         }
         for (i, &(x, y, z)) in corners.iter().enumerate() {
-            assert_eq!(chunk.get(x, y, z), BlockState::new(1, i as u8));
+            assert_eq!(chunk.get(x, y, z), marker(i));
         }
         assert_eq!(chunk.get(1, 0, 0), BlockState::AIR);
     }
@@ -191,7 +216,7 @@ mod tests {
         let mut chunk = Chunk::new(ChunkPos::new(0, 0));
         chunk.set(0, 40, 0, BlockState::AIR);
         assert!((0..SECTION_COUNT).all(|s| chunk.section_is_empty(s)));
-        chunk.set(0, 40, 0, BlockState::new(1, 0));
+        chunk.set(0, 40, 0, BlockState::of(blocks::STONE));
         assert!(!chunk.section_is_empty(2));
         assert!(chunk.section_is_empty(1));
     }
@@ -208,6 +233,6 @@ mod tests {
     #[test]
     fn above_world_height_is_air() {
         let chunk = Chunk::new(ChunkPos::new(0, 0));
-        assert_eq!(chunk.get(0, 128, 0), BlockState::AIR);
+        assert_eq!(chunk.get(0, 256, 0), BlockState::AIR);
     }
 }

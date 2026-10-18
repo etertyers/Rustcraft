@@ -200,13 +200,12 @@ impl ItemEntity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::items;
     use crate::player::collision::WorldCollider;
     use crate::{
-        inventory::item::ItemRegistry,
         player::physics::hitbox,
-        world::{World, block::BlockRegistry, chunk::ChunkPos, worldgen::flat::flat_chunk},
+        world::{World, chunk::ChunkPos, worldgen::flat::flat_chunk},
     };
-    use std::sync::Arc;
 
     struct Scene {
         world: World,
@@ -222,18 +221,16 @@ mod tests {
                     world.insert(flat_chunk(ChunkPos::new(x, z)));
                 }
             }
-            let assets = crate::assets::dir();
-            let items = Items::new(
-                Arc::new(BlockRegistry::load(&assets.join("data/blocks.ron")).unwrap()),
-                Arc::new(ItemRegistry::load(&assets.join("data/items.ron")).unwrap()),
-            );
-            Self { world, items }
+            Self {
+                world,
+                items: Items::new(),
+            }
         }
 
         fn run(&self, item: &mut ItemEntity, ticks: u32) {
             let collider = WorldCollider {
                 world: &self.world,
-                blocks: &self.items.blocks,
+                blocks: self.items.blocks,
             };
             for _ in 0..ticks {
                 item.tick(&collider);
@@ -242,7 +239,7 @@ mod tests {
     }
 
     const COBBLESTONE: ItemStack = ItemStack {
-        id: 4,
+        id: items::COBBLESTONE,
         count: 1,
         damage: 0,
     };
@@ -287,7 +284,7 @@ mod tests {
         let player = hitbox(DVec3::new(0.5, 64.0, 0.5));
         let mut inventory = Inventory::default();
         let mut random = || 0.5;
-        let stack = ItemStack::new(4, 10);
+        let stack = ItemStack::new(items::COBBLESTONE, 10);
         let mut item = ItemEntity::from_block(stack, IVec3::new(1, 64, 0), &mut random);
         assert!(
             !item.pick_up(&player, &mut inventory, &scene.items),
@@ -300,9 +297,9 @@ mod tests {
 
         // A full inventory takes only part of a stack.
         for i in 1..36 {
-            inventory.set(i, Some(ItemStack::new(3, 64)));
+            inventory.set(i, Some(ItemStack::new(items::DIRT, 64)));
         }
-        inventory.set(0, Some(ItemStack::new(4, 60)));
+        inventory.set(0, Some(ItemStack::new(items::COBBLESTONE, 60)));
         let mut item = ItemEntity::new(stack, DVec3::new(0.5, 64.2, 0.5), DVec3::ZERO, 0.0);
         assert!(item.pick_up(&player, &mut inventory, &scene.items));
         assert_eq!((item.stack.count, item.expired()), (6, false));

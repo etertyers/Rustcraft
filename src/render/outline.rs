@@ -1,18 +1,23 @@
-//! The wireframe box around the block the player is looking at.
+//! The wireframe boxes around the block the player is looking at: its
+//! outline shape, which may be several boxes (stairs, fences).
 
 use glam::{IVec3, Vec3};
+
+use crate::world::shape::Cuboid;
 
 /// Minecraft grows the outline by this much so it sits just outside the block.
 const GROW: f32 = 0.002;
 
 /// 12 edges, two vertices each.
-const VERTEX_COUNT: u32 = 24;
+const BOX_VERTICES: u32 = 24;
+/// Most boxes outlined at once (a wall post with four sides is five).
+const MAX_BOXES: usize = 8;
 
 pub struct Outline {
     pipeline: wgpu::RenderPipeline,
     vertices: wgpu::Buffer,
-    /// The block outlined in the next frame.
-    target: Option<IVec3>,
+    /// The block outlined in the next frame, and its outline boxes.
+    target: Option<(IVec3, Vec<Cuboid>)>,
 }
 
 impl Outline {
@@ -68,7 +73,8 @@ impl Outline {
         });
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("outline vertices"),
-            size: (VERTEX_COUNT as usize * std::mem::size_of::<[f32; 3]>()) as wgpu::BufferAddress,
+            size: (BOX_VERTICES as usize * MAX_BOXES * std::mem::size_of::<[f32; 3]>())
+                as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -79,35 +85,40 @@ impl Outline {
         }
     }
 
-    pub fn set_target(&mut self, block: Option<IVec3>) {
-        self.target = block;
+    pub fn set_target(&mut self, target: Option<(IVec3, Vec<Cuboid>)>) {
+        self.target = target;
     }
 
-    /// Uploads this frame's box; returns false if there's nothing to outline.
-    pub fn prepare(&self, queue: &wgpu::Queue) -> bool {
-        let Some(block) = self.target else {
-            return false;
+    /// Uploads this frame's boxes; returns how many vertices to draw (0 if
+    /// there's nothing to outline).
+    pub fn prepare(&self, queue: &wgpu::Queue) -> u32 {
+        let Some((block, boxes)) = &self.target else {
+            return 0;
         };
-        let min = block.as_vec3() - GROW;
-        let max = block.as_vec3() + 1.0 + GROW;
-        queue.write_buffer(
-            &self.vertices,
-            0,
-            bytemuck::cast_slice(&box_edges(min, max)),
-        );
-        true
+        let corner = block.as_vec3();
+        let vertices: Vec<[f32; 3]> = boxes
+            .iter()
+            .take(MAX_BOXES)
+            .flat_map(|b| {
+                let min = corner + Vec3::from(b.min) - GROW;
+                let max = corner + Vec3::from(b.max) + GROW;
+                box_edges(min, max)
+            })
+            .collect();
+        queue.write_buffer(&self.vertices, 0, bytemuck::cast_slice(&vertices));
+        vertices.len() as u32
     }
 
-    /// Draws the box uploaded by `prepare`. Bind group 0 must hold the globals.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+    /// Draws `vertices` uploaded by `prepare`. Bind group 0 must hold the globals.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, vertices: u32) {
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, self.vertices.slice(..));
-        pass.draw(0..VERTEX_COUNT, 0..1);
+        pass.draw(0..vertices, 0..1);
     }
 }
 
 /// Line-list vertices for the 12 edges of a box.
-fn box_edges(min: Vec3, max: Vec3) -> [[f32; 3]; VERTEX_COUNT as usize] {
+fn box_edges(min: Vec3, max: Vec3) -> [[f32; 3]; BOX_VERTICES as usize] {
     let corner = |i: usize| {
         [
             if i & 1 == 0 { min.x } else { max.x },
@@ -115,7 +126,7 @@ fn box_edges(min: Vec3, max: Vec3) -> [[f32; 3]; VERTEX_COUNT as usize] {
             if i & 4 == 0 { min.z } else { max.z },
         ]
     };
-    let mut out = [[0.0; 3]; VERTEX_COUNT as usize];
+    let mut out = [[0.0; 3]; BOX_VERTICES as usize];
     let mut n = 0;
     for a in 0..8 {
         // Each edge joins corners that differ in one bit; list it from the lower one.

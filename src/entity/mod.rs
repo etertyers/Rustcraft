@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod arrow;
+pub mod falling;
 pub mod item;
 pub mod mob;
 pub mod mobs;

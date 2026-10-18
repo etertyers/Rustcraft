@@ -9,8 +9,11 @@ use super::{
     icons::{IconFace, ItemIcon, ItemIcons},
 };
 use crate::{
-    entity::{item::ItemEntity, particle::Particle},
-    world::mesh::{BlockModels, Mesh},
+    entity::{falling::FallingBlock, item::ItemEntity, particle::Particle},
+    world::{
+        Face,
+        mesh::{BlockModels, Mesh, face_corners},
+    },
 };
 
 const CUBE_HALF: f32 = 0.125;
@@ -51,6 +54,30 @@ pub fn item_mesh(
         }
     }
     mesh
+}
+
+/// Adds falling blocks: whole blocks with their faces' textures, lit by
+/// the light where they are.
+pub fn add_falling_blocks(
+    mesh: &mut Mesh,
+    blocks: &[FallingBlock],
+    models: &BlockModels,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    for block in blocks {
+        let bottom = block.between_ticks(alpha);
+        let (sky, lit) = light_at(bottom + DVec3::Y * 0.5);
+        let light = [sky as f32, lit as f32];
+        let corner = (bottom - DVec3::new(0.5, 0.0, 0.5)).as_vec3();
+        let model = models.get(block.state);
+        for face in Face::ALL {
+            let texture = model.faces[face.index()];
+            let color = models.icon_color(texture.tint).map(|c| c * face.shade());
+            let corners = face_corners(face).map(|c| (corner + Vec3::from(c)).to_array());
+            mesh.quad(corners, texture.uv, [color; 4], [light; 4]);
+        }
+    }
 }
 
 /// 1.0.0 darkens digging particles to 60% (then tints them as their block,
@@ -169,13 +196,14 @@ fn add_sprite(mesh: &mut Mesh, origin: Vec3, yaw: f32, face: IconFace, light: [f
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
     #[test]
     fn particles_face_the_camera_even_looking_up_or_down() {
-        use crate::world::{Face, biome::BiomeColors, block::BlockRegistry, block::BlockState};
-        let blocks = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+        use crate::world::{Face, biome::BiomeColors, block::BlockState};
+        let blocks = crate::world::block::registry();
         let models = BlockModels::new(
-            &blocks,
+            blocks,
             |_| None,
             [0.0, 0.0, 1.0, 1.0],
             BiomeColors::uniform(),
@@ -184,7 +212,7 @@ mod tests {
         let chip = Particle::chip(
             glam::IVec3::new(0, 64, 0),
             Face::Top,
-            BlockState::new(1, 0),
+            BlockState::of(blocks::STONE),
             &mut random,
         );
         for (yaw, pitch) in [(0.0f32, 0.0f32), (1.0, 0.8), (2.5, -1.2), (-2.0, 0.3)] {

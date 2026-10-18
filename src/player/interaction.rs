@@ -1,13 +1,17 @@
-//! Breaking and placing blocks: which cells change, following 1.0.0's rules.
+//! Breaking and placing blocks: which cells change, with 1.0.0's rules
+//! and modern block states.
 
-use glam::IVec3;
+use glam::{DVec3, IVec3};
 
 use super::{collision::Aabb, raycast::Hit};
 use crate::{
     config::WORLD_HEIGHT,
     world::{
         Face, World,
-        block::{BlockDef, BlockId, BlockRegistry, BlockState, Placement, bed_direction},
+        block::{BlockDef, BlockRegistry, BlockState, Placement, Shape},
+        connect::{self, sturdy},
+        props::{Prop, attach_face, axis, bed_part, door_half, half, hinge, rail_shape, slab_type},
+        shape,
     },
 };
 
@@ -19,13 +23,17 @@ pub const PLACE_REPEAT_TICKS: u8 = 4;
 /// One block change.
 pub type Edit = (IVec3, BlockState);
 
-fn def_at<'a>(world: &World, blocks: &'a BlockRegistry, at: IVec3) -> Option<&'a BlockDef> {
-    blocks.get(world.block(at.x, at.y, at.z)?.id())
+fn state_at(world: &World, at: IVec3) -> Option<BlockState> {
+    world.block(at.x, at.y, at.z)
 }
 
-/// Breaks the block at `at` (instantly, until mining exists in M7), plus
-/// anything it held up: flowers or a sugar cane stack on top, torches on
-/// its sides. Unbreakable blocks (bedrock) give no edits.
+fn def_at<'a>(world: &World, blocks: &'a BlockRegistry, at: IVec3) -> Option<&'a BlockDef> {
+    blocks.get(state_at(world, at)?.id())
+}
+
+/// Breaks the block at `at`, plus anything it held up: flowers or a sugar
+/// cane stack on top, torches on its sides. Unbreakable blocks (bedrock)
+/// give no edits.
 pub fn break_block(world: &World, blocks: &BlockRegistry, at: IVec3) -> Vec<Edit> {
     let Some(def) = def_at(world, blocks, at) else {
         return Vec::new();
@@ -39,14 +47,14 @@ pub fn break_block(world: &World, blocks: &BlockRegistry, at: IVec3) -> Vec<Edit
         next += 1;
         for face in Face::ALL {
             let neighbor = removed + IVec3::from_array(face.normal());
-            let Some(state) = world.block(neighbor.x, neighbor.y, neighbor.z) else {
+            let Some(state) = state_at(world, neighbor) else {
                 continue;
             };
-            let held = blocks.get(state.id()).is_some_and(|def| {
-                def.held_by(state.data())
-                    .iter()
-                    .any(|&offset| neighbor + offset == removed)
-            });
+            let held = state
+                .def()
+                .held_by(state)
+                .iter()
+                .any(|&offset| neighbor + offset == removed);
             if held && !edits.iter().any(|&(p, _)| p == neighbor) {
                 edits.push((neighbor, BlockState::AIR));
             }
@@ -55,170 +63,329 @@ pub fn break_block(world: &World, blocks: &BlockRegistry, at: IVec3) -> Vec<Edit
     edits
 }
 
-/// Where `block` goes when placed against `hit`, or `None` if it can't be:
-/// the cell must be in the world, loaded and replaceable, a solid block
-/// can't overlap the player, and blocks that need ground need it below.
+/// Whether the cell holding `there` can take `block` placed into it:
+/// anything replaceable (air, tall grass, water), or the same slab or
+/// snow layer that `block` joins (modern `canBeReplaced`). `clicked` is
+/// whether `there` is the block clicked, rather than the cell beside it.
+fn takes(there: BlockState, block: BlockState, hit: &Hit, clicked: bool) -> bool {
+    let def = there.def();
+    if there.id() == block.id() {
+        match def.placement {
+            Placement::Slab if there.get(Prop::SlabType) != slab_type::DOUBLE => {
+                if !clicked {
+                    return true;
+                }
+                let upper = hit.height_in_block() > 0.5;
+                return match (there.get(Prop::SlabType), hit.face) {
+                    (slab_type::BOTTOM, Some(face)) => {
+                        face == Face::Top || (upper && face.is_horizontal())
+                    }
+                    (_, Some(face)) => face == Face::Bottom || (!upper && face.is_horizontal()),
+                    _ => false,
+                };
+            }
+            Placement::Layers if there.number(Prop::Layers) < 8 => {
+                return !clicked || hit.face == Some(Face::Top);
+            }
+            _ => {}
+        }
+    }
+    def.is_replaceable(there)
+}
+
+/// What placing `block` (an item's block, in its placed state) against
+/// `hit` changes, or `None` if it can't go there: the cell must be in the
+/// world, loaded and able to take it, blocks that collide can't overlap
+/// the player (`player`, looking along `yaw`), and blocks that hang on
+/// something need it there. Beds and doors take two cells. Blocks whose
+/// state hangs on their neighbors (fences, stairs) are joined up.
 pub fn place_block(
     world: &World,
     blocks: &BlockRegistry,
     hit: &Hit,
     block: BlockState,
     player: &Aabb,
-) -> Option<Edit> {
-    let clicked = def_at(world, blocks, hit.block)?;
-    // Clicking tall grass or snow replaces it instead of building beside it.
-    let at = if clicked.replaceable {
-        hit.block
+    yaw: f32,
+) -> Option<Vec<Edit>> {
+    let clicked = state_at(world, hit.block)?;
+    // Clicking tall grass, or a slab this one completes, places into it
+    // instead of building beside it.
+    let (at, there) = if takes(clicked, block, hit, true) {
+        (hit.block, clicked)
     } else {
-        hit.adjacent()?
+        let at = hit.adjacent()?;
+        let there = state_at(world, at)?;
+        if !takes(there, block, hit, false) {
+            return None;
+        }
+        (at, there)
     };
     if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
         return None;
     }
-    if !def_at(world, blocks, at)?.replaceable {
-        return None;
-    }
-    let new = blocks.get(block.id())?;
-    if new.solid && Aabb::block(at.x, at.y, at.z).intersects(player) {
-        return None;
-    }
-    let data = match new.placement {
-        // Turned toward the player by `facing_data`, or made into two
-        // halves by `place_bed` or `place_door`, afterwards.
-        Placement::Plain
-        | Placement::Facing
-        | Placement::Bed
-        | Placement::Door
-        | Placement::Slab { .. } => block.data(),
-        Placement::Torch => match hit.face? {
-            Face::Top => 5,
-            Face::East => 1,
-            Face::West => 2,
-            Face::South => 3,
-            Face::North => 4,
+    let looking = Face::from_yaw(yaw);
+    let face = hit.face?;
+    // A side clicked on its top half.
+    let upper = hit.height_in_block() > 0.5;
+    let def = blocks.get(block.id())?;
+    let state = match def.placement {
+        Placement::Plain => block,
+        Placement::Torch { wall } => match face {
+            Face::Top => block,
             Face::Bottom => return None,
+            // On a wall, facing away from it.
+            side => BlockState::of(wall)
+                .with_face(Prop::Facing, side)
+                .with_bool(Prop::Lit, block.bool(Prop::Lit)),
         },
+        Placement::Facing => {
+            let prop = if block.has(Prop::FacingAll) {
+                Prop::FacingAll
+            } else {
+                Prop::Facing
+            };
+            block.with_face(prop, facing_toward(yaw))
+        }
+        Placement::Look | Placement::Bed | Placement::Door => {
+            block.with_face(Prop::Facing, looking)
+        }
+        Placement::LookClockwise => block.with_face(Prop::Facing, looking.rotate_cw()),
+        Placement::Axis => block.with(
+            Prop::Axis,
+            match face {
+                Face::East | Face::West => axis::X,
+                Face::North | Face::South => axis::Z,
+                _ => axis::Y,
+            },
+        ),
+        Placement::Slab => {
+            let kind = if there.id() == block.id() {
+                slab_type::DOUBLE
+            } else {
+                match face {
+                    Face::Bottom => slab_type::TOP,
+                    Face::Top => slab_type::BOTTOM,
+                    _ if upper => slab_type::TOP,
+                    _ => slab_type::BOTTOM,
+                }
+            };
+            block.with(Prop::SlabType, kind)
+        }
+        Placement::Stairs => {
+            let top = face == Face::Bottom || (face != Face::Top && upper);
+            block
+                .with_face(Prop::Facing, looking)
+                .with(Prop::Half, if top { half::TOP } else { half::BOTTOM })
+        }
+        Placement::Trapdoor => {
+            if face.is_horizontal() && hit.block != at {
+                block
+                    .with_face(Prop::Facing, face)
+                    .with(Prop::Half, if upper { half::TOP } else { half::BOTTOM })
+            } else {
+                let top = face == Face::Bottom;
+                block
+                    .with_face(Prop::Facing, looking.opposite())
+                    .with(Prop::Half, if top { half::TOP } else { half::BOTTOM })
+            }
+        }
+        Placement::Wall => {
+            if !face.is_horizontal() {
+                return None;
+            }
+            block.with_face(Prop::Facing, face)
+        }
+        Placement::Attached => match face {
+            Face::Top => block
+                .with(Prop::AttachFace, attach_face::FLOOR)
+                .with_face(Prop::Facing, looking),
+            Face::Bottom => block
+                .with(Prop::AttachFace, attach_face::CEILING)
+                .with_face(Prop::Facing, looking),
+            side => block
+                .with(Prop::AttachFace, attach_face::WALL)
+                .with_face(Prop::Facing, side),
+        },
+        Placement::Vine => {
+            if face == Face::Top {
+                return None;
+            }
+            // On the clicked block's side or underside.
+            let toward = face.opposite();
+            let base = if there.id() == block.id() {
+                there
+            } else {
+                block
+            };
+            base.with_bool(Prop::side(toward), true)
+        }
+        Placement::Layers => {
+            if there.id() == block.id() {
+                there.with_number(Prop::Layers, there.number(Prop::Layers) + 1)
+            } else {
+                block
+            }
+        }
+        Placement::Rail => {
+            let along_x = matches!(looking, Face::East | Face::West);
+            if block.has(Prop::RailShape) {
+                block.with(
+                    Prop::RailShape,
+                    if along_x {
+                        rail_shape::EAST_WEST
+                    } else {
+                        rail_shape::NORTH_SOUTH
+                    },
+                )
+            } else {
+                block.with(
+                    Prop::StraightRailShape,
+                    if along_x {
+                        rail_shape::EAST_WEST
+                    } else {
+                        rail_shape::NORTH_SOUTH
+                    },
+                )
+            }
+        }
     };
+    let new = state.def();
+    // Whatever it hangs on must be there to hold it.
     if !matches!(new.placement, Placement::Bed | Placement::Door)
-        && let Some(offset) = new.support(data)
+        && let Some(offset) = new.support(state)
     {
-        let support = def_at(world, blocks, at + offset)?;
-        // Torches need a full solid block; plants just need ground.
-        let holds = match new.placement {
-            Placement::Torch => support.is_opaque_cube(),
-            Placement::Plain
-            | Placement::Facing
-            | Placement::Bed
-            | Placement::Door
-            | Placement::Slab { .. } => !support.replaceable,
+        let support = state_at(world, at + offset)?;
+        let holds = match new.shape {
+            Shape::Torch | Shape::Ladder | Shape::Lever | Shape::Button => sturdy(support),
+            _ => !support.def().replaceable,
         };
         if !holds {
             return None;
         }
     }
-    Some((at, BlockState::new(block.id(), data)))
+    if new.placement == Placement::Vine && !sturdy(state_at(world, hit.block)?) {
+        return None;
+    }
+    if collides(state, at, player) {
+        return None;
+    }
+    let edits = match new.placement {
+        Placement::Bed => place_bed(world, blocks, hit, (at, state), player)?.to_vec(),
+        Placement::Door => place_door(world, blocks, hit, (at, state), player)?.to_vec(),
+        _ => vec![(at, state)],
+    };
+    // Join fences, stairs and dust to what's around them.
+    let get = |p: IVec3| {
+        edits
+            .iter()
+            .find(|&&(at, _)| at == p)
+            .map(|&(_, block)| block)
+            .or_else(|| state_at(world, p))
+    };
+    Some(
+        edits
+            .iter()
+            .map(|&(at, block)| (at, connect::update_shape(block, at, &get)))
+            .collect(),
+    )
 }
 
-/// A bed's two halves for `foot` (from `place_block`) and a player looking
-/// along `yaw`: only on top of a block, into empty cells above full solid
-/// blocks, clear of the player (1.0.0's `ItemBed.onItemUse`).
-pub fn place_bed(
+/// Whether `state` at `at` would collide with `player`.
+fn collides(state: BlockState, at: IVec3, player: &Aabb) -> bool {
+    let corner = at.as_dvec3();
+    shape::shapes().collision(state).iter().any(|b| {
+        Aabb::new(
+            corner + DVec3::from(b.min.map(f64::from)),
+            corner + DVec3::from(b.max.map(f64::from)),
+        )
+        .intersects(player)
+    })
+}
+
+/// A bed's two halves for `foot` (from `place_block`, facing the way the
+/// player looks): only on top of a block, into empty cells above full
+/// solid blocks, clear of the player (1.0.0's `ItemBed.onItemUse`).
+fn place_bed(
     world: &World,
     blocks: &BlockRegistry,
     hit: &Hit,
     (foot, bed): Edit,
-    yaw: f32,
     player: &Aabb,
 ) -> Option<[Edit; 2]> {
     if hit.face != Some(Face::Top) {
         return None;
     }
-    let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
-    // Looking north, east, south, west puts the head north, east, south, west.
-    let dir = [2, 3, 0, 1][quarter.rem_euclid(4) as usize];
-    let head = foot + bed_direction(dir);
+    let head = foot + IVec3::from_array(bed.face(Prop::Facing).normal());
     for cell in [foot, head] {
-        if !world
-            .block(cell.x, cell.y, cell.z)
-            .is_some_and(BlockState::is_air)
+        if !state_at(world, cell).is_some_and(BlockState::is_air)
             || !def_at(world, blocks, cell - IVec3::Y).is_some_and(BlockDef::is_opaque_cube)
             || Aabb::block(cell.x, cell.y, cell.z).intersects(player)
         {
             return None;
         }
     }
+    let foot_state = bed.with(Prop::BedPart, bed_part::FOOT);
     Some([
-        (foot, BlockState::new(bed.id(), dir)),
-        (head, BlockState::new(bed.id(), dir | 8)),
+        (foot, foot_state),
+        (head, foot_state.with(Prop::BedPart, bed_part::HEAD)),
     ])
 }
 
-/// A door's two halves for `lower` (from `place_block`) and a player
-/// looking along `yaw`: only on top of a full block, into two replaceable
-/// cells clear of the player. Its hinge goes beside the solid side, or
-/// beside a door already there, so pairs open apart (1.0.0's
+/// A door's two halves for `lower` (from `place_block`, facing the way the
+/// player looks): only on top of a full block, into two replaceable cells
+/// clear of the player. Its hinge goes beside the solid side, or beside a
+/// door already there, so pairs open apart (1.0.0's
 /// `ItemDoor.placeDoorBlock`).
-pub fn place_door(
+fn place_door(
     world: &World,
     blocks: &BlockRegistry,
     hit: &Hit,
     (lower, door): Edit,
-    yaw: f32,
     player: &Aabb,
 ) -> Option<[Edit; 2]> {
     if hit.face != Some(Face::Top) || lower.y + 1 >= WORLD_HEIGHT as i32 {
         return None;
     }
     let upper = lower + IVec3::Y;
+    let above = state_at(world, upper)?;
     if !def_at(world, blocks, lower - IVec3::Y)?.is_opaque_cube()
-        || !def_at(world, blocks, upper)?.replaceable
+        || !above.def().is_replaceable(above)
         || Aabb::block(upper.x, upper.y, upper.z).intersects(player)
     {
         return None;
     }
-    let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
-    // Looking north, east, south, west gives direction 3, 0, 1, 2.
-    let mut dir = (quarter + 3).rem_euclid(4) as u8;
-    let side = [IVec3::Z, IVec3::NEG_X, IVec3::NEG_Z, IVec3::X][dir as usize];
+    // The player's right.
+    let right = IVec3::from_array(door.face(Prop::Facing).rotate_cw().normal());
     let count = |offset: IVec3, test: &dyn Fn(BlockState) -> bool| {
         [lower, upper]
             .iter()
-            .filter(|&&cell| {
-                let at = cell + offset;
-                world.block(at.x, at.y, at.z).is_some_and(test)
-            })
+            .filter(|&&cell| state_at(world, cell + offset).is_some_and(test))
             .count()
     };
-    let solid = |block: BlockState| blocks.get(block.id()).is_some_and(BlockDef::is_opaque_cube);
+    let solid = |block: BlockState| block.def().is_opaque_cube();
     let is_door = |block: BlockState| block.id() == door.id();
-    let (door_left, door_right) = (count(-side, &is_door) > 0, count(side, &is_door) > 0);
-    if (door_left && !door_right) || count(side, &solid) > count(-side, &solid) {
-        // Hinged on the other side: turned back a quarter and "open".
-        dir = ((dir + 3) & 3) | 4;
-    }
+    let (door_left, door_right) = (count(-right, &is_door) > 0, count(right, &is_door) > 0);
+    let side = if (door_left && !door_right) || count(right, &solid) > count(-right, &solid) {
+        hinge::RIGHT
+    } else {
+        hinge::LEFT
+    };
+    let lower_state = door
+        .with(Prop::Hinge, side)
+        .with(Prop::DoubleBlockHalf, door_half::LOWER);
     Some([
-        (lower, BlockState::new(door.id(), dir)),
-        (upper, BlockState::new(door.id(), dir | 8)),
+        (lower, lower_state),
+        (
+            upper,
+            lower_state.with(Prop::DoubleBlockHalf, door_half::UPPER),
+        ),
     ])
 }
 
-/// A slab placed at `at` onto the same slab (same block and data value)
-/// joins it into the `double` block instead (1.0.0's
-/// `BlockStep.onBlockAdded`).
-pub fn place_slab(world: &World, (at, slab): Edit, double: BlockId) -> Edit {
-    let below = at - IVec3::Y;
-    match world.block(below.x, below.y, below.z) {
-        Some(under) if under == slab => (below, BlockState::new(double, slab.data())),
-        _ => (at, slab),
-    }
-}
-
-/// The data value turning a `Placement::Facing` block's front toward a
-/// player looking along `yaw` (radians, 0 north, turning east).
-pub fn facing_data(yaw: f32) -> u8 {
-    let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
-    // Looking north, east, south, west puts the front south, west, north, east.
-    [3, 4, 2, 5][quarter.rem_euclid(4) as usize]
+/// The way a `Placement::Facing` block's front faces for a player looking
+/// along `yaw` (radians, 0 north, turning east): toward the player.
+pub fn facing_toward(yaw: f32) -> Face {
+    Face::from_yaw(yaw).opposite()
 }
 
 #[cfg(test)]
@@ -227,21 +394,23 @@ mod tests {
     use crate::{
         player::physics::hitbox,
         world::{
-            Face,
+            Face, blocks,
             chunk::{Chunk, ChunkPos},
+            props::stairs_shape,
         },
     };
     use glam::DVec3;
 
-    const STONE: BlockState = BlockState::new(1, 0);
-    const BEDROCK: BlockState = BlockState::new(7, 0);
-    const REEDS: BlockState = BlockState::new(83, 0);
-    const TALL_GRASS: BlockState = BlockState::new(31, 1);
-    const WATER: BlockState = BlockState::new(9, 0);
-    const DANDELION: BlockState = BlockState::new(37, 0);
+    const STONE: BlockState = BlockState::of(blocks::STONE);
+    const BEDROCK: BlockState = BlockState::of(blocks::BEDROCK);
+    const SUGAR_CANE: BlockState = BlockState::of(blocks::SUGAR_CANE);
+    const SHORT_GRASS: BlockState = BlockState::of(blocks::SHORT_GRASS);
+    const WATER: BlockState = BlockState::of(blocks::WATER);
+    const DANDELION: BlockState = BlockState::of(blocks::DANDELION);
+    const TORCH: BlockState = BlockState::of(blocks::TORCH);
 
-    fn blocks() -> BlockRegistry {
-        BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap()
+    fn blocks() -> &'static BlockRegistry {
+        crate::world::block::registry()
     }
 
     /// One loaded chunk at the origin with a stone floor at y 63.
@@ -260,11 +429,33 @@ mod tests {
         world
     }
 
-    fn hit(block: IVec3, face: Face) -> Hit {
+    fn set(world: &mut World, edits: &[Edit]) {
+        for &(at, block) in edits {
+            let pos = ChunkPos::of_block(at.x, at.z);
+            world
+                .get_mut(pos)
+                .unwrap()
+                .set(at.x as usize, at.y as usize, at.z as usize, block);
+        }
+    }
+
+    /// A hit on `face` of `block`, `height` up it (0.5 is the middle).
+    fn hit_at(block: IVec3, face: Face, height: f64) -> Hit {
+        let center = block.as_dvec3() + DVec3::splat(0.5);
+        let mut point = center + IVec3::from_array(face.normal()).as_dvec3() * 0.5;
+        if face.is_horizontal() {
+            point.y = block.y as f64 + height;
+        }
         Hit {
             block,
             face: Some(face),
+            point,
         }
+    }
+
+    /// A hit on the middle of `face` of `block`.
+    fn hit(block: IVec3, face: Face) -> Hit {
+        hit_at(block, face, 0.4)
     }
 
     /// A player standing well away from the test cells.
@@ -272,129 +463,250 @@ mod tests {
         hitbox(DVec3::new(12.5, 64.0, 12.5))
     }
 
+    /// Places `block` against `hit` looking along `yaw`, by a far player.
+    fn place(world: &World, hit: &Hit, block: BlockState, yaw: f32) -> Option<Vec<Edit>> {
+        place_block(world, blocks(), hit, block, &far_player(), yaw)
+    }
+
+    /// The one cell a placement changes.
+    fn place_one(world: &World, hit: &Hit, block: BlockState) -> Option<Edit> {
+        let edits = place(world, hit, block, 0.0)?;
+        assert_eq!(edits.len(), 1);
+        Some(edits[0])
+    }
+
     #[test]
     fn facing_blocks_put_their_front_toward_the_player() {
         use std::f32::consts::{FRAC_PI_2, PI, TAU};
-        assert_eq!(facing_data(0.0), 3, "looking north, the front faces south");
-        assert_eq!(facing_data(FRAC_PI_2), 4);
-        assert_eq!(facing_data(PI), 2);
-        assert_eq!(facing_data(-FRAC_PI_2), 5);
-        assert_eq!(facing_data(TAU - 0.2), 3);
+        assert_eq!(
+            facing_toward(0.0),
+            Face::South,
+            "looking north, the front faces south"
+        );
+        assert_eq!(facing_toward(FRAC_PI_2), Face::West);
+        assert_eq!(facing_toward(PI), Face::North);
+        assert_eq!(facing_toward(-FRAC_PI_2), Face::East);
+        assert_eq!(facing_toward(TAU - 0.2), Face::South);
+        let world = world_with(&[]);
+        let furnace = BlockState::of(blocks::FURNACE);
+        let (_, placed) =
+            place_one(&world, &hit(IVec3::new(3, 63, 3), Face::Top), furnace).unwrap();
+        assert_eq!(placed.face(Prop::Facing), Face::South);
     }
 
     #[test]
     fn beds_go_on_top_of_solid_blocks_with_the_head_ahead() {
         use std::f32::consts::FRAC_PI_2;
-        const BED: BlockState = BlockState::new(26, 0);
+        let bed = BlockState::of(blocks::RED_BED);
         let world = world_with(&[(IVec3::new(5, 64, 3), STONE)]);
-        let blocks = blocks();
         let on_top = hit(IVec3::new(5, 63, 5), Face::Top);
-        let foot = place_block(&world, &blocks, &on_top, BED, &far_player()).unwrap();
-        // Looking east: the head goes east (direction 3).
-        let halves = place_bed(&world, &blocks, &on_top, foot, FRAC_PI_2, &far_player());
+        // Looking east: the head goes east.
+        let halves = place(&world, &on_top, bed, FRAC_PI_2).unwrap();
+        let east = bed.with_face(Prop::Facing, Face::East);
         assert_eq!(
             halves,
-            Some([
-                (IVec3::new(5, 64, 5), BlockState::new(26, 3)),
-                (IVec3::new(6, 64, 5), BlockState::new(26, 3 | 8)),
-            ])
+            [
+                (IVec3::new(5, 64, 5), east),
+                (
+                    IVec3::new(6, 64, 5),
+                    east.with(Prop::BedPart, bed_part::HEAD)
+                ),
+            ]
         );
         // Looking north, the head's cell is taken by stone.
-        let blocked = hit(IVec3::new(5, 63, 4), Face::Top);
-        let foot = place_block(&world, &blocks, &blocked, BED, &far_player()).unwrap();
         assert_eq!(
-            place_bed(&world, &blocks, &blocked, foot, 0.0, &far_player()),
+            place(&world, &hit(IVec3::new(5, 63, 4), Face::Top), bed, 0.0),
             None
         );
         // Only on top of blocks.
-        let side = hit(IVec3::new(5, 64, 3), Face::East);
-        let foot = place_block(&world, &blocks, &side, BED, &far_player()).unwrap();
         assert_eq!(
-            place_bed(&world, &blocks, &side, foot, 0.0, &far_player()),
+            place(&world, &hit(IVec3::new(5, 64, 3), Face::East), bed, 0.0),
             None
         );
         // Breaking either half takes the other.
         let mut world = world;
-        for (at, block) in halves.unwrap() {
-            let pos = ChunkPos::of_block(at.x, at.z);
-            world
-                .get_mut(pos)
-                .unwrap()
-                .set(at.x as usize, at.y as usize, at.z as usize, block);
-        }
-        let broken = break_block(&world, &blocks, IVec3::new(6, 64, 5));
+        set(&mut world, &halves);
+        let broken = break_block(&world, blocks(), IVec3::new(6, 64, 5));
         assert_eq!(broken.len(), 2);
     }
 
     #[test]
     fn doors_stand_on_full_blocks_and_hinge_against_walls() {
-        const DOOR: BlockState = BlockState::new(64, 0);
+        let door = BlockState::of(blocks::OAK_DOOR);
         let mut world = world_with(&[(IVec3::new(4, 64, 8), STONE), (IVec3::new(4, 65, 8), STONE)]);
-        let blocks = blocks();
-        let place = |world: &World, x: i32, yaw: f32| {
-            let on_top = hit(IVec3::new(x, 63, 8), Face::Top);
-            let lower = place_block(world, &blocks, &on_top, DOOR, &far_player())?;
-            place_door(world, &blocks, &on_top, lower, yaw, &far_player())
+        let put = |world: &World, x: i32, yaw: f32| {
+            place(world, &hit(IVec3::new(x, 63, 8), Face::Top), door, yaw)
         };
-        // Looking north: direction 3, the upper half adding 8.
+        // Looking north: facing north, hinged on the left.
+        let north = door.with_face(Prop::Facing, Face::North);
         assert_eq!(
-            place(&world, 8, 0.0),
-            Some([
-                (IVec3::new(8, 64, 8), BlockState::new(64, 3)),
-                (IVec3::new(8, 65, 8), BlockState::new(64, 3 | 8)),
+            put(&world, 8, 0.0),
+            Some(vec![
+                (IVec3::new(8, 64, 8), north),
+                (
+                    IVec3::new(8, 65, 8),
+                    north.with(Prop::DoubleBlockHalf, door_half::UPPER)
+                ),
             ])
         );
-        // With a wall to the east (on its right), it hinges the other way:
-        // a quarter back and marked open.
-        let [(_, lower), _] = place(&world, 3, 0.0).unwrap();
-        assert_eq!(lower, BlockState::new(64, 2 | 4));
+        // With a wall to the east (on its right), it hinges on the right.
+        let lower = put(&world, 3, 0.0).unwrap()[0].1;
+        assert_eq!(lower, north.with(Prop::Hinge, hinge::RIGHT));
         // Breaking the ground takes both halves; so does breaking either.
-        let [(at, lower), (above, upper)] = place(&world, 8, 0.0).unwrap();
-        for (cell, block) in [(at, lower), (above, upper)] {
-            let pos = ChunkPos::of_block(cell.x, cell.z);
-            world.get_mut(pos).unwrap().set(
-                cell.x as usize,
-                cell.y as usize,
-                cell.z as usize,
-                block,
-            );
-        }
-        assert_eq!(break_block(&world, &blocks, at - IVec3::Y).len(), 3);
-        assert_eq!(break_block(&world, &blocks, above).len(), 2);
-        assert_eq!(break_block(&world, &blocks, at).len(), 2);
-        // No room under the world's ceiling or on a side face.
-        let side = hit(IVec3::new(4, 64, 8), Face::East);
-        let lower = place_block(&world, &blocks, &side, DOOR, &far_player()).unwrap();
+        let halves = put(&world, 8, 0.0).unwrap();
+        let (at, above) = (halves[0].0, halves[1].0);
+        set(&mut world, &halves);
+        assert_eq!(break_block(&world, blocks(), at - IVec3::Y).len(), 3);
+        assert_eq!(break_block(&world, blocks(), above).len(), 2);
+        assert_eq!(break_block(&world, blocks(), at).len(), 2);
+        // Not on a side face.
         assert_eq!(
-            place_door(&world, &blocks, &side, lower, 0.0, &far_player()),
+            place(&world, &hit(IVec3::new(4, 64, 8), Face::East), door, 0.0),
             None
         );
     }
 
     #[test]
-    fn a_slab_on_the_same_slab_makes_a_double_slab() {
-        let wooden = BlockState::new(126, 0);
-        let world = world_with(&[(IVec3::new(2, 64, 2), wooden)]);
+    fn slabs_go_on_the_half_clicked_and_join_into_double_slabs() {
+        let oak = BlockState::of(blocks::OAK_SLAB);
+        let world = world_with(&[(IVec3::new(4, 64, 4), STONE)]);
+        let kind = |hit: Hit| place_one(&world, &hit, oak).map(|(_, s)| s.get(Prop::SlabType));
+        // On the ground: the bottom half. Under a block: the top half.
         assert_eq!(
-            place_slab(&world, (IVec3::new(2, 65, 2), wooden), 125),
-            (IVec3::new(2, 64, 2), BlockState::new(125, 0))
+            kind(hit(IVec3::new(2, 63, 2), Face::Top)),
+            Some(slab_type::BOTTOM)
         );
-        // Different slabs, or a different variant, just stack.
-        let brick = BlockState::new(44, 4);
         assert_eq!(
-            place_slab(&world, (IVec3::new(2, 65, 2), brick), 43),
-            (IVec3::new(2, 65, 2), brick)
+            kind(hit(IVec3::new(4, 64, 4), Face::Bottom)),
+            None,
+            "under it is stone"
         );
+        // On a side: by which half was clicked.
+        assert_eq!(
+            kind(hit_at(IVec3::new(4, 64, 4), Face::East, 0.25)),
+            Some(slab_type::BOTTOM)
+        );
+        assert_eq!(
+            kind(hit_at(IVec3::new(4, 64, 4), Face::East, 0.75)),
+            Some(slab_type::TOP)
+        );
+        // Clicking the top of a bottom slab fills it in.
+        let world = world_with(&[(IVec3::new(2, 64, 2), oak)]);
+        assert_eq!(
+            place_one(&world, &hit(IVec3::new(2, 64, 2), Face::Top), oak),
+            Some((
+                IVec3::new(2, 64, 2),
+                oak.with(Prop::SlabType, slab_type::DOUBLE)
+            ))
+        );
+        // A different slab goes on top instead.
+        let brick = BlockState::of(blocks::BRICK_SLAB);
+        assert_eq!(
+            place_one(&world, &hit(IVec3::new(2, 64, 2), Face::Top), brick),
+            Some((IVec3::new(2, 65, 2), brick))
+        );
+    }
+
+    #[test]
+    fn stairs_face_the_way_the_player_looks_and_turn_upside_down_up_high() {
+        use std::f32::consts::FRAC_PI_2;
+        let stairs = BlockState::of(blocks::OAK_STAIRS);
+        let world = world_with(&[(IVec3::new(4, 64, 4), STONE)]);
+        let (_, placed) = place(
+            &world,
+            &hit(IVec3::new(2, 63, 2), Face::Top),
+            stairs,
+            FRAC_PI_2,
+        )
+        .unwrap()[0];
+        assert_eq!(placed.face(Prop::Facing), Face::East);
+        assert_eq!(placed.get(Prop::Half), half::BOTTOM);
+        let (_, high) = place(
+            &world,
+            &hit_at(IVec3::new(4, 64, 4), Face::West, 0.8),
+            stairs,
+            0.0,
+        )
+        .unwrap()[0];
+        assert_eq!(high.get(Prop::Half), half::TOP);
+        // Beside stairs turned the other way, it makes a corner.
+        let west = stairs.with_face(Prop::Facing, Face::West);
+        let world = world_with(&[(IVec3::new(2, 64, 1), west)]);
+        let (_, corner) =
+            place(&world, &hit(IVec3::new(2, 63, 2), Face::Top), stairs, 0.0).unwrap()[0];
+        assert_eq!(corner.get(Prop::StairsShape), stairs_shape::OUTER_LEFT);
+    }
+
+    #[test]
+    fn fences_join_what_they_are_placed_beside() {
+        let fence = BlockState::of(blocks::OAK_FENCE);
+        let world = world_with(&[(IVec3::new(3, 64, 3), fence), (IVec3::new(5, 64, 4), STONE)]);
+        let (_, placed) = place_one(&world, &hit(IVec3::new(4, 63, 3), Face::Top), fence).unwrap();
+        assert!(placed.bool(Prop::West), "joins the fence");
+        assert!(!placed.bool(Prop::East) && !placed.bool(Prop::North));
+    }
+
+    #[test]
+    fn levers_buttons_ladders_and_trapdoors_attach_to_the_clicked_face() {
+        let world = world_with(&[(IVec3::new(4, 64, 4), STONE)]);
+        let stone = IVec3::new(4, 64, 4);
+        let button = BlockState::of(blocks::STONE_BUTTON);
+        let (at, wall) = place_one(&world, &hit(stone, Face::South), button).unwrap();
+        assert_eq!(at, IVec3::new(4, 64, 5));
+        assert_eq!(wall.get(Prop::AttachFace), attach_face::WALL);
+        assert_eq!(wall.face(Prop::Facing), Face::South);
+        let lever = BlockState::of(blocks::LEVER);
+        let (_, floor) = place_one(&world, &hit(stone, Face::Top), lever).unwrap();
+        assert_eq!(floor.get(Prop::AttachFace), attach_face::FLOOR);
+        // Ladders go only on sides, facing out.
+        let ladder = BlockState::of(blocks::LADDER);
+        let (_, hung) = place_one(&world, &hit(stone, Face::West), ladder).unwrap();
+        assert_eq!(hung.face(Prop::Facing), Face::West);
+        assert_eq!(place_one(&world, &hit(stone, Face::Top), ladder), None);
+        // A trapdoor on the top half of a side hangs from the top.
+        let trapdoor = BlockState::of(blocks::OAK_TRAPDOOR);
+        let (_, high) = place_one(&world, &hit_at(stone, Face::North, 0.8), trapdoor).unwrap();
+        assert_eq!(high.get(Prop::Half), half::TOP);
+        assert_eq!(high.face(Prop::Facing), Face::North);
+    }
+
+    #[test]
+    fn snow_stacks_layers_up_to_a_full_block() {
+        let snow = BlockState::of(blocks::SNOW);
+        let three = snow.with_number(Prop::Layers, 3);
+        let world = world_with(&[(IVec3::new(2, 64, 2), three)]);
+        let (at, more) = place_one(&world, &hit(IVec3::new(2, 64, 2), Face::Top), snow).unwrap();
+        assert_eq!((at, more.number(Prop::Layers)), (IVec3::new(2, 64, 2), 4));
+        // Stone can't go into three layers of snow, only on top.
+        assert_eq!(
+            place_one(&world, &hit(IVec3::new(2, 64, 2), Face::Top), STONE).map(|(at, _)| at),
+            Some(IVec3::new(2, 65, 2))
+        );
+    }
+
+    #[test]
+    fn logs_lie_along_the_clicked_face() {
+        let world = world_with(&[(IVec3::new(3, 64, 3), STONE)]);
+        let log = BlockState::of(blocks::OAK_LOG);
+        let axis_of = |face| {
+            place_one(&world, &hit(IVec3::new(3, 64, 3), face), log)
+                .unwrap()
+                .1
+                .get(Prop::Axis)
+        };
+        assert_eq!(axis_of(Face::Top), axis::Y);
+        assert_eq!(axis_of(Face::East), axis::X);
+        assert_eq!(axis_of(Face::North), axis::Z);
     }
 
     #[test]
     fn breaking_removes_the_block_and_plants_on_it() {
         let world = world_with(&[
-            (IVec3::new(2, 64, 2), REEDS),
-            (IVec3::new(2, 65, 2), REEDS),
-            (IVec3::new(2, 66, 2), REEDS),
+            (IVec3::new(2, 64, 2), SUGAR_CANE),
+            (IVec3::new(2, 65, 2), SUGAR_CANE),
+            (IVec3::new(2, 66, 2), SUGAR_CANE),
         ]);
-        let edits = break_block(&world, &blocks(), IVec3::new(2, 63, 2));
+        let edits = break_block(&world, blocks(), IVec3::new(2, 63, 2));
         let cells: Vec<i32> = edits.iter().map(|(at, _)| at.y).collect();
         assert_eq!(cells, [63, 64, 65, 66]);
         assert!(edits.iter().all(|(_, block)| block.is_air()));
@@ -404,168 +716,140 @@ mod tests {
     fn bedrock_air_and_unloaded_blocks_cannot_be_broken() {
         let world = world_with(&[(IVec3::new(1, 0, 1), BEDROCK)]);
         let blocks = blocks();
-        assert!(break_block(&world, &blocks, IVec3::new(1, 0, 1)).is_empty());
-        assert!(break_block(&world, &blocks, IVec3::new(1, 70, 1)).is_empty());
-        assert!(break_block(&world, &blocks, IVec3::new(40, 63, 1)).is_empty());
+        assert!(break_block(&world, blocks, IVec3::new(1, 0, 1)).is_empty());
+        assert!(break_block(&world, blocks, IVec3::new(1, 70, 1)).is_empty());
+        assert!(break_block(&world, blocks, IVec3::new(40, 63, 1)).is_empty());
     }
 
     #[test]
     fn places_against_the_clicked_face() {
         let world = world_with(&[]);
-        let edit = place_block(
-            &world,
-            &blocks(),
-            &hit(IVec3::new(3, 63, 3), Face::Top),
-            STONE,
-            &far_player(),
-        );
+        let edit = place_one(&world, &hit(IVec3::new(3, 63, 3), Face::Top), STONE);
         assert_eq!(edit, Some((IVec3::new(3, 64, 3), STONE)));
     }
 
     #[test]
-    fn cannot_place_inside_the_player() {
+    fn only_blocks_that_collide_are_kept_out_of_the_player() {
         let world = world_with(&[]);
         let player = hitbox(DVec3::new(3.5, 64.0, 3.5));
         let below_feet = hit(IVec3::new(3, 63, 3), Face::Top);
-        assert_eq!(
-            place_block(&world, &blocks(), &below_feet, STONE, &player),
-            None
-        );
-        // Non-solid blocks may overlap the player.
-        let world = world_with(&[]);
-        let edit = place_block(&world, &blocks(), &below_feet, DANDELION, &player);
-        assert_eq!(edit, Some((IVec3::new(3, 64, 3), DANDELION)));
+        let put =
+            |block, player: &Aabb| place_block(&world, blocks(), &below_feet, block, player, 0.0);
+        assert_eq!(put(STONE, &player), None);
+        // Flowers, torches and a layer of snow don't collide.
+        assert!(put(DANDELION, &player).is_some());
+        assert!(put(TORCH, &player).is_some());
+        assert!(put(BlockState::of(blocks::SNOW), &player).is_some());
         // Standing next to the cell is fine.
         let beside = hitbox(DVec3::new(4.3, 64.0, 3.5));
-        assert!(place_block(&world, &blocks(), &below_feet, STONE, &beside).is_some());
+        assert!(put(STONE, &beside).is_some());
     }
 
     #[test]
     fn clicking_tall_grass_replaces_it_and_water_can_be_built_into() {
         let world = world_with(&[
-            (IVec3::new(5, 64, 5), TALL_GRASS),
+            (IVec3::new(5, 64, 5), SHORT_GRASS),
             (IVec3::new(6, 64, 5), WATER),
             (IVec3::new(7, 64, 5), STONE),
         ]);
-        let blocks = blocks();
-        let player = far_player();
-        let edit = place_block(
-            &world,
-            &blocks,
-            &hit(IVec3::new(5, 64, 5), Face::Top),
-            STONE,
-            &player,
-        );
+        let edit = place_one(&world, &hit(IVec3::new(5, 64, 5), Face::Top), STONE);
         assert_eq!(edit, Some((IVec3::new(5, 64, 5), STONE)));
-        let edit = place_block(
-            &world,
-            &blocks,
-            &hit(IVec3::new(7, 64, 5), Face::West),
-            STONE,
-            &player,
-        );
+        let edit = place_one(&world, &hit(IVec3::new(7, 64, 5), Face::West), STONE);
         assert_eq!(edit, Some((IVec3::new(6, 64, 5), STONE)));
     }
 
     #[test]
     fn cannot_place_into_solid_blocks_or_outside_the_world() {
         let world = world_with(&[(IVec3::new(3, 64, 3), STONE)]);
-        let blocks = blocks();
-        let player = far_player();
-        // The cell beside the clicked face is already stone.
-        let into_stone = hit(IVec3::new(3, 63, 3), Face::Top);
         assert_eq!(
-            place_block(&world, &blocks, &into_stone, STONE, &player),
+            place_one(&world, &hit(IVec3::new(3, 63, 3), Face::Top), STONE),
             None
         );
-        let world = world_with(&[(IVec3::new(3, 127, 3), STONE)]);
-        let above_top = hit(IVec3::new(3, 127, 3), Face::Top);
+        let top = WORLD_HEIGHT as i32 - 1;
+        let world = world_with(&[(IVec3::new(3, top, 3), STONE)]);
         assert_eq!(
-            place_block(&world, &blocks, &above_top, STONE, &player),
+            place_one(&world, &hit(IVec3::new(3, top, 3), Face::Top), STONE),
             None
+        );
+        // The top layer itself takes blocks.
+        let world = world_with(&[(IVec3::new(3, top - 1, 3), STONE)]);
+        assert_eq!(
+            place_one(&world, &hit(IVec3::new(3, top - 1, 3), Face::Top), STONE),
+            Some((IVec3::new(3, top, 3), STONE))
         );
         // Started inside a block: no face to place against.
         let inside = Hit {
             block: IVec3::new(3, 63, 3),
             face: None,
+            point: DVec3::new(3.5, 63.5, 3.5),
         };
-        assert_eq!(place_block(&world, &blocks, &inside, STONE, &player), None);
+        assert_eq!(place_one(&world, &inside, STONE), None);
     }
 
     #[test]
     fn plants_need_ground() {
         let world = world_with(&[(IVec3::new(3, 65, 3), STONE)]);
-        let blocks = blocks();
-        let player = far_player();
-        let on_floor = hit(IVec3::new(3, 63, 3), Face::Top);
-        assert!(place_block(&world, &blocks, &on_floor, DANDELION, &player).is_some());
+        assert!(place_one(&world, &hit(IVec3::new(3, 63, 3), Face::Top), DANDELION).is_some());
         // Beside a floating block, over air.
         let on_side = hit(IVec3::new(3, 65, 3), Face::North);
-        assert!(place_block(&world, &blocks, &on_side, STONE, &player).is_some());
-        assert_eq!(
-            place_block(&world, &blocks, &on_side, DANDELION, &player),
-            None
-        );
+        assert!(place_one(&world, &on_side, STONE).is_some());
+        assert_eq!(place_one(&world, &on_side, DANDELION), None);
     }
 
-    const TORCH: BlockState = BlockState::new(50, 0);
+    fn wall_torch(facing: Face) -> BlockState {
+        BlockState::of(blocks::WALL_TORCH).with_face(Prop::Facing, facing)
+    }
 
     #[test]
-    fn torches_attach_to_floors_and_walls_like_1_0_0() {
+    fn torches_stand_on_floors_and_hang_on_walls() {
         let world = world_with(&[(IVec3::new(3, 64, 3), STONE)]);
-        let blocks = blocks();
-        let player = far_player();
-        let place = |face| {
-            place_block(
-                &world,
-                &blocks,
-                &hit(IVec3::new(3, 64, 3), face),
-                TORCH,
-                &player,
-            )
-        };
+        let put = |face| place_one(&world, &hit(IVec3::new(3, 64, 3), face), TORCH);
+        assert_eq!(put(Face::Top), Some((IVec3::new(3, 65, 3), TORCH)));
         assert_eq!(
-            place(Face::Top),
-            Some((IVec3::new(3, 65, 3), BlockState::new(50, 5)))
+            put(Face::East),
+            Some((IVec3::new(4, 64, 3), wall_torch(Face::East)))
         );
         assert_eq!(
-            place(Face::East),
-            Some((IVec3::new(4, 64, 3), BlockState::new(50, 1)))
+            put(Face::West),
+            Some((IVec3::new(2, 64, 3), wall_torch(Face::West)))
         );
         assert_eq!(
-            place(Face::West),
-            Some((IVec3::new(2, 64, 3), BlockState::new(50, 2)))
+            put(Face::South),
+            Some((IVec3::new(3, 64, 4), wall_torch(Face::South)))
         );
         assert_eq!(
-            place(Face::South),
-            Some((IVec3::new(3, 64, 4), BlockState::new(50, 3)))
+            put(Face::North),
+            Some((IVec3::new(3, 64, 2), wall_torch(Face::North)))
         );
+        assert_eq!(put(Face::Bottom), None);
+        // Glass is a full block to hang on in modern Minecraft, but not leaves.
+        let leaves = world_with(&[(IVec3::new(3, 64, 3), BlockState::of(blocks::OAK_LEAVES))]);
         assert_eq!(
-            place(Face::North),
-            Some((IVec3::new(3, 64, 2), BlockState::new(50, 4)))
-        );
-        assert_eq!(place(Face::Bottom), None);
-        // Not on glass.
-        let world = world_with(&[(IVec3::new(3, 64, 3), BlockState::new(20, 0))]);
-        let on_glass = hit(IVec3::new(3, 64, 3), Face::Top);
-        assert_eq!(
-            place_block(&world, &blocks, &on_glass, TORCH, &player),
+            place_one(&leaves, &hit(IVec3::new(3, 64, 3), Face::Top), TORCH),
             None
         );
+        // A redstone torch hangs as a redstone wall torch, still lit.
+        let redstone = BlockState::of(blocks::REDSTONE_TORCH);
+        let (_, hung) =
+            place_one(&world, &hit(IVec3::new(3, 64, 3), Face::East), redstone).unwrap();
+        assert!(hung.is(blocks::REDSTONE_WALL_TORCH) && hung.bool(Prop::Lit));
     }
 
     #[test]
-    fn breaking_a_wall_pops_its_torches_but_not_others() {
+    fn breaking_a_wall_pops_what_hangs_on_it_but_not_others() {
+        let ladder = BlockState::of(blocks::LADDER).with_face(Prop::Facing, Face::North);
         let world = world_with(&[
             (IVec3::new(3, 64, 3), STONE),
-            (IVec3::new(4, 64, 3), BlockState::new(50, 1)), // on the wall's east side
-            (IVec3::new(3, 65, 3), BlockState::new(50, 5)), // on top of the wall
-            (IVec3::new(3, 64, 4), BlockState::new(50, 5)), // on the floor beside it
+            (IVec3::new(4, 64, 3), wall_torch(Face::East)), // on the wall's east side
+            (IVec3::new(3, 65, 3), TORCH),                  // on top of the wall
+            (IVec3::new(3, 64, 4), TORCH),                  // on the floor beside it
+            (IVec3::new(3, 64, 2), ladder),                 // on its north side
         ]);
-        let edits = break_block(&world, &blocks(), IVec3::new(3, 64, 3));
+        let edits = break_block(&world, blocks(), IVec3::new(3, 64, 3));
         let mut cells: Vec<IVec3> = edits.iter().map(|(at, _)| *at).collect();
         cells.sort_by_key(|c| (c.x, c.y, c.z));
         let expected = [
+            IVec3::new(3, 64, 2),
             IVec3::new(3, 64, 3),
             IVec3::new(3, 65, 3),
             IVec3::new(4, 64, 3),

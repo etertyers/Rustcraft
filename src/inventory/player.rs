@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub use super::slots::Click;
 use super::{
+    item::ItemId,
     slots,
     stack::{ItemStack, Items},
 };
@@ -88,7 +89,7 @@ impl Inventory {
     }
 
     /// The first slot holding item `id`, if any.
-    pub fn find(&self, id: u16) -> Option<usize> {
+    pub fn find(&self, id: ItemId) -> Option<usize> {
         self.slots
             .iter()
             .position(|slot| slot.is_some_and(|stack| stack.id == id))
@@ -143,25 +144,19 @@ impl Inventory {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::sync::Arc;
-
     use super::*;
-    use crate::{inventory::item::ItemRegistry, world::block::BlockRegistry};
+    use crate::inventory::items;
 
     pub fn items() -> Items {
-        let assets = crate::assets::dir();
-        Items::new(
-            Arc::new(BlockRegistry::load(&assets.join("data/blocks.ron")).unwrap()),
-            Arc::new(ItemRegistry::load(&assets.join("data/items.ron")).unwrap()),
-        )
+        Items::new()
     }
 
-    const STONE: u16 = 1;
-    const DIRT: u16 = 3;
-    const SNOWBALL: u16 = 332;
-    const PICKAXE: u16 = 270;
+    const STONE: ItemId = items::STONE;
+    const DIRT: ItemId = items::DIRT;
+    const SNOWBALL: ItemId = items::SNOWBALL;
+    const PICKAXE: ItemId = items::WOODEN_PICKAXE;
 
-    fn counts(inventory: &Inventory) -> Vec<(usize, u16, u8)> {
+    fn counts(inventory: &Inventory) -> Vec<(usize, ItemId, u8)> {
         (0..SLOTS)
             .filter_map(|i| inventory.slot(i).map(|s| (i, s.id, s.count)))
             .collect()
@@ -205,13 +200,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn data_values_keep_stacks_apart() {
+    fn different_colors_keep_stacks_apart() {
         let items = items();
         let mut inventory = Inventory::default();
-        inventory.add(ItemStack::with_damage(35, 5, 14), &items);
-        inventory.add(ItemStack::with_damage(35, 5, 1), &items);
-        assert_eq!(inventory.slot(0).unwrap().damage, 14);
-        assert_eq!(inventory.slot(1).unwrap().damage, 1);
+        inventory.add(ItemStack::new(items::RED_WOOL, 5), &items);
+        inventory.add(ItemStack::new(items::ORANGE_WOOL, 5), &items);
+        assert_eq!(inventory.slot(0).unwrap().id, items::RED_WOOL);
+        assert_eq!(inventory.slot(1).unwrap().id, items::ORANGE_WOOL);
     }
 
     #[test]

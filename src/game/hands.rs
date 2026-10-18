@@ -11,20 +11,18 @@ use crate::{
         item::ItemEntity,
         particle::{MAX_PARTICLES, Particle},
     },
-    inventory::{item::Tool, player::HOTBAR_SLOTS, stack::ItemStack},
+    inventory::{item::Tool, items, player::HOTBAR_SLOTS, stack::ItemStack},
     player::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
         raycast::Hit,
         stats::DamageSource,
     },
     world::{
-        block::{Activate, BlockState, Fluid, Placement},
+        block::{Activate, Fluid},
         harvest,
+        props::{Prop, door_half},
     },
 };
-
-/// The arrow item, given back when a stuck arrow is picked up.
-const ARROW: u16 = 262;
 
 /// Exhaustion per block broken (modern `Block.playerDestroy`).
 const BREAK_EXHAUSTION: f32 = 0.005;
@@ -165,7 +163,7 @@ impl Game {
     /// and wearing the tool as the game mode says.
     pub(super) fn break_block(&mut self, cell: IVec3) {
         let world = self.chunks.world();
-        let edits = interaction::break_block(world, &self.items.blocks, cell);
+        let edits = interaction::break_block(world, self.items.blocks, cell);
         if edits.is_empty() {
             return;
         }
@@ -187,16 +185,13 @@ impl Game {
                 let Some(block) = world.block(at.x, at.y, at.z) else {
                     continue;
                 };
-                let Some(def) = self.items.blocks.get(block.id()) else {
-                    continue;
-                };
                 // The mined block needs the right tool; blocks it held up
                 // (torches, flowers) always drop.
-                if at == cell && !harvest::can_harvest(def, tool) {
+                if at == cell && !harvest::can_harvest(block.def(), tool) {
                     continue;
                 }
                 let kind = tool.map(|tool| tool.kind);
-                for stack in harvest::drops(def, block.data(), kind, &mut random) {
+                for stack in harvest::drops(block, kind, &mut random) {
                     self.entities
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
@@ -265,7 +260,7 @@ impl Game {
         let player = self.body.aabb();
         for arrow in &mut arrows {
             let world = self.chunks.world();
-            let blocks = &self.items.blocks;
+            let blocks = self.items.blocks;
             let solid = |cell: glam::IVec3| {
                 world
                     .block(cell.x, cell.y, cell.z)
@@ -291,7 +286,7 @@ impl Game {
             if arrow.can_pick_up(&player)
                 && self
                     .inventory
-                    .add(ItemStack::with_damage(ARROW, 1, 0), &self.items)
+                    .add(ItemStack::new(items::ARROW, 1), &self.items)
                     .is_none()
             {
                 return false;
@@ -425,6 +420,12 @@ impl Game {
             Activate::Furnace => self.open_furnace(cell),
             Activate::Bed => self.use_bed(cell),
             Activate::Door => self.toggle_door(cell),
+            Activate::Open => {
+                if let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z) {
+                    let open = !block.bool(Prop::Open);
+                    self.edit(&[(cell, block.with_bool(Prop::Open, open))]);
+                }
+            }
         }
         true
     }
@@ -436,16 +437,17 @@ impl Game {
         let Some(block) = world.block(cell.x, cell.y, cell.z) else {
             return;
         };
-        let lower = if block.data() & 8 == 0 {
+        let lower = if block.get(Prop::DoubleBlockHalf) == door_half::LOWER {
             cell
         } else {
             cell - IVec3::Y
         };
+        let open = !block.bool(Prop::Open);
         let edits: Vec<_> = [lower, lower + IVec3::Y]
             .into_iter()
             .filter_map(|at| {
                 let half = world.block(at.x, at.y, at.z)?;
-                (half.id() == block.id()).then(|| (at, BlockState::new(half.id(), half.data() ^ 4)))
+                (half.id() == block.id()).then(|| (at, half.with_bool(Prop::Open, open)))
             })
             .collect();
         self.edit(&edits);
@@ -461,38 +463,11 @@ impl Game {
         };
         let world = self.chunks.world();
         let player = self.body.aabb();
-        let Some((at, placed)) =
-            interaction::place_block(world, &self.items.blocks, hit, block, &player)
+        let yaw = self.camera.yaw;
+        let Some(edits) =
+            interaction::place_block(world, self.items.blocks, hit, block, &player, yaw)
         else {
             return;
-        };
-        let placement = self.items.blocks.get(placed.id()).map(|def| def.placement);
-        let yaw = self.camera.yaw;
-        let edits = match placement {
-            Some(Placement::Facing) => {
-                vec![(
-                    at,
-                    BlockState::new(placed.id(), interaction::facing_data(yaw)),
-                )]
-            }
-            Some(Placement::Bed) => {
-                let blocks = &self.items.blocks;
-                match interaction::place_bed(world, blocks, hit, (at, placed), yaw, &player) {
-                    Some(halves) => halves.to_vec(),
-                    None => return,
-                }
-            }
-            Some(Placement::Slab { double }) => {
-                vec![interaction::place_slab(world, (at, placed), double)]
-            }
-            Some(Placement::Door) => {
-                let blocks = &self.items.blocks;
-                match interaction::place_door(world, blocks, hit, (at, placed), yaw, &player) {
-                    Some(halves) => halves.to_vec(),
-                    None => return,
-                }
-            }
-            _ => vec![(at, placed)],
         };
         self.edit(&edits);
         if self.mode.uses_up_items() {
@@ -502,8 +477,8 @@ impl Game {
     }
 
     /// Middle click (1.0.0's pick block): selects the hotbar slot holding
-    /// the targeted block, or with every item to hand, puts a stack of it
-    /// in the selected slot.
+    /// the targeted block's item, or with every item to hand, puts a stack
+    /// of it in the selected slot.
     pub fn pick_block(&mut self) {
         let Some(hit) = self.target else {
             return;
@@ -515,15 +490,10 @@ impl Game {
         else {
             return;
         };
-        let Some(def) = self.items.blocks.get(block.id()) else {
+        let Some(item) = self.items.items.of_block(block.id()) else {
             return;
         };
-        let data = if def.variants.is_empty() {
-            0
-        } else {
-            block.data()
-        };
-        let stack = ItemStack::with_damage(block.id(), 1, data as u16);
+        let stack = ItemStack::with_damage(item, 1, 0);
         let in_hotbar = (0..HOTBAR_SLOTS).find(|&i| {
             self.inventory
                 .slot(i)
@@ -545,17 +515,17 @@ impl Game {
     /// shears and torches.
     #[cfg(debug_assertions)]
     pub fn give_dev_kit(&mut self) {
-        const KIT: [(u16, u8); 10] = [
-            (270, 1),
-            (274, 1),
-            (257, 1),
-            (285, 1),
-            (278, 1),
-            (256, 1),
-            (258, 1),
-            (267, 1),
-            (359, 1),
-            (50, 64),
+        const KIT: [(crate::inventory::item::ItemId, u8); 10] = [
+            (items::WOODEN_PICKAXE, 1),
+            (items::STONE_PICKAXE, 1),
+            (items::IRON_PICKAXE, 1),
+            (items::GOLDEN_PICKAXE, 1),
+            (items::DIAMOND_PICKAXE, 1),
+            (items::IRON_SHOVEL, 1),
+            (items::IRON_AXE, 1),
+            (items::IRON_SWORD, 1),
+            (items::SHEARS, 1),
+            (items::TORCH, 64),
         ];
         for (id, count) in KIT {
             if let Some(rest) = self.inventory.add(ItemStack::new(id, count), &self.items) {
@@ -576,7 +546,7 @@ impl Game {
     pub(super) fn tick_particles(&mut self) {
         let collider = crate::player::collision::WorldCollider {
             world: self.chunks.world(),
-            blocks: &self.items.blocks,
+            blocks: self.items.blocks,
         };
         for particle in &mut self.particles {
             particle.tick(&collider);
@@ -606,7 +576,7 @@ impl Game {
     pub(super) fn tick_items(&mut self) {
         let collider = crate::player::collision::WorldCollider {
             world: self.chunks.world(),
-            blocks: &self.items.blocks,
+            blocks: self.items.blocks,
         };
         let player = self.body.aabb();
         let alive = !self.stats.is_dead();

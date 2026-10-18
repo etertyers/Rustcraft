@@ -5,13 +5,12 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
-    block::{
-        BlockRegistry, BlockState, DATA_VALUES, FaceTint, Fluid, RenderLayer, Shape, bed_direction,
-        door_box, door_side,
-    },
+    block::{BlockRegistry, BlockState, FaceTint, Fluid, RenderLayer, Shape, door_box, door_side},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     fluid::{self, Cell},
     light::ChunkLight,
+    props::{Prop, axis, bed_part, hinge, rail_shape},
+    shape::{self, Cuboid},
 };
 use crate::{
     config::{CHUNK_SIZE, WORLD_HEIGHT},
@@ -24,15 +23,30 @@ pub struct FaceTexture {
     /// Atlas UV rect `[u0, v0, u1, v1]`, v0 at the top.
     pub uv: [f32; 4],
     pub tint: FaceTint,
+    /// Quarter turns of the texture on the face, clockwise (a log lying
+    /// on its side turns its bark).
+    pub rotation: u8,
 }
 
-/// Everything the mesher needs to know about one (ID, data) pair.
+impl FaceTexture {
+    /// Texture coordinates for the corners of `face_corners` order
+    /// (bottom-left, bottom-right, top-right, top-left), turned by
+    /// `rotation`.
+    pub fn corner_uvs(&self) -> [[f32; 2]; 4] {
+        let [u0, v0, u1, v1] = self.uv;
+        let mut uvs = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+        uvs.rotate_left(self.rotation as usize % 4);
+        uvs
+    }
+}
+
+/// Everything the mesher needs to know about one block state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockModel {
     pub shape: Shape,
     /// Hides any face touching it.
     pub opaque_cube: bool,
-    /// Hides faces between two blocks with the same ID.
+    /// Hides faces between two blocks of the same kind.
     pub cull_same: bool,
     /// Light lost passing through it, 0–15.
     pub opacity: u8,
@@ -46,13 +60,15 @@ pub struct BlockModel {
     pub stops_fluid: bool,
     /// Indexed by `Face::index`.
     pub faces: [FaceTexture; 6],
+    /// The boxes it's drawn as, for shapes drawn from boxes.
+    pub boxes: Option<Vec<Cuboid>>,
 }
 
-/// Block models for every (ID, data) pair, resolved against the texture atlas.
+/// Block models for every block state, resolved against the texture atlas.
 pub struct BlockModels {
+    registry: &'static BlockRegistry,
+    /// By `BlockRegistry::state_index`.
     models: Vec<BlockModel>,
-    /// Used for IDs the registry doesn't define.
-    unknown: BlockModel,
     colors: BiomeColors,
 }
 
@@ -60,62 +76,71 @@ impl BlockModels {
     /// `uv` maps a texture name to its atlas rect, or `None` if it's missing;
     /// missing textures use `missing_uv`.
     pub fn new(
-        registry: &BlockRegistry,
+        registry: &'static BlockRegistry,
         uv: impl Fn(&str) -> Option<[f32; 4]>,
         missing_uv: [f32; 4],
         colors: BiomeColors,
     ) -> Self {
-        let unknown = BlockModel {
-            shape: Shape::Cube,
-            opaque_cube: true,
-            cull_same: false,
-            opacity: 15,
-            emission: 0,
-            translucent: false,
-            fluid: None,
-            stops_fluid: true,
-            faces: [FaceTexture {
-                uv: missing_uv,
-                tint: FaceTint::None,
-            }; 6],
-        };
-        let max_id = registry.iter().map(|def| def.id).max().unwrap_or(0) as usize;
-        let mut models = Vec::with_capacity((max_id + 1) * DATA_VALUES);
-        for id in 0..=max_id {
-            for data in 0..DATA_VALUES as u8 {
-                let Some(def) = registry.get(id as u16) else {
-                    models.push(unknown.clone());
-                    continue;
-                };
-                let textures = def.textures_for(data);
-                let tint = def.tint_for(data);
-                let mut faces = Face::ALL.map(|face| FaceTexture {
-                    uv: textures
-                        .and_then(|t| t.get(face))
-                        .and_then(&uv)
-                        .unwrap_or(missing_uv),
-                    tint: tint.for_face(face),
-                });
-                // Blocks placed facing the player turn their south face.
-                if let Some(front) = def.front(data) {
-                    faces.swap(Face::South.index(), front.index());
-                }
-                models.push(BlockModel {
-                    shape: def.shape,
-                    opaque_cube: def.is_opaque_cube(),
-                    cull_same: def.cull_same,
-                    opacity: def.light_opacity(),
-                    emission: def.light,
-                    translucent: def.layer == RenderLayer::Translucent,
-                    fluid: def.fluid,
-                    stops_fluid: def.stops_fluid(),
-                    faces,
-                });
+        let mut models = Vec::with_capacity(registry.state_count());
+        for state in registry.states() {
+            let def = state.def();
+            let textures = def.textures_for(state);
+            let tint = def.tint_for(state);
+            let texture = |face: Face| FaceTexture {
+                uv: textures
+                    .as_ref()
+                    .and_then(|t| t.get(face))
+                    .and_then(&uv)
+                    .unwrap_or(missing_uv),
+                tint: tint.for_face(face),
+                rotation: 0,
+            };
+            let mut faces = Face::ALL.map(texture);
+            // Blocks facing a way turn their south face that way.
+            if let Some(front) = def.front(state) {
+                faces.swap(Face::South.index(), front.index());
             }
+            // A log lying along x or z shows its ends on that axis and its
+            // bark turned to run along it.
+            if state.has(Prop::Axis) {
+                let (end, side) = (faces[Face::Top.index()], faces[Face::North.index()]);
+                let turned = FaceTexture {
+                    rotation: 1,
+                    ..side
+                };
+                match state.get(Prop::Axis) {
+                    axis::X => {
+                        faces = Face::ALL.map(|face| match face {
+                            Face::East | Face::West => end,
+                            _ => turned,
+                        });
+                    }
+                    axis::Z => {
+                        faces = Face::ALL.map(|face| match face {
+                            Face::North | Face::South => end,
+                            Face::East | Face::West => turned,
+                            _ => side,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            models.push(BlockModel {
+                shape: def.shape,
+                opaque_cube: def.is_opaque_cube_state(state),
+                cull_same: def.cull_same,
+                opacity: def.light_opacity_for(state),
+                emission: def.light_for(state),
+                translucent: def.layer == RenderLayer::Translucent,
+                fluid: def.fluid,
+                stops_fluid: def.stops_fluid(),
+                faces,
+                boxes: shape::render_boxes(state),
+            });
         }
         Self {
+            registry,
             models,
-            unknown,
             colors,
         }
     }
@@ -137,8 +162,7 @@ impl BlockModels {
     }
 
     pub fn get(&self, block: BlockState) -> &BlockModel {
-        let index = block.id() as usize * DATA_VALUES + block.data() as usize;
-        self.models.get(index).unwrap_or(&self.unknown)
+        &self.models[self.registry.state_index(block)]
     }
 }
 
@@ -159,6 +183,17 @@ impl ChunkArea {
         }
         chunks[1][1] = Some(center);
         Self { chunks }
+    }
+
+    /// One past the highest non-empty section of any loaded chunk in the area.
+    pub fn top_section(&self) -> usize {
+        self.chunks
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|chunk| chunk.top_section())
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn center(&self) -> &Chunk {
@@ -330,7 +365,7 @@ fn smooth_face(
 
 /// Unit cube face corners, counter-clockwise from outside, starting at the
 /// texture's bottom-left.
-fn face_corners(face: Face) -> [[f32; 3]; 4] {
+pub(crate) fn face_corners(face: Face) -> [[f32; 3]; 4] {
     match face {
         Face::Top => [[0., 1., 1.], [1., 1., 1.], [1., 1., 0.], [0., 1., 0.]],
         Face::Bottom => [[0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.]],
@@ -406,18 +441,18 @@ const CROP_PLANES: [[[f32; 3]; 4]; 4] = [
 
 /// 1.0.0's torch (`RenderBlocks.renderTorchAtAngle`): four planes cut from
 /// the full texture 1/16 either side of the center, which leaves a 2×2-pixel
-/// stick, plus a small cap at 10/16. Wall torches (data 1–4, see
-/// `Placement::Torch`) sit 0.2 higher, shifted 0.1 and leaning 0.4 at the
-/// base toward their wall. Returns (corners, uv) per quad, block-relative.
-fn torch_quads(data: u8, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
+/// stick, plus a small cap at 10/16. Wall torches sit 0.2 higher, shifted
+/// 0.1 and leaning 0.4 at the base toward their wall. Returns (corners, uv)
+/// per quad, block-relative.
+fn torch_quads(state: BlockState, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 5] {
     const HALF: f32 = 1.0 / 16.0;
     const CAP: f32 = 0.625;
-    let (shift, lean) = match data {
-        1 => ([-0.1, 0.2, 0.0], [-0.4, 0.0]),
-        2 => ([0.1, 0.2, 0.0], [0.4, 0.0]),
-        3 => ([0.0, 0.2, -0.1], [0.0, -0.4]),
-        4 => ([0.0, 0.2, 0.1], [0.0, 0.4]),
-        _ => ([0.0; 3], [0.0; 2]),
+    let (shift, lean) = if state.has(Prop::Facing) {
+        // `facing` points away from the wall.
+        let [nx, _, nz] = state.face(Prop::Facing).normal().map(|n| n as f32);
+        ([-0.1 * nx, 0.2, -0.1 * nz], [-0.4 * nx, -0.4 * nz])
+    } else {
+        ([0.0; 3], [0.0; 2])
     };
     let place = |c: [f32; 3], lean_by: f32| {
         [
@@ -462,11 +497,11 @@ const BED_BOTTOM: f32 = 3.0 / 16.0;
 /// foot to head), the planks underneath, the two long sides and the end
 /// away from the other half, each with the face it shows and is shaded as.
 /// `model` holds the half's textures (`blocks.ron` puts the foot's end on
-/// south and the head's on north); `data` is the direction plus 8 for the
-/// head.
-fn bed_quads(data: u8, model: &BlockModel) -> Vec<Quad> {
-    let head = data & 8 != 0;
-    let toward_head = bed_direction(data & 3);
+/// south and the head's on north).
+fn bed_quads(state: BlockState, model: &BlockModel) -> Vec<Quad> {
+    let head = state.get(Prop::BedPart) == bed_part::HEAD;
+    let facing = state.face(Prop::Facing);
+    let toward_head = glam::IVec3::from_array(facing.normal());
     let along = [
         toward_head.x as f32,
         toward_head.y as f32,
@@ -475,7 +510,15 @@ fn bed_quads(data: u8, model: &BlockModel) -> Vec<Quad> {
     let texture = |face: Face| model.faces[face.index()].uv;
     // The top's u runs along +x; turning its corners points it at the head.
     let mut top = face_corners(Face::Top).map(|[x, _, z]| [x, BED_TOP, z]);
-    top.rotate_left(3 - (data & 3) as usize);
+    // Quarter turns from south: 1.0.0's direction 0–3 (south, west,
+    // north, east).
+    let turns = match facing {
+        Face::West => 1,
+        Face::North => 2,
+        Face::East => 3,
+        _ => 0,
+    };
+    top.rotate_left(3 - turns);
     let bottom = face_corners(Face::Bottom).map(|[x, _, z]| [x, BED_BOTTOM, z]);
     let mut quads = vec![
         (Face::Top, top, texture(Face::Top)),
@@ -513,9 +556,15 @@ fn bed_quads(data: u8, model: &BlockModel) -> Vec<Quad> {
 /// each face's texture cut to the part of the slab it covers, and the
 /// wide faces mirrored as 1.0.0's `BlockDoor.getBlockTexture` does so the
 /// handle sits away from the hinge.
-fn door_quads(data: u8, model: &BlockModel) -> [Quad; 6] {
-    let (min, max) = door_box(data);
-    let side = door_side(data);
+fn door_quads(state: BlockState, model: &BlockModel) -> [Quad; 6] {
+    let (min, max) = door_box(state);
+    let data = legacy_door_data(state);
+    let side = match door_side(state) {
+        Face::North => 0,
+        Face::East => 1,
+        Face::South => 2,
+        _ => 3,
+    };
     Face::ALL.map(|face| {
         let corners = face_corners(face)
             .map(|c| [0, 1, 2].map(|axis| if c[axis] > 0.5 { max[axis] } else { min[axis] }));
@@ -553,6 +602,25 @@ fn door_quads(data: u8, model: &BlockModel) -> [Quad; 6] {
     })
 }
 
+/// The 1.0.0 data value (direction 0–3 plus 4 if open) that draws like a
+/// door state: with its hinge on the left, direction 3 faces north, 0
+/// east, 1 south and 2 west; a right hinge is 1.0.0's way of hinging a
+/// door the other side, a quarter turn back with "open" flipped.
+fn legacy_door_data(state: BlockState) -> u8 {
+    let dir = match state.face(Prop::Facing) {
+        Face::East => 0,
+        Face::South => 1,
+        Face::West => 2,
+        _ => 3,
+    };
+    let open = state.bool(Prop::Open);
+    if state.get(Prop::Hinge) == hinge::LEFT {
+        dir | if open { 4 } else { 0 }
+    } else {
+        ((dir + 3) & 3) | if open { 0 } else { 4 }
+    }
+}
+
 /// Whether a door face's texture is drawn mirrored (1.0.0's negative
 /// texture index for the wide faces).
 fn door_mirrored(data: u8, side: u8, face: Face) -> bool {
@@ -570,9 +638,6 @@ fn door_mirrored(data: u8, side: u8, face: Face) -> bool {
     let turn = side / 2 + ((mc_side & 1) ^ side) + (data & 4) / 4;
     turn & 1 != 0
 }
-
-/// Height of a slab (the bottom half of its cell).
-const SLAB_HEIGHT: f32 = 0.5;
 
 /// Water or lava at chunk-local `cell` (1.0.0's
 /// `RenderBlocks.renderBlockFluids`): each corner of the surface at its
@@ -734,6 +799,255 @@ fn face_visible(
     !(model.cull_same && neighbor.id() == block.id())
 }
 
+/// Where a face's corner `p` (block-relative) falls on its texture, 0–1
+/// across and down, as Minecraft's block models map elements by default:
+/// a box's faces show the part of the texture the face covers.
+fn face_uv(face: Face, p: [f32; 3]) -> [f32; 2] {
+    let [x, y, z] = p;
+    match face {
+        Face::Top => [x, z],
+        Face::Bottom => [x, 1.0 - z],
+        Face::North => [1.0 - x, 1.0 - y],
+        Face::South => [x, 1.0 - y],
+        Face::West => [z, 1.0 - y],
+        Face::East => [1.0 - z, 1.0 - y],
+    }
+}
+
+/// The two axes a face spans, as `smooth_face` orders them.
+fn face_axes(face: Face) -> [usize; 2] {
+    match face {
+        Face::Top | Face::Bottom => [0, 2],
+        Face::North | Face::South => [0, 1],
+        Face::East | Face::West => [1, 2],
+    }
+}
+
+/// Draws box `b` of the block at chunk-local `cell`: faces on the cell's
+/// edge are hidden by solid neighbors like a cube's, the rest always show;
+/// each face shows the part of its texture it covers and takes the smooth
+/// light of its whole face, blended to where its corners are.
+#[allow(clippy::too_many_arguments)]
+fn mesh_box(
+    mesh: &mut Mesh,
+    models: &BlockModels,
+    area: &ChunkArea,
+    light: &ChunkLight,
+    cell: [i32; 3],
+    origin: [f32; 3],
+    biome: Biome,
+    block: BlockState,
+    model: &BlockModel,
+    b: Cuboid,
+) {
+    let [x, y, z] = cell;
+    let full = b == Cuboid::FULL;
+    for face in Face::ALL {
+        let normal = face.normal();
+        let axis = normal.iter().position(|&n| n != 0).unwrap_or(1);
+        let outward = normal[axis] > 0;
+        let on_edge = if outward {
+            b.max[axis] >= 1.0
+        } else {
+            b.min[axis] <= 0.0
+        };
+        if on_edge {
+            let neighbor = area.get(x + normal[0], y + normal[1], z + normal[2]);
+            if !face_visible(models, block, model, neighbor) {
+                continue;
+            }
+        }
+        let corners = face_corners(face)
+            .map(|c| [0, 1, 2].map(|i| if c[i] > 0.5 { b.max[i] } else { b.min[i] }));
+        let texture = model.faces[face.index()];
+        let [u0, v0, u1, v1] = texture.uv;
+        let uvs = if full {
+            texture.corner_uvs()
+        } else {
+            corners.map(|p| {
+                let [u, v] = face_uv(face, p);
+                [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]
+            })
+        };
+        let color = models
+            .tint_color(texture.tint, biome)
+            .map(|c| c * face.shade());
+        let lit = smooth_face(models, area, light, cell, face);
+        let full_corners = face_corners(face);
+        let [a1, a2] = face_axes(face);
+        // Each corner blends the four full-face corners by where it is.
+        let at = |p: [f32; 3]| {
+            let mut ao = 0.0;
+            let mut l = [0.0; 2];
+            for (corner, &(c_ao, c_light)) in full_corners.iter().zip(&lit) {
+                let w = |axis: usize| {
+                    if corner[axis] > 0.5 {
+                        p[axis]
+                    } else {
+                        1.0 - p[axis]
+                    }
+                };
+                let weight = w(a1).clamp(0.0, 1.0) * w(a2).clamp(0.0, 1.0);
+                ao += c_ao * weight;
+                l[0] += c_light[0] * weight;
+                l[1] += c_light[1] * weight;
+            }
+            (ao, l)
+        };
+        let blended = corners.map(at);
+        let colors = blended.map(|(ao, _)| color.map(|c| c * ao));
+        let lights = blended.map(|(_, l)| l);
+        mesh.quad_uvs(translate(corners, origin), uvs, colors, lights);
+    }
+}
+
+/// Cactus (Minecraft's model): a cube whose sides are drawn a pixel in.
+fn mesh_cactus(
+    mesh: &mut Mesh,
+    models: &BlockModels,
+    area: &ChunkArea,
+    light: &ChunkLight,
+    cell: [i32; 3],
+    origin: [f32; 3],
+    biome: Biome,
+) {
+    let [x, y, z] = cell;
+    let Some(block) = area.get(x, y, z) else {
+        return;
+    };
+    let model = models.get(block);
+    const INSET: f32 = 1.0 / 16.0;
+    for face in Face::ALL {
+        let normal = face.normal();
+        if face == Face::Top || face == Face::Bottom {
+            let neighbor = area.get(x + normal[0], y + normal[1], z + normal[2]);
+            if !face_visible(models, block, model, neighbor) {
+                continue;
+            }
+        }
+        let corners = face_corners(face).map(|c| {
+            [0, 1, 2].map(|i| {
+                if normal[i] != 0 && i != 1 {
+                    // Pull the side in by a pixel.
+                    if c[i] > 0.5 { 1.0 - INSET } else { INSET }
+                } else {
+                    c[i]
+                }
+            })
+        });
+        let texture = model.faces[face.index()];
+        let color = models
+            .tint_color(texture.tint, biome)
+            .map(|c| c * face.shade());
+        let lit = smooth_face(models, area, light, cell, face);
+        let colors = lit.map(|(ao, _)| color.map(|c| c * ao));
+        let lights = lit.map(|(_, l)| l);
+        mesh.quad_uvs(
+            translate(corners, origin),
+            texture.corner_uvs(),
+            colors,
+            lights,
+        );
+    }
+}
+
+/// How far flat blocks sit off the surface they lie on, in blocks.
+const FLAT_OFFSET: f32 = 1.0 / 64.0;
+
+/// A rail's quad: flat just above the ground, turned along its shape, or
+/// sloping up a block for ascending shapes. The curved texture's turn runs
+/// from south to east, as for shape `south_east`.
+fn rail_quads(state: BlockState, uv: [f32; 4]) -> [([[f32; 3]; 4], [f32; 4]); 1] {
+    let shape = if state.has(Prop::RailShape) {
+        state.get(Prop::RailShape)
+    } else {
+        state.get(Prop::StraightRailShape)
+    };
+    let h = FLAT_OFFSET;
+    // Corners counter-clockwise from above, the texture running north to
+    // south (v) for a north_south rail.
+    let mut corners = [[0.0, h, 1.0], [1.0, h, 1.0], [1.0, h, 0.0], [0.0, h, 0.0]];
+    // Quarter turns, and the edge (north, south, east, west) raised a block.
+    let (turn, raise): (usize, Option<Face>) = match shape {
+        rail_shape::EAST_WEST => (1, None),
+        2 => (1, Some(Face::East)),
+        3 => (1, Some(Face::West)),
+        4 => (0, Some(Face::North)),
+        5 => (0, Some(Face::South)),
+        6 => (0, None),
+        7 => (1, None),
+        8 => (2, None),
+        9 => (3, None),
+        _ => (0, None),
+    };
+    corners.rotate_left(turn);
+    if let Some(edge) = raise {
+        for c in &mut corners {
+            let up = match edge {
+                Face::North => c[2] < 0.5,
+                Face::South => c[2] > 0.5,
+                Face::East => c[0] > 0.5,
+                _ => c[0] < 0.5,
+            };
+            if up {
+                c[1] = 1.0 + h;
+            }
+        }
+    }
+    [(corners, uv)]
+}
+
+/// The flat quads of a ladder, vine, lily pad or redstone dust,
+/// block-relative, each drawn from both sides with the block's texture.
+fn flat_quads(state: BlockState) -> Vec<[[f32; 3]; 4]> {
+    let ground = |h: f32| [[0.0, h, 1.0], [1.0, h, 1.0], [1.0, h, 0.0], [0.0, h, 0.0]];
+    // A quad standing a little in from the side `face` of the cell.
+    let against = |face: Face| -> [[f32; 3]; 4] {
+        let d = FLAT_OFFSET;
+        match face {
+            Face::North => [[1.0, 0.0, d], [0.0, 0.0, d], [0.0, 1.0, d], [1.0, 1.0, d]],
+            Face::South => [
+                [0.0, 0.0, 1.0 - d],
+                [1.0, 0.0, 1.0 - d],
+                [1.0, 1.0, 1.0 - d],
+                [0.0, 1.0, 1.0 - d],
+            ],
+            Face::West => [[d, 0.0, 0.0], [d, 0.0, 1.0], [d, 1.0, 1.0], [d, 1.0, 0.0]],
+            Face::East => [
+                [1.0 - d, 0.0, 1.0],
+                [1.0 - d, 0.0, 0.0],
+                [1.0 - d, 1.0, 0.0],
+                [1.0 - d, 1.0, 1.0],
+            ],
+            Face::Top => ground(1.0 - d),
+            Face::Bottom => ground(d),
+        }
+    };
+    match state.def().shape {
+        // On the wall behind it.
+        Shape::Ladder => vec![against(state.face(Prop::Facing).opposite())],
+        Shape::Vine => {
+            let mut quads: Vec<_> = [Face::North, Face::East, Face::South, Face::West, Face::Top]
+                .into_iter()
+                .filter(|&face| state.bool(Prop::side(face)))
+                .map(against)
+                .collect();
+            if quads.is_empty() {
+                quads.push(against(Face::Top));
+            }
+            quads
+        }
+        _ => vec![ground(FLAT_OFFSET)],
+    }
+}
+
+/// Redstone dust's color by its power, from dark red at 0 to bright red
+/// at 15 (modern `RedStoneWireBlock.getColorForPower`, roughly).
+fn wire_color(state: BlockState) -> [f32; 3] {
+    let p = state.number(Prop::Power) as f32 / 15.0;
+    [0.3 + 0.7 * p, if p > 0.0 { 0.2 * p * p } else { 0.0 }, 0.0]
+}
+
 /// Builds the mesh for the center chunk of `area`, lit by `light` (from
 /// `light::light_chunk` on the same area).
 pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) -> Mesh {
@@ -784,10 +1098,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             }
                         }
                         Shape::Bed => {
-                            // Both halves of a direction share a model; the
-                            // head's (data 8) has its textures.
-                            let half = BlockState::new(block.id(), block.data() & 8);
-                            for (face, corners, uv) in bed_quads(block.data(), models.get(half)) {
+                            for (face, corners, uv) in bed_quads(block, model) {
                                 let [dx, dy, dz] = face.normal();
                                 let neighbor =
                                     area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
@@ -805,10 +1116,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             }
                         }
                         Shape::Door => {
-                            // Both halves share their textures with data 0
-                            // or 8.
-                            let half = BlockState::new(block.id(), block.data() & 8);
-                            for (face, corners, uv) in door_quads(block.data(), models.get(half)) {
+                            for (face, corners, uv) in door_quads(block, model) {
                                 let color = side_color.map(|c| c * face.shade());
                                 mesh.quad(
                                     translate(corners, origin),
@@ -819,7 +1127,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             }
                         }
                         Shape::Torch => {
-                            for (corners, uv) in torch_quads(block.data(), side.uv) {
+                            for (corners, uv) in torch_quads(block, side.uv) {
                                 mesh.quad(
                                     translate(corners, origin),
                                     uv,
@@ -853,37 +1161,56 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             let cell = [x as i32, y as i32, z as i32];
                             mesh_liquid(&mut mesh, models, area, light, cell, origin, biome);
                         }
-                        // Every other shape is a full cube until its model is
-                        // built.
+                        Shape::Cube => {
+                            let cell = [x as i32, y as i32, z as i32];
+                            mesh_box(
+                                &mut mesh,
+                                models,
+                                area,
+                                light,
+                                cell,
+                                origin,
+                                biome,
+                                block,
+                                model,
+                                Cuboid::FULL,
+                            );
+                        }
+                        Shape::Cactus => {
+                            let cell = [x as i32, y as i32, z as i32];
+                            mesh_cactus(&mut mesh, models, area, light, cell, origin, biome);
+                        }
+                        Shape::Rail => {
+                            for (corners, uv) in rail_quads(block, side.uv) {
+                                mesh.double_sided_quad(
+                                    translate(corners, origin),
+                                    uv,
+                                    side_color,
+                                    own_light,
+                                );
+                            }
+                        }
+                        Shape::Ladder | Shape::Vine | Shape::LilyPad | Shape::RedstoneWire => {
+                            let color = match model.shape {
+                                Shape::RedstoneWire => wire_color(block),
+                                _ => side_color,
+                            };
+                            for corners in flat_quads(block) {
+                                mesh.double_sided_quad(
+                                    translate(corners, origin),
+                                    side.uv,
+                                    color,
+                                    own_light,
+                                );
+                            }
+                        }
                         _ => {
-                            let slab = model.shape == Shape::Slab;
-                            let height = if slab { SLAB_HEIGHT } else { 1.0 };
-                            for face in Face::ALL {
-                                let [dx, dy, dz] = face.normal();
-                                let neighbor =
-                                    area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
-                                // A slab's top is below whatever sits on it.
-                                let open_top = slab && face == Face::Top;
-                                if !open_top && !face_visible(models, block, model, neighbor) {
-                                    continue;
-                                }
-                                let mut texture = model.faces[face.index()];
-                                if slab && !matches!(face, Face::Top | Face::Bottom) {
-                                    // Sides show the texture's lower half.
-                                    let [u0, v0, u1, v1] = texture.uv;
-                                    texture.uv = [u0, v0 + (v1 - v0) * (1.0 - height), u1, v1];
-                                }
-                                let color = models
-                                    .tint_color(texture.tint, biome)
-                                    .map(|c| c * face.shade());
-                                let cell = [x as i32, y as i32, z as i32];
-                                let lit = smooth_face(models, area, light, cell, face);
-                                let corners =
-                                    face_corners(face).map(|[cx, cy, cz]| [cx, cy.min(height), cz]);
-                                let colors = lit.map(|(ao, _)| color.map(|c| c * ao));
-                                let lights = lit.map(|(_, l)| l);
-                                let corners = translate(corners, origin);
-                                mesh.quad(corners, texture.uv, colors, lights);
+                            let cell = [x as i32, y as i32, z as i32];
+                            for &b in model.boxes.iter().flatten() {
+                                mesh_box(
+                                    &mut mesh, models, area, light, cell, origin, biome, block,
+                                    model, b,
+                                );
                             }
                         }
                     }
@@ -897,34 +1224,20 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::light::light_chunk;
+    use crate::world::{blocks, light::light_chunk};
     use glam::Vec3;
 
-    const STONE: BlockState = BlockState::new(1, 0);
-    const GLASS: BlockState = BlockState::new(20, 0);
-    const LEAVES: BlockState = BlockState::new(18, 0);
-    const FLOWER: BlockState = BlockState::new(37, 0);
-    const WHEAT: BlockState = BlockState::new(59, 0);
-    const TORCH: BlockState = BlockState::new(50, 0);
-    const FENCE: BlockState = BlockState::new(85, 0);
+    const STONE: BlockState = BlockState::of(blocks::STONE);
+    const GLASS: BlockState = BlockState::of(blocks::GLASS);
+    const LEAVES: BlockState = BlockState::of(blocks::OAK_LEAVES);
+    const FLOWER: BlockState = BlockState::of(blocks::DANDELION);
+    const WHEAT: BlockState = BlockState::of(blocks::WHEAT);
+    const TORCH: BlockState = BlockState::of(blocks::TORCH);
+    const FENCE: BlockState = BlockState::of(blocks::OAK_FENCE);
 
     fn models() -> BlockModels {
-        let ron = r#"[
-            (id: 0, name: "air", hardness: 0.0, shape: None, solid: false),
-            (id: 1, name: "stone", hardness: 1.5),
-            (id: 18, name: "leaves", hardness: 0.2, layer: Cutout),
-            (id: 20, name: "glass", hardness: 0.3, layer: Cutout, cull_same: true),
-            (id: 37, name: "flower", hardness: 0.0, shape: Cross, layer: Cutout),
-            (id: 50, name: "torch", hardness: 0.0, shape: Torch, layer: Cutout, light: 14),
-            (id: 59, name: "wheat", hardness: 0.0, shape: Crop, layer: Cutout),
-            (id: 85, name: "fence", hardness: 2.0, shape: Fence),
-            (id: 126, name: "wooden_slab", hardness: 2.0, shape: Slab),
-            (id: 8, name: "flowing_water", hardness: 100.0, fluid: Some(Water), shape: Liquid, layer: Translucent, solid: false, cull_same: true),
-            (id: 9, name: "water", hardness: 100.0, fluid: Some(Water), shape: Liquid, layer: Translucent, solid: false, cull_same: true),
-        ]"#;
-        let registry = BlockRegistry::from_ron(ron).unwrap();
         BlockModels::new(
-            &registry,
+            crate::world::block::registry(),
             |_| None,
             [0.0, 0.0, 1.0, 1.0],
             BiomeColors::uniform(),
@@ -962,9 +1275,11 @@ mod tests {
         mesh_chunk(&models, &area, &light_chunk(&models, &area))
     }
 
+    /// Faces drawn, opaque or translucent.
     fn quads(mesh: &Mesh) -> usize {
-        assert_eq!(mesh.indices.len() % 6, 0);
-        mesh.indices.len() / 6
+        let indices = mesh.indices.len() + mesh.translucent.len();
+        assert_eq!(indices % 6, 0);
+        indices / 6
     }
 
     /// A bed model whose faces have the uvs [i, 0, i + 1, 1] for face index i.
@@ -984,8 +1299,9 @@ mod tests {
             let i = face.index() as f32;
             [i, 0.0, i + 1.0, 1.0]
         };
-        // Foot of a bed whose head is north (direction 2).
-        let foot = bed_quads(2, &model);
+        // Foot of a bed whose head is north.
+        let bed = BlockState::of(blocks::RED_BED).with_face(Prop::Facing, Face::North);
+        let foot = bed_quads(bed, &model);
         let faces: Vec<Face> = foot.iter().map(|(face, ..)| *face).collect();
         assert_eq!(
             faces,
@@ -998,8 +1314,8 @@ mod tests {
         assert_eq!(u, [0.0, -1.0], "the top's texture runs north, to the head");
         assert_eq!(foot[2].2, uv(Face::South), "the foot's end");
         assert!(foot[1].1.iter().all(|c| c[1] == BED_BOTTOM));
-        // The head (data 8 on) shows its north end instead.
-        let head = bed_quads(2 | 8, &model);
+        // The head shows its north end instead.
+        let head = bed_quads(bed.with(Prop::BedPart, bed_part::HEAD), &model);
         assert!(
             head.iter()
                 .any(|&(face, _, end)| face == Face::North && end == uv(Face::North))
@@ -1007,7 +1323,7 @@ mod tests {
         assert!(head.iter().all(|&(face, ..)| face != Face::South));
         // Heading east, the north side's texture is flipped to keep the legs
         // at the foot; the south side's isn't.
-        let east = bed_quads(3, &model);
+        let east = bed_quads(bed.with_face(Prop::Facing, Face::East), &model);
         let side = |face: Face| east.iter().find(|q| q.0 == face).unwrap().2;
         let [u0, _, u1, _] = uv(Face::East);
         assert_eq!(side(Face::North), [u1, 0.0, u0, 1.0]);
@@ -1023,15 +1339,17 @@ mod tests {
         };
         let mirrored = |[u0, v0, u1, v1]: [f32; 4]| [u1, v0, u0, v1];
         let find = |quads: &[Quad], face: Face| quads.iter().find(|q| q.0 == face).unwrap().2;
-        // Closed along the south side (direction 3): the wide faces show the
-        // whole texture, the north one mirrored, and the thin ones a strip.
-        let closed = door_quads(3, &model);
+        // Placed looking north, closed along the south side: the wide faces
+        // show the whole texture, the north one mirrored, and the thin ones
+        // a strip.
+        let door = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
+        let closed = door_quads(door, &model);
         assert_eq!(find(&closed, Face::South), uv(Face::South));
         assert_eq!(find(&closed, Face::North), mirrored(uv(Face::North)));
         let [u0, _, u1, _] = find(&closed, Face::East);
         assert!(((u1 - u0) - 3.0 / 16.0).abs() < 1e-6, "{u0} {u1}");
         // Open, it lies along the west side; now the west face is mirrored.
-        let open = door_quads(3 | 4, &model);
+        let open = door_quads(door.with_bool(Prop::Open, true), &model);
         assert!(
             open.iter()
                 .all(|(_, corners, _)| corners.iter().all(|c| c[0] <= 3.0 / 16.0))
@@ -1042,7 +1360,7 @@ mod tests {
 
     #[test]
     fn a_slab_is_half_a_block_with_its_top_always_shown() {
-        const SLAB: BlockState = BlockState::new(126, 0);
+        const SLAB: BlockState = BlockState::of(blocks::OAK_SLAB);
         let mesh = mesh_with(&[(5, 64, 5, SLAB), (5, 65, 5, STONE)], true);
         // Six slab faces (its top shows under the stone) and five of the
         // stone's (its bottom faces a slab, which doesn't hide it).
@@ -1104,7 +1422,8 @@ mod tests {
     #[test]
     fn bottom_of_world_is_hidden_and_top_is_open() {
         assert_eq!(quads(&mesh_with(&[(5, 0, 5, STONE)], true)), 5);
-        assert_eq!(quads(&mesh_with(&[(5, 127, 5, STONE)], true)), 6);
+        let top = WORLD_HEIGHT as i32 - 1;
+        assert_eq!(quads(&mesh_with(&[(5, top, 5, STONE)], true)), 6);
     }
 
     #[test]
@@ -1136,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_shapes_draw_as_cubes_without_hiding_neighbors() {
+    fn a_fence_post_draws_inside_its_cell_without_hiding_neighbors() {
         let mesh = mesh_with(&[(5, 64, 5, STONE), (5, 65, 5, FENCE)], true);
         assert_eq!(quads(&mesh), 6 + 5);
     }
@@ -1144,7 +1463,7 @@ mod tests {
     #[test]
     fn torches_are_a_thin_stick_that_leans_off_walls() {
         const WEST_PLANE: f32 = 5.5 - 1.0 / 16.0;
-        let floor = mesh_with(&[(5, 64, 5, BlockState::new(50, 5))], true);
+        let floor = mesh_with(&[(5, 64, 5, BlockState::of(blocks::TORCH))], true);
         assert_eq!(quads(&floor), 5);
         let upright = floor
             .vertices
@@ -1155,7 +1474,8 @@ mod tests {
         assert_eq!(upright, 6, "the west plane stands straight at 7/16");
         // Attached to a wall to the west: raised 0.2, shifted 0.1 west, and
         // the base leans another 0.4 west.
-        let wall = mesh_with(&[(5, 64, 5, BlockState::new(50, 1))], true);
+        let east = BlockState::of(blocks::WALL_TORCH).with_face(Prop::Facing, Face::East);
+        let wall = mesh_with(&[(5, 64, 5, east)], true);
         // The first quad is the west plane.
         for v in &wall.vertices[..4] {
             let expected = if v.position[1] > 65.0 {
@@ -1279,9 +1599,6 @@ mod tests {
 
     #[test]
     fn faces_get_their_texture_and_biome_tint() {
-        let ron = r#"#![enable(implicit_some)]
-            [(id: 2, name: "grass", hardness: 0.6, textures: (all: "dirt", top: "grass_top"), tint: GrassTop)]"#;
-        let registry = BlockRegistry::from_ron(ron).unwrap();
         let uv = |name: &str| {
             Some(if name == "grass_top" {
                 [0.5, 0.0, 1.0, 0.5]
@@ -1289,30 +1606,59 @@ mod tests {
                 [0.0; 4]
             })
         };
-        let models = BlockModels::new(&registry, uv, [9.0; 4], BiomeColors::uniform());
-        let model = models.get(BlockState::new(2, 0));
+        let models = BlockModels::new(
+            crate::world::block::registry(),
+            uv,
+            [9.0; 4],
+            BiomeColors::uniform(),
+        );
+        let model = models.get(BlockState::of(blocks::GRASS_BLOCK));
         assert_eq!(model.faces[Face::Top.index()].uv, [0.5, 0.0, 1.0, 0.5]);
         assert_eq!(model.faces[Face::Bottom.index()].uv, [0.0; 4]);
         assert_eq!(model.faces[Face::Top.index()].tint, FaceTint::Grass);
         assert_eq!(model.faces[Face::East.index()].tint, FaceTint::None);
-        // Undefined IDs get the missing texture.
-        assert_eq!(models.get(BlockState::new(300, 0)).faces[0].uv, [9.0; 4]);
+        // Missing textures get the missing texture.
+        let missing = BlockModels::new(
+            crate::world::block::registry(),
+            |_| None,
+            [9.0; 4],
+            BiomeColors::uniform(),
+        );
+        assert_eq!(missing.get(STONE).faces[0].uv, [9.0; 4]);
+    }
+
+    #[test]
+    fn logs_lying_down_show_their_ends_along_their_axis() {
+        let models = models();
+        let log = |axis_value: u8| {
+            models.get(BlockState::of(blocks::OAK_LOG).with(Prop::Axis, axis_value))
+        };
+        let upright = log(axis::Y).clone();
+        let end = upright.faces[Face::Top.index()];
+        let bark = upright.faces[Face::North.index()];
+        let along_x = log(axis::X);
+        assert_eq!(along_x.faces[Face::East.index()], end);
+        assert_eq!(
+            along_x.faces[Face::Top.index()].rotation,
+            1,
+            "bark turned to run along x"
+        );
+        assert_eq!(along_x.faces[Face::Top.index()].uv, bark.uv);
+        let along_z = log(axis::Z);
+        assert_eq!(along_z.faces[Face::South.index()], end);
+        assert_eq!(along_z.faces[Face::Top.index()], bark);
     }
 
     #[test]
     fn grass_takes_the_color_of_its_column_biome() {
-        let ron = r#"#![enable(implicit_some)]
-            [(id: 2, name: "grass", hardness: 0.6, textures: (all: "x"), tint: GrassTop)]"#;
-        let registry = BlockRegistry::from_ron(ron).unwrap();
         let mut map = image::RgbaImage::new(256, 256);
         map.put_pixel(0, 255, image::Rgba([200, 0, 0, 255])); // desert
         map.put_pixel(50, 173, image::Rgba([0, 200, 0, 255])); // plains
         let colors = BiomeColors::from_colormaps(&map, &map);
-        let models = BlockModels::new(&registry, |_| None, [0.0; 4], colors);
-
+        let models = BlockModels::new(crate::world::block::registry(), |_| None, [0.0; 4], colors);
         let mut chunk = Chunk::new(ChunkPos::new(0, 0));
-        chunk.set(0, 64, 0, BlockState::new(2, 0));
-        chunk.set(5, 64, 0, BlockState::new(2, 0));
+        chunk.set(0, 64, 0, BlockState::of(blocks::GRASS_BLOCK));
+        chunk.set(5, 64, 0, BlockState::of(blocks::GRASS_BLOCK));
         chunk.set_biome(5, 0, Biome::Desert);
         let area = ChunkArea::new(Arc::new(chunk), |_| None);
         let mesh = mesh_chunk(&models, &area, &light_chunk(&models, &area));
@@ -1327,7 +1673,7 @@ mod tests {
         assert_eq!(top_color(5.0), [200.0 / 255.0, 0.0, 0.0]);
     }
 
-    const WATER: BlockState = BlockState::new(9, 0);
+    const WATER: BlockState = BlockState::of(blocks::WATER);
 
     #[test]
     fn water_goes_in_the_translucent_list_with_a_lowered_surface_seen_from_below() {
@@ -1347,8 +1693,8 @@ mod tests {
     }
 
     #[test]
-    fn still_and_flowing_water_join_and_the_surface_slopes_downstream() {
-        let flowing = BlockState::new(8, 3);
+    fn sources_and_flowing_water_join_and_the_surface_slopes_downstream() {
+        let flowing = fluid::at_level(Fluid::Water, 3);
         let mesh = mesh_with(&[(4, 60, 4, WATER), (5, 60, 4, flowing)], true);
         // Each: the surface both ways, the bottom and three sides.
         assert_eq!(mesh.translucent.len() / 6, 12);

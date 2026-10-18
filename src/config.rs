@@ -20,8 +20,9 @@ pub const Z_FAR: f32 = 1000.0;
 /// Game logic rate, like Minecraft.
 pub const TICKS_PER_SECOND: u32 = 20;
 
-/// Height of the cloud layer (1.0.0's `getCloudHeight` plus its 0.33 offset).
-pub const CLOUD_HEIGHT: f32 = 108.33;
+/// Height of the cloud layer: modern Minecraft's 192 (1.18+) plus 1.0.0's
+/// 0.33 offset, above the taller world's mountains.
+pub const CLOUD_HEIGHT: f32 = 192.33;
 
 /// Ticks between autosaves: 5 minutes, as CLAUDE.md asks for "every few
 /// minutes" (1.0.0 itself saved a few changed chunks every 40 ticks).
@@ -70,8 +71,9 @@ pub const MOUSE_SENSITIVITY: f32 = 0.0025;
 /// Chunk width and depth in blocks; chunks are columns of 16³ sections.
 pub const CHUNK_SIZE: usize = 16;
 
-/// World height in blocks (Y 0..127), as in 1.0.0.
-pub const WORLD_HEIGHT: usize = 128;
+/// World height in blocks (Y 0..255, 16 sections), raised from 1.0.0's 128
+/// in v1.1 (see CLAUDE.md §9).
+pub const WORLD_HEIGHT: usize = 256;
 
 /// Sea level, as in 1.0.0.
 pub const SEA_LEVEL: i32 = 63;

@@ -96,6 +96,10 @@ impl DebugUi {
         self.visible = !self.visible;
     }
 
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
     /// Counts a frame that reached the screen, for the FPS readout.
     pub fn frame_presented(&mut self, now: Instant) {
         self.fps.tick(now);

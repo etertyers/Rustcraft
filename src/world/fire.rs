@@ -2,7 +2,7 @@
 //! normal difficulty, without rain: fire ages on scheduled ticks, spreads to
 //! air beside flammable blocks, burns those blocks away and goes out once
 //! nothing around it burns. Lava starts fires on random ticks (modern
-//! `LavaFluid.randomTick`). A fire's data value is its age, 0–15.
+//! `LavaFluid.randomTick`). A fire's `age` is 0–15.
 
 use std::collections::BTreeMap;
 
@@ -10,17 +10,15 @@ use glam::IVec3;
 
 use super::{
     World,
-    block::{BlockDef, BlockId, BlockRegistry, BlockState, Shape},
+    block::{BlockDef, BlockRegistry, BlockState, Shape},
+    blocks::{FIRE, LAVA, NETHERRACK},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     fast_hash::{FastMap, FastSet},
+    props::Prop,
 };
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
-pub const FIRE: BlockId = 51;
-const FLOWING_LAVA: BlockId = 10;
-const LAVA: BlockId = 11;
-/// Burns forever (modern `#infiniburn_overworld`).
-const NETHERRACK: BlockId = 87;
+// Netherrack burns forever (modern `#infiniburn_overworld`).
 const MAX_AGE: u8 = 15;
 /// Normal difficulty, which makes fire spread a little faster.
 const DIFFICULTY: i32 = 2;
@@ -35,6 +33,11 @@ const NEIGHBORS: [IVec3; 6] = [
     IVec3::NEG_Z,
     IVec3::Z,
 ];
+
+/// Fire of age `age`.
+fn fire(age: u8) -> BlockState {
+    BlockState::of(FIRE).with_number(Prop::Age15, age)
+}
 
 /// Scheduled fire updates, and blocks changed since the last tick. Not
 /// saved: fire in a chunk is scheduled again when it loads.
@@ -187,7 +190,7 @@ impl Step<'_> {
     }
 
     fn place_fire(&mut self, at: IVec3, age: u8) {
-        self.set(at, BlockState::new(FIRE, age.min(MAX_AGE)));
+        self.set(at, fire(age.min(MAX_AGE)));
         let delay = self.delay();
         self.fires.schedule(at, self.time + delay);
     }
@@ -218,10 +221,10 @@ impl Step<'_> {
         let below = at - IVec3::Y;
         let forever = self.get(below).is_some_and(|b| b.id() == NETHERRACK);
         // It ages, but this update goes by the age it had.
-        let age = block.data();
+        let age = block.number(Prop::Age15);
         let older = (age + (self.random)(3) as u8 / 2).min(MAX_AGE);
         if older != age {
-            self.set(at, BlockState::new(FIRE, older));
+            self.set(at, fire(older));
         }
         if !forever {
             if !self.has_flammable_neighbor(at) {
@@ -314,7 +317,7 @@ impl Step<'_> {
                 let y = (section * SECTION_SIZE) as i32 + (self.random)(SECTION_SIZE as u32) as i32;
                 let z = (self.random)(CHUNK_SIZE as u32) as i32;
                 let at = IVec3::new(min_x + x, y, min_z + z);
-                if matches!(self.get(at).map(BlockState::id), Some(FLOWING_LAVA | LAVA)) {
+                if self.get(at).is_some_and(|block| block.is(LAVA)) {
                     self.lava_tick(at);
                 }
             }
@@ -364,14 +367,15 @@ impl Step<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
-    const STONE: BlockState = BlockState::new(1, 0);
-    const PLANKS: BlockState = BlockState::new(5, 0);
+    const STONE: BlockState = BlockState::of(blocks::STONE);
+    const PLANKS: BlockState = BlockState::of(blocks::OAK_PLANKS);
     const FLOOR: i32 = 63;
 
     struct Yard {
         world: World,
-        blocks: BlockRegistry,
+        blocks: &'static BlockRegistry,
         fires: Fires,
         time: u64,
         seed: u32,
@@ -392,8 +396,7 @@ mod tests {
                     world.insert(chunk);
                 }
             }
-            let blocks =
-                BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
+            let blocks = crate::world::block::registry();
             Self {
                 world,
                 blocks,
@@ -417,7 +420,7 @@ mod tests {
         }
 
         fn light(&mut self, at: IVec3) {
-            self.set(at, BlockState::new(FIRE, 0));
+            self.set(at, BlockState::of(FIRE));
             self.fires.schedule(at, self.time + 1);
         }
 
@@ -428,9 +431,9 @@ mod tests {
                     *seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
                     (*seed >> 16) % n
                 };
-                let edits =
-                    self.fires
-                        .tick(&self.world, &self.blocks, self.time, near, &mut random);
+                let edits = self
+                    .fires
+                    .tick(&self.world, self.blocks, self.time, near, &mut random);
                 for (at, block) in edits {
                     self.set(at, block);
                 }
@@ -438,7 +441,7 @@ mod tests {
             }
         }
 
-        fn count(&self, block: BlockId) -> usize {
+        fn count(&self, block: crate::world::block::BlockId) -> usize {
             let mut count = 0;
             for x in -16..32 {
                 for z in -16..32 {
@@ -466,7 +469,10 @@ mod tests {
         assert!(yard.count(FIRE) > 1, "it spread");
         yard.run(20_000, &[]);
         // Fire creeps slowly over flat ground, so a floor burns in patches.
-        assert!(yard.count(5) < 36, "some planks burned away");
+        assert!(
+            yard.count(blocks::OAK_PLANKS) < 36,
+            "some planks burned away"
+        );
         assert_eq!(yard.count(FIRE), 0, "and the fire went out");
         assert_eq!(yard.fires.pending(), 0);
         assert_eq!(
@@ -495,7 +501,7 @@ mod tests {
 
         // On netherrack it burns forever.
         let mut yard = Yard::new();
-        yard.set(at, BlockState::new(NETHERRACK, 0));
+        yard.set(at, BlockState::of(NETHERRACK));
         yard.light(at + IVec3::Y);
         yard.run(5000, &[]);
         assert_eq!(yard.get(at + IVec3::Y).id(), FIRE);
@@ -505,7 +511,7 @@ mod tests {
     fn lava_sets_fire_to_wood_near_it() {
         let mut yard = Yard::new();
         let lava = IVec3::new(4, 64, 4);
-        yard.set(lava, BlockState::new(LAVA, 0));
+        yard.set(lava, BlockState::of(LAVA));
         for x in 2..=6 {
             for z in 2..=6 {
                 if (x, z) != (4, 4) {
@@ -513,15 +519,18 @@ mod tests {
                 }
             }
         }
-        let planks = yard.count(5);
+        let planks = yard.count(blocks::OAK_PLANKS);
         // Random ticks are rare: 3 a section a tick, and the lava is one
         // cell in 4096.
         yard.run(30_000, &[ChunkPos::new(0, 0)]);
-        assert!(yard.count(5) < planks, "some planks burned");
+        assert!(
+            yard.count(blocks::OAK_PLANKS) < planks,
+            "some planks burned"
+        );
 
         // Without anything flammable, lava starts nothing.
         let mut yard = Yard::new();
-        yard.set(lava, BlockState::new(LAVA, 0));
+        yard.set(lava, BlockState::of(LAVA));
         yard.run(30_000, &[ChunkPos::new(0, 0)]);
         assert_eq!(yard.count(FIRE), 0);
     }

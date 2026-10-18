@@ -4,14 +4,15 @@ use crate::{
     config::{CHUNK_SIZE, SEA_LEVEL},
     world::{
         block::BlockState,
+        blocks,
         chunk::{Chunk, ChunkPos},
     },
 };
 
-const BEDROCK: BlockState = BlockState::new(7, 0);
-const STONE: BlockState = BlockState::new(1, 0);
-const DIRT: BlockState = BlockState::new(3, 0);
-const GRASS: BlockState = BlockState::new(2, 0);
+const BEDROCK: BlockState = BlockState::of(blocks::BEDROCK);
+const STONE: BlockState = BlockState::of(blocks::STONE);
+const DIRT: BlockState = BlockState::of(blocks::DIRT);
+const GRASS: BlockState = BlockState::of(blocks::GRASS_BLOCK);
 
 pub fn flat_chunk(pos: ChunkPos) -> Chunk {
     let mut chunk = Chunk::new(pos);

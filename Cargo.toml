@@ -31,3 +31,15 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
+
+[build-dependencies]
+ron = "0.12.2"
+serde = { version = "1.0.229", features = ["derive"] }
+
+# The performance gate's benchmarks (`cargo bench`), from M14 on.
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "world"
+harness = false

@@ -153,6 +153,7 @@ impl Particle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
     /// Solid ground below y 64.
     struct Floor;
@@ -181,7 +182,7 @@ mod tests {
             seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
             (seed >> 8) as f32 / (1u32 << 24) as f32
         };
-        let stone = BlockState::new(1, 0);
+        let stone = BlockState::of(blocks::STONE);
         let mut particles = Particle::burst(IVec3::new(0, 64, 0), stone, &mut random);
         assert_eq!(particles.len(), 64);
         assert!(particles.iter().all(|p| p.face == Face::Bottom));
@@ -208,7 +209,7 @@ mod tests {
         let chip = Particle::chip(
             IVec3::new(3, 64, 3),
             Face::East,
-            BlockState::new(1, 0),
+            BlockState::of(blocks::STONE),
             &mut random,
         );
         assert!((chip.position.x - 4.1).abs() < 1e-9);

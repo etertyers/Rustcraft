@@ -2,18 +2,16 @@
 //! blocks that are cubes draw as small cubes, everything else as a flat
 //! picture (the item's texture, or the block's for plants, torches, rails...).
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use super::atlas::{Atlas, ITEM_PREFIX, MISSING_TILE};
 use crate::{
-    inventory::{
-        item::{FIRST_ITEM_ID, ItemId, ItemRegistry},
-        stack::ItemStack,
-    },
+    inventory::{item::ItemRegistry, stack::ItemStack},
     world::{
         Face,
         block::{BlockState, Shape},
         mesh::BlockModels,
+        props::Prop,
     },
 };
 
@@ -37,8 +35,8 @@ pub enum ItemIcon {
 
 pub struct ItemIcons {
     models: Arc<BlockModels>,
-    /// Item texture UVs by (ID, data value); data 0 is the default.
-    items: HashMap<(ItemId, u8), [f32; 4]>,
+    /// Each item's icon, by ID.
+    icons: Vec<ItemIcon>,
     missing: [f32; 4],
 }
 
@@ -50,37 +48,46 @@ impl ItemIcons {
                 .get(&format!("{ITEM_PREFIX}{texture}"))
                 .map_or(missing, |tile| atlas.uv_rect(tile))
         };
-        let mut items = HashMap::new();
-        for item in registry.iter() {
-            items.insert((item.id, 0), uv(&item.texture));
-            for (&data, variant) in &item.variants {
-                items.insert((item.id, data), uv(&variant.texture));
-            }
-        }
-        Self {
+        let mut icons = Self {
             models,
-            items,
+            icons: Vec::with_capacity(registry.len()),
             missing,
+        };
+        for item in registry.iter() {
+            let icon = match (&item.texture, item.places) {
+                (Some(texture), _) => ItemIcon::Flat(IconFace {
+                    uv: uv(texture),
+                    color: [1.0; 3],
+                }),
+                // Facing the viewer, as an icon shows the south face.
+                (None, Some(block)) => icons.block_icon(
+                    BlockState::of(block)
+                        .with_face(Prop::Facing, Face::South)
+                        .with_face(Prop::FacingAll, Face::South),
+                ),
+                (None, None) => ItemIcon::Flat(IconFace {
+                    uv: missing,
+                    color: [1.0; 3],
+                }),
+            };
+            icons.icons.push(icon);
         }
+        icons
     }
 
     pub fn icon(&self, stack: &ItemStack) -> ItemIcon {
-        if stack.id >= FIRST_ITEM_ID {
-            let data = u8::try_from(stack.damage).unwrap_or(0);
-            let uv = self
-                .items
-                .get(&(stack.id, data))
-                .or_else(|| self.items.get(&(stack.id, 0)))
-                .copied()
-                .unwrap_or(self.missing);
-            return ItemIcon::Flat(IconFace {
-                uv,
+        self.icons
+            .get(stack.id.index())
+            .copied()
+            .unwrap_or(ItemIcon::Flat(IconFace {
+                uv: self.missing,
                 color: [1.0; 3],
-            });
-        }
-        let model = self
-            .models
-            .get(BlockState::new(stack.id, stack.damage as u8));
+            }))
+    }
+
+    /// A block drawn as an icon: a small cube, or its south face flat.
+    fn block_icon(&self, state: BlockState) -> ItemIcon {
+        let model = self.models.get(state);
         let face = |face: Face| {
             let texture = model.faces[face.index()];
             IconFace {

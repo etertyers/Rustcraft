@@ -15,12 +15,8 @@ use crate::{
         slots::{self, Click, SlotRef},
         stack::ItemStack,
     },
-    world::{block::BlockState, block_entity::BlockEntity},
+    world::{block_entity::BlockEntity, blocks, props::Prop},
 };
-
-/// The furnace block, unlit and lit.
-const FURNACE: u16 = 61;
-const LIT_FURNACE: u16 = 62;
 
 /// What's open besides the inventory.
 #[derive(Debug, Clone, PartialEq)]
@@ -134,10 +130,9 @@ impl Game {
             let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
                 continue;
             };
-            if matches!(block.id(), FURNACE | LIT_FURNACE) {
-                let id = if lit { LIT_FURNACE } else { FURNACE };
+            if block.is(blocks::FURNACE) && block.bool(Prop::Lit) != lit {
                 self.chunks
-                    .set_blocks(&[(at, BlockState::new(id, block.data()))]);
+                    .set_blocks(&[(at, block.with_bool(Prop::Lit, lit))]);
             }
         }
     }
@@ -440,6 +435,8 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inventory::items;
+    use crate::world::blocks;
     use std::sync::Arc;
 
     use glam::DVec3;
@@ -463,21 +460,25 @@ mod tests {
     fn the_inventory_grid_crafts_planks_one_click_at_a_time() {
         let mut game = flat_game(GameMode::Survival);
         game.open_inventory();
-        game.inventory.set(0, Some(ItemStack::new(17, 3)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::OAK_LOG, 3)));
         game.click_slot(SlotRef::Inventory(0), Click::Left);
         game.click_slot(SlotRef::Grid(3), Click::Left);
-        assert_eq!(game.slot_stack(SlotRef::Result), Some(ItemStack::new(5, 4)));
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::OAK_PLANKS, 4))
+        );
         game.click_slot(SlotRef::Result, Click::Left);
         game.click_slot(SlotRef::Result, Click::Left);
-        assert_eq!(game.cursor, Some(ItemStack::new(5, 8)));
-        assert_eq!(grid_of(&game)[3], Some(ItemStack::new(17, 1)));
+        assert_eq!(game.cursor, Some(ItemStack::new(items::OAK_PLANKS, 8)));
+        assert_eq!(grid_of(&game)[3], Some(ItemStack::new(items::OAK_LOG, 1)));
         // Holding something else, the result can't be taken.
         game.click_slot(SlotRef::Inventory(5), Click::Left);
-        game.inventory.set(6, Some(ItemStack::new(3, 1)));
+        game.inventory.set(6, Some(ItemStack::new(items::DIRT, 1)));
         game.click_slot(SlotRef::Inventory(6), Click::Left);
         game.click_slot(SlotRef::Result, Click::Left);
-        assert_eq!(game.cursor, Some(ItemStack::new(3, 1)));
-        assert_eq!(grid_of(&game)[3], Some(ItemStack::new(17, 1)));
+        assert_eq!(game.cursor, Some(ItemStack::new(items::DIRT, 1)));
+        assert_eq!(grid_of(&game)[3], Some(ItemStack::new(items::OAK_LOG, 1)));
     }
 
     #[test]
@@ -489,10 +490,10 @@ mod tests {
             size: 3,
             grid: vec![
                 None,
-                Some(ItemStack::new(5, 10)),
+                Some(ItemStack::new(items::OAK_PLANKS, 10)),
                 None,
                 None,
-                Some(ItemStack::new(5, 7)),
+                Some(ItemStack::new(items::OAK_PLANKS, 7)),
                 None,
                 None,
                 None,
@@ -500,8 +501,14 @@ mod tests {
             ],
         });
         game.click_slot(SlotRef::Result, Click::Shift);
-        assert_eq!(game.inventory.slot(8), Some(&ItemStack::new(280, 28)));
-        assert_eq!(grid_of(&game)[1], Some(ItemStack::new(5, 3)));
+        assert_eq!(
+            game.inventory.slot(8),
+            Some(&ItemStack::new(items::STICK, 28))
+        );
+        assert_eq!(
+            grid_of(&game)[1],
+            Some(ItemStack::new(items::OAK_PLANKS, 3))
+        );
         assert_eq!(grid_of(&game)[4], None);
         assert_eq!(game.slot_stack(SlotRef::Result), None);
     }
@@ -510,32 +517,38 @@ mod tests {
     fn closing_throws_out_the_grid_and_the_held_stack() {
         let mut game = flat_game(GameMode::Survival);
         game.open_inventory();
-        game.inventory.set(0, Some(ItemStack::new(4, 5)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::COBBLESTONE, 5)));
         game.click_slot(SlotRef::Inventory(0), Click::Right);
         game.click_slot(SlotRef::Grid(0), Click::Right);
         game.click_slot(SlotRef::Grid(1), Click::Right);
-        assert_eq!(game.cursor, Some(ItemStack::new(4, 1)));
+        assert_eq!(game.cursor, Some(ItemStack::new(items::COBBLESTONE, 1)));
         game.close_container();
         assert_eq!(game.container, None);
         assert_eq!(game.cursor, None);
         let thrown: u8 = game.entities.iter().map(|item| item.stack.count).sum();
         assert_eq!(thrown, 3);
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(4, 2)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::COBBLESTONE, 2))
+        );
     }
 
     #[test]
     fn right_clicking_a_crafting_table_opens_it_even_holding_a_block() {
         let mut game = flat_game(GameMode::Survival);
-        game.chunks
-            .set_blocks(&[(glam::IVec3::new(0, 63, 0), BlockState::new(58, 0))]);
-        game.inventory.set(0, Some(ItemStack::new(3, 5)));
+        game.chunks.set_blocks(&[(
+            glam::IVec3::new(0, 63, 0),
+            BlockState::of(blocks::CRAFTING_TABLE),
+        )]);
+        game.inventory.set(0, Some(ItemStack::new(items::DIRT, 5)));
         game.advance(0.0);
         game.place_clicked = true;
         game.tick();
         assert_eq!(game.container, Some(Container::crafting(3)));
         assert_eq!(
             game.inventory.slot(0),
-            Some(&ItemStack::new(3, 5)),
+            Some(&ItemStack::new(items::DIRT, 5)),
             "nothing placed"
         );
     }
@@ -563,18 +576,22 @@ mod tests {
         let at = (game.body.position() + DVec3::new(2.0, 0.0, 0.0))
             .floor()
             .as_ivec3();
-        game.chunks.set_blocks(&[(at, BlockState::new(54, 3))]);
+        game.chunks
+            .set_blocks(&[(at, BlockState::of(blocks::CHEST))]);
         game.open_chest(at);
         assert_eq!(game.container, Some(Container::Chest(at)));
-        game.inventory.set(4, Some(ItemStack::new(265, 10)));
         game.inventory
-            .set(20, Some(ItemStack::with_damage(278, 1, 9)));
+            .set(4, Some(ItemStack::new(items::IRON_INGOT, 10)));
+        game.inventory.set(
+            20,
+            Some(ItemStack::with_damage(items::DIAMOND_PICKAXE, 1, 9)),
+        );
         game.click_slot(SlotRef::Inventory(4), Click::Shift);
         game.click_slot(SlotRef::Inventory(20), Click::Left);
         game.click_slot(SlotRef::Block(13), Click::Left);
         assert_eq!(
             game.slot_stack(SlotRef::Block(0)),
-            Some(ItemStack::new(265, 10))
+            Some(ItemStack::new(items::IRON_INGOT, 10))
         );
         assert_eq!(game.inventory.slot(4), None);
         game.close_container();
@@ -587,20 +604,29 @@ mod tests {
         assert_eq!(
             held,
             Some(vec![
-                ItemStack::new(265, 10),
-                ItemStack::with_damage(278, 1, 9)
+                ItemStack::new(items::IRON_INGOT, 10),
+                ItemStack::with_damage(items::DIAMOND_PICKAXE, 1, 9)
             ])
         );
         // Shift-clicking takes a stack back out, hotbar end first.
         game.open_chest(at);
         game.click_slot(SlotRef::Block(0), Click::Shift);
-        assert_eq!(game.inventory.slot(8), Some(&ItemStack::new(265, 10)));
+        assert_eq!(
+            game.inventory.slot(8),
+            Some(&ItemStack::new(items::IRON_INGOT, 10))
+        );
         game.close_container();
         game.break_block(at);
         assert_eq!(game.chunks.block_entity(at), None);
-        let spilled: Vec<u16> = game.entities.iter().map(|item| item.stack.id).collect();
-        assert!(spilled.contains(&278), "the pickaxe spills: {spilled:?}");
-        assert!(spilled.contains(&54), "and the chest drops itself");
+        let spilled: Vec<_> = game.entities.iter().map(|item| item.stack.id).collect();
+        assert!(
+            spilled.contains(&items::DIAMOND_PICKAXE),
+            "the pickaxe spills: {spilled:?}"
+        );
+        assert!(
+            spilled.contains(&items::CHEST),
+            "and the chest drops itself"
+        );
     }
 
     #[test]
@@ -608,13 +634,13 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         let at = glam::IVec3::new(2, 64, 0);
         game.chunks.set_blocks(&[
-            (at, BlockState::new(54, 3)),
-            (at + glam::IVec3::Y, BlockState::new(1, 0)),
+            (at, BlockState::of(blocks::CHEST)),
+            (at + glam::IVec3::Y, BlockState::of(blocks::STONE)),
         ]);
         game.open_chest(at);
         assert_eq!(game.container, None);
         game.chunks
-            .set_blocks(&[(at + glam::IVec3::Y, BlockState::new(50, 5))]);
+            .set_blocks(&[(at + glam::IVec3::Y, BlockState::of(blocks::TORCH))]);
         game.open_chest(at);
         assert_eq!(
             game.container,
@@ -628,10 +654,14 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         let at = glam::IVec3::new(2, 64, 0);
         let block = |game: &Game| game.chunks.world().block(at.x, at.y, at.z).unwrap();
-        game.chunks.set_blocks(&[(at, BlockState::new(FURNACE, 4))]);
+        let furnace =
+            BlockState::of(blocks::FURNACE).with_face(Prop::Facing, crate::world::Face::West);
+        game.chunks.set_blocks(&[(at, furnace)]);
         game.open_furnace(at);
-        game.inventory.set(0, Some(ItemStack::new(15, 2)));
-        game.inventory.set(1, Some(ItemStack::new(5, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::IRON_ORE, 2)));
+        game.inventory
+            .set(1, Some(ItemStack::new(items::OAK_PLANKS, 1)));
         game.click_slot(SlotRef::Inventory(0), Click::Left);
         game.click_slot(SlotRef::Block(furnace::INPUT), Click::Left);
         game.click_slot(SlotRef::Inventory(1), Click::Left);
@@ -643,18 +673,18 @@ mod tests {
         game.tick();
         assert_eq!(
             block(&game),
-            BlockState::new(LIT_FURNACE, 4),
+            furnace.with_bool(Prop::Lit, true),
             "lit, facing kept"
         );
         // A plank burns 300 ticks: one ingot, most of a second, then out.
         for _ in 0..300 {
             game.tick();
         }
-        assert_eq!(block(&game), BlockState::new(FURNACE, 4));
+        assert_eq!(block(&game), furnace);
         game.open_furnace(at);
         assert_eq!(
             game.slot_stack(SlotRef::Block(furnace::OUTPUT)),
-            Some(ItemStack::new(265, 1))
+            Some(ItemStack::new(items::IRON_INGOT, 1))
         );
         assert_eq!(
             game.furnace_progress(),
@@ -662,29 +692,39 @@ mod tests {
             "half-done ore starts over"
         );
         game.click_slot(SlotRef::Block(furnace::OUTPUT), Click::Shift);
-        assert_eq!(game.inventory.slot(8), Some(&ItemStack::new(265, 1)));
+        assert_eq!(
+            game.inventory.slot(8),
+            Some(&ItemStack::new(items::IRON_INGOT, 1))
+        );
     }
 
     #[test]
     fn dragging_shares_a_stack_evenly_or_one_each() {
         let mut game = flat_game(GameMode::Survival);
         game.open_inventory();
-        game.inventory.set(9, Some(ItemStack::new(4, 62)));
-        game.inventory.set(11, Some(ItemStack::new(3, 1)));
-        game.cursor = Some(ItemStack::new(4, 10));
+        game.inventory
+            .set(9, Some(ItemStack::new(items::COBBLESTONE, 62)));
+        game.inventory.set(11, Some(ItemStack::new(items::DIRT, 1)));
+        game.cursor = Some(ItemStack::new(items::COBBLESTONE, 10));
         // Left across four slots: dirt's slot is skipped, so 10 / 3 each.
         let slots = [9, 10, 11, 12].map(SlotRef::Inventory);
         game.drag_across(&slots, Click::Left);
         assert_eq!(
             game.inventory.slot(9),
-            Some(&ItemStack::new(4, 64)),
+            Some(&ItemStack::new(items::COBBLESTONE, 64)),
             "capped at 64"
         );
-        assert_eq!(game.inventory.slot(10), Some(&ItemStack::new(4, 3)));
-        assert_eq!(game.inventory.slot(12), Some(&ItemStack::new(4, 3)));
+        assert_eq!(
+            game.inventory.slot(10),
+            Some(&ItemStack::new(items::COBBLESTONE, 3))
+        );
+        assert_eq!(
+            game.inventory.slot(12),
+            Some(&ItemStack::new(items::COBBLESTONE, 3))
+        );
         assert_eq!(
             game.cursor,
-            Some(ItemStack::new(4, 2)),
+            Some(ItemStack::new(items::COBBLESTONE, 2)),
             "the rest stays held"
         );
         // Right across three slots, holding only two: one each in two.
@@ -697,11 +737,11 @@ mod tests {
         game.drag_across(&slots, Click::Right);
         assert_eq!(
             game.slot_stack(SlotRef::Grid(0)),
-            Some(ItemStack::new(4, 1))
+            Some(ItemStack::new(items::COBBLESTONE, 1))
         );
         assert_eq!(
             game.slot_stack(SlotRef::Grid(1)),
-            Some(ItemStack::new(4, 1))
+            Some(ItemStack::new(items::COBBLESTONE, 1))
         );
         assert_eq!(game.slot_stack(SlotRef::Grid(2)), None);
         assert_eq!(game.cursor, None);
@@ -711,24 +751,30 @@ mod tests {
     fn double_clicking_gathers_part_stacks_first() {
         let mut game = flat_game(GameMode::Survival);
         game.open_inventory();
-        game.cursor = Some(ItemStack::new(5, 10));
-        game.inventory.set(0, Some(ItemStack::new(5, 64)));
-        game.inventory.set(20, Some(ItemStack::new(5, 30)));
-        game.inventory.set(21, Some(ItemStack::new(3, 30)));
+        game.cursor = Some(ItemStack::new(items::OAK_PLANKS, 10));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::OAK_PLANKS, 64)));
+        game.inventory
+            .set(20, Some(ItemStack::new(items::OAK_PLANKS, 30)));
+        game.inventory
+            .set(21, Some(ItemStack::new(items::DIRT, 30)));
         game.container = Some(Container::Crafting {
             size: 2,
-            grid: vec![Some(ItemStack::new(5, 5)), None, None, None],
+            grid: vec![Some(ItemStack::new(items::OAK_PLANKS, 5)), None, None, None],
         });
         game.collect_onto_cursor();
-        assert_eq!(game.cursor, Some(ItemStack::new(5, 64)));
+        assert_eq!(game.cursor, Some(ItemStack::new(items::OAK_PLANKS, 64)));
         assert_eq!(game.slot_stack(SlotRef::Grid(0)), None);
         assert_eq!(game.inventory.slot(20), None);
         assert_eq!(
             game.inventory.slot(0),
-            Some(&ItemStack::new(5, 45)),
+            Some(&ItemStack::new(items::OAK_PLANKS, 45)),
             "full stack last"
         );
-        assert_eq!(game.inventory.slot(21), Some(&ItemStack::new(3, 30)));
+        assert_eq!(
+            game.inventory.slot(21),
+            Some(&ItemStack::new(items::DIRT, 30))
+        );
     }
 
     #[test]

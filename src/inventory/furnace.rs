@@ -128,6 +128,7 @@ mod tests {
 
     use super::*;
     use crate::inventory::crafting::Recipes;
+    use crate::inventory::items;
 
     fn items() -> Items {
         let recipes = Recipes::load(&crate::assets::dir().join("data/recipes.ron")).unwrap();
@@ -142,21 +143,30 @@ mod tests {
     fn coal_smelts_eight_iron_ore_200_ticks_each() {
         let items = items();
         let mut furnace = Furnace::default();
-        furnace.slots[INPUT] = Some(ItemStack::new(15, 10));
-        furnace.slots[FUEL] = Some(ItemStack::new(263, 1));
+        furnace.slots[INPUT] = Some(ItemStack::new(items::IRON_ORE, 10));
+        furnace.slots[FUEL] = Some(ItemStack::new(items::COAL, 1));
         assert!(!furnace.is_idle(&items));
         assert_eq!(run(&mut furnace, &items, 1), 1, "lights");
         assert_eq!(furnace.slots[FUEL], None);
         run(&mut furnace, &items, 198);
         assert_eq!(furnace.slots[OUTPUT], None);
         run(&mut furnace, &items, 1);
-        assert_eq!(furnace.slots[OUTPUT], Some(ItemStack::new(265, 1)));
+        assert_eq!(
+            furnace.slots[OUTPUT],
+            Some(ItemStack::new(items::IRON_INGOT, 1))
+        );
         // 1600 ticks of coal smelt 8; it goes out the tick after (fuel
         // lights on the first tick and counts down from the second).
         assert_eq!(run(&mut furnace, &items, 1400), 0);
         assert_eq!(run(&mut furnace, &items, 1), 1, "goes out");
-        assert_eq!(furnace.slots[OUTPUT], Some(ItemStack::new(265, 8)));
-        assert_eq!(furnace.slots[INPUT], Some(ItemStack::new(15, 2)));
+        assert_eq!(
+            furnace.slots[OUTPUT],
+            Some(ItemStack::new(items::IRON_INGOT, 8))
+        );
+        assert_eq!(
+            furnace.slots[INPUT],
+            Some(ItemStack::new(items::IRON_ORE, 2))
+        );
         assert!(!furnace.is_burning());
         assert!(furnace.is_idle(&items));
     }
@@ -165,20 +175,20 @@ mod tests {
     fn fuel_isnt_burned_without_something_to_smelt_or_room_for_it() {
         let items = items();
         let mut furnace = Furnace::default();
-        furnace.slots[FUEL] = Some(ItemStack::new(5, 4));
-        furnace.slots[INPUT] = Some(ItemStack::new(3, 4));
+        furnace.slots[FUEL] = Some(ItemStack::new(items::OAK_PLANKS, 4));
+        furnace.slots[INPUT] = Some(ItemStack::new(items::DIRT, 4));
         run(&mut furnace, &items, 10);
         assert_eq!(
             furnace.slots[FUEL],
-            Some(ItemStack::new(5, 4)),
+            Some(ItemStack::new(items::OAK_PLANKS, 4)),
             "dirt doesn't smelt"
         );
-        furnace.slots[INPUT] = Some(ItemStack::new(12, 4));
-        furnace.slots[OUTPUT] = Some(ItemStack::new(20, 64));
+        furnace.slots[INPUT] = Some(ItemStack::new(items::SAND, 4));
+        furnace.slots[OUTPUT] = Some(ItemStack::new(items::GLASS, 64));
         run(&mut furnace, &items, 10);
         assert_eq!(
             furnace.slots[FUEL],
-            Some(ItemStack::new(5, 4)),
+            Some(ItemStack::new(items::OAK_PLANKS, 4)),
             "the output is full"
         );
         assert!(furnace.is_idle(&items));
@@ -188,13 +198,13 @@ mod tests {
     fn a_lava_bucket_leaves_its_bucket_and_logs_make_charcoal() {
         let items = items();
         let mut furnace = Furnace::default();
-        furnace.slots[INPUT] = Some(ItemStack::with_damage(17, 1, 2));
-        furnace.slots[FUEL] = Some(ItemStack::new(327, 1));
+        furnace.slots[INPUT] = Some(ItemStack::with_damage(items::OAK_LOG, 1, 2));
+        furnace.slots[FUEL] = Some(ItemStack::new(items::LAVA_BUCKET, 1));
         run(&mut furnace, &items, COOK_TICKS);
-        assert_eq!(furnace.slots[FUEL], Some(ItemStack::new(325, 1)));
+        assert_eq!(furnace.slots[FUEL], Some(ItemStack::new(items::BUCKET, 1)));
         assert_eq!(
             furnace.slots[OUTPUT],
-            Some(ItemStack::with_damage(263, 1, 1))
+            Some(ItemStack::new(items::CHARCOAL, 1))
         );
         assert!(furnace.is_burning(), "lava burns on");
         assert!((furnace.fuel_left() - 19801.0 / 20000.0).abs() < 1e-6);

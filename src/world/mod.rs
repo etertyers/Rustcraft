@@ -3,16 +3,22 @@
 pub mod biome;
 pub mod block;
 pub mod block_entity;
+pub mod blocks;
 pub mod chunk;
+pub mod connect;
 pub mod daytime;
+pub mod dimension;
 pub mod fast_hash;
 pub mod fire;
 pub mod fluid;
 pub mod harvest;
+pub mod legacy;
 pub mod light;
 pub mod manager;
 pub mod mesh;
+pub mod props;
 pub mod save;
+pub mod shape;
 pub mod worldgen;
 
 use std::sync::Arc;
@@ -78,6 +84,10 @@ impl World {
         self.chunks.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
     pub fn positions(&self) -> impl Iterator<Item = ChunkPos> + '_ {
         self.chunks.keys().copied()
     }
@@ -127,6 +137,46 @@ impl Face {
         }
     }
 
+    /// The face looking the other way.
+    pub fn opposite(self) -> Face {
+        match self {
+            Face::Top => Face::Bottom,
+            Face::Bottom => Face::Top,
+            Face::North => Face::South,
+            Face::South => Face::North,
+            Face::East => Face::West,
+            Face::West => Face::East,
+        }
+    }
+
+    /// A quarter turn clockwise seen from above (north → east); top and
+    /// bottom stay put.
+    pub fn rotate_cw(self) -> Face {
+        match self {
+            Face::North => Face::East,
+            Face::East => Face::South,
+            Face::South => Face::West,
+            Face::West => Face::North,
+            vertical => vertical,
+        }
+    }
+
+    /// A quarter turn counterclockwise seen from above (north → west).
+    pub fn rotate_ccw(self) -> Face {
+        self.rotate_cw().opposite()
+    }
+
+    /// The horizontal direction a player looking along `yaw` (radians, 0
+    /// north, turning east) faces.
+    pub fn from_yaw(yaw: f32) -> Face {
+        let quarter = (yaw / std::f32::consts::FRAC_PI_2).round() as i32;
+        [Face::North, Face::East, Face::South, Face::West][quarter.rem_euclid(4) as usize]
+    }
+
+    pub fn is_horizontal(self) -> bool {
+        !matches!(self, Face::Top | Face::Bottom)
+    }
+
     /// Minecraft's fixed directional shading: top 1.0, bottom 0.5, Z faces 0.8, X faces 0.6.
     pub fn shade(self) -> f32 {
         match self {
@@ -141,14 +191,15 @@ impl Face {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
 
     #[test]
     fn block_lookup_handles_negative_coordinates_and_unloaded_chunks() {
         let mut world = World::default();
         let mut chunk = Chunk::new(ChunkPos::new(-1, 0));
-        chunk.set(15, 64, 3, BlockState::new(1, 0));
+        chunk.set(15, 64, 3, BlockState::of(blocks::STONE));
         world.insert(chunk);
-        assert_eq!(world.block(-1, 64, 3), Some(BlockState::new(1, 0)));
+        assert_eq!(world.block(-1, 64, 3), Some(BlockState::of(blocks::STONE)));
         assert_eq!(world.block(-1, 65, 3), Some(BlockState::AIR));
         assert_eq!(world.block(-1, 500, 3), Some(BlockState::AIR));
         assert_eq!(world.block(0, 64, 3), None);
@@ -159,11 +210,16 @@ mod tests {
         let mut world = World::default();
         world.insert(Chunk::new(ChunkPos::new(0, 0)));
         let shared = world.get(ChunkPos::new(0, 0)).unwrap().clone();
-        world
-            .get_mut(ChunkPos::new(0, 0))
-            .unwrap()
-            .set(1, 2, 3, BlockState::new(4, 0));
+        world.get_mut(ChunkPos::new(0, 0)).unwrap().set(
+            1,
+            2,
+            3,
+            BlockState::of(blocks::COBBLESTONE),
+        );
         assert!(shared.get(1, 2, 3).is_air());
-        assert_eq!(world.block(1, 2, 3), Some(BlockState::new(4, 0)));
+        assert_eq!(
+            world.block(1, 2, 3),
+            Some(BlockState::of(blocks::COBBLESTONE))
+        );
     }
 }

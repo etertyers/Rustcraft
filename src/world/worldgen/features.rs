@@ -14,20 +14,21 @@ use crate::{
     world::{
         biome::Biome,
         block::BlockState,
+        blocks,
         chunk::{Chunk, ChunkPos},
     },
 };
 
-const OAK_LOG: BlockState = BlockState::new(17, 0);
-const BIRCH_LOG: BlockState = BlockState::new(17, 2);
-const OAK_LEAVES: BlockState = BlockState::new(18, 0);
-const BIRCH_LEAVES: BlockState = BlockState::new(18, 2);
-const TALL_GRASS: BlockState = BlockState::new(31, 1);
-const DEAD_BUSH: BlockState = BlockState::new(32, 0);
-const DANDELION: BlockState = BlockState::new(37, 0);
-const ROSE: BlockState = BlockState::new(38, 0);
-const CACTUS: BlockState = BlockState::new(81, 0);
-const REEDS: BlockState = BlockState::new(83, 0);
+const OAK_LOG: BlockState = BlockState::of(blocks::OAK_LOG);
+const BIRCH_LOG: BlockState = BlockState::of(blocks::BIRCH_LOG);
+const OAK_LEAVES: BlockState = BlockState::of(blocks::OAK_LEAVES);
+const BIRCH_LEAVES: BlockState = BlockState::of(blocks::BIRCH_LEAVES);
+const SHORT_GRASS: BlockState = BlockState::of(blocks::SHORT_GRASS);
+const DEAD_BUSH: BlockState = BlockState::of(blocks::DEAD_BUSH);
+const DANDELION: BlockState = BlockState::of(blocks::DANDELION);
+const POPPY: BlockState = BlockState::of(blocks::POPPY);
+const CACTUS: BlockState = BlockState::of(blocks::CACTUS);
+const SUGAR_CANE: BlockState = BlockState::of(blocks::SUGAR_CANE);
 
 const TREE_SALT: u64 = 0x7EE;
 const PLANT_SALT: u64 = 0x91A;
@@ -95,12 +96,35 @@ impl<'a> ChunkWriter<'a> {
 
 /// Air and small plants, which leaves and plants may grow into.
 fn is_replaceable(block: BlockState) -> bool {
-    block.is_air() || matches!(block.id(), 31 | 37 | 38)
+    block.is_air()
+        || matches!(
+            block.id(),
+            blocks::SHORT_GRASS
+                | blocks::FERN
+                | blocks::DEAD_BUSH
+                | blocks::DANDELION
+                | blocks::POPPY
+        )
+}
+
+fn is_leaves(block: BlockState) -> bool {
+    matches!(
+        block.id(),
+        blocks::OAK_LEAVES | blocks::SPRUCE_LEAVES | blocks::BIRCH_LEAVES
+    )
+}
+
+#[cfg(test)]
+fn is_log(block: BlockState) -> bool {
+    matches!(
+        block.id(),
+        blocks::OAK_LOG | blocks::SPRUCE_LOG | blocks::BIRCH_LOG
+    )
 }
 
 /// Logs grow through leaves too.
 fn log_replaceable(block: BlockState) -> bool {
-    is_replaceable(block) || block.id() == 18
+    is_replaceable(block) || is_leaves(block)
 }
 
 fn always(_: BlockState) -> bool {
@@ -200,7 +224,7 @@ fn plants(terrain: &Terrain, chunk: &mut Chunk) {
                 _ => 0.0,
             };
             if roll < chance {
-                writer.set_if(x, column.height + 1, z, TALL_GRASS, |b| b.is_air());
+                writer.set_if(x, column.height + 1, z, SHORT_GRASS, |b| b.is_air());
             }
         }
     }
@@ -208,7 +232,7 @@ fn plants(terrain: &Terrain, chunk: &mut Chunk) {
     // Flowers: dandelions, and one patch in four is roses.
     for _ in 0..4 {
         let (cx, cz) = pick(&mut rng);
-        let flower = if rng.below(4) == 0 { ROSE } else { DANDELION };
+        let flower = if rng.below(4) == 0 { POPPY } else { DANDELION };
         let roll = rng.next_f64();
         let chance = match terrain.column(cx, cz).biome {
             Biome::Plains => 0.8,
@@ -268,7 +292,7 @@ fn plants(terrain: &Terrain, chunk: &mut Chunk) {
             .any(|&(dx, dz)| terrain.column(x + dx, z + dz).height < SEA_LEVEL);
         if shore && by_water {
             for dy in 1..=tall {
-                writer.set_if(x, column.height + dy, z, REEDS, |b| b.is_air());
+                writer.set_if(x, column.height + dy, z, SUGAR_CANE, |b| b.is_air());
             }
         }
     }
@@ -343,8 +367,10 @@ mod tests {
         assert!(count(&counts, Biome::Forest, OAK_LOG) > 20, "{counts:?}");
         assert!(count(&counts, Biome::Forest, OAK_LEAVES) > 0);
         let (_, counts) = census(&terrain, 2, find_biome(&terrain, Biome::Plains));
-        assert!(count(&counts, Biome::Plains, TALL_GRASS) > 50);
-        assert!(count(&counts, Biome::Plains, DANDELION) + count(&counts, Biome::Plains, ROSE) > 0);
+        assert!(count(&counts, Biome::Plains, SHORT_GRASS) > 50);
+        assert!(
+            count(&counts, Biome::Plains, DANDELION) + count(&counts, Biome::Plains, POPPY) > 0
+        );
         for biome in [Biome::Plains, Biome::Desert, Biome::Ocean] {
             assert_eq!(
                 count(&counts, biome, OAK_LOG),
@@ -368,7 +394,7 @@ mod tests {
         let (chunks, counts) = census(&terrain, 2, find_biome(&terrain, Biome::Desert));
         assert!(count(&counts, Biome::Desert, CACTUS) > 0, "{counts:?}");
         assert!(count(&counts, Biome::Desert, DEAD_BUSH) > 0);
-        assert_eq!(count(&counts, Biome::Desert, TALL_GRASS), 0);
+        assert_eq!(count(&counts, Biome::Desert, SHORT_GRASS), 0);
         // Every cactus stands on sand or cactus.
         for chunk in chunks.values() {
             for y in 1..WORLD_HEIGHT {
@@ -392,7 +418,7 @@ mod tests {
                 let (min_x, min_z) = chunk.pos.min_block();
                 for i in 0..256 {
                     let (x, z) = (i % 16, i / 16);
-                    if chunk.get(x, SEA_LEVEL as usize + 1, z) == REEDS {
+                    if chunk.get(x, SEA_LEVEL as usize + 1, z) == SUGAR_CANE {
                         let (wx, wz) = (min_x + x as i32, min_z + z as i32);
                         let wet = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                             .iter()
@@ -421,14 +447,14 @@ mod tests {
                 for y in SEA_LEVEL as usize..WORLD_HEIGHT - 1 {
                     // The top log of a trunk on the east edge of the chunk.
                     let log = chunk.get(15, y, z);
-                    if log.id() != 17 || chunk.get(15, y + 1, z).id() != 18 {
+                    if !is_log(log) || !is_leaves(chunk.get(15, y + 1, z)) {
                         continue;
                     }
                     // Leaves one block east of the top log are never a random
                     // corner, so they must be in the neighbor chunk.
                     let beside = east.get(0, y, z);
                     assert!(
-                        matches!(beside.id(), 17 | 18),
+                        is_log(beside) || is_leaves(beside),
                         "{beside:?} beside a tree top"
                     );
                     checked += 1;

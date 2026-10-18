@@ -1,23 +1,25 @@
 //! Debug "block gallery": every block and listed variant on a grass floor.
 //!
 //! Blocks are laid out in rows of 16 IDs along +X, three blocks apart. Each
-//! ID's data-value variants run along +Z behind it.
+//! block's variants (one state for each, like a ripe crop or a lit furnace)
+//! run along +Z behind it.
 
 use std::collections::HashMap;
 
 use crate::{
     config::{CHUNK_SIZE, SEA_LEVEL},
     world::{
-        block::{BlockRegistry, BlockState, DATA_VALUES},
+        block::{BlockRegistry, BlockState},
+        blocks,
         chunk::{Chunk, ChunkPos},
     },
 };
 
 const IDS_PER_ROW: usize = 16;
 const COLUMN_SPACING: i32 = 3;
-/// Leaves room for 16 variants plus a gap between rows.
-const ROW_SPACING: i32 = DATA_VALUES as i32 + 3;
-const FLOOR: BlockState = BlockState::new(2, 0);
+/// Leaves room for a block and its variants plus a gap between rows.
+const ROW_SPACING: i32 = 10;
+const FLOOR: BlockState = BlockState::of(blocks::GRASS_BLOCK);
 const FLOOR_Y: i32 = SEA_LEVEL;
 
 /// One block placed in the gallery.
@@ -27,19 +29,36 @@ pub struct Exhibit {
     pub pos: [i32; 3],
 }
 
-/// Where each block goes: every defined ID except air, with data 0 and every
-/// data value that has a variant.
+/// Where each block goes: every block except air in its default state, then
+/// for each variant the first state that shows it.
 pub fn exhibits(registry: &BlockRegistry) -> Vec<Exhibit> {
     let mut exhibits = Vec::new();
-    for (index, def) in registry.iter().filter(|def| def.id != 0).enumerate() {
+    for (index, def) in registry
+        .iter()
+        .filter(|def| def.id != blocks::AIR)
+        .enumerate()
+    {
         let x = (index % IDS_PER_ROW) as i32 * COLUMN_SPACING;
         let row_z = (index / IDS_PER_ROW) as i32 * ROW_SPACING;
-        let data_values =
-            std::iter::once(0).chain(def.variants.keys().copied().filter(|&d| d != 0));
-        for data in data_values {
+        let mut shown = vec![BlockState::of(def.id)];
+        for variant in 0..def.variants.len() {
+            let first = registry
+                .states()
+                .filter(|state| state.id() == def.id)
+                .find(|&state| def.shows_variant(state, variant));
+            if let Some(state) = first.filter(|state| !shown.contains(state)) {
+                shown.push(state);
+            }
+        }
+        for (z, block) in shown.into_iter().enumerate() {
+            debug_assert!(
+                (z as i32) < ROW_SPACING - 1,
+                "{} has too many variants",
+                def.name
+            );
             exhibits.push(Exhibit {
-                block: BlockState::new(def.id, data),
-                pos: [x, FLOOR_Y + 1, row_z + data as i32],
+                block,
+                pos: [x, FLOOR_Y + 1, row_z + z as i32],
             });
         }
     }
@@ -86,20 +105,24 @@ pub fn gallery_chunks(registry: &BlockRegistry) -> Vec<Chunk> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::blocks;
     use std::collections::{BTreeSet, HashSet};
 
-    fn registry() -> BlockRegistry {
-        BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap()
+    fn registry() -> &'static BlockRegistry {
+        crate::world::block::registry()
     }
 
     #[test]
     fn every_block_and_variant_is_shown_once() {
         let registry = registry();
-        let exhibits = exhibits(&registry);
-        let ids: BTreeSet<u16> = exhibits.iter().map(|e| e.block.id()).collect();
-        assert_eq!(ids, (1..=122).chain([125, 126]).collect());
-        let wool: Vec<_> = exhibits.iter().filter(|e| e.block.id() == 35).collect();
-        assert_eq!(wool.len(), 16);
+        let exhibits = exhibits(registry);
+        let ids: BTreeSet<_> = exhibits.iter().map(|e| e.block.id()).collect();
+        assert_eq!(ids.len(), registry.iter().count() - 1, "all but air");
+        let wheat = exhibits
+            .iter()
+            .filter(|e| e.block.is(blocks::WHEAT))
+            .count();
+        assert_eq!(wheat, 8, "every growth stage");
         let positions: HashSet<_> = exhibits.iter().map(|e| e.pos).collect();
         assert_eq!(positions.len(), exhibits.len(), "two exhibits share a spot");
     }
@@ -107,11 +130,11 @@ mod tests {
     #[test]
     fn chunks_contain_every_exhibit() {
         let registry = registry();
-        let chunks: HashMap<ChunkPos, Chunk> = gallery_chunks(&registry)
+        let chunks: HashMap<ChunkPos, Chunk> = gallery_chunks(registry)
             .into_iter()
             .map(|c| (c.pos, c))
             .collect();
-        for exhibit in exhibits(&registry) {
+        for exhibit in exhibits(registry) {
             let [x, y, z] = exhibit.pos;
             let chunk = &chunks[&ChunkPos::of_block(x, z)];
             let block = chunk.get(

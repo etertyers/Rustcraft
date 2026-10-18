@@ -15,19 +15,20 @@ use crate::{
     world::{
         biome::Biome,
         block::BlockState,
+        blocks,
         chunk::{Chunk, ChunkPos},
     },
 };
 
-pub const STONE: BlockState = BlockState::new(1, 0);
-pub const GRASS: BlockState = BlockState::new(2, 0);
-pub const DIRT: BlockState = BlockState::new(3, 0);
-pub const BEDROCK: BlockState = BlockState::new(7, 0);
-pub const WATER: BlockState = BlockState::new(9, 0);
-pub const SAND: BlockState = BlockState::new(12, 0);
-pub const GRAVEL: BlockState = BlockState::new(13, 0);
-pub const SANDSTONE: BlockState = BlockState::new(24, 0);
-pub const LAVA: BlockState = BlockState::new(11, 0);
+pub const STONE: BlockState = BlockState::of(blocks::STONE);
+pub const GRASS: BlockState = BlockState::of(blocks::GRASS_BLOCK);
+pub const DIRT: BlockState = BlockState::of(blocks::DIRT);
+pub const BEDROCK: BlockState = BlockState::of(blocks::BEDROCK);
+pub const WATER: BlockState = BlockState::of(blocks::WATER);
+pub const SAND: BlockState = BlockState::of(blocks::SAND);
+pub const GRAVEL: BlockState = BlockState::of(blocks::GRAVEL);
+pub const SANDSTONE: BlockState = BlockState::of(blocks::SANDSTONE);
+pub const LAVA: BlockState = BlockState::of(blocks::LAVA);
 
 /// Caves are where two 3D noise fields are both near zero; this is the
 /// squared distance from zero that counts (wider = bigger tunnels).

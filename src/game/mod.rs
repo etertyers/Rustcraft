@@ -10,6 +10,7 @@ mod mobs;
 #[cfg(test)]
 mod progression;
 mod sleep;
+mod updates;
 
 use std::{path::Path, sync::Arc};
 
@@ -116,6 +117,12 @@ pub struct Game {
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
     pub arrows: Vec<Arrow>,
+    /// Sand and gravel falling.
+    pub falling: Vec<crate::entity::falling::FallingBlock>,
+    /// Blocks due to start falling, by tick.
+    falls_due: Vec<(u64, glam::IVec3)>,
+    /// Loaded chunks with upgraded v1.0 blocks to join to their neighbors.
+    post_processing: Vec<ChunkPos>,
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
     mob_defs: Arc<MobRegistry>,
@@ -193,6 +200,9 @@ impl Game {
             entities: Vec::new(),
             particles: Vec::new(),
             arrows: Vec::new(),
+            falling: Vec::new(),
+            falls_due: Vec::new(),
+            post_processing: Vec::new(),
             drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
             mobs: Vec::new(),
@@ -217,7 +227,9 @@ impl Game {
 
     /// Opens the saved world in `dir` where the player left it.
     pub fn open(dir: WorldDir, items: Items, models: Arc<BlockModels>) -> Result<Self> {
-        let level = dir.load_level()?;
+        let mut level = dir.load_level()?;
+        // A v1.0 world is upgraded the first time it's opened.
+        dir.migrate_v1(&mut level)?;
         info!(
             "opening {:?} (seed {}, {})",
             level.name,
@@ -227,7 +239,7 @@ impl Game {
         let source = ChunkSource::Terrain(Box::new(Terrain::new(level.seed)));
         let chunks = ChunkManager::with_store(
             source,
-            dir.regions(),
+            dir.regions(level.dimension),
             models,
             config::RENDER_DISTANCE,
             chunk_workers(),
@@ -433,6 +445,38 @@ impl Game {
         self.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
 
+    /// Puts the player's feet at `feet`, looking along `yaw` and `pitch`
+    /// (for `--shot` scenes).
+    pub fn teleport(&mut self, feet: DVec3, yaw: f32, pitch: f32) {
+        self.body = Body::new(feet);
+        self.body.flying = self.mode.can_fly();
+        self.body.may_fly = self.mode.can_fly();
+        self.prev_feet = feet;
+        self.camera.yaw = yaw;
+        self.camera.pitch = pitch;
+        self.advance(0.0);
+    }
+
+    /// Sets the time of day and game mode (for `--shot` scenes).
+    pub fn set_time_and_mode(&mut self, time: u64, mode: GameMode) {
+        self.time = time;
+        self.mode = mode;
+    }
+
+    /// Changes blocks the way the player's edits do, waking fluids, fire
+    /// and falling blocks around them (for `--shot` scenes).
+    pub fn set_blocks(&mut self, edits: &[(glam::IVec3, crate::world::block::BlockState)]) {
+        self.edit(edits);
+    }
+
+    /// Runs `ticks` game ticks at once (for `--shot` scenes).
+    pub fn run_ticks(&mut self, ticks: u32) {
+        for _ in 0..ticks {
+            self.tick();
+        }
+        self.advance(0.0);
+    }
+
     /// Flies the player `distance` blocks north at feet height `height`, in
     /// creative, looking a little down (`--bench`'s route).
     pub fn glide(&mut self, distance: f64, height: f64) {
@@ -502,6 +546,8 @@ impl Game {
         self.tick_mobs();
         self.tick_fluids();
         self.tick_fires();
+        self.tick_falling();
+        self.post_process();
         self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;
@@ -519,7 +565,7 @@ impl Game {
         }
         let collider = WorldCollider {
             world: self.chunks.world(),
-            blocks: &self.items.blocks,
+            blocks: self.items.blocks,
         };
         self.body.may_fly = self.mode.can_fly();
         // Wait for the chunks around the player to load before moving them.
@@ -546,7 +592,8 @@ impl Game {
         let p = point.floor().as_ivec3();
         let block = self.chunks.world().block(p.x, p.y, p.z)?;
         let fluid = self.items.blocks.get(block.id())?.fluid?;
-        let surface = (p.y + 1) as f64 - (fluid::height_percent(block.data()) - 1.0 / 9.0) as f64;
+        let surface =
+            (p.y + 1) as f64 - (fluid::height_percent(fluid::level(block)) - 1.0 / 9.0) as f64;
         (point.y < surface).then_some(fluid)
     }
 
@@ -585,7 +632,7 @@ impl Game {
             in_lava: liquid == Some(Fluid::Lava),
             in_fire: WorldCollider {
                 world: self.chunks.world(),
-                blocks: &self.items.blocks,
+                blocks: self.items.blocks,
             }
             .in_fire(&self.body.aabb()),
             eyes_in_water,
@@ -633,15 +680,16 @@ impl Game {
         self.release_input();
     }
 
-    /// The block the crosshair points at from `eye`, within reach.
+    /// The block the crosshair points at from `eye`, within reach: the
+    /// first block outline the view passes through.
     fn find_target(&self, eye: DVec3) -> Option<Hit> {
         let world = self.chunks.world();
         let dir = self.camera.forward().as_dvec3();
-        raycast::raycast(eye, dir, config::REACH, |cell| {
+        let shapes = crate::world::shape::shapes();
+        raycast::raycast_boxes(eye, dir, config::REACH, |cell| {
             world
                 .block(cell.x, cell.y, cell.z)
-                .and_then(|block| self.items.blocks.get(block.id()))
-                .is_some_and(|def| def.is_targetable())
+                .map_or(&[], |block| shapes.outline(block))
         })
     }
 }
@@ -685,29 +733,30 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         entity::mobs::MobRegistry,
-        inventory::{crafting::Recipes, item::ItemRegistry, stack::ItemStack},
+        inventory::{crafting::Recipes, items, stack::ItemStack},
         player::stats::MAX_HEALTH,
         world::{
+            Face,
             biome::BiomeColors,
-            block::{BlockRegistry, BlockState},
+            block::BlockState,
+            blocks,
             chunk::ChunkPos,
+            props::{Prop, bed_part, door_half},
             save::TempDir,
         },
     };
 
     pub(crate) fn registries() -> (Items, Arc<BlockModels>) {
         let assets = crate::assets::dir();
-        let blocks = BlockRegistry::load(&assets.join("data/blocks.ron")).unwrap();
         let models = BlockModels::new(
-            &blocks,
+            crate::world::block::registry(),
             |_| Some([0.0; 4]),
             [0.0; 4],
             BiomeColors::uniform(),
         );
-        let items = ItemRegistry::load(&assets.join("data/items.ron")).unwrap();
         let recipes = Recipes::load(&assets.join("data/recipes.ron")).unwrap();
         (
-            Items::new(Arc::new(blocks), Arc::new(items)).with_recipes(Arc::new(recipes)),
+            Items::new().with_recipes(Arc::new(recipes)),
             Arc::new(models),
         )
     }
@@ -744,18 +793,20 @@ pub(crate) mod tests {
             feet.y as i32 + 3,
             feet.z.floor() as i32,
         );
-        let bricks = BlockState::new(45, 0);
+        let bricks = BlockState::of(blocks::BRICKS);
         game.chunks.set_blocks(&[(at, bricks)]);
         game.body = Body::new(feet);
         game.camera.yaw = 1.25;
         game.camera.pitch = -0.5;
         game.time = 500;
+        game.inventory.set(
+            3,
+            Some(ItemStack::with_damage(items::WOODEN_PICKAXE, 1, 12)),
+        );
         game.inventory
-            .set(3, Some(ItemStack::with_damage(270, 1, 12)));
-        game.inventory
-            .set(20, Some(ItemStack::with_damage(35, 40, 14)));
+            .set(20, Some(ItemStack::new(items::RED_WOOL, 40)));
         game.inventory.selected = 3;
-        game.cursor = Some(ItemStack::new(50, 7));
+        game.cursor = Some(ItemStack::new(items::TORCH, 7));
         game.body.flying = true;
         game.bed = Some(IVec3::new(3, 70, -9));
         game.save().unwrap();
@@ -770,15 +821,18 @@ pub(crate) mod tests {
         assert_eq!((game.camera.yaw, game.camera.pitch), (1.25, -0.5));
         assert_eq!(
             game.inventory.slot(3),
-            Some(&ItemStack::with_damage(270, 1, 12))
+            Some(&ItemStack::with_damage(items::WOODEN_PICKAXE, 1, 12))
         );
         assert_eq!(
             game.inventory.slot(20),
-            Some(&ItemStack::with_damage(35, 40, 14))
+            Some(&ItemStack::new(items::RED_WOOL, 40))
         );
         assert_eq!(game.inventory.selected, 3);
         // The held torches went back into the first free slot.
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(50, 7)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::TORCH, 7))
+        );
         assert!(game.body.flying);
         assert_eq!(game.bed, Some(IVec3::new(3, 70, -9)));
         load_player_chunk(&mut game);
@@ -814,13 +868,17 @@ pub(crate) mod tests {
         for _ in 0..17 {
             game.tick();
         }
-        assert_eq!(grass(&game), Some(BlockState::new(2, 0)), "still mining");
+        assert_eq!(
+            grass(&game),
+            Some(BlockState::of(blocks::GRASS_BLOCK)),
+            "still mining"
+        );
         game.tick();
         assert_eq!(grass(&game), Some(BlockState::AIR));
         assert_eq!(game.entities.len(), 1);
         assert_eq!(
             game.entities[0].stack,
-            ItemStack::new(3, 1),
+            ItemStack::new(items::DIRT, 1),
             "grass drops dirt"
         );
         game.breaking = false;
@@ -828,7 +886,10 @@ pub(crate) mod tests {
             game.tick();
         }
         assert!(game.entities.is_empty(), "picked up");
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(3, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::DIRT, 1))
+        );
 
         // Placing it on the grass two blocks north uses it up.
         game.camera.pitch = -0.3;
@@ -837,7 +898,7 @@ pub(crate) mod tests {
         game.tick();
         assert_eq!(
             game.chunks.world().block(0, 64, -2),
-            Some(BlockState::new(3, 0))
+            Some(BlockState::of(blocks::DIRT))
         );
         assert_eq!(game.inventory.slot(0), None);
     }
@@ -845,37 +906,42 @@ pub(crate) mod tests {
     #[test]
     fn a_bed_goes_down_as_two_halves_and_breaks_into_one_bed() {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory.set(0, Some(ItemStack::new(355, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::RED_BED, 1)));
         // Looking north at the grass two blocks ahead.
         game.camera.pitch = -0.7;
         game.advance(0.0);
         game.place_clicked = true;
         game.tick();
         let block = |game: &Game, z| game.chunks.world().block(0, 64, z);
-        assert_eq!(block(&game, -2), Some(BlockState::new(26, 2)), "the foot");
+        let foot = BlockState::of(blocks::RED_BED).with_face(Prop::Facing, Face::North);
+        assert_eq!(block(&game, -2), Some(foot), "the foot");
         assert_eq!(
             block(&game, -3),
-            Some(BlockState::new(26, 2 | 8)),
+            Some(foot.with(Prop::BedPart, bed_part::HEAD)),
             "the head"
         );
         assert_eq!(game.inventory.slot(0), None);
         game.break_block(IVec3::new(0, 64, -3));
         assert_eq!(block(&game, -2), Some(BlockState::AIR));
         let drops: Vec<ItemStack> = game.entities.iter().map(|item| item.stack).collect();
-        assert_eq!(drops, [ItemStack::new(355, 1)]);
+        assert_eq!(drops, [ItemStack::new(items::RED_BED, 1)]);
     }
 
     #[test]
     fn a_closed_door_blocks_the_way_until_right_clicked_open() {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory.set(0, Some(ItemStack::new(324, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::OAK_DOOR, 1)));
         game.camera.pitch = -0.7;
         game.advance(0.0);
         game.place_clicked = true;
         game.tick();
         let door = |game: &Game, y| game.chunks.world().block(0, y, -2);
-        assert_eq!(door(&game, 64), Some(BlockState::new(64, 3)));
-        assert_eq!(door(&game, 65), Some(BlockState::new(64, 3 | 8)));
+        let lower = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
+        let upper = lower.with(Prop::DoubleBlockHalf, door_half::UPPER);
+        assert_eq!(door(&game, 64), Some(lower));
+        assert_eq!(door(&game, 65), Some(upper));
         // Walking north stops against the door's slab on the cell's south side.
         game.camera.pitch = 0.0;
         game.keys.set_key(KeyCode::KeyW, true);
@@ -889,8 +955,8 @@ pub(crate) mod tests {
         game.advance(0.0);
         game.place_clicked = true;
         game.tick();
-        assert_eq!(door(&game, 64), Some(BlockState::new(64, 3 | 4)));
-        assert_eq!(door(&game, 65), Some(BlockState::new(64, 3 | 4 | 8)));
+        assert_eq!(door(&game, 64), Some(lower.with_bool(Prop::Open, true)));
+        assert_eq!(door(&game, 65), Some(upper.with_bool(Prop::Open, true)));
         game.keys.set_key(KeyCode::KeyW, true);
         for _ in 0..40 {
             game.tick();
@@ -902,7 +968,7 @@ pub(crate) mod tests {
     fn slabs_are_half_a_block_to_walk_up_onto() {
         let mut game = flat_game(GameMode::Survival);
         let slabs: Vec<_> = (-6..=-2)
-            .map(|z| (IVec3::new(0, 64, z), BlockState::new(126, 0)))
+            .map(|z| (IVec3::new(0, 64, z), BlockState::of(blocks::OAK_SLAB)))
             .collect();
         game.chunks.set_blocks(&slabs);
         game.camera.pitch = 0.0;
@@ -916,11 +982,52 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_player_walks_through_torches_and_flowers_but_not_over_fences() {
+        let mut game = flat_game(GameMode::Survival);
+        // A torch and a flower on the ground, and at head height a torch
+        // hanging off a stone just east of the way.
+        let wall_torch = BlockState::of(blocks::WALL_TORCH).with_face(Prop::Facing, Face::West);
+        game.chunks.set_blocks(&[
+            (IVec3::new(0, 64, -2), BlockState::of(blocks::TORCH)),
+            (IVec3::new(0, 64, -4), BlockState::of(blocks::DANDELION)),
+            (IVec3::new(1, 65, -6), BlockState::of(blocks::STONE)),
+            (IVec3::new(0, 65, -6), wall_torch),
+        ]);
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..40 {
+            game.tick();
+        }
+        let feet = game.body.position();
+        assert!(feet.z < -7.0, "walked through them all: {feet}");
+        assert_eq!(feet.y, 64.0);
+
+        // A fence's collision is 1.5 high: jumping doesn't clear it.
+        let mut game = flat_game(GameMode::Survival);
+        let fences: Vec<_> = (-3..=3)
+            .map(|x| (IVec3::new(x, 64, -2), BlockState::of(blocks::OAK_FENCE)))
+            .collect();
+        game.chunks.set_blocks(&fences);
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        game.keys.set_key(KeyCode::Space, true);
+        for _ in 0..60 {
+            game.tick();
+        }
+        let feet = game.body.position();
+        assert!(feet.z > -1.5, "stopped by the fence: {feet}");
+    }
+
+    #[test]
     fn holding_right_click_on_a_door_toggles_it_once() {
         let mut game = flat_game(GameMode::Survival);
+        let lower = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
         game.chunks.set_blocks(&[
-            (IVec3::new(0, 64, -2), BlockState::new(64, 3)),
-            (IVec3::new(0, 65, -2), BlockState::new(64, 3 | 8)),
+            (IVec3::new(0, 64, -2), lower),
+            (
+                IVec3::new(0, 65, -2),
+                lower.with(Prop::DoubleBlockHalf, door_half::UPPER),
+            ),
         ]);
         game.camera.pitch = 0.0;
         game.advance(0.0);
@@ -931,20 +1038,26 @@ pub(crate) mod tests {
         }
         game.on_mouse_button(MouseButton::Right, false);
         let door = game.chunks.world().block(0, 64, -2);
-        assert_eq!(door, Some(BlockState::new(64, 3 | 4)), "opened once");
+        assert_eq!(door, Some(lower.with_bool(Prop::Open, true)), "opened once");
+        // Open, it lies along the west side of its cell: looking straight
+        // on passes beside it, so aim at it.
+        game.camera.yaw = (-0.4f32).atan2(2.0);
+        game.camera.pitch = (-0.12f32 / 2.04).atan();
+        game.advance(0.0);
+        assert_eq!(
+            game.target.map(|hit| hit.block),
+            Some(IVec3::new(0, 65, -2))
+        );
         game.on_mouse_button(MouseButton::Right, true);
         game.tick();
         game.on_mouse_button(MouseButton::Right, false);
-        assert_eq!(
-            game.chunks.world().block(0, 64, -2),
-            Some(BlockState::new(64, 3))
-        );
+        assert_eq!(game.chunks.world().block(0, 64, -2), Some(lower));
     }
 
     #[test]
     fn creative_breaks_instantly_without_drops_and_keeps_placed_items() {
         let mut game = flat_game(GameMode::Creative);
-        game.inventory.set(0, Some(ItemStack::new(1, 1)));
+        game.inventory.set(0, Some(ItemStack::new(items::STONE, 1)));
         game.break_clicked = true;
         game.tick();
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
@@ -959,17 +1072,21 @@ pub(crate) mod tests {
         game.tick();
         assert_eq!(
             game.chunks.world().block(0, 64, -2),
-            Some(BlockState::new(1, 0))
+            Some(BlockState::of(blocks::STONE))
         );
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(1, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::STONE, 1))
+        );
     }
 
     #[test]
     fn stone_mined_with_a_pickaxe_gives_cobblestone_and_wears_it() {
         let mut game = flat_game(GameMode::Survival);
-        let stone = BlockState::new(1, 0);
+        let stone = BlockState::of(blocks::STONE);
         game.chunks.set_blocks(&[(IVec3::new(0, 63, 0), stone)]);
-        game.inventory.set(0, Some(ItemStack::new(270, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::WOODEN_PICKAXE, 1)));
         game.breaking = true;
         // Wooden pickaxe on stone: 2 / 1.5 / 30 per tick, so 23 ticks.
         for _ in 0..22 {
@@ -978,7 +1095,11 @@ pub(crate) mod tests {
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(stone));
         game.tick();
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
-        assert_eq!(game.entities[0].stack, ItemStack::new(4, 1), "cobblestone");
+        assert_eq!(
+            game.entities[0].stack,
+            ItemStack::new(items::COBBLESTONE, 1),
+            "cobblestone"
+        );
         assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "one use worn");
     }
 
@@ -1004,7 +1125,7 @@ pub(crate) mod tests {
     fn stone_mined_by_hand_drops_nothing() {
         let mut game = flat_game(GameMode::Survival);
         game.chunks
-            .set_blocks(&[(IVec3::new(0, 63, 0), BlockState::new(1, 0))]);
+            .set_blocks(&[(IVec3::new(0, 63, 0), BlockState::of(blocks::STONE))]);
         game.breaking = true;
         // 1 / 1.5 / 100 per tick, summed in f32 as 1.0.0 does: 151 ticks.
         for _ in 0..151 {
@@ -1032,8 +1153,10 @@ pub(crate) mod tests {
     #[test]
     fn dying_scatters_the_inventory_and_respawning_starts_fresh() {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory.set(0, Some(ItemStack::new(4, 30)));
-        game.inventory.set(20, Some(ItemStack::new(270, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::COBBLESTONE, 30)));
+        game.inventory
+            .set(20, Some(ItemStack::new(items::WOODEN_PICKAXE, 1)));
         game.body = Body::new(DVec3::new(0.5, 100.0, 0.5));
         for _ in 0..100 {
             game.tick();
@@ -1052,7 +1175,8 @@ pub(crate) mod tests {
         let mut game = flat_game(GameMode::Survival);
         game.stats.food = 10;
         game.stats.saturation = 0.0;
-        game.inventory.set(0, Some(ItemStack::new(320, 2)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::COOKED_PORKCHOP, 2)));
         game.camera.pitch = 1.5;
         game.advance(0.0);
         game.placing = true;
@@ -1062,36 +1186,51 @@ pub(crate) mod tests {
         assert_eq!(game.stats.food, 10, "still chewing");
         game.tick();
         assert_eq!(game.stats.food, 18);
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::COOKED_PORKCHOP, 1))
+        );
         // Full: no more eating.
         game.stats.food = 20;
         for _ in 0..40 {
             game.tick();
         }
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::COOKED_PORKCHOP, 1))
+        );
     }
 
     #[test]
     fn stew_leaves_its_bowl_and_creative_doesnt_eat() {
         let mut game = flat_game(GameMode::Survival);
         game.stats.food = 5;
-        game.inventory.set(0, Some(ItemStack::new(282, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::MUSHROOM_STEW, 1)));
         game.camera.pitch = 1.5;
         game.placing = true;
         for _ in 0..32 {
             game.tick();
         }
-        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(281, 1)));
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::BOWL, 1))
+        );
 
         let mut creative = flat_game(GameMode::Creative);
         creative.stats.food = 5;
-        creative.inventory.set(0, Some(ItemStack::new(320, 1)));
+        creative
+            .inventory
+            .set(0, Some(ItemStack::new(items::COOKED_PORKCHOP, 1)));
         creative.camera.pitch = 1.5;
         creative.placing = true;
         for _ in 0..40 {
             creative.tick();
         }
-        assert_eq!(creative.inventory.slot(0), Some(&ItemStack::new(320, 1)));
+        assert_eq!(
+            creative.inventory.slot(0),
+            Some(&ItemStack::new(items::COOKED_PORKCHOP, 1))
+        );
     }
 
     pub(crate) fn mob_registry() -> Arc<MobRegistry> {
@@ -1172,7 +1311,8 @@ pub(crate) mod tests {
             0.0,
         );
         game.mobs.push(zombie);
-        game.inventory.set(0, Some(ItemStack::new(276, 1)));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::DIAMOND_SWORD, 1)));
         game.camera.pitch = 0.0;
         game.time = 18000;
         game.break_clicked = true;
@@ -1215,8 +1355,8 @@ pub(crate) mod tests {
             0.0,
         );
         game.mobs.push(zombie);
-        game.inventory.set(0, Some(ItemStack::new(261, 1)));
-        game.inventory.set(5, Some(ItemStack::new(262, 5)));
+        game.inventory.set(0, Some(ItemStack::new(items::BOW, 1)));
+        game.inventory.set(5, Some(ItemStack::new(items::ARROW, 5)));
         game.camera.pitch = 0.0;
         game.time = 18000;
         game.placing = true;
@@ -1239,7 +1379,9 @@ pub(crate) mod tests {
 
         // Creative shoots without arrows and its arrows can't be picked up.
         let mut creative = flat_game(GameMode::Creative);
-        creative.inventory.set(0, Some(ItemStack::new(261, 1)));
+        creative
+            .inventory
+            .set(0, Some(ItemStack::new(items::BOW, 1)));
         creative.camera.pitch = 0.0;
         creative.placing = true;
         for _ in 0..20 {

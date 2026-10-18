@@ -24,7 +24,7 @@ use crate::{
     config,
     entity::mobs::MobRegistry,
     game::{Container, Game, chunk_workers, environment::environment},
-    inventory::item::ItemRegistry,
+    inventory::item,
     inventory::{
         crafting::Recipes,
         player::HOTBAR_SLOTS,
@@ -42,10 +42,11 @@ use crate::{
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
         crack,
-        entities::{add_particles, item_mesh},
+        entities::{add_falling_blocks, add_particles, item_mesh},
         icons::ItemIcons,
         models::{add_arrow, add_mob},
     },
+    shots,
     ui::{
         DebugStats, DebugUi, Hud,
         gui::{SlotView, SurvivalHud},
@@ -55,10 +56,11 @@ use crate::{
     },
     world::{
         biome::{Biome, BiomeColors},
-        block::BlockRegistry,
+        block,
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
+        shape::Cuboid,
         worldgen::{gallery, terrain::Terrain},
     },
 };
@@ -122,7 +124,22 @@ pub struct App {
     error: Option<anyhow::Error>,
     /// `--bench`: the flight being timed.
     bench: Option<Bench>,
+    /// `--shot`: the scene being captured.
+    shot: Option<ShotRun>,
 }
+
+/// How far `--shot` has got with its scene.
+pub struct ShotRun {
+    shot: &'static shots::Shot,
+    out: std::path::PathBuf,
+    /// Staged, and frames drawn since.
+    staged: Option<u32>,
+    captured: bool,
+}
+
+/// Frames drawn after staging a scene before capturing it, so remeshed
+/// chunks and the UI catch up.
+const SHOT_SETTLE_FRAMES: u32 = 10;
 
 impl App {
     pub fn new(world_kind: Option<WorldKind>) -> Self {
@@ -149,7 +166,24 @@ impl App {
             frame_skipped: false,
             error: None,
             bench: None,
+            shot: None,
         }
+    }
+
+    /// Captures `shot` to `out` instead of playing.
+    pub fn with_shot(mut self, shot: &'static shots::Shot, out: std::path::PathBuf) -> Self {
+        // Every scene is seen at the standard render distance.
+        self.options.render_distance = config::RENDER_DISTANCE;
+        if self.world_kind.is_none() || shot.world.is_some() {
+            self.world_kind = Some(shot.world.clone().unwrap_or(WorldKind::Flat));
+        }
+        self.shot = Some(ShotRun {
+            shot,
+            out,
+            staged: None,
+            captured: false,
+        });
+        self
     }
 
     pub fn with_bench(mut self, bench: Option<Bench>) -> Self {
@@ -181,8 +215,8 @@ impl App {
             .with_inner_size(LogicalSize::new(width, height));
         let window = Arc::new(event_loop.create_window(attrs)?);
         let assets = assets::dir();
-        let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
-        let items = ItemRegistry::load(&assets.join("data/items.ron"))?;
+        let blocks = block::registry();
+        let items = item::registry();
         let textures = assets.join("textures");
         let atlas = Atlas::load(&[
             (&textures.join("blocks"), ""),
@@ -231,18 +265,18 @@ impl App {
             .collect::<Result<Vec<_>>>()?;
         let mut renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
         // The bench measures how fast frames can go.
-        renderer.set_vsync(self.options.vsync && self.bench.is_none());
-        renderer.set_offscreen_fallback(self.bench.is_some());
+        renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
+        renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
         let models = BlockModels::new(
-            &blocks,
+            blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
             atlas.uv_rect(MISSING_TILE),
             biome_colors,
         );
         let models = Arc::new(models);
-        let icons = ItemIcons::new(&atlas, models.clone(), &items);
+        let icons = ItemIcons::new(&atlas, models.clone(), items);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
-        let items = Items::new(Arc::new(blocks), Arc::new(items)).with_recipes(Arc::new(recipes));
+        let items = Items::new().with_recipes(Arc::new(recipes));
         self.catalog = catalog(&items, &icons);
         self.icons = Some(Arc::new(icons));
         self.items = Some(items);
@@ -263,6 +297,16 @@ impl App {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let mut game = self.start_world(kind)?.with_mobs(mobs);
         game.apply_options(&self.options);
+        if let Some(run) = &self.shot {
+            let shot = run.shot;
+            game.set_time_and_mode(
+                shot.time.unwrap_or(game.time()),
+                shot.mode.unwrap_or(game.mode),
+            );
+            if let Some((feet, yaw, pitch)) = shot.view {
+                game.teleport(DVec3::from_array(feet), yaw, pitch);
+            }
+        }
         Ok(game)
     }
 
@@ -296,7 +340,7 @@ impl App {
             // In front of the first gallery row, looking south along it.
             WorldKind::Gallery => (
                 ChunkSource::Fixed(
-                    gallery::gallery_chunks(&items.blocks)
+                    gallery::gallery_chunks(items.blocks)
                         .into_iter()
                         .map(|chunk| (chunk.pos, chunk))
                         .collect(),
@@ -398,8 +442,10 @@ impl App {
     /// Opens the pause menu over a world being played (not over a screen,
     /// the death screen or a bed), freeing the mouse. The game stops.
     fn pause_game(&mut self) {
-        // The bench keeps flying when the window loses focus.
+        // The bench keeps flying when the window loses focus, and a scene
+        // being captured never pauses.
         if self.bench.is_none()
+            && self.shot.is_none()
             && self.playing()
             && self.screen.is_none()
             && !self.sleeping
@@ -598,8 +644,10 @@ impl App {
         if self.bench.is_some() {
             game.glide(bench::SPEED * dt as f64, bench::HEIGHT);
         }
-        // The pause menu stops the game; the camera still follows it.
-        game.advance(if self.pause.is_some() { 0.0 } else { dt });
+        // The pause menu stops the game; the camera still follows it. A
+        // scene being captured stands still.
+        let frozen = self.pause.is_some() || self.shot.is_some();
+        game.advance(if frozen { 0.0 } else { dt });
         let ticked = Instant::now();
 
         let p = game.camera.position;
@@ -613,22 +661,42 @@ impl App {
             renderer.remove_chunk(pos);
         }
         let uploaded = Instant::now();
-        renderer.set_outline(game.target.map(|hit| hit.block));
+        let center = ChunkPos::of_block(x, z);
+        let mut capturing = false;
+        if let Some(run) = self.shot.as_mut() {
+            match run.staged {
+                None if game.chunks.settled(center) => {
+                    (run.shot.stage)(game);
+                    run.staged = Some(0);
+                }
+                Some(frames) if frames >= SHOT_SETTLE_FRAMES && game.chunks.settled(center) => {
+                    renderer.capture_next_frame(run.out.clone());
+                    capturing = true;
+                }
+                Some(frames) => run.staged = Some(frames + 1),
+                None => {}
+            }
+            if run.shot.overlay && !debug_ui.is_visible() {
+                debug_ui.toggle();
+            }
+        }
+        let shapes = crate::world::shape::shapes();
+        renderer.set_outline(game.target.and_then(|hit| {
+            let block = game
+                .chunks
+                .world()
+                .block(hit.block.x, hit.block.y, hit.block.z)?;
+            Some((hit.block, shapes.outline(block).to_vec()))
+        }));
         let crack = game.mining_progress().and_then(|(cell, progress)| {
             let uv = *self.crack_uvs.get(crack::stage(progress))?;
             let block = game.chunks.world().block(cell.x, cell.y, cell.z)?;
-            // Over the block's own box (a slab's half, a door's slab), or
-            // the whole cell for blocks without one.
-            let (min, max) = game
-                .items()
-                .blocks
-                .get(block.id())
-                .and_then(|def| def.collision_box(block.data()))
-                .unwrap_or(([0.0; 3], [1.0; 3]));
+            // Over the block's outline (a slab's half, a door's slab).
+            let bounds = Cuboid::bounds(shapes.outline(block)).unwrap_or(Cuboid::FULL);
             let cell = cell.as_vec3();
             Some(crack::crack_mesh(
-                cell + Vec3::from(min),
-                cell + Vec3::from(max),
+                cell + Vec3::from(bounds.min),
+                cell + Vec3::from(bounds.max),
                 uv,
             ))
         });
@@ -647,6 +715,13 @@ impl App {
                 light_at,
             );
             if let Some(models) = &self.models {
+                add_falling_blocks(
+                    &mut mesh,
+                    &game.falling,
+                    models,
+                    game.tick_alpha(),
+                    light_at,
+                );
                 add_particles(
                     &mut mesh,
                     &game.particles,
@@ -734,6 +809,9 @@ impl App {
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
         let result = renderer.render(&game.camera, &game.environment(), ui);
+        if capturing && let Some(run) = self.shot.as_mut() {
+            run.captured = true;
+        }
         let render_distance = game.chunks.radius();
         let place = format!(
             "ended at {:.0}, {} chunks loaded, {} drawn",
@@ -755,8 +833,38 @@ impl App {
                 let report = format!("{}\n  {place}", bench.report(render_distance));
                 info!("{report}");
                 println!("{report}");
+                if let Some(path) = bench.perf_report.clone() {
+                    let work = self.game.as_ref().map(|game| {
+                        let stats = game.chunks.work_stats();
+                        (stats.generated.summary(), stats.meshed.summary())
+                    });
+                    let (generated, meshed) = work.unwrap_or(((0, 0.0), (0, 0.0)));
+                    let run = bench::RunStats {
+                        generated,
+                        meshed,
+                        memory_mib: bench::resident_memory_mib(),
+                    };
+                    let about = format!("Measured on {}; {place}.", bench::machine());
+                    let text = bench.perf_markdown(render_distance, run, &about);
+                    if let Err(err) = std::fs::create_dir_all(path.parent().unwrap_or(&path))
+                        .and_then(|_| std::fs::write(&path, &text))
+                    {
+                        error!("writing {}: {err}", path.display());
+                    } else {
+                        println!("wrote {}", path.display());
+                    }
+                }
                 event_loop.exit();
             }
+        }
+        if self.shot.as_ref().is_some_and(|run| run.captured) {
+            println!(
+                "{}",
+                self.shot
+                    .as_ref()
+                    .map_or(String::new(), |run| run.out.display().to_string())
+            );
+            event_loop.exit();
         }
         if self.options != options_before {
             self.options_changed();
@@ -912,25 +1020,13 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Every block and item with each data-value variant, for the creative
-/// inventory, with how it looks and its name.
+/// Every item, blocks first, for the creative inventory, with how it looks
+/// and its name.
 fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
-    let blocks = items
-        .blocks
+    items
+        .items
         .iter()
-        .filter(|def| def.id != 0)
-        .flat_map(|def| {
-            std::iter::once(0)
-                .chain(def.variants.keys().copied().filter(|&data| data != 0))
-                .map(|data| ItemStack::with_damage(def.id, 1, data as u16))
-        });
-    let others = items.items.iter().flat_map(|item| {
-        std::iter::once(0)
-            .chain(item.variants.keys().copied().filter(|&data| data != 0))
-            .map(|data| ItemStack::with_damage(item.id, 1, data as u16))
-    });
-    blocks
-        .chain(others)
+        .map(|item| ItemStack::with_damage(item.id, 1, 0))
         .map(|stack| {
             (
                 stack,

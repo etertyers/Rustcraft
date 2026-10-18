@@ -126,6 +126,8 @@ pub struct Renderer {
     offscreen: Option<wgpu::Texture>,
     /// The last frame went to `offscreen`.
     drew_offscreen: bool,
+    /// Where to save the next frame as a PNG (for `--shot`).
+    capture: Option<std::path::PathBuf>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -286,6 +288,7 @@ impl Renderer {
             surface,
             offscreen_fallback: false,
             offscreen: None,
+            capture: None,
             drew_offscreen: false,
             device,
             queue,
@@ -426,9 +429,9 @@ impl Renderer {
         pass.draw(0..6, 0..1);
     }
 
-    /// Outlines `block` from the next frame on, or nothing.
-    pub fn set_outline(&mut self, block: Option<IVec3>) {
-        self.outline.set_target(block);
+    /// Outlines `block`'s boxes from the next frame on, or nothing.
+    pub fn set_outline(&mut self, target: Option<(IVec3, Vec<crate::world::shape::Cuboid>)>) {
+        self.outline.set_target(target);
     }
 
     pub fn remove_chunk(&mut self, pos: ChunkPos) {
@@ -506,6 +509,102 @@ impl Renderer {
         self.drew_offscreen
     }
 
+    /// Draws the next frame off screen and saves it to `path` as a PNG
+    /// instead of showing it.
+    pub fn capture_next_frame(&mut self, path: std::path::PathBuf) {
+        self.capture = Some(path);
+    }
+
+    /// A texture like the window's frames that can be copied out.
+    fn capture_target(&self) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("capture"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[self.config.format.remove_srgb_suffix()],
+        })
+    }
+
+    /// Queues a copy of `texture` into a buffer to read back; returns the
+    /// buffer and its padded row length in bytes.
+    fn copy_out(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        texture: &wgpu::Texture,
+    ) -> (wgpu::Buffer, u32) {
+        let (width, height) = (self.config.width, self.config.height);
+        let padded = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("capture readback"),
+            size: (padded * height) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(height),
+                },
+            },
+            texture.size(),
+        );
+        (buffer, padded)
+    }
+
+    /// Waits for a copied frame and writes it as a PNG.
+    fn save_capture(
+        &self,
+        buffer: &wgpu::Buffer,
+        padded: u32,
+        path: &std::path::Path,
+    ) -> Result<()> {
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .context("waiting for the captured frame")?;
+        let (width, height) = (self.config.width, self.config.height);
+        let data = slice
+            .get_mapped_range()
+            .map_err(|err| anyhow::anyhow!("reading the captured frame: {err:?}"))?;
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for row in data.chunks(padded as usize).take(height as usize) {
+            for px in row[..(width * 4) as usize].chunks(4) {
+                let [a, b, c, _] = [px[0], px[1], px[2], px[3]];
+                let (r, g, b) = if bgra { (c, b, a) } else { (a, b, c) };
+                pixels.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        drop(data);
+        buffer.unmap();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        image::RgbaImage::from_raw(width, height, pixels)
+            .context("captured frame size")?
+            .save(path)
+            .with_context(|| format!("saving {}", path.display()))?;
+        log::info!("saved {}", path.display());
+        Ok(())
+    }
+
     /// A texture like the window's frames, for drawing off screen.
     fn offscreen_target(&mut self) -> wgpu::Texture {
         let size = wgpu::Extent3d {
@@ -533,7 +632,9 @@ impl Renderer {
     }
 
     fn draw(&mut self, camera: &Camera, environment: &Environment, ui: &UiPaint) -> Result<bool> {
+        let capture = self.capture.take();
         let frame = match self.surface.get_current_texture() {
+            _ if capture.is_some() => None,
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded
@@ -551,9 +652,10 @@ impl Renderer {
             wgpu::CurrentSurfaceTexture::Validation => bail!("surface validation error"),
         };
         self.drew_offscreen = frame.is_none();
-        let target = match &frame {
-            Some(frame) => frame.texture.clone(),
-            None => self.offscreen_target(),
+        let target = match (&frame, &capture) {
+            (Some(frame), _) => frame.texture.clone(),
+            (None, Some(_)) => self.capture_target(),
+            (None, None) => self.offscreen_target(),
         };
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let ui_view = target.create_view(&wgpu::TextureViewDescriptor {
@@ -654,8 +756,8 @@ impl Renderer {
             if !above_clouds {
                 self.draw_clouds(&mut pass);
             }
-            if outline {
-                self.outline.draw(&mut pass);
+            if outline > 0 {
+                self.outline.draw(&mut pass, outline);
             }
         }
 
@@ -689,8 +791,14 @@ impl Renderer {
             self.egui_renderer
                 .render(&mut pass, &ui.primitives, &screen);
         }
+        let readback = capture
+            .as_ref()
+            .map(|_| self.copy_out(&mut encoder, &target));
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
+        if let (Some(path), Some((buffer, padded))) = (capture, readback) {
+            self.save_capture(&buffer, padded, &path)?;
+        }
         match frame {
             Some(frame) => self.queue.present(frame),
             None => {
