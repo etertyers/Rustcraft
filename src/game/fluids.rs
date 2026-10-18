@@ -32,8 +32,9 @@ impl Game {
     /// Right-click with a bucket (1.0.0's `ItemBucket.onItemRightClick`):
     /// an empty one scoops up the first source block in reach, a full one
     /// pours a source onto the face of the block looked at, into air or
-    /// anything fluid washes away. Survival swaps the bucket for its empty
-    /// or full kind; creative keeps it as it is.
+    /// anything fluid washes away. Scooping fills the bucket; pouring
+    /// empties it in survival, but creative keeps it full (as modern
+    /// Minecraft does).
     pub(super) fn use_bucket(&mut self, eye: DVec3) {
         let Some(bucket) = self
             .inventory
@@ -76,9 +77,8 @@ impl Game {
             }
         };
         self.edit(&[edit]);
-        if self.mode.uses_up_items()
-            && let Some(id) = self.items.bucket_item(after)
-        {
+        let keeps = after == Bucket::Empty && !self.mode.uses_up_items();
+        if !keeps && let Some(id) = self.items.bucket_item(after) {
             let slot = self.inventory.selected;
             self.inventory
                 .set(slot, Some(ItemStack::with_damage(id, 1, 0)));
@@ -240,11 +240,16 @@ mod tests {
         click_with(&mut game, 325, -0.68);
         assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(325, 1)));
 
-        // Lava in creative: the bucket stays full.
+        // Lava in creative: pouring keeps the bucket full, and scooping
+        // fills an empty one.
         let mut game = flat_game(GameMode::Creative);
         click_with(&mut game, 327, -0.51);
         let poured = game.chunks.world().block(0, 64, -3).unwrap();
         assert_eq!(poured.id(), 10);
+        assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(327, 1)));
+        game.edit(&[(at, BlockState::new(11, 0))]);
+        click_with(&mut game, 325, -0.51);
+        assert_eq!(game.chunks.world().block(0, 64, -2), Some(BlockState::AIR));
         assert_eq!(game.inventory.slot(0), Some(&ItemStack::new(327, 1)));
     }
 }
