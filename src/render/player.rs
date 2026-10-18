@@ -426,6 +426,16 @@ pub fn model_to_world(frame: &Mat4, feet: Vec3, p: Vec3) -> Vec3 {
     feet + frame.transform_point3(local)
 }
 
+/// The matrix taking points in model blocks (y down, as `LimbPose`
+/// matrices leave them) to the world; `model_to_world` for matrices.
+pub fn model_matrix(frame: &Mat4, feet: Vec3) -> Mat4 {
+    Mat4::from_translation(feet)
+        * *frame
+        * Mat4::from_scale(Vec3::splat(PLAYER_SCALE))
+        * Mat4::from_translation(Vec3::new(0.0, FEET_Y / PIXELS, 0.0))
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+}
+
 /// Adds the player's model at `feet`, facing `yaw`, lit by (sky, block)
 /// `light` and multiplied by `tint`. `hat`, `jacket` and the other outer
 /// layers are always drawn.
@@ -819,6 +829,24 @@ mod tests {
         // On the player's right (east at yaw 0), around hip height.
         assert!(world.x > 0.2 && world.x < 0.5, "{world}");
         assert!(world.y > 0.6 && world.y < 1.4, "{world}");
+    }
+
+    #[test]
+    fn the_model_matrix_agrees_with_the_point_mapping() {
+        let pose = PlayerPose {
+            swim_amount: 0.7,
+            in_water: true,
+            head_pitch: 0.4,
+            ..standing()
+        };
+        let frame = body_frame(&pose, 1.1);
+        let feet = Vec3::new(10.0, 64.0, -3.0);
+        let matrix = model_matrix(&frame, feet);
+        for p in [Vec3::ZERO, Vec3::new(3.0, 20.0, -5.0), Vec3::new(-8.0, 5.0, 9.0)] {
+            let a = matrix.transform_point3(p / PIXELS);
+            let b = model_to_world(&frame, feet, p);
+            assert!((a - b).length() < 1e-4, "{a} {b}");
+        }
     }
 
     #[test]

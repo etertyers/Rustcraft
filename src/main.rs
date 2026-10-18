@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
-use rustcraft::{app, bench, player, shots};
+use rustcraft::{app, bench, game::view::ViewMode, player, shots};
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
     env_logger::init();
     let event_loop = EventLoop::new()?;
-    let (world, bench, shot) = parse_args(std::env::args().skip(1))?;
-    let mut app = app::App::new(world).with_bench(bench);
+    let (world, bench, shot, view) = parse_args(std::env::args().skip(1))?;
+    let mut app = app::App::new(world).with_bench(bench).with_view(view);
     if let Some((shot, out)) = shot {
         app = app.with_shot(shot, out);
     }
@@ -23,19 +23,22 @@ type ShotArgs = (&'static shots::Shot, std::path::PathBuf);
 /// with `--seed <n>`. `--bench [seconds]` flies over generated terrain
 /// and prints frame timings (see `bench`), at `--distance <chunks>` if
 /// given. `--shot <name> [--out <file>]` captures a scene (see `shots`);
-/// `--shot list` lists them.
+/// `--shot list` lists them. `--view first|back|front` starts in that view
+/// (F5 cycles them).
 fn parse_args(
     args: impl Iterator<Item = String>,
 ) -> Result<(
     Option<app::WorldKind>,
     Option<bench::Bench>,
     Option<ShotArgs>,
+    ViewMode,
 )> {
     let mut args = args.peekable();
     let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
     let mut bench = None;
     let (mut shot, mut out) = (None, None);
     let mut test_world = None;
+    let mut view = ViewMode::First;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--shot" => {
@@ -78,6 +81,15 @@ fn parse_args(
                     .get_or_insert_with(|| bench::Bench::new(bench::DEFAULT_SECONDS))
                     .distance = Some(distance);
             }
+            "--view" => {
+                let value = args.next().context("--view needs first, back or front")?;
+                view = match value.as_str() {
+                    "first" => ViewMode::First,
+                    "back" => ViewMode::ThirdBack,
+                    "front" => ViewMode::ThirdFront,
+                    other => anyhow::bail!("bad view {other:?} (first, back or front)"),
+                };
+            }
             "--gallery" => test_world = Some(app::WorldKind::Gallery),
             "--flat" => test_world = Some(app::WorldKind::Flat),
             "--world" => world = Some(args.next().context("--world needs a name")?),
@@ -101,7 +113,7 @@ fn parse_args(
     });
     if bench.is_some() {
         let seed = seed.unwrap_or(bench::SEED);
-        return Ok((Some(app::WorldKind::Generated { seed }), bench, None));
+        return Ok((Some(app::WorldKind::Generated { seed }), bench, None, view));
     }
     let world = match (world, seed) {
         _ if test_world.is_some() => test_world,
@@ -109,5 +121,5 @@ fn parse_args(
         (None, Some(seed)) => Some(app::WorldKind::Generated { seed }),
         (None, None) => None,
     };
-    Ok((world, None, shot))
+    Ok((world, None, shot, view))
 }

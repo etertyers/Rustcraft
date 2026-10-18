@@ -8,6 +8,7 @@
 use std::f32::consts::{PI, TAU};
 
 use glam::{DVec3, IVec3, Vec3};
+use winit::keyboard::KeyCode;
 
 use super::Game;
 use crate::{
@@ -309,6 +310,23 @@ impl Game {
     /// The player's view settings.
     pub fn view(&self) -> &ViewState {
         &self.view
+    }
+
+    /// Chooses the view directly (for `--view`).
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        self.view.mode = mode;
+    }
+
+    /// Starts a swing and runs `ticks` of it (for `--shot` scenes).
+    pub fn swing_for_shot(&mut self, ticks: u32) {
+        self.view.swing();
+        self.run_ticks(ticks + 1);
+    }
+
+    /// Holds sneak for a moment (for `--shot` scenes).
+    pub fn sneak_for_shot(&mut self) {
+        self.keys.set_key(KeyCode::ShiftLeft, true);
+        self.run_ticks(3);
     }
 
     /// F5.

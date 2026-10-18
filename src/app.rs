@@ -23,6 +23,7 @@ use crate::{
     bench::{self, Bench, FrameTimes},
     config,
     entity::mobs::MobRegistry,
+    figure::{self, Figure, PlayerMeshes},
     game::{Container, Game, chunk_workers, environment::environment},
     inventory::item,
     inventory::{
@@ -34,6 +35,7 @@ use crate::{
     level::{self, WorldDir},
     look::Look,
     options::Options,
+    pack::model::ItemModels,
     player::{
         mode::GameMode,
         stats::{DamageSource, MAX_AIR},
@@ -44,6 +46,7 @@ use crate::{
         camera::Camera,
         crack,
         entities::{add_falling_blocks, add_particles, item_mesh},
+        held::HeldCache,
         icons::ItemIcons,
         models::{add_arrow, add_mob},
     },
@@ -115,6 +118,14 @@ pub struct App {
     crack_uvs: Vec<[f32; 4]>,
     /// The block and item atlas, for playing its animations.
     atlas: Option<Atlas>,
+    /// Display transforms and sprites of the item models.
+    item_models: Option<Arc<ItemModels>>,
+    /// Geometry of items in hand, built from the atlas.
+    held: HeldCache,
+    /// Whether the skin has slim arms.
+    skin_slim: bool,
+    /// The view worlds start in.
+    start_view: crate::game::view::ViewMode,
     /// The resource packs the look was built with, highest first.
     applied_packs: Vec<String>,
     /// When texture animations started.
@@ -167,6 +178,10 @@ impl App {
             pause: None,
             crack_uvs: Vec::new(),
             atlas: None,
+            item_models: None,
+            held: HeldCache::default(),
+            skin_slim: false,
+            start_view: Default::default(),
             applied_packs: Vec::new(),
             animation_start: Instant::now(),
             catalog: Vec::new(),
@@ -201,6 +216,12 @@ impl App {
             self.options.render_distance = distance;
         }
         self.bench = bench;
+        self
+    }
+
+    /// Starts worlds in the given view (`--view`).
+    pub fn with_view(mut self, view: crate::game::view::ViewMode) -> Self {
+        self.start_view = view;
         self
     }
 
@@ -258,6 +279,7 @@ impl App {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let mut game = self.start_world(kind)?.with_mobs(mobs);
         game.apply_options(&self.options);
+        game.set_view_mode(self.start_view);
         if let Some(run) = &self.shot {
             let shot = run.shot;
             game.set_time_and_mode(
@@ -439,7 +461,6 @@ impl App {
         self.set_cursor_grab(false);
     }
 
-    /// Applies settings changed on the Options screen and saves them.
     /// Keeps a newly built look's models, icons and atlas.
     fn install_look(&mut self, look: Look) {
         if let Some(items) = &self.items {
@@ -449,6 +470,9 @@ impl App {
         self.models = Some(look.models);
         self.crack_uvs = look.crack_uvs;
         self.atlas = Some(look.atlas);
+        self.item_models = Some(look.item_models);
+        self.skin_slim = look.skin_slim;
+        self.held.clear();
     }
 
     /// Rebuilds the look with the selected resource packs and swaps it in
@@ -491,6 +515,7 @@ impl App {
         }
     }
 
+    /// Applies settings changed on the Options screen and saves them.
     fn options_changed(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_vsync(self.options.vsync);
@@ -613,6 +638,7 @@ impl App {
         match game {
             Ok(mut game) => {
                 game.apply_options(&self.options);
+                game.set_view_mode(self.start_view);
                 self.game = Some(game);
                 self.menu = None;
                 self.set_cursor_grab(true);
@@ -723,10 +749,11 @@ impl App {
                 let p = p.floor().as_ivec3();
                 chunks.light_at(p.x, p.y, p.z).unwrap_or((15, 0))
             };
+            let view_camera = game.view_camera();
             let mut mesh = item_mesh(
                 &game.entities,
                 icons,
-                &game.camera,
+                &view_camera,
                 game.tick_alpha(),
                 light_at,
             );
@@ -742,12 +769,30 @@ impl App {
                     &mut mesh,
                     &game.particles,
                     models,
-                    &game.camera,
+                    &view_camera,
                     game.tick_alpha(),
                     light_at,
                 );
             }
+            // The player: the hand in first person, the model in third.
+            let player = match (&self.atlas, &self.item_models) {
+                (Some(atlas), Some(item_models)) => {
+                    let fig = Figure {
+                        icons,
+                        item_models,
+                        atlas: atlas.image(),
+                        slim: self.skin_slim,
+                    };
+                    let (feet, _) = game.player_body();
+                    let body_light = light_at(feet.as_dvec3() + DVec3::Y);
+                    let hand_light = light_at(game.camera.position.as_dvec3());
+                    figure::build(game, &mut self.held, &fig, body_light, hand_light)
+                }
+                _ => PlayerMeshes::default(),
+            };
+            mesh.append(&player.items);
             renderer.set_entities(&mesh);
+            renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();
             let eye = game.camera.position.as_dvec3();
@@ -770,7 +815,10 @@ impl App {
             for arrow in &game.arrows {
                 add_arrow(&mut arrows, arrow, alpha, light_at(arrow.position));
             }
-            meshes.push((game.mob_defs().iter().count(), arrows));
+            let mob_kinds = game.mob_defs().iter().count();
+            meshes.push((mob_kinds, arrows));
+            // The skin is the texture after the arrow's.
+            meshes.push((mob_kinds + 1, player.body));
             renderer.set_mobs(&meshes);
         }
 
@@ -824,7 +872,7 @@ impl App {
         let options_before = self.options.clone();
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
-        let result = renderer.render(&game.camera, &game.environment(), ui);
+        let result = renderer.render(&game.view_camera(), &game.environment(), ui);
         if capturing && let Some(run) = self.shot.as_mut() {
             run.captured = true;
         }
