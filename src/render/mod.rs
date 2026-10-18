@@ -10,7 +10,7 @@ pub mod models;
 mod outline;
 pub mod vertex;
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use glam::{IVec3, Vec2, Vec3};
@@ -20,7 +20,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
     config::{CHUNK_SIZE, SKY_COLOR, WORLD_HEIGHT},
-    world::{chunk::ChunkPos, mesh::Mesh},
+    world::{chunk::ChunkPos, fast_hash::FastMap, mesh::Mesh},
 };
 use atlas::Atlas;
 use camera::Camera;
@@ -148,7 +148,7 @@ pub struct Renderer {
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     atlas_bind_group: wgpu::BindGroup,
-    chunks: HashMap<ChunkPos, ChunkBuffers>,
+    chunks: FastMap<ChunkPos, ChunkBuffers>,
     /// Dropped items, rebuilt every frame.
     entities: Option<ChunkBuffers>,
     /// Chunks that passed frustum culling in the last frame.
@@ -306,7 +306,7 @@ impl Renderer {
             globals_buffer,
             globals_bind_group,
             atlas_bind_group,
-            chunks: HashMap::new(),
+            chunks: FastMap::default(),
             entities: None,
             chunks_drawn: 0,
             outline,

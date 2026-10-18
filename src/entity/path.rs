@@ -3,9 +3,11 @@
 //! swimming, but never into lava. If the goal can't be reached the path
 //! leads to the reachable cell closest to it.
 
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 
 use glam::IVec3;
+
+use crate::world::fast_hash::FastMap;
 
 /// What a path finder needs to know about a cell.
 pub trait Terrain {
@@ -87,8 +89,8 @@ pub fn find_path(
 ) -> Vec<IVec3> {
     let estimate = |cell: IVec3| (goal - cell).as_vec3().length();
     let mut open = BinaryHeap::new();
-    let mut came_from: HashMap<IVec3, IVec3> = HashMap::new();
-    let mut walked: HashMap<IVec3, f32> = HashMap::new();
+    let mut came_from: FastMap<IVec3, IVec3> = FastMap::default();
+    let mut walked: FastMap<IVec3, f32> = FastMap::default();
     open.push(Open {
         cost: estimate(start),
         cell: start,

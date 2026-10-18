@@ -11,7 +11,7 @@
 //! the rest to cobblestone), lava can't flow sideways into water, and lava
 //! looks only 2 blocks ahead for a way down.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use glam::{DVec3, IVec3};
 
@@ -19,6 +19,7 @@ use super::{
     World,
     block::{BlockId, BlockRegistry, BlockState, Fluid},
     chunk::{Chunk, SECTION_COUNT, SECTION_SIZE},
+    fast_hash::{FastMap, FastSet},
 };
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
@@ -205,7 +206,7 @@ pub fn corner_height(fluid: Fluid, corner: IVec3, cell: &impl Fn(IVec3) -> Optio
 pub struct Fluids {
     /// By (due tick, order scheduled).
     queue: BTreeMap<(u64, u64), (IVec3, BlockId)>,
-    scheduled: HashSet<(IVec3, BlockId)>,
+    scheduled: FastSet<(IVec3, BlockId)>,
     next: u64,
     changed: Vec<IVec3>,
 }
@@ -288,7 +289,7 @@ impl Fluids {
             fluids: self,
             time,
             random,
-            edits: HashMap::new(),
+            edits: FastMap::default(),
             order: Vec::new(),
             washed: Vec::new(),
         };
@@ -322,7 +323,7 @@ struct Step<'a> {
     fluids: &'a mut Fluids,
     time: u64,
     random: &'a mut dyn FnMut(u32) -> u32,
-    edits: HashMap<IVec3, BlockState>,
+    edits: FastMap<IVec3, BlockState>,
     order: Vec<IVec3>,
     washed: Vec<(IVec3, BlockState)>,
 }

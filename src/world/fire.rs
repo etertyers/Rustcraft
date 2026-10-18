@@ -4,7 +4,7 @@
 //! nothing around it burns. Lava starts fires on random ticks (modern
 //! `LavaFluid.randomTick`). A fire's data value is its age, 0–15.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use glam::IVec3;
 
@@ -12,6 +12,7 @@ use super::{
     World,
     block::{BlockDef, BlockId, BlockRegistry, BlockState, Shape},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
+    fast_hash::{FastMap, FastSet},
 };
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
@@ -41,7 +42,7 @@ const NEIGHBORS: [IVec3; 6] = [
 pub struct Fires {
     /// By (due tick, order scheduled).
     queue: BTreeMap<(u64, u64), IVec3>,
-    scheduled: HashSet<IVec3>,
+    scheduled: FastSet<IVec3>,
     next: u64,
     changed: Vec<IVec3>,
 }
@@ -111,7 +112,7 @@ impl Fires {
             fires: self,
             time,
             random,
-            edits: HashMap::new(),
+            edits: FastMap::default(),
             order: Vec::new(),
         };
         for at in changed {
@@ -137,7 +138,7 @@ struct Step<'a> {
     fires: &'a mut Fires,
     time: u64,
     random: &'a mut dyn FnMut(u32) -> u32,
-    edits: HashMap<IVec3, BlockState>,
+    edits: FastMap<IVec3, BlockState>,
     order: Vec<IVec3>,
 }
 
