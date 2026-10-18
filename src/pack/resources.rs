@@ -160,7 +160,10 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::{pack::tests::*, world::save::TempDir};
+    use crate::{
+        pack::tests::{ASHEN, MCMETA, PRIME, kenzos_pack, write_zip},
+        world::save::TempDir,
+    };
 
     fn png(rgba: [u8; 4], width: u32, height: u32) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -277,9 +280,10 @@ mod tests {
     #[test]
     fn every_texture_name_in_the_data_files_resolves_in_the_base_or_a_pack() {
         let assets = crate::assets::dir();
-        let packs = ["Ashen_1.8.3.zip", "Prime's HD Textures (FREE)"]
-            .map(|name| Pack::open(&assets.join(name)).unwrap());
-        let res = Resources::load(&assets, packs.into()).unwrap();
+        let (Some(ashen), Some(prime)) = (kenzos_pack(ASHEN), kenzos_pack(PRIME)) else {
+            return;
+        };
+        let res = Resources::load(&assets, vec![ashen, prime]).unwrap();
         let blocks = crate::world::block::registry();
         let missing = blocks.missing_textures(|name| res.texture(name).is_some());
         // Drawn as entities in modern Minecraft; v1.0 never had them either.

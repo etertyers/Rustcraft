@@ -10,7 +10,7 @@ use crate::{
     entity::{
         arrow::Arrow,
         mob::{DEATH_TICKS, Mob, angle_difference},
-        mobs::{MobDef, Model, Part, PartBox, Role},
+        mobs::{MobDef, Part, PartBox, Role},
     },
     world::mesh::Mesh,
 };
@@ -63,9 +63,12 @@ pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8,
         for b in std::iter::once(&main).chain(&part.extra) {
             add_box(
                 mesh,
-                &def.model,
+                def.model.texture_size,
                 b,
-                part.mirror,
+                BoxStyle {
+                    mirror: part.mirror,
+                    grow: 0.0,
+                },
                 |corner| place(pivot + rotation * corner),
                 tint,
                 light,
@@ -162,22 +165,34 @@ fn animate(
     (x, y)
 }
 
+/// How a box is built beyond its size and texture position.
+#[derive(Debug, Clone, Copy)]
+pub struct BoxStyle {
+    /// Swaps the box's left and right, for mirrored limbs.
+    pub mirror: bool,
+    /// Pixels the box is grown on every side without changing its
+    /// texture layout (a skin's hat and sleeve layers).
+    pub grow: f32,
+}
+
 /// Adds one box with Minecraft's box texture layout: the top and bottom
 /// along the upper strip, then the four sides below them.
-fn add_box(
+pub fn add_box(
     mesh: &mut Mesh,
-    model: &Model,
+    texture_size: (f32, f32),
     b: &PartBox,
-    mirror: bool,
+    style: BoxStyle,
     place: impl Fn(Vec3) -> [f32; 3],
     tint: [f32; 3],
     light: [f32; 2],
 ) {
+    let BoxStyle { mirror, grow } = style;
     let (u, v) = b.uv;
     let (w, h, d) = b.size;
-    let (mut x1, y1, z1) = b.from;
-    let mut x2 = x1 + w;
-    let (y2, z2) = (y1 + h, z1 + d);
+    let (fx, fy, fz) = b.from;
+    let (mut x1, mut x2) = (fx - grow, fx + w + grow);
+    let (y1, y2) = (fy - grow, fy + h + grow);
+    let (z1, z2) = (fz - grow, fz + d + grow);
     if mirror {
         std::mem::swap(&mut x1, &mut x2);
     }
@@ -190,7 +205,7 @@ fn add_box(
     let v5 = corner(x2, y1, z2);
     let v6 = corner(x2, y2, z2);
     let v7 = corner(x1, y2, z2);
-    let (tw, th) = model.texture_size;
+    let (tw, th) = texture_size;
     // 1.0.0's ModelBox faces: corners and texture rect (u1, v1, u2, v2).
     let faces = [
         (

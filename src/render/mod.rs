@@ -5,9 +5,12 @@ pub mod camera;
 pub mod crack;
 pub mod entities;
 pub mod frustum;
+pub mod hand;
+pub mod held;
 pub mod icons;
 pub mod models;
 mod outline;
+pub mod player;
 pub mod vertex;
 
 use std::sync::Arc;
@@ -149,6 +152,12 @@ pub struct Renderer {
     cloud_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    /// The same, for the first-person hand's own projection.
+    hand_globals_buffer: wgpu::Buffer,
+    hand_globals_bind_group: wgpu::BindGroup,
+    /// The hand's arm (drawn with the skin, the last mob texture) and item.
+    hand_arm: Option<ChunkBuffers>,
+    hand_item: Option<ChunkBuffers>,
     texture_layout: wgpu::BindGroupLayout,
     /// The atlas, kept to copy animation frames into.
     atlas_texture: wgpu::Texture,
@@ -229,6 +238,20 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: globals_buffer.as_entire_binding(),
+            }],
+        });
+        let hand_globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hand globals"),
+            size: std::mem::size_of::<Globals>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let hand_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hand globals"),
+            layout: &globals_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: hand_globals_buffer.as_entire_binding(),
             }],
         });
 
@@ -316,6 +339,10 @@ impl Renderer {
             cloud_bind_group,
             globals_buffer,
             globals_bind_group,
+            hand_globals_buffer,
+            hand_globals_bind_group,
+            hand_arm: None,
+            hand_item: None,
             texture_layout,
             atlas_texture,
             atlas_bind_group,
@@ -406,6 +433,19 @@ impl Renderer {
                 (*kind, self.rewrite(reuse, "mob", mesh))
             })
             .collect();
+    }
+
+    /// Replaces the first-person hand drawn from the next frame on: the arm
+    /// (textured with the skin, the last mob texture) and the held item
+    /// (textured with the atlas), in camera space.
+    pub fn set_hand(&mut self, arm: Option<&Mesh>, item: Option<&Mesh>) {
+        let (old_arm, old_item) = (self.hand_arm.take(), self.hand_item.take());
+        self.hand_arm = arm
+            .filter(|mesh| !mesh.is_empty())
+            .map(|mesh| self.rewrite(old_arm, "hand arm", mesh));
+        self.hand_item = item
+            .filter(|mesh| !mesh.is_empty())
+            .map(|mesh| self.rewrite(old_item, "hand item", mesh));
     }
 
     /// Replaces the mining crack drawn from the next frame on.
@@ -736,9 +776,9 @@ impl Renderer {
             self.old_atlases
                 .retain(|(generation, _)| chunks.values().any(|c| c.atlas == *generation));
         }
-        let globals = globals(view_proj, camera.position, environment);
+        let frame_globals = globals(view_proj, camera.position, environment);
         self.queue
-            .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
+            .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&frame_globals));
         let outline = self.outline.prepare(&self.queue);
 
         let mut encoder = self
@@ -840,6 +880,53 @@ impl Renderer {
             }
             if outline > 0 {
                 self.outline.draw(&mut pass, outline);
+            }
+        }
+
+        if self.hand_arm.is_some() || self.hand_item.is_some() {
+            // The hand is drawn over the world with its own 70° projection,
+            // a fresh depth buffer and no fog.
+            let hand_env = Environment {
+                fog_start: 1.0e6,
+                fog_end: 2.0e6,
+                fog_density: 0.0,
+                ..*environment
+            };
+            let hand = globals(hand::hand_projection(self.aspect()), Vec3::ZERO, &hand_env);
+            self.queue
+                .write_buffer(&self.hand_globals_buffer, 0, bytemuck::bytes_of(&hand));
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hand"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.hand_globals_bind_group, &[]);
+            pass.set_pipeline(&self.mob_pipeline);
+            if let Some(arm) = &self.hand_arm
+                && let Some(skin) = self.mob_bind_groups.last()
+            {
+                pass.set_bind_group(1, skin, &[]);
+                draw_range(&mut pass, arm, 0..arm.opaque);
+            }
+            if let Some(item) = &self.hand_item {
+                pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+                draw_range(&mut pass, item, 0..item.opaque);
             }
         }
 

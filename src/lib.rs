@@ -7,6 +7,7 @@ pub mod assets;
 pub mod bench;
 pub mod config;
 pub mod entity;
+pub mod figure;
 pub mod game;
 pub mod inventory;
 pub mod level;

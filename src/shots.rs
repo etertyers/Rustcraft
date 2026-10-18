@@ -112,7 +112,115 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: falling_sand,
     },
+    Shot {
+        name: "m16-hand-empty",
+        about: "first person with an empty hand: the skin's right arm at the lower right",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
+        name: "m16-hand-sword",
+        about: "first person holding an iron sword, extruded from its sprite",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: hold_sword,
+    },
+    Shot {
+        name: "m16-hand-block",
+        about: "first person holding a grass block, a small cube",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: hold_block,
+    },
+    Shot {
+        name: "m16-hand-swing",
+        about: "first person, a swing under way with a sword in hand",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: swing_sword,
+    },
+    Shot {
+        name: "m16-third-back",
+        about: "third person behind the player, holding a sword",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: third_back,
+    },
+    Shot {
+        name: "m16-third-front",
+        about: "third person in front of the player, looking back at them",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: third_front,
+    },
+    Shot {
+        name: "m16-third-sneak",
+        about: "third person behind the player, sneaking",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: third_sneak,
+    },
 ];
+
+/// Puts `item` in the hotbar's first slot and selects it, settling the
+/// hand's equip dip.
+fn hold(game: &mut Game, item: crate::inventory::item::ItemId) {
+    game.inventory
+        .set(0, Some(crate::inventory::stack::ItemStack::new(item, 1)));
+    game.inventory.selected = 0;
+    game.run_ticks(10);
+}
+
+fn hold_sword(game: &mut Game) {
+    hold(game, crate::inventory::items::IRON_SWORD);
+}
+
+fn hold_block(game: &mut Game) {
+    hold(game, crate::inventory::items::GRASS_BLOCK);
+}
+
+fn swing_sword(game: &mut Game) {
+    hold_sword(game);
+    game.swing_for_shot(3);
+}
+
+fn third_back(game: &mut Game) {
+    hold_sword(game);
+    game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
+}
+
+fn third_front(game: &mut Game) {
+    hold_sword(game);
+    game.set_view_mode(crate::game::view::ViewMode::ThirdFront);
+}
+
+fn third_sneak(game: &mut Game) {
+    hold_sword(game);
+    game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
+    game.sneak_for_shot();
+}
 
 fn at(x: i32, y: i32, z: i32) -> IVec3 {
     IVec3::new(x, y, z)

@@ -839,7 +839,9 @@ mod tests {
     #[test]
     fn kenzos_packs_models_resolve() {
         let assets = crate::assets::dir();
-        let ashen = Pack::open(&assets.join("Ashen_1.8.3.zip")).unwrap();
+        let Some(ashen) = kenzos_pack(ASHEN) else {
+            return;
+        };
         let res = Resources::new(Pack::base(&assets), vec![ashen], HashMap::new());
         let overrides = BlockOverrides::load(&res, crate::world::block::registry());
         // Ashen gives stone four looks: vanilla's and three of its own.

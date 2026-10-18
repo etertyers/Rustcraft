@@ -11,6 +11,7 @@ mod mobs;
 mod progression;
 mod sleep;
 mod updates;
+pub mod view;
 
 use std::{path::Path, sync::Arc};
 
@@ -84,6 +85,8 @@ pub struct Game {
     items: Items,
     /// Look direction comes from the mouse; position follows `body` each frame.
     pub camera: Camera,
+    /// How the player looks to the camera: swinging, bobbing, F5.
+    view: view::ViewState,
     body: Body,
     /// Feet position at the previous tick, for interpolating the camera.
     prev_feet: DVec3,
@@ -179,6 +182,7 @@ impl Game {
             chunks,
             items,
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
+            view: view::ViewState::new(yaw, pitch, None),
             body,
             prev_feet: feet,
             spawn,
@@ -372,7 +376,9 @@ impl Game {
             );
             return;
         }
-        if key == KeyCode::F4 && pressed && !repeat {
+        if key == KeyCode::F5 && pressed && !repeat {
+            self.cycle_view();
+        } else if key == KeyCode::F4 && pressed && !repeat {
             #[cfg(debug_assertions)]
             {
                 self.flying = !self.flying;
@@ -404,6 +410,7 @@ impl Game {
     pub fn apply_options(&mut self, options: &Options) {
         self.chunks.set_radius(options.render_distance);
         self.camera.fov = options.fov;
+        self.view.bobbing = options.view_bobbing;
         self.sensitivity = options.sensitivity;
     }
 
@@ -534,6 +541,7 @@ impl Game {
                 self.use_hands();
             }
         }
+        self.tick_view();
         if let Some((_, ticks)) = &mut self.message {
             *ticks = ticks.saturating_sub(1);
             if *ticks == 0 {

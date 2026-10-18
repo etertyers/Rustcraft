@@ -72,6 +72,10 @@ impl Game {
         let wants_place = using && self.place_cooldown == 0;
         let place_pressed = self.place_clicked;
         let clicked = self.break_clicked;
+        if clicked {
+            // Every left click swings, whatever it hits.
+            self.view.swing();
+        }
         self.break_clicked = false;
         self.place_clicked = false;
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
@@ -103,6 +107,7 @@ impl Game {
             return;
         };
         if wants_break {
+            self.view.swing();
             self.mine(hit.block);
             // Chips fly off the face while it's being mined.
             if self.mining.is_some()
@@ -117,8 +122,14 @@ impl Game {
                 let chip = Particle::chip(hit.block, face, block, &mut random);
                 self.add_particles([chip]);
             }
-        } else if using && !self.activate(hit.block, place_pressed) && wants_place {
-            self.place(&hit);
+        } else if using {
+            if self.activate(hit.block, place_pressed) {
+                if place_pressed {
+                    self.view.swing();
+                }
+            } else if wants_place {
+                self.place(&hit);
+            }
         }
     }
 
@@ -470,6 +481,7 @@ impl Game {
             return;
         };
         self.edit(&edits);
+        self.view.swing();
         if self.mode.uses_up_items() {
             self.inventory.take(self.inventory.selected, 1);
         }

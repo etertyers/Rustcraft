@@ -315,6 +315,15 @@ impl Mesh {
         self.indices.is_empty() && self.translucent.is_empty()
     }
 
+    /// Adds another mesh's faces after this one's.
+    pub fn append(&mut self, other: &Mesh) {
+        let base = self.vertices.len() as u32;
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices.extend(other.indices.iter().map(|i| i + base));
+        self.translucent
+            .extend(other.translucent.iter().map(|i| i + base));
+    }
+
     /// Adds a quad from corners ordered bottom-left, bottom-right, top-right,
     /// top-left as seen from its front (counter-clockwise), with a color and
     /// (sky, block) light per corner.

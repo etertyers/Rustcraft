@@ -390,7 +390,10 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::pack::{Pack, tests::*};
+    use crate::pack::{
+        Pack,
+        tests::{ASHEN, MCMETA, PRIME, kenzos_pack, write_zip},
+    };
 
     fn png(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -470,8 +473,10 @@ mod tests {
             ("gui/container/inventory", &[][..]),
             ("gui/container/furnace", FURNACE),
         ];
-        for name in ["Ashen_1.8.3.zip", "Prime's HD Textures (FREE)"] {
-            let pack = Pack::open(&assets.join(name)).unwrap();
+        for name in [ASHEN, PRIME] {
+            let Some(pack) = kenzos_pack(name) else {
+                continue;
+            };
             let res = Resources::load(&assets, vec![pack]).unwrap();
             for (sheet, sprites) in sheets {
                 let plain = compose_sheet(&base, sheet, sprites).unwrap();

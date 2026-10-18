@@ -30,6 +30,8 @@ pub struct Options {
     /// Sound volume 0–1. Kept for when sound arrives; nothing plays yet.
     pub volume: f32,
     pub vsync: bool,
+    /// Whether the view and hand shake with each step.
+    pub view_bobbing: bool,
     /// Selected resource packs (file or folder names in `resourcepacks/`),
     /// highest priority first.
     pub resource_packs: Vec<String>,
@@ -43,6 +45,7 @@ impl Default for Options {
             sensitivity: 1.0,
             volume: 1.0,
             vsync: true,
+            view_bobbing: true,
             resource_packs: Vec::new(),
         }
     }
@@ -94,6 +97,7 @@ impl Options {
                 .clamp(*SENSITIVITIES.start(), *SENSITIVITIES.end()),
             volume: self.volume.clamp(0.0, 1.0),
             vsync: self.vsync,
+            view_bobbing: self.view_bobbing,
             resource_packs: self.resource_packs,
         }
     }
@@ -115,6 +119,7 @@ mod tests {
             sensitivity: 1.5,
             volume: 0.25,
             vsync: false,
+            view_bobbing: false,
             resource_packs: vec!["High.zip".to_owned(), "Low".to_owned()],
         };
         options.save(&path).unwrap();
