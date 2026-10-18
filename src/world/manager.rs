@@ -662,7 +662,7 @@ mod tests {
         let mut manager = loaded_flat();
         manager.set_blocks(&[
             (IVec3::new(500, 70, 0), STONE),
-            (IVec3::new(0, 128, 0), STONE),
+            (IVec3::new(0, WORLD_HEIGHT as i32, 0), STONE),
             (IVec3::new(0, -1, 0), STONE),
         ]);
         assert!(manager.update(ChunkPos::new(0, 0)).meshes.is_empty());

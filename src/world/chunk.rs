@@ -1,4 +1,4 @@
-//! Chunk storage: a 16×128×16 column split into 16³ sections, plus the
+//! Chunk storage: a 16×256×16 column split into 16³ sections, plus the
 //! block entities (chests, furnaces) in it.
 
 use std::collections::BTreeMap;
@@ -7,7 +7,7 @@ use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
 use super::{biome::Biome, block::BlockState, block_entity::BlockEntity};
 
-/// A block's position within its chunk: x and z in 0..16, y in 0..128.
+/// A block's position within its chunk: x and z in 0..16, y in 0..256.
 pub type LocalPos = [u8; 3];
 
 /// Edge length of a section (and width of a chunk).
@@ -107,7 +107,7 @@ impl Chunk {
         )
     }
 
-    /// Block at local (x, z) in 0..16 and y in 0..128. Out-of-range y is air.
+    /// Block at local (x, z) in 0..16 and y in 0..256. Out-of-range y is air.
     pub fn get(&self, x: usize, y: usize, z: usize) -> BlockState {
         debug_assert!(x < CHUNK_SIZE && z < CHUNK_SIZE, "({x}, {z}) outside chunk");
         if y >= WORLD_HEIGHT {
@@ -135,6 +135,14 @@ impl Chunk {
                 *slot = Some(blocks);
             }
         }
+    }
+
+    /// One past the highest section holding any blocks (0 if it's all air).
+    pub fn top_section(&self) -> usize {
+        self.sections
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |index| index + 1)
     }
 
     /// Whether section `index` (0 = bottom) holds no blocks at all.
@@ -174,8 +182,8 @@ mod tests {
         let corners = [
             (0, 0, 0),
             (15, 0, 15),
-            (0, 127, 0),
-            (15, 127, 15),
+            (0, 255, 0),
+            (15, 255, 15),
             (7, 64, 3),
         ];
         let marker = |i: usize| {
@@ -220,6 +228,6 @@ mod tests {
     #[test]
     fn above_world_height_is_air() {
         let chunk = Chunk::new(ChunkPos::new(0, 0));
-        assert_eq!(chunk.get(0, 128, 0), BlockState::AIR);
+        assert_eq!(chunk.get(0, 256, 0), BlockState::AIR);
     }
 }

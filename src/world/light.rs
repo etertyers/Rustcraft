@@ -19,17 +19,20 @@ const AREA_OFFSET: i32 = CHUNK_SIZE as i32;
 /// The result keeps a one-block border around the chunk for face lighting.
 const BORDER: usize = CHUNK_SIZE + 2;
 
-/// Light for one chunk plus a one-block border, as `sky << 4 | block`.
+/// Light for one chunk plus a one-block border, as `sky << 4 | block`,
+/// up to `height`: above that (a section clear of every block in the 3×3
+/// area) there's only full sky light.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkLight {
     cells: Vec<u8>,
+    height: usize,
 }
 
 impl ChunkLight {
     /// (sky, block) light at chunk-local coordinates, with x and z in
-    /// -1..=16. Above the world is full sky light; below it is dark.
+    /// -1..=16. Above the blocks is full sky light; below the world it's dark.
     pub fn get(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
-        if y >= WORLD_HEIGHT as i32 {
+        if y >= self.height as i32 {
             return (MAX_LIGHT, 0);
         }
         if y < 0 {
@@ -51,7 +54,10 @@ fn area_index(x: usize, y: usize, z: usize) -> usize {
 /// Computes light for the center chunk of `area`. Missing neighbor chunks
 /// count as empty.
 pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
-    let volume = AREA * AREA * WORLD_HEIGHT;
+    // Up to a section past the highest blocks, which block light can't
+    // cross; everything above is open sky.
+    let height = ((area.top_section() + 1) * CHUNK_SIZE).min(WORLD_HEIGHT);
+    let volume = AREA * AREA * height;
     let mut opacity = vec![0u8; volume];
     let mut sky = vec![0u8; volume];
     let mut block = vec![0u8; volume];
@@ -66,7 +72,7 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
             // Sunlight goes straight down undimmed until something absorbs it.
             let mut level = MAX_LIGHT;
             let mut open = true;
-            for y in (0..WORLD_HEIGHT).rev() {
+            for y in (0..height).rev() {
                 let state = area.get(ax, y as i32, az).unwrap_or(BlockState::AIR);
                 if state.is_air() {
                     sky[area_index(x, y, z)] = level;
@@ -100,7 +106,7 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
                     top = top.max(open_from[nz as usize * AREA + nx as usize]);
                 }
             }
-            for y in 0..top.min(WORLD_HEIGHT) {
+            for y in 0..top.min(height) {
                 let i = area_index(x, y, z);
                 if sky[i] > 1 {
                     sky_queue.push_back(i as u32);
@@ -109,11 +115,11 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
         }
     }
 
-    spread(&mut sky, &opacity, sky_queue);
-    spread(&mut block, &opacity, block_queue);
+    spread(&mut sky, &opacity, sky_queue, height);
+    spread(&mut block, &opacity, block_queue, height);
 
-    let mut cells = vec![0u8; BORDER * BORDER * WORLD_HEIGHT];
-    for y in 0..WORLD_HEIGHT {
+    let mut cells = vec![0u8; BORDER * BORDER * height];
+    for y in 0..height {
         for z in 0..BORDER {
             for x in 0..BORDER {
                 // Border cell 0 is area cell CHUNK_SIZE - 1.
@@ -122,12 +128,12 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
             }
         }
     }
-    ChunkLight { cells }
+    ChunkLight { cells, height }
 }
 
 /// Floods light outward from the queued cells: each step loses 1, or the
 /// entered block's opacity if that's more.
-fn spread(levels: &mut [u8], opacity: &[u8], mut queue: VecDeque<u32>) {
+fn spread(levels: &mut [u8], opacity: &[u8], mut queue: VecDeque<u32>, height: usize) {
     const STEPS: [(i32, i32, i32); 6] = [
         (1, 0, 0),
         (-1, 0, 0),
@@ -136,7 +142,7 @@ fn spread(levels: &mut [u8], opacity: &[u8], mut queue: VecDeque<u32>) {
         (0, 0, 1),
         (0, 0, -1),
     ];
-    let (w, h) = (AREA as i32, WORLD_HEIGHT as i32);
+    let (w, h) = (AREA as i32, height as i32);
     while let Some(i) = queue.pop_front() {
         let i = i as usize;
         let level = levels[i];
@@ -230,7 +236,19 @@ mod tests {
         assert_eq!(light.get(5, 64, 5), (15, 0));
         assert_eq!(light.get(5, 127, 5), (15, 0));
         assert_eq!(light.get(5, 63, 5), (0, 0));
-        assert_eq!(light.get(5, 128, 5), (15, 0));
+        assert_eq!(light.get(5, 255, 5), (15, 0));
+        assert_eq!(light.get(5, 256, 5), (15, 0));
+    }
+
+    #[test]
+    fn blocks_at_the_top_of_the_world_are_lit_like_any_other() {
+        let tower: Vec<_> = (64..256).map(|y| (5, y, 5, STONE)).collect();
+        let mut with_torch = tower.clone();
+        with_torch.push((6, 255, 5, TORCH));
+        let light = light_chunk(&models(), &ground(&with_torch));
+        assert_eq!(light.get(5, 200, 6), (15, 0), "beside the tower, open sky");
+        assert_eq!(light.get(7, 255, 5).1, 13, "a torch at the top spreads");
+        assert_eq!(light.get(5, 256, 5), (15, 0));
     }
 
     #[test]

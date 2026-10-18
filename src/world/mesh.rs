@@ -181,6 +181,17 @@ impl ChunkArea {
         Self { chunks }
     }
 
+    /// One past the highest non-empty section of any loaded chunk in the area.
+    pub fn top_section(&self) -> usize {
+        self.chunks
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|chunk| chunk.top_section())
+            .max()
+            .unwrap_or(0)
+    }
+
     pub fn center(&self) -> &Chunk {
         self.chunks[1][1]
             .as_deref()
@@ -1156,7 +1167,8 @@ mod tests {
     #[test]
     fn bottom_of_world_is_hidden_and_top_is_open() {
         assert_eq!(quads(&mesh_with(&[(5, 0, 5, STONE)], true)), 5);
-        assert_eq!(quads(&mesh_with(&[(5, 127, 5, STONE)], true)), 6);
+        let top = WORLD_HEIGHT as i32 - 1;
+        assert_eq!(quads(&mesh_with(&[(5, top, 5, STONE)], true)), 6);
     }
 
     #[test]
