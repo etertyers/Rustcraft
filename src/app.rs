@@ -171,12 +171,14 @@ impl App {
     }
 
     fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        // The bench draws a full 1080p screen's worth.
+        let (width, height) = match self.bench {
+            Some(_) => bench::WINDOW_SIZE,
+            None => (config::WINDOW_WIDTH, config::WINDOW_HEIGHT),
+        };
         let attrs = Window::default_attributes()
             .with_title(config::WINDOW_TITLE)
-            .with_inner_size(LogicalSize::new(
-                config::WINDOW_WIDTH,
-                config::WINDOW_HEIGHT,
-            ));
+            .with_inner_size(LogicalSize::new(width, height));
         let window = Arc::new(event_loop.create_window(attrs)?);
         let assets = assets::dir();
         let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
@@ -396,7 +398,13 @@ impl App {
     /// Opens the pause menu over a world being played (not over a screen,
     /// the death screen or a bed), freeing the mouse. The game stops.
     fn pause_game(&mut self) {
-        if self.playing() && self.screen.is_none() && !self.sleeping && self.pause.is_none() {
+        // The bench keeps flying when the window loses focus.
+        if self.bench.is_none()
+            && self.playing()
+            && self.screen.is_none()
+            && !self.sleeping
+            && self.pause.is_none()
+        {
             self.pause = Some(PauseMenu::default());
             self.set_cursor_grab(false);
         }
@@ -830,7 +838,8 @@ impl ApplicationHandler for App {
                 self.pause_game();
             }
             WindowEvent::Occluded(occluded) => {
-                self.occluded = occluded;
+                // The bench draws off screen when hidden.
+                self.occluded = occluded && self.bench.is_none();
                 if !occluded && let Some(window) = &self.window {
                     window.request_redraw();
                 }

@@ -14,6 +14,8 @@ pub const DEFAULT_SECONDS: f32 = 60.0;
 pub const SPEED: f64 = 10.9;
 /// Feet height for the flight, above most hills.
 pub const HEIGHT: f64 = 100.0;
+/// The window's size: a 1080p screen.
+pub const WINDOW_SIZE: (u32, u32) = (1920, 1080);
 /// The first seconds load the world around the start; they're timed
 /// separately.
 const WARM_UP: f32 = 5.0;
@@ -72,7 +74,9 @@ impl Bench {
     /// the flight.
     pub fn report(&self, render_distance: i32) -> String {
         format!(
-            "bench: render distance {render_distance}, {:.0} s at {SPEED} blocks/s\n  warm-up {}\n  flight  {}",
+            "bench: render distance {render_distance}, {}×{}, {:.0} s at {SPEED} blocks/s\n  warm-up {}\n  flight  {}",
+            WINDOW_SIZE.0,
+            WINDOW_SIZE.1,
             self.seconds,
             summary(&self.warm_up),
             summary(&self.frames)
@@ -94,13 +98,22 @@ fn summary(frames: &[FrameTimes]) -> String {
     let mean_ms = |part: fn(&FrameTimes) -> Duration| {
         frames.iter().map(|f| part(f).as_secs_f32()).sum::<f32>() / n * 1000.0
     };
+    let worst = frames
+        .iter()
+        .max_by(|a, b| a.frame.total_cmp(&b.frame))
+        .expect("not empty");
+    let ms = |d: Duration| d.as_secs_f32() * 1000.0;
     format!(
-        "{} frames ({offscreen} off screen), {:.0} fps average, 1% low {:.0} fps, worst {:.1} ms, {slow} over 33 ms; \
+        "{} frames ({offscreen} off screen), {:.0} fps average, 1% low {:.0} fps, worst {:.1} ms \
+         (game {:.1}, chunks {:.1}, draw {:.1}), {slow} over 33 ms; \
          per frame: game {:.2} ms, chunks {:.2} ms, draw {:.2} ms",
         frames.len(),
         n / total,
         1.0 / percentile(0.99),
-        sorted[sorted.len() - 1] * 1000.0,
+        worst.frame * 1000.0,
+        ms(worst.game),
+        ms(worst.chunks),
+        ms(worst.draw),
         mean_ms(|f| f.game),
         mean_ms(|f| f.chunks),
         mean_ms(|f| f.draw),
@@ -139,7 +152,10 @@ mod tests {
             report.contains("flight  64 frames (0 off screen)"),
             "{report}"
         );
-        assert!(report.contains("worst 62.5 ms, 1 over 33 ms"), "{report}");
+        assert!(
+            report.contains("worst 62.5 ms (game 1.0, chunks 0.0, draw 0.0), 1 over 33 ms"),
+            "{report}"
+        );
         assert!(report.contains("game 1.00 ms"), "{report}");
     }
 }
