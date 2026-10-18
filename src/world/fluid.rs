@@ -150,6 +150,43 @@ pub fn flow_vector(fluid: Fluid, at: IVec3, cell: &impl Fn(IVec3) -> Option<Cell
     flow.normalize_or_zero()
 }
 
+/// Height of a fluid's surface at the block corner `corner` (the
+/// smallest x and z of the four cells around it), 0–1 above `corner.y`
+/// (1.0.0's `RenderBlocks.getFluidHeight`): full if the fluid is above any
+/// of the four cells, otherwise an average weighted toward sources and
+/// falls, with open cells pulling it down.
+pub fn corner_height(fluid: Fluid, corner: IVec3, cell: &impl Fn(IVec3) -> Option<Cell>) -> f32 {
+    let mut total = 0.0;
+    let mut count = 0.0;
+    for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+        let at = corner - IVec3::new(dx, 0, dz);
+        if cell(at + IVec3::Y).is_some_and(|c| c.fluid == Some(fluid)) {
+            return 1.0;
+        }
+        let Some(here) = cell(at) else {
+            continue;
+        };
+        if here.fluid == Some(fluid) {
+            let data = here.block.data();
+            let empty = height_percent(data);
+            if data as i32 >= FALLING || data == 0 {
+                total += empty * 10.0;
+                count += 10.0;
+            }
+            total += empty;
+            count += 1.0;
+        } else if !here.stops {
+            total += 1.0;
+            count += 1.0;
+        }
+    }
+    if count == 0.0 {
+        1.0 - height_percent(0)
+    } else {
+        1.0 - total / count
+    }
+}
+
 /// Scheduled fluid updates, and blocks the game changed since the last
 /// tick (1.0.0's `scheduleBlockUpdate` and neighbor notifications). Not
 /// saved: flowing blocks in a chunk are scheduled again when it loads.
@@ -185,20 +222,20 @@ impl Fluids {
     }
 
     /// Schedules the flowing blocks of a chunk that just loaded.
-    pub fn chunk_loaded(&mut self, chunk: &Chunk, blocks: &BlockRegistry, time: u64) {
+    pub fn chunk_loaded(&mut self, chunk: &Chunk, time: u64) {
         let (min_x, min_z) = chunk.pos.min_block();
         for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
             for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
-                        let block = chunk.get(x, y, z);
-                        let Some(fluid) = blocks.get(block.id()).and_then(|def| def.fluid) else {
-                            continue;
+                        let id = chunk.get(x, y, z).id();
+                        let fluid = match id {
+                            FLOWING_WATER => Fluid::Water,
+                            FLOWING_LAVA => Fluid::Lava,
+                            _ => continue,
                         };
-                        if block.id() == flowing(fluid) {
-                            let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
-                            self.schedule(at, block.id(), time + tick_rate(fluid));
-                        }
+                        let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
+                        self.schedule(at, id, time + tick_rate(fluid));
                     }
                 }
             }
@@ -837,6 +874,11 @@ mod tests {
             flow_vector(Fluid::Water, IVec3::new(9, 64, 0), &cell),
             DVec3::ZERO
         );
+        // A source's surface is highest; a level 7 edge is nearly flat.
+        let source = corner_height(Fluid::Water, IVec3::new(1, 64, 1), &cell);
+        let edge = corner_height(Fluid::Water, IVec3::new(8, 64, 1), &cell);
+        assert!(source > 0.7 && source < 8.0 / 9.0 + 1e-6, "{source}");
+        assert!(edge < 0.2, "{edge}");
         assert_eq!(height_percent(0), 1.0 / 9.0);
         assert_eq!(height_percent(9), 1.0 / 9.0);
         assert_eq!(height_percent(7), 8.0 / 9.0);
@@ -847,7 +889,7 @@ mod tests {
         let mut pond = Pond::new();
         pond.write(IVec3::new(0, 64, 0), BlockState::new(FLOWING_WATER, 0));
         let chunk = pond.world.get(ChunkPos::new(0, 0)).unwrap().clone();
-        pond.fluids.chunk_loaded(&chunk, &pond.blocks, 0);
+        pond.fluids.chunk_loaded(&chunk, 0);
         assert_eq!(pond.fluids.pending(), 1);
         pond.run(100);
         assert_eq!(pond.level(3, 0), Some(3));

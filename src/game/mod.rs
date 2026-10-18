@@ -48,7 +48,7 @@ use crate::{
     world::{
         block::Fluid,
         chunk::ChunkPos,
-        fluid::Fluids,
+        fluid::{self, Fluids},
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -524,11 +524,15 @@ impl Game {
         }
     }
 
-    /// The liquid at `point`, if any.
+    /// The liquid at `point`, if it's below the surface (1.0.0's
+    /// `isInsideOfMaterial`, which counts a source's whole cell and the
+    /// lower part of a shallower flow's).
     fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
         let p = point.floor().as_ivec3();
         let block = self.chunks.world().block(p.x, p.y, p.z)?;
-        self.items.blocks.get(block.id())?.fluid
+        let fluid = self.items.blocks.get(block.id())?.fluid?;
+        let surface = (p.y + 1) as f64 - (fluid::height_percent(block.data()) - 1.0 / 9.0) as f64;
+        (point.y < surface).then_some(fluid)
     }
 
     /// Exhaustion from moving, then a tick of health, hunger, air and fire

@@ -117,8 +117,7 @@ impl Game {
     pub(super) fn schedule_fluids(&mut self, chunks: &[ChunkPos]) {
         for &pos in chunks {
             if let Some(chunk) = self.chunks.world().get(pos) {
-                self.fluids
-                    .chunk_loaded(chunk, &self.items.blocks, self.time);
+                self.fluids.chunk_loaded(chunk, self.time);
             }
         }
     }
