@@ -231,7 +231,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Block-breaking particles and crack overlay.
 - **Done when:** a fresh player can go from a new world to iron tools with no debug UI (sound is excluded while the placeholder above stands).
 
-### - [ ] M12 — Fluids
+### - [x] M12 — Fluids
 - Flowing water and lava with 1.0.0 spread rules (water 7 blocks, lava 3 in the Overworld), source blocks, infinite water sources, lava + water → obsidian/cobblestone.
 - Buckets pick up and place fluids. Current pushes entities.
 - **Done when:** pouring water into a hole spreads and fills like Minecraft, and lava + water makes cobblestone and obsidian.
