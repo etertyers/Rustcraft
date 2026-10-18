@@ -238,7 +238,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Buckets pick up and place fluids. Current pushes entities.
 - **Done when:** pouring water into a hole spreads and fills like Minecraft, and lava + water makes cobblestone and obsidian.
 
-### - [ ] M13 — Performance and release
+### - [x] M13 — Performance and release
 - Profile (Instruments / `cargo flamegraph`), fix hot spots, reduce allocations in meshing.
 - Release build bundled as a macOS `.app` (e.g. `cargo-bundle`), app icon.
 - **Done when:** 60+ FPS at render distance 9 on the Mac mini (stretch goal 12); `.app` launches by double-click.
