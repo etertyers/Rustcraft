@@ -1,11 +1,12 @@
 //! Axis-aligned boxes and Minecraft-style collision against the world's blocks.
 
-use glam::{DVec3, Vec3};
+use glam::{DVec3, IVec3, Vec3};
 
 use crate::world::{
     World,
     block::{BlockRegistry, Fluid},
     chunk::ChunkPos,
+    fluid,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,6 +106,13 @@ pub trait Collider {
     fn liquid(&self, _region: &Aabb) -> Option<Fluid> {
         None
     }
+
+    /// Which way the water `region` reaches into runs, normalized, or zero
+    /// (1.0.0's `handleMaterialAcceleration`: the flow of every water cell
+    /// it reaches, added up).
+    fn current(&self, _region: &Aabb) -> DVec3 {
+        DVec3::ZERO
+    }
 }
 
 /// The loaded world's solid blocks. Unloaded chunks are walls, so nothing
@@ -125,6 +133,25 @@ impl WorldCollider<'_> {
         );
         (low.z..=high.z)
             .all(|z| (low.x..=high.x).all(|x| self.world.get(ChunkPos::new(x, z)).is_some()))
+    }
+}
+
+impl WorldCollider<'_> {
+    /// The liquid cells `region` reaches into: those whose surface (1.0.0's
+    /// `getFluidHeightPercent` below the top) its top is level with.
+    fn liquid_cells<'b>(&'b self, region: &'b Aabb) -> impl Iterator<Item = (IVec3, Fluid)> + 'b {
+        let min = region.min.floor().as_ivec3();
+        let max = region.max.floor().as_ivec3();
+        (min.y..=max.y).flat_map(move |y| {
+            (min.z..=max.z).flat_map(move |z| {
+                (min.x..=max.x).filter_map(move |x| {
+                    let block = self.world.block(x, y, z)?;
+                    let fluid = self.blocks.get(block.id())?.fluid?;
+                    let surface = (y + 1) as f64 - fluid::height_percent(block.data()) as f64;
+                    (region.max.y >= surface).then_some((IVec3::new(x, y, z), fluid))
+                })
+            })
+        })
     }
 }
 
@@ -162,31 +189,27 @@ impl Collider for WorldCollider<'_> {
     }
 
     fn liquid(&self, region: &Aabb) -> Option<Fluid> {
-        let min = region.min.floor().as_ivec3();
-        let max = region.max.floor().as_ivec3();
         let mut found = None;
-        for y in min.y..=max.y {
-            for z in min.z..=max.z {
-                for x in min.x..=max.x {
-                    let Some(block) = self.world.block(x, y, z) else {
-                        continue;
-                    };
-                    let Some(fluid) = self.blocks.get(block.id()).and_then(|def| def.fluid) else {
-                        continue;
-                    };
-                    // 1.0.0's getFluidHeightPercent: level 0 (a source) fills 8/9.
-                    let level = (block.data() & 7) as f64;
-                    let surface = (y + 1) as f64 - (level + 1.0) / 9.0;
-                    if region.max.y >= surface {
-                        if fluid == Fluid::Water {
-                            return Some(fluid);
-                        }
-                        found = Some(fluid);
-                    }
-                }
+        for (_, fluid) in self.liquid_cells(region) {
+            if fluid == Fluid::Water {
+                return Some(fluid);
             }
+            found = Some(fluid);
         }
         found
+    }
+
+    fn current(&self, region: &Aabb) -> DVec3 {
+        let cell = |at: IVec3| {
+            let block = self.world.block(at.x, at.y, at.z)?;
+            Some(fluid::Cell::new(block, self.blocks))
+        };
+        let flow: DVec3 = self
+            .liquid_cells(region)
+            .filter(|&(_, fluid)| fluid == Fluid::Water)
+            .map(|(at, fluid)| fluid::flow_vector(fluid, at, &cell))
+            .sum();
+        flow.normalize_or_zero()
     }
 }
 

@@ -11,7 +11,7 @@ use crate::{
     },
     player::{
         collision::{Aabb, Collider},
-        physics::sweep,
+        physics::{CURRENT_PUSH, sweep},
     },
 };
 
@@ -133,6 +133,10 @@ impl ItemEntity {
     /// One tick of 1.0.0's `EntityItem.onUpdate`.
     pub fn tick(&mut self, world: &impl Collider) {
         self.prev_center = self.center();
+        // Water carries items along (around their middle, as 1.0.0's box
+        // shrunk 0.4 top and bottom comes to for something this small).
+        let center = self.center();
+        self.velocity += world.current(&Aabb::new(center, center)) * CURRENT_PUSH;
         self.velocity.y -= GRAVITY;
         let wanted = self.velocity;
         let (moved, bb) = sweep(self.bb, wanted, world, &mut Vec::new());

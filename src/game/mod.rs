@@ -4,6 +4,7 @@
 
 mod containers;
 pub mod environment;
+mod fluids;
 mod hands;
 mod mobs;
 #[cfg(test)]
@@ -47,6 +48,7 @@ use crate::{
     world::{
         block::Fluid,
         chunk::ChunkPos,
+        fluid::Fluids,
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -128,6 +130,8 @@ pub struct Game {
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
     mining: Option<(glam::IVec3, f32)>,
+    /// Scheduled water and lava updates.
+    fluids: Fluids,
     /// For drops and throws.
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
@@ -197,6 +201,7 @@ impl Game {
             populated: HashSet::new(),
             mining: None,
             eating: None,
+            fluids: Fluids::default(),
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
@@ -481,6 +486,7 @@ impl Game {
         self.tick_particles();
         self.tick_arrows();
         self.tick_mobs();
+        self.tick_fluids();
         self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;

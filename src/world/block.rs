@@ -326,6 +326,11 @@ pub struct BlockDef {
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,
+    /// Holds back water and lava without being solid to walk into (signs,
+    /// pressure plates, cobwebs, sugar cane: 1.0.0's solid materials and
+    /// `blockBlocksFlow` list). Solid blocks always do.
+    #[serde(default)]
+    pub blocks_flow: bool,
     /// The tool that mines it fast (1.0.0's effective tool lists and
     /// materials).
     #[serde(default)]
@@ -440,6 +445,11 @@ impl BlockDef {
     /// Whether the crosshair can select it (everything but air and fluids).
     pub fn is_targetable(&self) -> bool {
         !matches!(self.shape, Shape::None | Shape::Liquid)
+    }
+
+    /// Whether water and lava stop at it rather than wash it away.
+    pub fn stops_fluid(&self) -> bool {
+        self.fluid.is_none() && (self.solid || self.blocks_flow)
     }
 
     /// A full opaque cube hides the faces of whatever touches it.

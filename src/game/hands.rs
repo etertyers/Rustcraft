@@ -213,7 +213,7 @@ impl Game {
         {
             self.inventory.damage_selected(wear, &self.items);
         }
-        self.chunks.set_blocks(&edits);
+        self.edit(&edits);
     }
 
     /// Draws a bow while `using` (right-click held) with ammunition, and
@@ -439,7 +439,7 @@ impl Game {
                 (half.id() == block.id()).then(|| (at, BlockState::new(half.id(), half.data() ^ 4)))
             })
             .collect();
-        self.chunks.set_blocks(&edits);
+        self.edit(&edits);
     }
 
     /// Places the selected stack's block against the clicked face.
@@ -485,7 +485,7 @@ impl Game {
             }
             _ => vec![(at, placed)],
         };
-        self.chunks.set_blocks(&edits);
+        self.edit(&edits);
         if self.mode.uses_up_items() {
             self.inventory.take(self.inventory.selected, 1);
         }

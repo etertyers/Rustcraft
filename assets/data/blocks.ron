@@ -82,7 +82,7 @@
     (id: 27, name: "golden_rail", hardness: 0.7, needs_ground: true, shape: Rail, layer: Cutout, solid: false, textures: (all: "rail_golden")),
     (id: 28, name: "detector_rail", hardness: 0.7, needs_ground: true, shape: Rail, layer: Cutout, solid: false, textures: (all: "rail_detector")),
     (id: 29, name: "sticky_piston", hardness: 0.5, textures: (top: "piston_top_sticky", bottom: "piston_bottom", side: "piston_side")),
-    (id: 30, name: "web", hardness: 4.0, harvest: (tools: [Sword, Shears]), drops: All([(item: 287)]), opacity: 1, shape: Cross, layer: Cutout, solid: false, textures: (all: "web")),
+    (id: 30, name: "web", hardness: 4.0, harvest: (tools: [Sword, Shears]), drops: All([(item: 287)]), opacity: 1, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "web")),
     // Data 0 is the dead shrub, 1 tall grass, 2 fern.
     (id: 31, name: "tallgrass", hardness: 0.0, drops: All([(item: 295, chance: 0.125)]), replaceable: true, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "deadbush"),
         variants: {
@@ -113,7 +113,7 @@
             14: (name: "red", textures: (all: "wool_colored_red")),
             15: (name: "black", textures: (all: "wool_colored_black")),
         }),
-    (id: 36, name: "piston_extension", hardness: -1.0, drops: Nothing, shape: None, solid: false),
+    (id: 36, name: "piston_extension", hardness: -1.0, drops: Nothing, shape: None, solid: false, blocks_flow: true),
     (id: 37, name: "yellow_flower", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "flower_dandelion")),
     (id: 38, name: "red_flower", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "flower_rose")),
     (id: 39, name: "brown_mushroom", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, light: 1, textures: (all: "mushroom_brown")),
@@ -171,7 +171,7 @@
     (id: 61, name: "furnace", hardness: 3.5, placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_off")),
     (id: 62, name: "lit_furnace", hardness: 3.5, placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 61)]), light: 13, textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front_on")),
     // No block texture in the pack; signs are drawn from entity/sign.png later.
-    (id: 63, name: "standing_sign", hardness: 1.0, drops: All([(item: 323)]), needs_ground: true, shape: Sign, solid: false, textures: (all: "sign")),
+    (id: 63, name: "standing_sign", hardness: 1.0, drops: All([(item: 323)]), needs_ground: true, shape: Sign, solid: false, blocks_flow: true, textures: (all: "sign")),
     // Data 0-7 is the lower half, 8+ the upper half.
     (id: 64, name: "wooden_door", hardness: 3.0, drops: All([(item: 324, max_data: 7)]), placement: Door, activate: Door, shape: Door, layer: Cutout, textures: (all: "door_wood_lower"),
         variants: {
@@ -180,14 +180,14 @@
     (id: 65, name: "ladder", hardness: 0.4, shape: Ladder, layer: Cutout, textures: (all: "ladder")),
     (id: 66, name: "rail", hardness: 0.7, needs_ground: true, shape: Rail, layer: Cutout, solid: false, textures: (all: "rail_normal")),
     (id: 67, name: "stone_stairs", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), opacity: 15, shape: Stairs, textures: (all: "cobblestone")),
-    (id: 68, name: "wall_sign", hardness: 1.0, drops: All([(item: 323)]), shape: Sign, solid: false, textures: (all: "sign")),
+    (id: 68, name: "wall_sign", hardness: 1.0, drops: All([(item: 323)]), shape: Sign, solid: false, blocks_flow: true, textures: (all: "sign")),
     (id: 69, name: "lever", hardness: 0.5, shape: Lever, layer: Cutout, solid: false, textures: (all: "lever")),
-    (id: 70, name: "stone_pressure_plate", hardness: 0.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: PressurePlate, solid: false, textures: (all: "stone")),
+    (id: 70, name: "stone_pressure_plate", hardness: 0.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: PressurePlate, solid: false, blocks_flow: true, textures: (all: "stone")),
     (id: 71, name: "iron_door", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: 330, max_data: 7)]), placement: Door, shape: Door, layer: Cutout, textures: (all: "door_iron_lower"),
         variants: {
             8: (name: "upper", textures: (all: "door_iron_upper")),
         }),
-    (id: 72, name: "wooden_pressure_plate", hardness: 0.5, needs_ground: true, shape: PressurePlate, solid: false, textures: (all: "planks_oak")),
+    (id: 72, name: "wooden_pressure_plate", hardness: 0.5, needs_ground: true, shape: PressurePlate, solid: false, blocks_flow: true, textures: (all: "planks_oak")),
     (id: 73, name: "redstone_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), drops: All([(item: 331, min: 4, max: 5)]), textures: (all: "redstone_ore")),
     (id: 74, name: "lit_redstone_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), drops: All([(item: 331, min: 4, max: 5)]), light: 9, textures: (all: "redstone_ore")),
     (id: 75, name: "unlit_redstone_torch", hardness: 0.0, drops: All([(item: 76)]), placement: Torch, shape: Torch, layer: Cutout, solid: false, textures: (all: "redstone_torch_off")),
@@ -198,7 +198,7 @@
     (id: 80, name: "snow", hardness: 0.2, tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: 332, min: 4)]), textures: (all: "snow")),
     (id: 81, name: "cactus", hardness: 0.4, needs_ground: true, shape: Cactus, layer: Cutout, textures: (top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side")),
     (id: 82, name: "clay", hardness: 0.6, tool: Shovel, drops: All([(item: 337, min: 4)]), textures: (all: "clay")),
-    (id: 83, name: "reeds", hardness: 0.0, drops: All([(item: 338)]), needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "reeds")),
+    (id: 83, name: "reeds", hardness: 0.0, drops: All([(item: 338)]), needs_ground: true, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "reeds")),
     (id: 84, name: "jukebox", hardness: 2.0, textures: (all: "jukebox_side", top: "jukebox_top")),
     (id: 85, name: "fence", hardness: 2.0, shape: Fence, textures: (all: "planks_oak")),
     (id: 86, name: "pumpkin", hardness: 1.0, textures: (end: "pumpkin_top", side: "pumpkin_side", south: "pumpkin_face_off")),

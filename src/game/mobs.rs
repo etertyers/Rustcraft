@@ -263,9 +263,11 @@ impl Game {
         }
     }
 
-    /// Chunks entering the world: bring back their stashed animals, and
-    /// place animals in chunks seen for the first time.
+    /// Chunks entering the world: schedule their flowing fluids, bring
+    /// back their stashed animals, and place animals in chunks seen for
+    /// the first time.
     pub fn on_chunks_loaded(&mut self, chunks: &[ChunkPos]) {
+        self.schedule_fluids(chunks);
         for &pos in chunks {
             if let Some(mobs) = self.stashed_mobs.remove(&pos) {
                 self.mobs.extend(mobs);
