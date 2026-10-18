@@ -435,6 +435,38 @@ impl Game {
         self.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
 
+    /// Puts the player's feet at `feet`, looking along `yaw` and `pitch`
+    /// (for `--shot` scenes).
+    pub fn teleport(&mut self, feet: DVec3, yaw: f32, pitch: f32) {
+        self.body = Body::new(feet);
+        self.body.flying = self.mode.can_fly();
+        self.body.may_fly = self.mode.can_fly();
+        self.prev_feet = feet;
+        self.camera.yaw = yaw;
+        self.camera.pitch = pitch;
+        self.advance(0.0);
+    }
+
+    /// Sets the time of day and game mode (for `--shot` scenes).
+    pub fn set_time_and_mode(&mut self, time: u64, mode: GameMode) {
+        self.time = time;
+        self.mode = mode;
+    }
+
+    /// Changes blocks the way the player's edits do, waking fluids, fire
+    /// and falling blocks around them (for `--shot` scenes).
+    pub fn set_blocks(&mut self, edits: &[(glam::IVec3, crate::world::block::BlockState)]) {
+        self.edit(edits);
+    }
+
+    /// Runs `ticks` game ticks at once (for `--shot` scenes).
+    pub fn run_ticks(&mut self, ticks: u32) {
+        for _ in 0..ticks {
+            self.tick();
+        }
+        self.advance(0.0);
+    }
+
     /// Flies the player `distance` blocks north at feet height `height`, in
     /// creative, looking a little down (`--bench`'s route).
     pub fn glide(&mut self, distance: f64, height: f64) {

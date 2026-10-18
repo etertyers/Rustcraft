@@ -13,5 +13,6 @@ pub mod level;
 pub mod options;
 pub mod player;
 pub mod render;
+pub mod shots;
 pub mod ui;
 pub mod world;

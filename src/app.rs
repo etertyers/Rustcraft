@@ -46,6 +46,7 @@ use crate::{
         icons::ItemIcons,
         models::{add_arrow, add_mob},
     },
+    shots,
     ui::{
         DebugStats, DebugUi, Hud,
         gui::{SlotView, SurvivalHud},
@@ -123,7 +124,22 @@ pub struct App {
     error: Option<anyhow::Error>,
     /// `--bench`: the flight being timed.
     bench: Option<Bench>,
+    /// `--shot`: the scene being captured.
+    shot: Option<ShotRun>,
 }
+
+/// How far `--shot` has got with its scene.
+pub struct ShotRun {
+    shot: &'static shots::Shot,
+    out: std::path::PathBuf,
+    /// Staged, and frames drawn since.
+    staged: Option<u32>,
+    captured: bool,
+}
+
+/// Frames drawn after staging a scene before capturing it, so remeshed
+/// chunks and the UI catch up.
+const SHOT_SETTLE_FRAMES: u32 = 10;
 
 impl App {
     pub fn new(world_kind: Option<WorldKind>) -> Self {
@@ -150,7 +166,24 @@ impl App {
             frame_skipped: false,
             error: None,
             bench: None,
+            shot: None,
         }
+    }
+
+    /// Captures `shot` to `out` instead of playing.
+    pub fn with_shot(mut self, shot: &'static shots::Shot, out: std::path::PathBuf) -> Self {
+        // Every scene is seen at the standard render distance.
+        self.options.render_distance = config::RENDER_DISTANCE;
+        if self.world_kind.is_none() || shot.world.is_some() {
+            self.world_kind = Some(shot.world.clone().unwrap_or(WorldKind::Flat));
+        }
+        self.shot = Some(ShotRun {
+            shot,
+            out,
+            staged: None,
+            captured: false,
+        });
+        self
     }
 
     pub fn with_bench(mut self, bench: Option<Bench>) -> Self {
@@ -232,8 +265,8 @@ impl App {
             .collect::<Result<Vec<_>>>()?;
         let mut renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
         // The bench measures how fast frames can go.
-        renderer.set_vsync(self.options.vsync && self.bench.is_none());
-        renderer.set_offscreen_fallback(self.bench.is_some());
+        renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
+        renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
         let models = BlockModels::new(
             blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -264,6 +297,13 @@ impl App {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let mut game = self.start_world(kind)?.with_mobs(mobs);
         game.apply_options(&self.options);
+        if let Some(run) = &self.shot {
+            let shot = run.shot;
+            game.set_time_and_mode(shot.time, shot.mode);
+            if let Some((feet, yaw, pitch)) = shot.view {
+                game.teleport(DVec3::from_array(feet), yaw, pitch);
+            }
+        }
         Ok(game)
     }
 
@@ -399,8 +439,10 @@ impl App {
     /// Opens the pause menu over a world being played (not over a screen,
     /// the death screen or a bed), freeing the mouse. The game stops.
     fn pause_game(&mut self) {
-        // The bench keeps flying when the window loses focus.
+        // The bench keeps flying when the window loses focus, and a scene
+        // being captured never pauses.
         if self.bench.is_none()
+            && self.shot.is_none()
             && self.playing()
             && self.screen.is_none()
             && !self.sleeping
@@ -599,8 +641,10 @@ impl App {
         if self.bench.is_some() {
             game.glide(bench::SPEED * dt as f64, bench::HEIGHT);
         }
-        // The pause menu stops the game; the camera still follows it.
-        game.advance(if self.pause.is_some() { 0.0 } else { dt });
+        // The pause menu stops the game; the camera still follows it. A
+        // scene being captured stands still.
+        let frozen = self.pause.is_some() || self.shot.is_some();
+        game.advance(if frozen { 0.0 } else { dt });
         let ticked = Instant::now();
 
         let p = game.camera.position;
@@ -614,6 +658,25 @@ impl App {
             renderer.remove_chunk(pos);
         }
         let uploaded = Instant::now();
+        let center = ChunkPos::of_block(x, z);
+        let mut capturing = false;
+        if let Some(run) = self.shot.as_mut() {
+            match run.staged {
+                None if game.chunks.settled(center) => {
+                    (run.shot.stage)(game);
+                    run.staged = Some(0);
+                }
+                Some(frames) if frames >= SHOT_SETTLE_FRAMES && game.chunks.settled(center) => {
+                    renderer.capture_next_frame(run.out.clone());
+                    capturing = true;
+                }
+                Some(frames) => run.staged = Some(frames + 1),
+                None => {}
+            }
+            if run.shot.overlay && !debug_ui.is_visible() {
+                debug_ui.toggle();
+            }
+        }
         let shapes = crate::world::shape::shapes();
         renderer.set_outline(game.target.and_then(|hit| {
             let block = game
@@ -736,6 +799,9 @@ impl App {
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
         let result = renderer.render(&game.camera, &game.environment(), ui);
+        if capturing && let Some(run) = self.shot.as_mut() {
+            run.captured = true;
+        }
         let render_distance = game.chunks.radius();
         let place = format!(
             "ended at {:.0}, {} chunks loaded, {} drawn",
@@ -759,6 +825,15 @@ impl App {
                 println!("{report}");
                 event_loop.exit();
             }
+        }
+        if self.shot.as_ref().is_some_and(|run| run.captured) {
+            println!(
+                "{}",
+                self.shot
+                    .as_ref()
+                    .map_or(String::new(), |run| run.out.display().to_string())
+            );
+            event_loop.exit();
         }
         if self.options != options_before {
             self.options_changed();

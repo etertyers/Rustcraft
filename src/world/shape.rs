@@ -404,6 +404,88 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
     }
 }
 
+/// The boxes `state` is drawn as, for shapes drawn as boxes (mostly its
+/// outline); `None` for shapes the mesher draws its own way: cubes, plants
+/// and crops, torches, fire, fluids, beds, doors, cactus and flat things
+/// (rails, ladders, vines, lily pads, redstone dust).
+pub fn render_boxes(state: BlockState) -> Option<Vec<Cuboid>> {
+    let def = state.def();
+    let facing = || state.face(Prop::Facing);
+    Some(match def.shape {
+        Shape::None
+        | Shape::Cube
+        | Shape::Cross
+        | Shape::Crop
+        | Shape::Bed
+        | Shape::Door
+        | Shape::Torch
+        | Shape::Fire
+        | Shape::Liquid
+        | Shape::Rail
+        | Shape::Ladder
+        | Shape::Vine
+        | Shape::LilyPad
+        | Shape::RedstoneWire
+        | Shape::Cactus => return None,
+        // A post with two rails to each neighbor it joins.
+        Shape::Fence => {
+            let mut boxes = vec![Cuboid::px(6.0, 0.0, 6.0, 10.0, 16.0, 10.0)];
+            for face in [Face::North, Face::East, Face::South, Face::West] {
+                if connected(state, face) {
+                    boxes.push(Cuboid::px(7.0, 12.0, 0.0, 9.0, 15.0, 6.0).rotated(turns(face)));
+                    boxes.push(Cuboid::px(7.0, 6.0, 0.0, 9.0, 9.0, 6.0).rotated(turns(face)));
+                }
+            }
+            boxes
+        }
+        // Two posts and two bars, swung open to one side.
+        Shape::FenceGate => {
+            let low = if state.bool(Prop::InWall) { 3.0 } else { 0.0 };
+            let mut boxes = vec![
+                Cuboid::px(0.0, 5.0 - low, 7.0, 2.0, 16.0 - low, 9.0),
+                Cuboid::px(14.0, 5.0 - low, 7.0, 16.0, 16.0 - low, 9.0),
+            ];
+            if state.bool(Prop::Open) {
+                for x in [0.0, 14.0] {
+                    boxes.push(Cuboid::px(x, 6.0 - low, 9.0, x + 2.0, 9.0 - low, 15.0));
+                    boxes.push(Cuboid::px(x, 12.0 - low, 9.0, x + 2.0, 15.0 - low, 15.0));
+                }
+            } else {
+                boxes.push(Cuboid::px(2.0, 6.0 - low, 7.0, 14.0, 9.0 - low, 9.0));
+                boxes.push(Cuboid::px(2.0, 12.0 - low, 7.0, 14.0, 15.0 - low, 9.0));
+            }
+            // The boxes above are for a gate facing south, opening to the
+            // south (away from the player who placed it); turn them.
+            let t = (turns(facing()) + 2) % 4;
+            boxes.into_iter().map(|b| b.rotated(t)).collect()
+        }
+        // The base and its handle.
+        Shape::Lever => {
+            let base = attached(
+                state,
+                Cuboid::px(5.0, 4.0, 13.0, 11.0, 12.0, 16.0),
+                Cuboid::px(5.0, 0.0, 4.0, 11.0, 3.0, 12.0),
+            );
+            let handle = attached(
+                state,
+                Cuboid::px(7.0, 7.0, 6.0, 9.0, 9.0, 13.0),
+                Cuboid::px(7.0, 3.0, 7.0, 9.0, 13.0, 9.0),
+            );
+            vec![base, handle]
+        }
+        // The slab with its two torches.
+        Shape::Repeater => {
+            let mut boxes = vec![Cuboid::px(0.0, 0.0, 0.0, 16.0, 2.0, 16.0)];
+            for z in [2.0, 8.0] {
+                boxes.push(Cuboid::px(7.0, 2.0, z, 9.0, 7.0, z + 2.0).rotated(turns(facing())));
+            }
+            boxes
+        }
+        Shape::Cauldron => collision_of(state, &[]),
+        _ => outline_of(state),
+    })
+}
+
 /// A lever or button's box: on a wall (`wall`, as for one facing north,
 /// on the south face of the block behind it), on the floor (`floor`, as
 /// for one facing north) or the ceiling (the floor box flipped).

@@ -732,6 +732,16 @@ impl BlockDef {
             .unwrap_or(if self.is_opaque_cube() { 15 } else { 0 })
     }
 
+    /// Light `state` stops: as `light_opacity`, except that a double slab
+    /// is a full opaque block.
+    pub fn light_opacity_for(&self, state: BlockState) -> u8 {
+        self.opacity.unwrap_or(if self.is_opaque_cube_state(state) {
+            15
+        } else {
+            0
+        })
+    }
+
     /// Offset to the block holding this one up, if it pops off without it.
     pub fn support(&self, state: BlockState) -> Option<IVec3> {
         match self.placement {

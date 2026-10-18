@@ -251,6 +251,19 @@ impl ChunkManager {
         self.generating.len() + self.meshing.len()
     }
 
+    /// Whether every chunk within the draw radius of `center` is loaded
+    /// and meshed with nothing left to do (for `--shot`).
+    pub fn settled(&self, center: ChunkPos) -> bool {
+        self.in_flight() == 0
+            && self.remeshed.is_empty()
+            && self.relight.is_empty()
+            && self
+                .offsets
+                .iter()
+                .filter(|(dx, dz)| dx.abs().max(dz.abs()) <= self.radius)
+                .all(|&(dx, dz)| self.meshed.contains(&center.offset(dx, dz)))
+    }
+
     /// Chebyshev distance in chunks.
     fn distance(a: ChunkPos, b: ChunkPos) -> i32 {
         (a.x - b.x).abs().max((a.z - b.z).abs())
