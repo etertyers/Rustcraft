@@ -225,7 +225,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - Chest block with persistent storage. Beds set the spawn point and skip the night.
 - **Done when:** the wood → stone → iron → diamond progression works in a fresh survival world.
 
-### - [ ] M11 — Audio and polish
+### - [x] M11 — Audio and polish
 - **[PLACEHOLDER: sound effects and music, waiting on Kenzo]** Don't implement audio yet. Kenzo is still downloading the files listed in `docs/sounds.md`. Until Kenzo confirms the files are in `assets/sounds/` and replaces this line with real instructions, skip all audio work, add no audio crate code, and don't treat missing sound as a failure. If you reach M11 before then, do the rest of M11 and note in the PR that audio is pending.
 - Settings menu: render distance, FOV, mouse sensitivity, volume, vsync. Pause menu.
 - Block-breaking particles and crack overlay.
