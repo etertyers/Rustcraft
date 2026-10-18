@@ -54,7 +54,7 @@ pub struct ItemDef {
     #[serde(skip)]
     pub id: ItemId,
     pub name: String,
-    /// File stem in `assets/textures/items/`; `None` for block items drawn
+    /// Texture name under `textures/item/`; `None` for block items drawn
     /// as their block.
     pub texture: Option<String>,
     #[serde(default = "default_max_stack")]
@@ -299,12 +299,20 @@ impl ItemRegistry {
     }
 
     /// Texture names referenced by some item that `exists` rejects.
-    pub fn missing_textures(&self, exists: impl Fn(&str) -> bool) -> BTreeSet<String> {
+    /// Every item texture location (`item/stick`).
+    pub fn texture_locations(&self) -> BTreeSet<String> {
         self.items
             .iter()
             .filter_map(|item| item.texture.as_deref())
+            .map(|name| format!("item/{name}"))
+            .collect()
+    }
+
+    /// The item texture locations that `exists` says are missing.
+    pub fn missing_textures(&self, exists: impl Fn(&str) -> bool) -> BTreeSet<String> {
+        self.texture_locations()
+            .into_iter()
             .filter(|name| !exists(name))
-            .map(str::to_owned)
             .collect()
     }
 }
@@ -335,8 +343,8 @@ mod tests {
 
     #[test]
     fn every_item_texture_exists() {
-        let dir = crate::assets::dir().join("textures/items");
-        let missing = registry().missing_textures(|name| dir.join(format!("{name}.png")).is_file());
+        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let missing = registry().missing_textures(|name| base.texture(name).is_some());
         assert!(missing.is_empty(), "missing item textures: {missing:?}");
     }
 
@@ -366,7 +374,7 @@ mod tests {
         assert_eq!(item(items::WHEAT_SEEDS).places, Some(blocks::WHEAT));
         assert_eq!(item(items::MUSHROOM_STEW).leftover, Some(items::BOWL));
         assert_eq!(item(items::BOW).shoots, Some(items::ARROW));
-        assert_eq!(item(items::OAK_DOOR).texture.as_deref(), Some("door_wood"));
+        assert_eq!(item(items::OAK_DOOR).texture.as_deref(), Some("oak_door"));
     }
 
     #[test]

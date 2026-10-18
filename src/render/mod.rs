@@ -73,7 +73,7 @@ pub struct Environment {
     pub cloud_height: f32,
 }
 
-/// The sky images from the texture pack's `environment/` folder.
+/// The sky images from the packs' `environment/` folder.
 pub struct SkyImages {
     pub sun: RgbaImage,
     pub moon: RgbaImage,
@@ -81,17 +81,15 @@ pub struct SkyImages {
 }
 
 impl SkyImages {
-    pub fn load(dir: &std::path::Path) -> Result<Self> {
-        let load = |name: &str| -> Result<RgbaImage> {
-            let path = dir.join(name);
-            Ok(image::open(&path)
-                .with_context(|| format!("loading {}", path.display()))?
-                .into_rgba8())
+    pub fn load(res: &crate::pack::Resources) -> Result<Self> {
+        let load = |name: &str| {
+            res.image(name)
+                .with_context(|| format!("no texture {name}"))
         };
         Ok(Self {
-            sun: load("sun.png")?,
-            moon: load("moon_phases.png")?,
-            clouds: load("clouds.png")?,
+            sun: load("environment/sun")?,
+            moon: load("environment/moon_phases")?,
+            clouds: load("environment/clouds")?,
         })
     }
 }
@@ -115,6 +113,8 @@ struct ChunkBuffers {
     indices: wgpu::Buffer,
     opaque: u32,
     translucent: u32,
+    /// The atlas generation its UVs point into.
+    atlas: u32,
 }
 
 pub struct Renderer {
@@ -149,7 +149,15 @@ pub struct Renderer {
     cloud_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    texture_layout: wgpu::BindGroupLayout,
+    /// The atlas, kept to copy animation frames into.
+    atlas_texture: wgpu::Texture,
     atlas_bind_group: wgpu::BindGroup,
+    /// Bumped each time the packs change the atlas.
+    atlas_generation: u32,
+    /// Earlier atlases, kept while chunks meshed against them wait to be
+    /// remeshed, so they don't flash wrong textures.
+    old_atlases: Vec<(u32, wgpu::BindGroup)>,
     chunks: FastMap<ChunkPos, ChunkBuffers>,
     /// Dropped items, rebuilt every frame.
     entities: Option<ChunkBuffers>,
@@ -225,8 +233,8 @@ impl Renderer {
         });
 
         let texture_layout = create_texture_layout(&device);
-        let atlas_bind_group =
-            create_texture_bind_group(&device, &queue, &texture_layout, "atlas", atlas.image());
+        let (atlas_texture, atlas_bind_group) =
+            create_texture(&device, &queue, &texture_layout, "atlas", atlas.image());
         let sun_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "sun", &sky.sun);
         let moon_bind_group =
@@ -308,13 +316,69 @@ impl Renderer {
             cloud_bind_group,
             globals_buffer,
             globals_bind_group,
+            texture_layout,
+            atlas_texture,
             atlas_bind_group,
+            atlas_generation: 0,
+            old_atlases: Vec::new(),
             chunks: FastMap::default(),
             entities: None,
             chunks_drawn: 0,
             outline,
             egui_renderer,
         })
+    }
+
+    /// Swaps in new textures after the resource packs change. Chunk meshes
+    /// made against the old atlas must be rebuilt.
+    pub fn set_textures(&mut self, atlas: &Atlas, sky: &SkyImages, mob_textures: &[RgbaImage]) {
+        let (device, queue, layout) = (&self.device, &self.queue, &self.texture_layout);
+        let (texture, bind_group) = create_texture(device, queue, layout, "atlas", atlas.image());
+        self.atlas_texture = texture;
+        let old = std::mem::replace(&mut self.atlas_bind_group, bind_group);
+        self.old_atlases.push((self.atlas_generation, old));
+        self.atlas_generation += 1;
+        self.sun_bind_group = create_texture_bind_group(device, queue, layout, "sun", &sky.sun);
+        self.moon_bind_group = create_texture_bind_group(device, queue, layout, "moon", &sky.moon);
+        self.cloud_bind_group =
+            create_texture_bind_group(device, queue, layout, "clouds", &sky.clouds);
+        self.mob_bind_groups = mob_textures
+            .iter()
+            .map(|image| create_texture_bind_group(device, queue, layout, "mob", image))
+            .collect();
+    }
+
+    /// The atlas bind group for buffers made against generation `atlas`.
+    fn atlas_for(&self, atlas: u32) -> &wgpu::BindGroup {
+        self.old_atlases
+            .iter()
+            .find(|(generation, _)| *generation == atlas)
+            .map_or(&self.atlas_bind_group, |(_, group)| group)
+    }
+
+    /// Copies animation frames into the atlas: (x, y, picture) per tile.
+    pub fn update_atlas(&self, tiles: &[(u32, u32, RgbaImage)]) {
+        for (x, y, picture) in tiles {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.atlas_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: *x, y: *y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                picture.as_raw(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * picture.width()),
+                    rows_per_image: Some(picture.height()),
+                },
+                wgpu::Extent3d {
+                    width: picture.width(),
+                    height: picture.height(),
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
 
     /// Uploads a chunk's mesh, replacing any previous one. Empty meshes just remove it.
@@ -391,6 +455,7 @@ impl Renderer {
             indices: index_buffer,
             opaque: mesh.indices.len() as u32,
             translucent: mesh.translucent.len() as u32,
+            atlas: self.atlas_generation,
         }
     }
 
@@ -420,6 +485,7 @@ impl Renderer {
             indices,
             opaque: mesh.indices.len() as u32,
             translucent: mesh.translucent.len() as u32,
+            atlas: self.atlas_generation,
         }
     }
 
@@ -665,6 +731,11 @@ impl Renderer {
 
         let view_proj = camera.view_proj(self.aspect());
         let frustum = Frustum::from_view_proj(view_proj);
+        if !self.old_atlases.is_empty() {
+            let chunks = &self.chunks;
+            self.old_atlases
+                .retain(|(generation, _)| chunks.values().any(|c| c.atlas == *generation));
+        }
         let globals = globals(view_proj, camera.position, environment);
         self.queue
             .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
@@ -721,9 +792,15 @@ impl Renderer {
                 .collect();
             visible.sort_by(|a, b| a.0.total_cmp(&b.0));
             self.chunks_drawn = visible.len();
+            let mut bound = self.atlas_generation;
             for (_, chunk) in &visible {
+                if chunk.atlas != bound {
+                    bound = chunk.atlas;
+                    pass.set_bind_group(1, self.atlas_for(bound), &[]);
+                }
                 draw_range(&mut pass, chunk, 0..chunk.opaque);
             }
+            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
             if let Some(entities) = &self.entities {
                 draw_range(&mut pass, entities, 0..entities.opaque);
             }
@@ -746,7 +823,12 @@ impl Renderer {
             }
             pass.set_pipeline(&self.translucent_pipeline);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            let mut bound = self.atlas_generation;
             for (_, chunk) in visible.iter().rev() {
+                if chunk.atlas != bound {
+                    bound = chunk.atlas;
+                    pass.set_bind_group(1, self.atlas_for(bound), &[]);
+                }
                 draw_range(
                     &mut pass,
                     chunk,
@@ -874,6 +956,18 @@ fn create_texture_bind_group(
     label: &str,
     image: &RgbaImage,
 ) -> wgpu::BindGroup {
+    create_texture(device, queue, layout, label, image).1
+}
+
+/// A texture holding `image` that can be written to later, and a bind
+/// group sampling it.
+fn create_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    label: &str,
+    image: &RgbaImage,
+) -> (wgpu::Texture, wgpu::BindGroup) {
     let texture = device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {
@@ -887,7 +981,7 @@ fn create_texture_bind_group(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         },
         wgpu::util::TextureDataOrder::LayerMajor,
@@ -902,7 +996,7 @@ fn create_texture_bind_group(
         min_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(label),
         layout,
         entries: &[
@@ -915,7 +1009,8 @@ fn create_texture_bind_group(
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
-    })
+    });
+    (texture, bind_group)
 }
 
 /// Block faces: opaque and cutout ones write depth; translucent ones blend

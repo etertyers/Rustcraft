@@ -12,6 +12,11 @@ pub const STAGES: usize = 10;
 /// The crack sits this far outside the block so it isn't hidden by it.
 const GROW: f32 = 0.002;
 
+/// The texture of crack stage `stage`.
+pub fn texture(stage: usize) -> String {
+    format!("block/destroy_stage_{stage}")
+}
+
 /// Which crack texture shows at mining `progress` (0–1).
 pub fn stage(progress: f32) -> usize {
     ((progress * STAGES as f32) as usize).min(STAGES - 1)

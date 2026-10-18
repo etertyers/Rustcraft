@@ -1,6 +1,6 @@
 //! The player's settings (1.0.0's `GameSettings`), kept in `options.ron`
 //! beside the saves folder: render distance, field of view, mouse
-//! sensitivity, volume and vsync.
+//! sensitivity, volume, vsync and the selected resource packs.
 
 use std::path::{Path, PathBuf};
 
@@ -30,6 +30,9 @@ pub struct Options {
     /// Sound volume 0–1. Kept for when sound arrives; nothing plays yet.
     pub volume: f32,
     pub vsync: bool,
+    /// Selected resource packs (file or folder names in `resourcepacks/`),
+    /// highest priority first.
+    pub resource_packs: Vec<String>,
 }
 
 impl Default for Options {
@@ -40,6 +43,7 @@ impl Default for Options {
             sensitivity: 1.0,
             volume: 1.0,
             vsync: true,
+            resource_packs: Vec::new(),
         }
     }
 }
@@ -90,6 +94,7 @@ impl Options {
                 .clamp(*SENSITIVITIES.start(), *SENSITIVITIES.end()),
             volume: self.volume.clamp(0.0, 1.0),
             vsync: self.vsync,
+            resource_packs: self.resource_packs,
         }
     }
 }
@@ -110,6 +115,7 @@ mod tests {
             sensitivity: 1.5,
             volume: 0.25,
             vsync: false,
+            resource_packs: vec!["High.zip".to_owned(), "Low".to_owned()],
         };
         options.save(&path).unwrap();
         assert_eq!(Options::load(&path), options);

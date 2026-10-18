@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use glam::{DVec3, Vec3};
 use log::{error, info, warn};
 use winit::{
@@ -32,14 +32,15 @@ use crate::{
         stack::{ItemStack, Items},
     },
     level::{self, WorldDir},
+    look::Look,
     options::Options,
     player::{
         mode::GameMode,
         stats::{DamageSource, MAX_AIR},
     },
     render::{
-        Renderer, SkyImages,
-        atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
+        Renderer,
+        atlas::Atlas,
         camera::Camera,
         crack,
         entities::{add_falling_blocks, add_particles, item_mesh},
@@ -55,7 +56,7 @@ use crate::{
         screens::{Screen, ScreenAction, ScreenView},
     },
     world::{
-        biome::{Biome, BiomeColors},
+        biome::Biome,
         block,
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
@@ -112,6 +113,12 @@ pub struct App {
     pause: Option<PauseMenu>,
     /// Atlas rects of the mining crack's stages.
     crack_uvs: Vec<[f32; 4]>,
+    /// The block and item atlas, for playing its animations.
+    atlas: Option<Atlas>,
+    /// The resource packs the look was built with, highest first.
+    applied_packs: Vec<String>,
+    /// When texture animations started.
+    animation_start: Instant,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
     cursor_grabbed: bool,
@@ -159,6 +166,9 @@ impl App {
             options: Options::load(&Options::path()),
             pause: None,
             crack_uvs: Vec::new(),
+            atlas: None,
+            applied_packs: Vec::new(),
+            animation_start: Instant::now(),
             catalog: Vec::new(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
@@ -216,78 +226,29 @@ impl App {
         let window = Arc::new(event_loop.create_window(attrs)?);
         let assets = assets::dir();
         let blocks = block::registry();
-        let items = item::registry();
-        let textures = assets.join("textures");
-        let atlas = Atlas::load(&[
-            (&textures.join("blocks"), ""),
-            (&textures.join("items"), ITEM_PREFIX),
-        ])?;
-        let missing_blocks = blocks.missing_textures(|name| atlas.get(name).is_some());
-        let missing_items =
-            items.missing_textures(|name| atlas.get(&format!("{ITEM_PREFIX}{name}")).is_some());
         info!(
             "loaded {} blocks and {} items",
             blocks.iter().count(),
-            items.len()
+            item::registry().len()
         );
-        if !missing_blocks.is_empty() || !missing_items.is_empty() {
-            warn!("missing block textures: {missing_blocks:?}, item textures: {missing_items:?}");
-        }
-
-        // The mining crack's stages; a missing one shows the checkerboard.
-        self.crack_uvs = (0..crack::STAGES)
-            .map(|i| {
-                let tile = atlas
-                    .get(&format!("destroy_stage_{i}"))
-                    .unwrap_or(MISSING_TILE);
-                atlas.uv_rect(tile)
-            })
-            .collect();
-
-        let biome_colors =
-            BiomeColors::load(&assets.join("textures/colormap")).unwrap_or_else(|err| {
-                warn!("{err:#}; using default biome colors");
-                BiomeColors::uniform()
-            });
-        let sky = SkyImages::load(&textures.join("environment"))?;
         let mob_defs = Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?);
-        // Textures for entity models: each mob kind, then the arrow.
-        let mob_textures = mob_defs
-            .iter()
-            .map(|(_, def)| def.texture.as_str())
-            .chain(["arrow.png"])
-            .map(|name| {
-                let path = textures.join("entity").join(name);
-                Ok(image::open(&path)
-                    .with_context(|| format!("loading {}", path.display()))?
-                    .into_rgba8())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let mut renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
+        self.applied_packs = self.options.resource_packs.clone();
+        let look = Look::with_packs(&assets, &self.applied_packs, &mob_defs)?;
+        let mut renderer =
+            Renderer::new(window.clone(), &look.atlas, &look.sky, &look.mob_textures)?;
         // The bench measures how fast frames can go.
         renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
-        let models = BlockModels::new(
-            blocks,
-            |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
-            atlas.uv_rect(MISSING_TILE),
-            biome_colors,
-        );
-        let models = Arc::new(models);
-        let icons = ItemIcons::new(&atlas, models.clone(), items);
+        self.debug_ui = Some(DebugUi::new(&window, look.atlas.image(), &look.res)?);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
-        let items = Items::new().with_recipes(Arc::new(recipes));
-        self.catalog = catalog(&items, &icons);
-        self.icons = Some(Arc::new(icons));
-        self.items = Some(items);
-        self.models = Some(models);
+        self.items = Some(Items::new().with_recipes(Arc::new(recipes)));
         self.mob_defs = Some(mob_defs);
+        self.install_look(look);
         match self.world_kind.clone() {
             Some(kind) => self.game = Some(self.start_game(kind)?),
             None => self.menu = Some(Menu::new(level::saves_dir())),
         }
         self.renderer = Some(renderer);
-        self.debug_ui = Some(DebugUi::new(&window, atlas.image())?);
         window.request_redraw();
         self.window = Some(window);
         Ok(())
@@ -479,9 +440,63 @@ impl App {
     }
 
     /// Applies settings changed on the Options screen and saves them.
+    /// Keeps a newly built look's models, icons and atlas.
+    fn install_look(&mut self, look: Look) {
+        if let Some(items) = &self.items {
+            self.catalog = catalog(items, &look.icons);
+        }
+        self.icons = Some(Arc::new(look.icons));
+        self.models = Some(look.models);
+        self.crack_uvs = look.crack_uvs;
+        self.atlas = Some(look.atlas);
+    }
+
+    /// Rebuilds the look with the selected resource packs and swaps it in
+    /// everywhere, without restarting. On failure the old look stays.
+    fn apply_resource_packs(&mut self) {
+        let Some(mobs) = self.mob_defs.clone() else {
+            return;
+        };
+        let packs = self.options.resource_packs.clone();
+        info!("applying resource packs {packs:?}");
+        let look = match Look::with_packs(&assets::dir(), &packs, &mobs) {
+            Ok(look) => look,
+            Err(err) => return error!("can't apply resource packs: {err:#}"),
+        };
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_textures(&look.atlas, &look.sky, &look.mob_textures);
+        }
+        if let Some(debug_ui) = self.debug_ui.as_mut()
+            && let Err(err) = debug_ui.set_textures(look.atlas.image(), &look.res)
+        {
+            error!("can't load the GUI images: {err:#}");
+        }
+        if let Some(game) = self.game.as_mut() {
+            game.chunks.set_models(look.models.clone());
+        }
+        self.applied_packs = packs;
+        self.animation_start = Instant::now();
+        self.install_look(look);
+    }
+
+    /// Plays texture animations up to now.
+    fn animate_textures(&mut self) {
+        let (Some(atlas), Some(renderer)) = (self.atlas.as_mut(), self.renderer.as_ref()) else {
+            return;
+        };
+        let ticks = self.animation_start.elapsed().as_secs_f64() * config::TICKS_PER_SECOND as f64;
+        let changed = atlas.animate(ticks as u64);
+        if !changed.is_empty() {
+            renderer.update_atlas(&changed);
+        }
+    }
+
     fn options_changed(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_vsync(self.options.vsync);
+        }
+        if self.options.resource_packs != self.applied_packs {
+            self.apply_resource_packs();
         }
         if let Some(game) = self.game.as_mut() {
             game.apply_options(&self.options);
@@ -615,6 +630,7 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
+        self.animate_textures();
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }

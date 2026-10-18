@@ -1,7 +1,5 @@
 //! The four 1.0.0 biomes Rustcraft generates, and their grass/foliage colors.
 
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use image::RgbaImage;
 
@@ -58,17 +56,16 @@ pub struct BiomeColors {
 }
 
 impl BiomeColors {
-    /// Samples `grass.png` and `foliage.png` from a colormap folder.
-    pub fn load(dir: &Path) -> Result<Self> {
-        let open = |name: &str| -> Result<RgbaImage> {
-            let path = dir.join(name);
-            Ok(image::open(&path)
-                .with_context(|| format!("loading {}", path.display()))?
-                .into_rgba8())
+    /// Samples `colormap/grass.png` and `colormap/foliage.png` from the
+    /// highest layers that have them.
+    pub fn load(res: &crate::pack::Resources) -> Result<Self> {
+        let open = |name: &str| {
+            res.image(name)
+                .with_context(|| format!("no texture {name}"))
         };
         Ok(Self::from_colormaps(
-            &open("grass.png")?,
-            &open("foliage.png")?,
+            &open("colormap/grass")?,
+            &open("colormap/foliage")?,
         ))
     }
 
@@ -145,8 +142,8 @@ mod tests {
 
     #[test]
     fn real_colormaps_load() {
-        let dir = crate::assets::dir().join("textures/colormap");
-        let colors = BiomeColors::load(&dir).unwrap();
+        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let colors = BiomeColors::load(&base).unwrap();
         // Forest grass is a different green from desert grass.
         assert_ne!(colors.grass(Biome::Forest), colors.grass(Biome::Desert));
     }

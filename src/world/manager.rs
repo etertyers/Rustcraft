@@ -75,8 +75,9 @@ impl ChunkSource {
 
 enum Job {
     Generate(ChunkPos),
-    /// The chunk's edit revision when the job was sent.
-    Mesh(ChunkPos, ChunkArea, u32),
+    /// The chunk's edit revision when the job was sent, and the models
+    /// to mesh with (they change when the resource packs do).
+    Mesh(ChunkPos, ChunkArea, u32, Arc<BlockModels>),
 }
 
 enum Done {
@@ -222,14 +223,12 @@ impl ChunkManager {
         let stats = Arc::new(WorkStats::default());
         let workers = (0..workers.max(1))
             .map(|i| {
-                let (jobs, done, source, store, worker_models) = (
+                let (jobs, done, source, store) = (
                     job_rx.clone(),
                     done_tx.clone(),
                     source.clone(),
                     store.clone(),
-                    models.clone(),
                 );
-                let models = worker_models;
                 let stats = stats.clone();
                 std::thread::Builder::new()
                     .name(format!("chunk-worker-{i}"))
@@ -242,7 +241,7 @@ impl ChunkManager {
                                     stats.generated.record(started.elapsed());
                                     Done::Generated(Box::new(chunk))
                                 }
-                                Job::Mesh(pos, area, revision) => {
+                                Job::Mesh(pos, area, revision, models) => {
                                     let light = light_chunk(&models, &area);
                                     let mesh = mesh_chunk(&models, &area, &light);
                                     stats.meshed.record(started.elapsed());
@@ -405,10 +404,26 @@ impl ChunkManager {
                 && let Some(area) = self.world.area(pos)
             {
                 self.meshing.insert(pos);
-                let _ = jobs.send(Job::Mesh(pos, area, self.revision(pos)));
+                let _ = jobs.send(Job::Mesh(
+                    pos,
+                    area,
+                    self.revision(pos),
+                    self.models.clone(),
+                ));
             }
         }
         changes
+    }
+
+    /// Meshes with new block models from now on (after the resource packs
+    /// change), remeshing every drawn chunk in the background. Old meshes
+    /// stay up until their replacements arrive.
+    pub fn set_models(&mut self, models: Arc<BlockModels>) {
+        self.models = models;
+        for &pos in &self.meshed {
+            *self.revisions.entry(pos).or_default() += 1;
+            self.relight.insert(pos);
+        }
     }
 
     fn revision(&self, pos: ChunkPos) -> u32 {
