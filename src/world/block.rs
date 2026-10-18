@@ -421,8 +421,8 @@ impl Tint {
     }
 }
 
-/// A block's model. Only `None`, `Cube`, `Cross` and `Crop` are built so far;
-/// every other shape draws as a full cube placeholder (see docs/DECISIONS.md).
+/// A block's model, which also picks its outline and collision boxes (see
+/// `world::shape`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum Shape {
     /// Draws nothing (air, moving piston).
@@ -439,6 +439,11 @@ pub enum Shape {
     Fence,
     FenceGate,
     Pane,
+    /// Cobblestone walls: a post with low or tall sides.
+    Wall,
+    /// A 1/16-high sheet (carpets).
+    Carpet,
+    Anvil,
     Door,
     Trapdoor,
     Torch,
@@ -764,25 +769,6 @@ impl BlockDef {
             by.push(IVec3::Y);
         }
         by
-    }
-
-    /// The part of its cell entities bump into, as (min, max) within the
-    /// cell, or `None` if they pass through (a bed is 9/16 tall and a door
-    /// a 3/16 slab on one side).
-    pub fn collision_box(&self, state: BlockState) -> Option<([f32; 3], [f32; 3])> {
-        if !self.solid {
-            return None;
-        }
-        Some(match self.shape {
-            Shape::Bed => ([0.0; 3], [1.0, 9.0 / 16.0, 1.0]),
-            Shape::Slab => match state.get(Prop::SlabType) {
-                super::props::slab_type::BOTTOM => ([0.0; 3], [1.0, 0.5, 1.0]),
-                super::props::slab_type::TOP => ([0.0, 0.5, 0.0], [1.0; 3]),
-                _ => ([0.0; 3], [1.0; 3]),
-            },
-            Shape::Door => door_box(state),
-            _ => ([0.0; 3], [1.0; 3]),
-        })
     }
 
     /// The face its front texture is on, for blocks placed facing the player.
@@ -1183,26 +1169,9 @@ mod tests {
         let right = open.with(Prop::Hinge, super::super::props::hinge::RIGHT);
         assert_eq!(door_box(right), ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]));
         let def = registry().def(blocks::OAK_DOOR);
-        assert_eq!(def.collision_box(door), Some(door_box(door)));
-        let bed = registry().def(blocks::RED_BED);
-        assert_eq!(
-            bed.collision_box(BlockState::of(blocks::RED_BED))
-                .unwrap()
-                .1[1],
-            9.0 / 16.0
-        );
-        assert_eq!(
-            block_collision(blocks::DANDELION),
-            None,
-            "flowers have no collision"
-        );
         let upper = door.with(Prop::DoubleBlockHalf, super::super::props::door_half::UPPER);
         assert_eq!(def.held_by(door), [IVec3::NEG_Y, IVec3::Y]);
         assert_eq!(def.held_by(upper), [IVec3::NEG_Y]);
-    }
-
-    fn block_collision(id: BlockId) -> Option<([f32; 3], [f32; 3])> {
-        registry().def(id).collision_box(BlockState::of(id))
     }
 
     #[test]

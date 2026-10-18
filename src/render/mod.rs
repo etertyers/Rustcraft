@@ -426,9 +426,9 @@ impl Renderer {
         pass.draw(0..6, 0..1);
     }
 
-    /// Outlines `block` from the next frame on, or nothing.
-    pub fn set_outline(&mut self, block: Option<IVec3>) {
-        self.outline.set_target(block);
+    /// Outlines `block`'s boxes from the next frame on, or nothing.
+    pub fn set_outline(&mut self, target: Option<(IVec3, Vec<crate::world::shape::Cuboid>)>) {
+        self.outline.set_target(target);
     }
 
     pub fn remove_chunk(&mut self, pos: ChunkPos) {
@@ -654,8 +654,8 @@ impl Renderer {
             if !above_clouds {
                 self.draw_clouds(&mut pass);
             }
-            if outline {
-                self.outline.draw(&mut pass);
+            if outline > 0 {
+                self.outline.draw(&mut pass, outline);
             }
         }
 

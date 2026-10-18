@@ -636,15 +636,16 @@ impl Game {
         self.release_input();
     }
 
-    /// The block the crosshair points at from `eye`, within reach.
+    /// The block the crosshair points at from `eye`, within reach: the
+    /// first block outline the view passes through.
     fn find_target(&self, eye: DVec3) -> Option<Hit> {
         let world = self.chunks.world();
         let dir = self.camera.forward().as_dvec3();
-        raycast::raycast(eye, dir, config::REACH, |cell| {
+        let shapes = crate::world::shape::shapes();
+        raycast::raycast_boxes(eye, dir, config::REACH, |cell| {
             world
                 .block(cell.x, cell.y, cell.z)
-                .and_then(|block| self.items.blocks.get(block.id()))
-                .is_some_and(|def| def.is_targetable())
+                .map_or(&[], |block| shapes.outline(block))
         })
     }
 }
@@ -937,6 +938,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_player_walks_through_torches_and_flowers_but_not_over_fences() {
+        let mut game = flat_game(GameMode::Survival);
+        // A torch and a flower on the ground, and at head height a torch
+        // hanging off a stone just east of the way.
+        let wall_torch = BlockState::of(blocks::WALL_TORCH).with_face(Prop::Facing, Face::West);
+        game.chunks.set_blocks(&[
+            (IVec3::new(0, 64, -2), BlockState::of(blocks::TORCH)),
+            (IVec3::new(0, 64, -4), BlockState::of(blocks::DANDELION)),
+            (IVec3::new(1, 65, -6), BlockState::of(blocks::STONE)),
+            (IVec3::new(0, 65, -6), wall_torch),
+        ]);
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        for _ in 0..40 {
+            game.tick();
+        }
+        let feet = game.body.position();
+        assert!(feet.z < -7.0, "walked through them all: {feet}");
+        assert_eq!(feet.y, 64.0);
+
+        // A fence's collision is 1.5 high: jumping doesn't clear it.
+        let mut game = flat_game(GameMode::Survival);
+        let fences: Vec<_> = (-3..=3)
+            .map(|x| (IVec3::new(x, 64, -2), BlockState::of(blocks::OAK_FENCE)))
+            .collect();
+        game.chunks.set_blocks(&fences);
+        game.camera.pitch = 0.0;
+        game.keys.set_key(KeyCode::KeyW, true);
+        game.keys.set_key(KeyCode::Space, true);
+        for _ in 0..60 {
+            game.tick();
+        }
+        let feet = game.body.position();
+        assert!(feet.z > -1.5, "stopped by the fence: {feet}");
+    }
+
+    #[test]
     fn holding_right_click_on_a_door_toggles_it_once() {
         let mut game = flat_game(GameMode::Survival);
         let lower = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
@@ -957,6 +995,15 @@ pub(crate) mod tests {
         game.on_mouse_button(MouseButton::Right, false);
         let door = game.chunks.world().block(0, 64, -2);
         assert_eq!(door, Some(lower.with_bool(Prop::Open, true)), "opened once");
+        // Open, it lies along the west side of its cell: looking straight
+        // on passes beside it, so aim at it.
+        game.camera.yaw = (-0.4f32).atan2(2.0);
+        game.camera.pitch = (-0.12f32 / 2.04).atan();
+        game.advance(0.0);
+        assert_eq!(
+            game.target.map(|hit| hit.block),
+            Some(IVec3::new(0, 65, -2))
+        );
         game.on_mouse_button(MouseButton::Right, true);
         game.tick();
         game.on_mouse_button(MouseButton::Right, false);

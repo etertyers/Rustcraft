@@ -7,7 +7,7 @@ use crate::world::{
     block::{BlockRegistry, BlockState, Fluid},
     blocks,
     chunk::ChunkPos,
-    fluid,
+    fluid, shape,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -183,19 +183,27 @@ impl Collider for WorldCollider<'_> {
     fn boxes(&self, region: &Aabb, out: &mut Vec<Aabb>) {
         let min = region.min.floor().as_ivec3();
         let max = region.max.floor().as_ivec3();
-        for y in min.y..=max.y {
+        let shapes = shape::shapes();
+        // One cell lower too: fences and walls reach half a block up.
+        for y in min.y - 1..=max.y {
             for z in min.z..=max.z {
                 for x in min.x..=max.x {
-                    // Unloaded chunks are walls.
-                    let bounds = match self.world.block(x, y, z) {
-                        None => Some(([0.0; 3], [1.0; 3])),
-                        Some(block) => block.def().collision_box(block),
+                    let cell = DVec3::new(x as f64, y as f64, z as f64);
+                    let Some(block) = self.world.block(x, y, z) else {
+                        // Unloaded chunks are walls.
+                        if y >= min.y {
+                            out.push(Aabb::new(cell, cell + DVec3::ONE));
+                        }
+                        continue;
                     };
-                    if let Some((min, max)) = bounds {
-                        let cell = DVec3::new(x as f64, y as f64, z as f64);
-                        let min = cell + Vec3::from(min).as_dvec3();
-                        let max = cell + Vec3::from(max).as_dvec3();
-                        out.push(Aabb::new(min, max));
+                    for b in shapes.collision(block) {
+                        let found = Aabb::new(
+                            cell + Vec3::from(b.min).as_dvec3(),
+                            cell + Vec3::from(b.max).as_dvec3(),
+                        );
+                        if found.intersects(region) || y >= min.y {
+                            out.push(found);
+                        }
                     }
                 }
             }

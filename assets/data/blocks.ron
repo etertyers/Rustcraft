@@ -193,7 +193,7 @@
         variants: [("lit=false", (textures: (all: "redstone_torch_off"), light: 0))]),
     (name: "stone_button", hardness: 0.5, props: [AttachFace, Facing, Powered], shape: Button, solid: false, textures: (all: "stone")),
     // A snow layer, 1-8 high.
-    (name: "snow", hardness: 0.1, props: [Layers], tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: "snowball")]), replaceable: true, needs_ground: true, shape: SnowLayer, solid: false, textures: (all: "snow")),
+    (name: "snow", hardness: 0.1, props: [Layers], tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: "snowball")]), replaceable: true, needs_ground: true, shape: SnowLayer, textures: (all: "snow")),
     (name: "ice", hardness: 0.5, tool: Pickaxe, drops: Nothing, opacity: 3, layer: Translucent, cull_same: true, slipperiness: 0.98, textures: (all: "ice")),
     (name: "snow_block", hardness: 0.2, tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: "snowball", min: 4)]), textures: (all: "snow")),
     (name: "cactus", hardness: 0.4, props: [Age15], needs_ground: true, shape: Cactus, layer: Cutout, textures: (top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side")),

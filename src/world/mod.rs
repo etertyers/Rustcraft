@@ -17,6 +17,7 @@ pub mod manager;
 pub mod mesh;
 pub mod props;
 pub mod save;
+pub mod shape;
 pub mod worldgen;
 
 use std::sync::Arc;

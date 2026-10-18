@@ -292,10 +292,13 @@ mod tests {
         }
     }
 
+    /// A hit on the middle of `face` of `block`.
     fn hit(block: IVec3, face: Face) -> Hit {
+        let center = block.as_dvec3() + DVec3::splat(0.5);
         Hit {
             block,
             face: Some(face),
+            point: center + IVec3::from_array(face.normal()).as_dvec3() * 0.5,
         }
     }
 
@@ -541,6 +544,7 @@ mod tests {
         let inside = Hit {
             block: IVec3::new(3, 63, 3),
             face: None,
+            point: DVec3::new(3.5, 63.5, 3.5),
         };
         assert_eq!(place_block(&world, blocks, &inside, STONE, &player), None);
     }

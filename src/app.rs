@@ -59,6 +59,7 @@ use crate::{
         chunk::ChunkPos,
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
+        shape::Cuboid,
         worldgen::{gallery, terrain::Terrain},
     },
 };
@@ -613,20 +614,23 @@ impl App {
             renderer.remove_chunk(pos);
         }
         let uploaded = Instant::now();
-        renderer.set_outline(game.target.map(|hit| hit.block));
+        let shapes = crate::world::shape::shapes();
+        renderer.set_outline(game.target.and_then(|hit| {
+            let block = game
+                .chunks
+                .world()
+                .block(hit.block.x, hit.block.y, hit.block.z)?;
+            Some((hit.block, shapes.outline(block).to_vec()))
+        }));
         let crack = game.mining_progress().and_then(|(cell, progress)| {
             let uv = *self.crack_uvs.get(crack::stage(progress))?;
             let block = game.chunks.world().block(cell.x, cell.y, cell.z)?;
-            // Over the block's own box (a slab's half, a door's slab), or
-            // the whole cell for blocks without one.
-            let (min, max) = block
-                .def()
-                .collision_box(block)
-                .unwrap_or(([0.0; 3], [1.0; 3]));
+            // Over the block's outline (a slab's half, a door's slab).
+            let bounds = Cuboid::bounds(shapes.outline(block)).unwrap_or(Cuboid::FULL);
             let cell = cell.as_vec3();
             Some(crack::crack_mesh(
-                cell + Vec3::from(min),
-                cell + Vec3::from(max),
+                cell + Vec3::from(bounds.min),
+                cell + Vec3::from(bounds.max),
                 uv,
             ))
         });
