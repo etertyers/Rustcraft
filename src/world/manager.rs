@@ -123,6 +123,8 @@ pub struct ChunkManager {
     relight: FastSet<ChunkPos>,
     /// Light of every drawn chunk.
     lights: FastMap<ChunkPos, ChunkLight>,
+    /// Time the workers spent, for `--perf-test`.
+    stats: Arc<WorkStats>,
 }
 
 /// Offsets within `radius + 1` chunks (one ring more is generated so the
@@ -138,6 +140,41 @@ fn offsets(radius: i32) -> Vec<(i32, i32)> {
 
 /// The chunk holding block `at` and its position there, if `at` is inside
 /// the world's height.
+/// A count of jobs and their total time.
+#[derive(Debug, Default)]
+pub struct JobTimes {
+    count: std::sync::atomic::AtomicU64,
+    nanos: std::sync::atomic::AtomicU64,
+}
+
+impl JobTimes {
+    fn record(&self, took: std::time::Duration) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.count.fetch_add(1, Relaxed);
+        self.nanos.fetch_add(took.as_nanos() as u64, Relaxed);
+    }
+
+    /// Jobs done and their average time in milliseconds.
+    pub fn summary(&self) -> (u64, f64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let count = self.count.load(Relaxed);
+        let nanos = self.nanos.load(Relaxed);
+        let average = if count == 0 {
+            0.0
+        } else {
+            nanos as f64 / count as f64 / 1e6
+        };
+        (count, average)
+    }
+}
+
+/// Time the chunk workers spent, by kind of job.
+#[derive(Debug, Default)]
+pub struct WorkStats {
+    pub generated: JobTimes,
+    pub meshed: JobTimes,
+}
+
 fn local_pos(at: IVec3) -> Option<(ChunkPos, LocalPos)> {
     if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
         return None;
@@ -182,6 +219,7 @@ impl ChunkManager {
         let store = store.map(Arc::new);
         let (job_tx, job_rx) = crossbeam_channel::unbounded::<Job>();
         let (done_tx, done_rx) = crossbeam_channel::unbounded();
+        let stats = Arc::new(WorkStats::default());
         let workers = (0..workers.max(1))
             .map(|i| {
                 let (jobs, done, source, store, worker_models) = (
@@ -192,17 +230,22 @@ impl ChunkManager {
                     models.clone(),
                 );
                 let models = worker_models;
+                let stats = stats.clone();
                 std::thread::Builder::new()
                     .name(format!("chunk-worker-{i}"))
                     .spawn(move || {
                         for job in jobs {
+                            let started = std::time::Instant::now();
                             let result = match job {
-                                Job::Generate(pos) => Done::Generated(Box::new(
-                                    source.load_or_generate(store.as_deref(), pos),
-                                )),
+                                Job::Generate(pos) => {
+                                    let chunk = source.load_or_generate(store.as_deref(), pos);
+                                    stats.generated.record(started.elapsed());
+                                    Done::Generated(Box::new(chunk))
+                                }
                                 Job::Mesh(pos, area, revision) => {
                                     let light = light_chunk(&models, &area);
                                     let mesh = mesh_chunk(&models, &area, &light);
+                                    stats.meshed.record(started.elapsed());
                                     Done::Meshed(pos, mesh, light, revision)
                                 }
                             };
@@ -236,7 +279,13 @@ impl ChunkManager {
             remeshed: Vec::new(),
             relight: FastSet::default(),
             lights: FastMap::default(),
+            stats,
         }
+    }
+
+    /// How long the worker threads have spent generating and meshing.
+    pub fn work_stats(&self) -> &WorkStats {
+        &self.stats
     }
 
     pub fn world(&self) -> &World {

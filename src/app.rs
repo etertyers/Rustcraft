@@ -830,6 +830,27 @@ impl App {
                 let report = format!("{}\n  {place}", bench.report(render_distance));
                 info!("{report}");
                 println!("{report}");
+                if let Some(path) = bench.perf_report.clone() {
+                    let work = self.game.as_ref().map(|game| {
+                        let stats = game.chunks.work_stats();
+                        (stats.generated.summary(), stats.meshed.summary())
+                    });
+                    let (generated, meshed) = work.unwrap_or(((0, 0.0), (0, 0.0)));
+                    let run = bench::RunStats {
+                        generated,
+                        meshed,
+                        memory_mib: bench::resident_memory_mib(),
+                    };
+                    let about = format!("Measured on {}; {place}.", bench::machine());
+                    let text = bench.perf_markdown(render_distance, run, &about);
+                    if let Err(err) = std::fs::create_dir_all(path.parent().unwrap_or(&path))
+                        .and_then(|_| std::fs::write(&path, &text))
+                    {
+                        error!("writing {}: {err}", path.display());
+                    } else {
+                        println!("wrote {}", path.display());
+                    }
+                }
                 event_loop.exit();
             }
         }

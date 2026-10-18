@@ -2,6 +2,10 @@
 //! timing every frame and the main parts of it, then prints a report and
 //! quits. Run it the same way before and after a change to compare, or
 //! under Instruments to see where the time goes.
+//!
+//! `--perf-test` is the milestone performance gate (CLAUDE.md §7.2): the
+//! same flight for 60 seconds at render distance 9, written up in
+//! `docs/perf/m<N>.md` with chunk generation and meshing times and memory.
 
 use std::time::Duration;
 
@@ -16,6 +20,15 @@ pub const SPEED: f64 = 10.9;
 pub const HEIGHT: f64 = 100.0;
 /// The window's size: a 1080p screen.
 pub const WINDOW_SIZE: (u32, u32) = (1920, 1080);
+/// The milestone `--perf-test` writes up (`docs/perf/m<N>.md`).
+pub const PERF_MILESTONE: u32 = 14;
+/// `--perf-test`'s flight length and render distance.
+pub const PERF_SECONDS: f32 = 60.0;
+pub const PERF_DISTANCE: i32 = 9;
+/// The gate: average and 1% low frame rates a milestone must keep.
+pub const MIN_AVERAGE_FPS: f32 = 60.0;
+pub const MIN_ONE_PERCENT_LOW_FPS: f32 = 40.0;
+
 /// The first seconds load the world around the start; they're timed
 /// separately.
 const WARM_UP: f32 = 5.0;
@@ -41,6 +54,8 @@ pub struct Bench {
     pub seconds: f32,
     /// Overrides the render distance in the options.
     pub distance: Option<i32>,
+    /// `--perf-test`: where to write the report.
+    pub perf_report: Option<std::path::PathBuf>,
     elapsed: f32,
     warm_up: Vec<FrameTimes>,
     frames: Vec<FrameTimes>,
@@ -51,6 +66,7 @@ impl Bench {
         Self {
             seconds,
             distance: None,
+            perf_report: None,
             elapsed: 0.0,
             warm_up: Vec::new(),
             frames: Vec::new(),
@@ -82,6 +98,119 @@ impl Bench {
             summary(&self.frames)
         )
     }
+}
+
+/// What the chunk workers did during a run, and the memory the game used.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunStats {
+    /// Chunks generated (or loaded) and their average time in ms.
+    pub generated: (u64, f64),
+    /// Chunks lit and meshed and their average time in ms.
+    pub meshed: (u64, f64),
+    /// Resident memory at the end, in MiB.
+    pub memory_mib: Option<f64>,
+}
+
+/// Flight numbers for the perf report.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Flight {
+    pub frames: usize,
+    pub average_fps: f32,
+    pub one_percent_low_fps: f32,
+    pub worst_ms: f32,
+    /// Frames over 33 ms and over 50 ms.
+    pub over_33ms: usize,
+    pub over_50ms: usize,
+}
+
+impl Bench {
+    /// The flight's numbers (after the warm-up).
+    pub fn flight(&self) -> Option<Flight> {
+        if self.frames.is_empty() {
+            return None;
+        }
+        let mut sorted: Vec<f32> = self.frames.iter().map(|f| f.frame).collect();
+        sorted.sort_by(f32::total_cmp);
+        let n = sorted.len();
+        let total: f32 = sorted.iter().sum();
+        Some(Flight {
+            frames: n,
+            average_fps: n as f32 / total,
+            one_percent_low_fps: 1.0 / sorted[((n - 1) as f32 * 0.99).round() as usize],
+            worst_ms: sorted[n - 1] * 1000.0,
+            over_33ms: sorted.iter().filter(|&&dt| dt > 1.0 / 30.0).count(),
+            over_50ms: sorted.iter().filter(|&&dt| dt > 0.05).count(),
+        })
+    }
+
+    /// The `--perf-test` write-up, in Markdown.
+    pub fn perf_markdown(&self, render_distance: i32, run: RunStats, about: &str) -> String {
+        let Some(f) = self.flight() else {
+            return "No frames were recorded.\n".to_owned();
+        };
+        let pass =
+            f.average_fps >= MIN_AVERAGE_FPS && f.one_percent_low_fps >= MIN_ONE_PERCENT_LOW_FPS;
+        let memory = run
+            .memory_mib
+            .map_or("unknown".to_owned(), |m| format!("{m:.0} MiB"));
+        format!(
+            "# M{PERF_MILESTONE} performance\n\n\
+             `cargo run --release -- --perf-test`: seed {SEED}, a {:.0} s flight north at \
+             {SPEED} blocks/s and feet height {HEIGHT}, render distance {render_distance}, \
+             {}×{}, vsync off, after {WARM_UP:.0} s of warm-up.\n\n{about}\n\n\
+             | Measure | Value |\n|---|---|\n\
+             | Average FPS | {:.0} |\n\
+             | 1% low FPS | {:.0} |\n\
+             | Worst frame | {:.1} ms |\n\
+             | Frames over 33 ms / 50 ms | {} / {} (of {}) |\n\
+             | Chunks generated or loaded | {} (avg {:.2} ms each, on worker threads) |\n\
+             | Chunks lit and meshed | {} (avg {:.2} ms each, on worker threads) |\n\
+             | Memory (resident) | {memory} |\n\n\
+             Gate (average ≥ {MIN_AVERAGE_FPS:.0}, 1% low ≥ {MIN_ONE_PERCENT_LOW_FPS:.0}): **{}**\n",
+            self.seconds,
+            WINDOW_SIZE.0,
+            WINDOW_SIZE.1,
+            f.average_fps,
+            f.one_percent_low_fps,
+            f.worst_ms,
+            f.over_33ms,
+            f.over_50ms,
+            f.frames,
+            run.generated.0,
+            run.generated.1,
+            run.meshed.0,
+            run.meshed.1,
+            if pass { "pass" } else { "FAIL" },
+        )
+    }
+}
+
+/// The machine's model and chip, from `sysctl`.
+pub fn machine() -> String {
+    let read = |key: &str| {
+        std::process::Command::new("sysctl")
+            .args(["-n", key])
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default()
+    };
+    format!(
+        "{} ({})",
+        read("hw.model"),
+        read("machdep.cpu.brand_string")
+    )
+}
+
+/// This process's resident memory in MiB, from `ps`.
+pub fn resident_memory_mib() -> Option<f64> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()?;
+    let kib: f64 = String::from_utf8(output.stdout).ok()?.trim().parse().ok()?;
+    Some(kib / 1024.0)
 }
 
 fn summary(frames: &[FrameTimes]) -> String {

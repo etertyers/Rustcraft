@@ -63,6 +63,12 @@ fn parse_args(
                     .get_or_insert_with(|| bench::Bench::new(seconds))
                     .seconds = seconds;
             }
+            "--perf-test" => {
+                let mut perf = bench::Bench::new(bench::PERF_SECONDS);
+                perf.distance = Some(bench::PERF_DISTANCE);
+                perf.perf_report = Some(format!("docs/perf/m{}.md", bench::PERF_MILESTONE).into());
+                bench = Some(perf);
+            }
             "--distance" => {
                 let value = args.next().context("--distance needs a number of chunks")?;
                 let distance = value
