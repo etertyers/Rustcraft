@@ -40,6 +40,11 @@ const SPRINT_KNOCKBACK: f64 = 0.5;
 const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
 
 impl Game {
+    /// The block being mined and how far along it is (0–1), for the crack.
+    pub fn mining_progress(&self) -> Option<(IVec3, f32)> {
+        self.mining
+    }
+
     /// The tool in the selected slot, if it's a tool.
     fn selected_tool(&self) -> Option<&Tool> {
         let stack = self.inventory.selected_stack()?;

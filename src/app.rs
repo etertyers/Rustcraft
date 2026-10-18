@@ -39,6 +39,7 @@ use crate::{
         Renderer, SkyImages,
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
+        crack,
         entities::item_mesh,
         icons::ItemIcons,
         models::{add_arrow, add_mob},
@@ -102,6 +103,8 @@ pub struct App {
     options: Options,
     /// The pause menu, open over a stopped game.
     pause: Option<PauseMenu>,
+    /// Atlas rects of the mining crack's stages.
+    crack_uvs: Vec<[f32; 4]>,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
     cursor_grabbed: bool,
@@ -131,6 +134,7 @@ impl App {
             sleeping: false,
             options: Options::load(&Options::path()),
             pause: None,
+            crack_uvs: Vec::new(),
             catalog: Vec::new(),
             cursor_grabbed: false,
             last_frame: Instant::now(),
@@ -177,6 +181,16 @@ impl App {
         if !missing_blocks.is_empty() || !missing_items.is_empty() {
             warn!("missing block textures: {missing_blocks:?}, item textures: {missing_items:?}");
         }
+
+        // The mining crack's stages; a missing one shows the checkerboard.
+        self.crack_uvs = (0..crack::STAGES)
+            .map(|i| {
+                let tile = atlas
+                    .get(&format!("destroy_stage_{i}"))
+                    .unwrap_or(MISSING_TILE);
+                atlas.uv_rect(tile)
+            })
+            .collect();
 
         let biome_colors =
             BiomeColors::load(&assets.join("textures/colormap")).unwrap_or_else(|err| {
@@ -569,6 +583,25 @@ impl App {
             renderer.remove_chunk(pos);
         }
         renderer.set_outline(game.target.map(|hit| hit.block));
+        let crack = game.mining_progress().and_then(|(cell, progress)| {
+            let uv = *self.crack_uvs.get(crack::stage(progress))?;
+            let block = game.chunks.world().block(cell.x, cell.y, cell.z)?;
+            // Over the block's own box (a slab's half, a door's slab), or
+            // the whole cell for blocks without one.
+            let (min, max) = game
+                .items()
+                .blocks
+                .get(block.id())
+                .and_then(|def| def.collision_box(block.data()))
+                .unwrap_or(([0.0; 3], [1.0; 3]));
+            let cell = cell.as_vec3();
+            Some(crack::crack_mesh(
+                cell + Vec3::from(min),
+                cell + Vec3::from(max),
+                uv,
+            ))
+        });
+        renderer.set_crack(crack.as_ref());
         if let Some(icons) = &self.icons {
             let chunks = &game.chunks;
             let light_at = |p: DVec3| {
