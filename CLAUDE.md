@@ -270,6 +270,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - At the end of each checkpoint, **stop**. Post a summary table (milestone, pass/fail, PR link, known issues) and wait for Kenzo. After Kenzo approves, merge the checkpoint's PRs into `main` in order with merge commits, tag each `m<N>`, and push the tags.
 - If something blocks a milestone (a design question, a failing test you can't fix), stop early and ask rather than pushing on.
 - **Performance gate (from M15 on):** at the end of every milestone, run `cargo bench` and the `--perf-test` from M14 and save the results to `docs/perf/m<N>.md`. If average FPS drops below 60, the 1% low drops below 40, or any benchmark is more than 15% slower than the previous milestone, fix it before moving on (or stop and ask if you can't). Include the FPS numbers in each PR and in the checkpoint summary table.
+- **Model recommendation:** At the end of each milestone, recommend Sonnet or Opus for the next one. Pick Opus only for world generation, structures, or complex systems like the Ender Dragon fight; otherwise Sonnet.
 - After M30 merges, tag `v1.1.0` and rebuild the `.app`.
 
 #### Checkpoint A — Foundations
