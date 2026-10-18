@@ -50,6 +50,8 @@ cargo test                     # all tests
 cargo clippy -- -D warnings    # must pass before every commit
 cargo fmt                      # must be applied before every commit
 RUST_LOG=rustcraft=debug cargo run --release
+cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
+scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots
 ```
 
