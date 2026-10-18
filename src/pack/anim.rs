@@ -22,7 +22,7 @@ pub struct Animation {
 impl Animation {
     /// Reads a `.png.mcmeta`. `None` if it has no `animation` section.
     pub fn parse(text: &str) -> Result<Option<Self>> {
-        let json: serde_json::Value = serde_json::from_str(text).context("bad .png.mcmeta")?;
+        let json = super::parse_json(text).context("bad .png.mcmeta")?;
         let Some(anim) = json.get("animation") else {
             return Ok(None);
         };

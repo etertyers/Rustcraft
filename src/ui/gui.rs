@@ -96,12 +96,17 @@ impl GuiTextures {
             let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
             ctx.load_texture(name, pixels, egui::TextureOptions::NEAREST)
         };
+        let widths = std::cell::RefCell::new(Vec::new());
         let sheet = |name: &str, sprites: &[Sprite]| -> Result<TextureHandle> {
             let image = compose_sheet(res, name, sprites)
                 .with_context(|| format!("no GUI image {name}"))?;
+            let short = name.rsplit('/').next().unwrap_or(name);
+            widths
+                .borrow_mut()
+                .push(format!("{short} {}", image.width()));
             Ok(load(name, &image))
         };
-        Ok(Self {
+        let textures = Self {
             atlas: load("atlas", atlas),
             widgets: sheet("gui/widgets", WIDGETS)?,
             inventory: sheet("gui/container/inventory", &[])?,
@@ -111,7 +116,9 @@ impl GuiTextures {
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
             icons: sheet("gui/icons", ICONS)?,
-        })
+        };
+        log::info!("GUI sheets (px wide): {}", widths.borrow().join(", "));
+        Ok(textures)
     }
 }
 
@@ -454,18 +461,24 @@ mod tests {
     }
 
     #[test]
-    fn kenzos_packs_give_every_gui_sheet() {
+    fn kenzos_packs_reskin_the_gui() {
         let assets = crate::assets::dir();
+        let base = Resources::load(&assets, Vec::new()).unwrap();
+        let sheets = [
+            ("gui/widgets", WIDGETS),
+            ("gui/icons", ICONS),
+            ("gui/container/inventory", &[][..]),
+            ("gui/container/furnace", FURNACE),
+        ];
         for name in ["Ashen_1.8.3.zip", "Prime's HD Textures (FREE)"] {
             let pack = Pack::open(&assets.join(name)).unwrap();
             let res = Resources::load(&assets, vec![pack]).unwrap();
-            for (sheet, sprites) in [
-                ("gui/widgets", WIDGETS),
-                ("gui/icons", ICONS),
-                ("gui/container/furnace", FURNACE),
-            ] {
+            for (sheet, sprites) in sheets {
+                let plain = compose_sheet(&base, sheet, sprites).unwrap();
                 let image = compose_sheet(&res, sheet, sprites).unwrap();
-                assert!(image.width() >= 256, "{name} {sheet}");
+                // Compared at the base sheet's size.
+                let image = resized(&image, plain.width(), plain.height());
+                assert_ne!(image, plain, "{name} doesn't change {sheet}");
             }
         }
     }

@@ -144,7 +144,7 @@ impl Resources {
     pub fn json(&self, path: &str) -> Option<serde_json::Value> {
         self.layers.iter().rev().find_map(|pack| {
             let bytes = pack.read(path)?;
-            match serde_json::from_slice(&bytes) {
+            match super::parse_json(&String::from_utf8_lossy(&bytes)) {
                 Ok(json) => Some(json),
                 Err(err) => {
                     warn!("can't read {path} in {}: {err}", pack.name());

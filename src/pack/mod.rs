@@ -36,6 +36,17 @@ pub struct PackInfo {
     pub formats: Option<(u32, u32)>,
 }
 
+/// Reads the first JSON value in `text`, ignoring anything after it, as
+/// Minecraft's lenient reader does (some packs' files have a stray
+/// closing brace at the end).
+pub fn parse_json(text: &str) -> serde_json::Result<serde_json::Value> {
+    let text = text.trim_start_matches('\u{feff}');
+    serde_json::Deserializer::from_str(text)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| serde_json::from_str(""))
+}
+
 /// The newest pack format the game knows (1.21.11's resource packs are 75).
 pub const PACK_FORMAT: u32 = 75;
 
@@ -43,7 +54,7 @@ impl PackInfo {
     /// Reads a `pack.mcmeta`: `pack_format`, or modern `min_format` and
     /// `max_format` (numbers or `[major, minor]`), or `supported_formats`.
     pub fn parse(text: &str) -> Result<Self> {
-        let json: serde_json::Value = serde_json::from_str(text)?;
+        let json = parse_json(text)?;
         let pack = json.get("pack").context("pack.mcmeta has no \"pack\"")?;
         let major = |value: &serde_json::Value| {
             value
@@ -349,6 +360,14 @@ pub(crate) mod tests {
         assert_eq!(ranged.formats, Some((15, 99)));
         assert_eq!(ranged.description, "ab");
         assert!(PackInfo::parse("{}").is_err());
+    }
+
+    #[test]
+    fn json_is_read_leniently() {
+        assert_eq!(parse_json("{\"a\": 1}\n}").unwrap()["a"], 1);
+        assert_eq!(parse_json("\u{feff}[2]").unwrap()[0], 2);
+        assert!(parse_json("").is_err());
+        assert!(parse_json("{").is_err());
     }
 
     const MCMETA_OLD: &str = r#"{"pack": {"pack_format": 9, "description": "A 16px pack"}}"#;

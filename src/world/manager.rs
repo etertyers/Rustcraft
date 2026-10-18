@@ -665,6 +665,40 @@ mod tests {
     }
 
     #[test]
+    fn new_models_remesh_every_drawn_chunk_with_them() {
+        let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 1, 2);
+        let center = ChunkPos::new(0, 0);
+        run_until(&mut manager, center, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        let marked = Arc::new(BlockModels::new(
+            crate::world::block::registry(),
+            |_| Some([0.25; 4]),
+            [0.25; 4],
+            BiomeColors::uniform(),
+        ));
+        manager.set_models(marked);
+        let mut remeshed = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while remeshed.len() < 9 || manager.in_flight() > 0 {
+            assert!(Instant::now() < deadline, "chunks were never remeshed");
+            for (pos, mesh) in manager.update(center).meshes {
+                assert!(
+                    mesh.vertices
+                        .iter()
+                        .all(|v| v.uv[0] == 0.25 || v.uv[0] == 0.0),
+                    "meshed with the old models"
+                );
+                assert!(mesh.vertices.iter().any(|v| v.uv[0] == 0.25));
+                remeshed.push(pos);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let unique: HashSet<_> = remeshed.iter().copied().collect();
+        assert_eq!((remeshed.len(), unique.len()), (9, 9));
+    }
+
+    #[test]
     fn nearest_chunks_are_meshed_first() {
         let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 4, 1);
         let center = ChunkPos::new(0, 0);
