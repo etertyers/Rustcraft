@@ -5,6 +5,11 @@
 //! scheduled ticks (every 5 game ticks for water, 30 for lava) until they
 //! settle into still blocks; a still block starts flowing again when
 //! anything next to it changes.
+//!
+//! Lava meeting water follows modern Minecraft instead, so cobblestone
+//! generators work: any lava touching water hardens (a source to obsidian,
+//! the rest to cobblestone), lava can't flow sideways into water, and lava
+//! looks only 2 blocks ahead for a way down.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -31,9 +36,6 @@ const MAX_UPDATES: usize = 1000;
 const LAST_LEVEL: i32 = 8;
 /// The bit set on fluid falling down.
 const FALLING: i32 = 8;
-/// How far ahead a flow looks for a way down (1.0.0's
-/// `calculateFlowCost` gives up past 4 blocks).
-const SEARCH_DEPTH: i32 = 4;
 /// The four sideways neighbors, in 1.0.0's order (−x, +x, −z, +z).
 const SIDEWAYS: [IVec3; 4] = [
     IVec3::new(-1, 0, 0),
@@ -63,6 +65,15 @@ fn tick_rate(fluid: Fluid) -> u64 {
     match fluid {
         Fluid::Water => 5,
         Fluid::Lava => 30,
+    }
+}
+
+/// How far ahead a flow looks for a way down: 1.0.0's `calculateFlowCost`
+/// gives up past 4 blocks, modern lava in the Overworld past 2.
+fn search_depth(fluid: Fluid) -> i32 {
+    match fluid {
+        Fluid::Water => 4,
+        Fluid::Lava => 2,
     }
 }
 
@@ -410,8 +421,9 @@ impl Step<'_> {
     }
 
     /// Lava touching water on a side or from above turns to obsidian if
-    /// it's a source, or cobblestone if it's within 4 levels of one
-    /// (1.0.0's `checkForHarden`).
+    /// it's a source, or cobblestone otherwise (modern `LiquidBlock`'s
+    /// `shouldSpreadLiquid`; 1.0.0's `checkForHarden` left lava more than
+    /// 4 levels from its source alone).
     fn harden(&mut self, at: IVec3) {
         let Some(block) = self.get(at) else {
             return;
@@ -425,11 +437,12 @@ impl Step<'_> {
         if !water_near {
             return;
         }
-        match block.data() {
-            0 => self.set_and_notify(at, OBSIDIAN),
-            1..=4 => self.set_and_notify(at, COBBLESTONE),
-            _ => {}
-        }
+        let hardened = if block.data() == 0 {
+            OBSIDIAN
+        } else {
+            COBBLESTONE
+        };
+        self.set_and_notify(at, hardened);
     }
 
     /// A scheduled update of the flowing block at `at` (1.0.0's
@@ -494,9 +507,14 @@ impl Step<'_> {
         } else {
             self.settle(at, fluid, level);
         }
+        if self.fluid(at) != Some(fluid) {
+            // It hardened.
+            return;
+        }
 
         let below = at - IVec3::Y;
-        if self.can_displace(below, fluid) {
+        let mut sideways = level >= 0 && (level == 0 || self.stops(below));
+        if self.can_displace(below, fluid, true) {
             if fluid == Fluid::Lava && self.fluid(below) == Some(Fluid::Water) {
                 // Lava falling on water makes stone.
                 self.set_and_notify(below, STONE);
@@ -507,8 +525,16 @@ impl Step<'_> {
             } else {
                 level + FALLING
             };
-            self.flow_into(below, fluid, falling);
-        } else if level >= 0 && (level == 0 || self.stops(below)) {
+            self.flow_into(below, fluid, falling, true);
+            // Modern Minecraft: fluid among three sources spreads sideways
+            // as well as down.
+            let sources = SIDEWAYS
+                .into_iter()
+                .filter(|&side| self.level(at + side, fluid) == 0)
+                .count();
+            sideways = sources >= 3;
+        }
+        if sideways {
             let ways = self.flow_directions(at, fluid);
             let next = if level >= FALLING { 1 } else { level + step };
             if next >= LAST_LEVEL {
@@ -516,7 +542,7 @@ impl Step<'_> {
             }
             for (side, way) in SIDEWAYS.into_iter().zip(ways) {
                 if way {
-                    self.flow_into(at + side, fluid, next);
+                    self.flow_into(at + side, fluid, next, false);
                 }
             }
         }
@@ -548,20 +574,24 @@ impl Step<'_> {
         self.harden(at);
     }
 
-    /// Whether `fluid` may flow into `at`: not its own kind, not lava, and
-    /// nothing that holds it back (1.0.0's `liquidCanDisplaceBlock`).
-    fn can_displace(&self, at: IVec3, fluid: Fluid) -> bool {
+    /// Whether `fluid` may flow into `at`, `down` or sideways: not its own
+    /// kind or lava, water only for lava falling onto it (modern
+    /// `canBeReplacedWith`), and nothing that holds it back (1.0.0's
+    /// `liquidCanDisplaceBlock`).
+    fn can_displace(&self, at: IVec3, fluid: Fluid, down: bool) -> bool {
         match self.fluid(at) {
-            Some(there) if there == fluid || there == Fluid::Lava => false,
-            _ => !self.stops(at),
+            Some(there) if there == fluid => false,
+            Some(Fluid::Lava) => false,
+            Some(Fluid::Water) => down,
+            None => !self.stops(at),
         }
     }
 
     /// Flows `fluid` at `level` into `at` if it can, washing away whatever
     /// was there (1.0.0's `flowIntoBlock`): water drops it as an item, lava
     /// burns it.
-    fn flow_into(&mut self, at: IVec3, fluid: Fluid, level: i32) {
-        if !self.can_displace(at, fluid) {
+    fn flow_into(&mut self, at: IVec3, fluid: Fluid, level: i32, down: bool) {
+        if !self.can_displace(at, fluid, down) {
             return;
         }
         if let Some(old) = self.get(at)
@@ -610,7 +640,7 @@ impl Step<'_> {
             if !self.stops(next - IVec3::Y) {
                 return steps;
             }
-            if steps < SEARCH_DEPTH {
+            if steps < search_depth(fluid) {
                 best = best.min(self.flow_cost(next, fluid, steps + 1, i));
             }
         }
@@ -857,6 +887,48 @@ mod tests {
         pond.pour(0, 64, 0, Fluid::Lava);
         pond.run(3000);
         assert_eq!(pond.get(2, 63, 0), STONE);
+    }
+
+    /// A trench along x at z 0 from x 0 to `end`, walled with glass.
+    fn trench(pond: &mut Pond, end: i32) {
+        for x in -1..=end + 1 {
+            pond.set(x, 64, -1, GLASS);
+            pond.set(x, 64, 1, GLASS);
+        }
+        pond.set(-1, 64, 0, GLASS);
+        pond.set(end + 1, 64, 0, GLASS);
+    }
+
+    #[test]
+    fn a_cobblestone_generator_keeps_making_cobblestone() {
+        // Lava at one end of a trench, water at the other, and a hole by
+        // the water so it never reaches the lava source. Whichever comes
+        // first, the lava hardens where they meet, and again each time
+        // the cobblestone is mined.
+        for lava_first in [false, true] {
+            let mut pond = Pond::new();
+            trench(&mut pond, 4);
+            pond.set(3, 63, 0, AIR);
+            if lava_first {
+                pond.pour(0, 64, 0, Fluid::Lava);
+                pond.run(3000);
+                assert_eq!(pond.level(3, 0), Some(6));
+                pond.pour(4, 64, 0, Fluid::Water);
+            } else {
+                pond.pour(4, 64, 0, Fluid::Water);
+                pond.run(100);
+                pond.pour(0, 64, 0, Fluid::Lava);
+            }
+            for round in 0..6 {
+                pond.run(600);
+                let cobble = (1..=3).find(|&x| pond.get(x, 64, 0) == COBBLESTONE);
+                let Some(x) = cobble else {
+                    panic!("no cobblestone in round {round}, lava first {lava_first}");
+                };
+                assert_eq!(pond.get(0, 64, 0).id(), LAVA, "the source survives");
+                pond.set(x, 64, 0, AIR);
+            }
+        }
     }
 
     #[test]
