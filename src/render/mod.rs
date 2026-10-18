@@ -10,7 +10,7 @@ pub mod models;
 mod outline;
 pub mod vertex;
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use glam::{IVec3, Vec2, Vec3};
@@ -20,7 +20,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
     config::{CHUNK_SIZE, SKY_COLOR, WORLD_HEIGHT},
-    world::{chunk::ChunkPos, mesh::Mesh},
+    world::{chunk::ChunkPos, fast_hash::FastMap, mesh::Mesh},
 };
 use atlas::Atlas;
 use camera::Camera;
@@ -119,6 +119,13 @@ struct ChunkBuffers {
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
+    /// Draw into `offscreen` when the window has no frame to give (it's
+    /// hidden or the screen is locked), waiting for the GPU, so `--bench`
+    /// still measures real frames.
+    offscreen_fallback: bool,
+    offscreen: Option<wgpu::Texture>,
+    /// The last frame went to `offscreen`.
+    drew_offscreen: bool,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -141,7 +148,7 @@ pub struct Renderer {
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     atlas_bind_group: wgpu::BindGroup,
-    chunks: HashMap<ChunkPos, ChunkBuffers>,
+    chunks: FastMap<ChunkPos, ChunkBuffers>,
     /// Dropped items, rebuilt every frame.
     entities: Option<ChunkBuffers>,
     /// Chunks that passed frustum culling in the last frame.
@@ -277,6 +284,9 @@ impl Renderer {
 
         Ok(Self {
             surface,
+            offscreen_fallback: false,
+            offscreen: None,
+            drew_offscreen: false,
             device,
             queue,
             config,
@@ -296,7 +306,7 @@ impl Renderer {
             globals_buffer,
             globals_bind_group,
             atlas_bind_group,
-            chunks: HashMap::new(),
+            chunks: FastMap::default(),
             entities: None,
             chunks_drawn: 0,
             outline,
@@ -317,21 +327,68 @@ impl Renderer {
     /// Replaces the mob meshes (one per kind that's present) drawn from
     /// the next frame on.
     pub fn set_mobs(&mut self, meshes: &[(usize, Mesh)]) {
+        let mut old = std::mem::take(&mut self.mobs);
         self.mobs = meshes
             .iter()
             .filter(|(_, mesh)| !mesh.is_empty())
-            .map(|(kind, mesh)| (*kind, self.buffers("mob", mesh)))
+            .map(|(kind, mesh)| {
+                let reuse = old
+                    .iter()
+                    .position(|(k, _)| k == kind)
+                    .map(|i| old.swap_remove(i).1);
+                (*kind, self.rewrite(reuse, "mob", mesh))
+            })
             .collect();
     }
 
     /// Replaces the mining crack drawn from the next frame on.
     pub fn set_crack(&mut self, mesh: Option<&Mesh>) {
-        self.crack = mesh.map(|mesh| self.buffers("crack", mesh));
+        let old = self.crack.take();
+        self.crack = mesh.map(|mesh| self.rewrite(old, "crack", mesh));
     }
 
     /// Replaces the dropped-item mesh drawn from the next frame on.
     pub fn set_entities(&mut self, mesh: &Mesh) {
-        self.entities = (!mesh.is_empty()).then(|| self.buffers("entity", mesh));
+        let old = self.entities.take();
+        self.entities = (!mesh.is_empty()).then(|| self.rewrite(old, "entity", mesh));
+    }
+
+    /// Buffers for a mesh that changes every frame: `old`'s, written over,
+    /// if they're big enough, or new ones with room to grow.
+    fn rewrite(&self, old: Option<ChunkBuffers>, label: &str, mesh: &Mesh) -> ChunkBuffers {
+        let vertices: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        let mut indices = Vec::with_capacity(mesh.indices.len() + mesh.translucent.len());
+        indices.extend_from_slice(&mesh.indices);
+        indices.extend_from_slice(&mesh.translucent);
+        let indices: &[u8] = bytemuck::cast_slice(&indices);
+        let fits = |buffer: &wgpu::Buffer, bytes: &[u8]| buffer.size() >= bytes.len() as u64;
+        let (vertex_buffer, index_buffer) = match old {
+            Some(old) if fits(&old.vertices, vertices) && fits(&old.indices, indices) => {
+                (old.vertices, old.indices)
+            }
+            _ => {
+                let buffer = |size: usize, usage| {
+                    self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(label),
+                        size: (size.next_power_of_two() as u64).max(256),
+                        usage: usage | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    })
+                };
+                (
+                    buffer(vertices.len(), wgpu::BufferUsages::VERTEX),
+                    buffer(indices.len(), wgpu::BufferUsages::INDEX),
+                )
+            }
+        };
+        self.queue.write_buffer(&vertex_buffer, 0, vertices);
+        self.queue.write_buffer(&index_buffer, 0, indices);
+        ChunkBuffers {
+            vertices: vertex_buffer,
+            indices: index_buffer,
+            opaque: mesh.indices.len() as u32,
+            translucent: mesh.translucent.len() as u32,
+        }
     }
 
     fn buffers(&self, label: &str, mesh: &Mesh) -> ChunkBuffers {
@@ -438,10 +495,52 @@ impl Renderer {
         result
     }
 
+    /// Draws into a texture instead of the window when it has no frame
+    /// to give (for `--bench`).
+    pub fn set_offscreen_fallback(&mut self, on: bool) {
+        self.offscreen_fallback = on;
+    }
+
+    /// Whether the last frame was drawn off screen.
+    pub fn drew_offscreen(&self) -> bool {
+        self.drew_offscreen
+    }
+
+    /// A texture like the window's frames, for drawing off screen.
+    fn offscreen_target(&mut self) -> wgpu::Texture {
+        let size = wgpu::Extent3d {
+            width: self.config.width,
+            height: self.config.height,
+            depth_or_array_layers: 1,
+        };
+        if let Some(texture) = &self.offscreen
+            && texture.size() == size
+        {
+            return texture.clone();
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[self.config.format.remove_srgb_suffix()],
+        });
+        self.offscreen = Some(texture.clone());
+        texture
+    }
+
     fn draw(&mut self, camera: &Camera, environment: &Environment, ui: &UiPaint) -> Result<bool> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded
+                if self.offscreen_fallback =>
+            {
+                None
+            }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Ok(false);
             }
@@ -451,10 +550,13 @@ impl Renderer {
             }
             wgpu::CurrentSurfaceTexture::Validation => bail!("surface validation error"),
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let ui_view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+        self.drew_offscreen = frame.is_none();
+        let target = match &frame {
+            Some(frame) => frame.texture.clone(),
+            None => self.offscreen_target(),
+        };
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_view = target.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.config.format.remove_srgb_suffix()),
             ..Default::default()
         });
@@ -589,7 +691,14 @@ impl Renderer {
         }
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
-        self.queue.present(frame);
+        match frame {
+            Some(frame) => self.queue.present(frame),
+            None => {
+                self.device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .context("waiting for an offscreen frame")?;
+            }
+        }
         Ok(true)
     }
 }

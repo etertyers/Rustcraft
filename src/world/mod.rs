@@ -5,6 +5,7 @@ pub mod block;
 pub mod block_entity;
 pub mod chunk;
 pub mod daytime;
+pub mod fast_hash;
 pub mod fire;
 pub mod fluid;
 pub mod harvest;
@@ -14,17 +15,18 @@ pub mod mesh;
 pub mod save;
 pub mod worldgen;
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::config;
 use block::BlockState;
 use chunk::{Chunk, ChunkPos};
+use fast_hash::FastMap;
 use mesh::ChunkArea;
 
 /// The loaded chunks.
 #[derive(Default)]
 pub struct World {
-    chunks: HashMap<ChunkPos, Arc<Chunk>>,
+    chunks: FastMap<ChunkPos, Arc<Chunk>>,
 }
 
 impl World {

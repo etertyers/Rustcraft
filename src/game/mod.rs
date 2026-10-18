@@ -11,11 +11,7 @@ mod mobs;
 mod progression;
 mod sleep;
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 pub use containers::Container;
 
@@ -48,6 +44,7 @@ use crate::{
     world::{
         block::Fluid,
         chunk::ChunkPos,
+        fast_hash::{FastMap, FastSet},
         fire::Fires,
         fluid::{self, Fluids},
         manager::{ChunkManager, ChunkSource},
@@ -124,9 +121,9 @@ pub struct Game {
     mob_defs: Arc<MobRegistry>,
     pub mobs: Vec<Mob>,
     /// Animals in unloaded chunks, waiting for their chunk to come back.
-    stashed_mobs: HashMap<ChunkPos, Vec<Mob>>,
+    stashed_mobs: FastMap<ChunkPos, Vec<Mob>>,
     /// Chunks that have had their animals placed (once per chunk).
-    populated: HashSet<ChunkPos>,
+    populated: FastSet<ChunkPos>,
     /// The hotbar slot being eaten from and for how many ticks.
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
@@ -199,8 +196,8 @@ impl Game {
             drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
             mobs: Vec::new(),
-            stashed_mobs: HashMap::new(),
-            populated: HashSet::new(),
+            stashed_mobs: FastMap::default(),
+            populated: FastSet::default(),
             mining: None,
             eating: None,
             fluids: Fluids::default(),
@@ -434,6 +431,20 @@ impl Game {
         };
         let slot = self.inventory.selected as i32 + steps;
         self.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
+    }
+
+    /// Flies the player `distance` blocks north at feet height `height`, in
+    /// creative, looking a little down (`--bench`'s route).
+    pub fn glide(&mut self, distance: f64, height: f64) {
+        self.mode = GameMode::Creative;
+        self.body.flying = true;
+        let mut feet = self.body.position();
+        feet.y = height;
+        feet.z -= distance;
+        self.body.set_position(feet);
+        self.prev_feet = feet;
+        self.camera.yaw = 0.0;
+        self.camera.pitch = -0.35;
     }
 
     /// Advances the game by `dt` seconds of real time: runs any ticks due,

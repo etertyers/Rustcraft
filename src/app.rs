@@ -19,7 +19,9 @@ use winit::{
 };
 
 use crate::{
-    assets, config,
+    assets,
+    bench::{self, Bench, FrameTimes},
+    config,
     entity::mobs::MobRegistry,
     game::{Container, Game, chunk_workers, environment::environment},
     inventory::item::ItemRegistry,
@@ -79,6 +81,9 @@ pub enum WorldKind {
     Gallery,
 }
 
+/// Mobs farther than this from the camera aren't drawn (1.0.0's
+/// `isInRangeToRenderDist` for a mob about a block across).
+const MOB_DRAW_DISTANCE: f64 = 64.0;
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
 
@@ -115,6 +120,8 @@ pub struct App {
     frame_skipped: bool,
     /// First fatal error; the event loop exits and `main` returns it.
     error: Option<anyhow::Error>,
+    /// `--bench`: the flight being timed.
+    bench: Option<Bench>,
 }
 
 impl App {
@@ -141,7 +148,16 @@ impl App {
             occluded: false,
             frame_skipped: false,
             error: None,
+            bench: None,
         }
+    }
+
+    pub fn with_bench(mut self, bench: Option<Bench>) -> Self {
+        if let Some(distance) = bench.as_ref().and_then(|bench| bench.distance) {
+            self.options.render_distance = distance;
+        }
+        self.bench = bench;
+        self
     }
 
     pub fn into_result(self) -> Result<()> {
@@ -155,12 +171,14 @@ impl App {
     }
 
     fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        // The bench draws a full 1080p screen's worth.
+        let (width, height) = match self.bench {
+            Some(_) => bench::WINDOW_SIZE,
+            None => (config::WINDOW_WIDTH, config::WINDOW_HEIGHT),
+        };
         let attrs = Window::default_attributes()
             .with_title(config::WINDOW_TITLE)
-            .with_inner_size(LogicalSize::new(
-                config::WINDOW_WIDTH,
-                config::WINDOW_HEIGHT,
-            ));
+            .with_inner_size(LogicalSize::new(width, height));
         let window = Arc::new(event_loop.create_window(attrs)?);
         let assets = assets::dir();
         let blocks = BlockRegistry::load(&assets.join("data/blocks.ron"))?;
@@ -212,7 +230,9 @@ impl App {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut renderer = Renderer::new(window.clone(), &atlas, &sky, &mob_textures)?;
-        renderer.set_vsync(self.options.vsync);
+        // The bench measures how fast frames can go.
+        renderer.set_vsync(self.options.vsync && self.bench.is_none());
+        renderer.set_offscreen_fallback(self.bench.is_some());
         let models = BlockModels::new(
             &blocks,
             |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
@@ -378,7 +398,13 @@ impl App {
     /// Opens the pause menu over a world being played (not over a screen,
     /// the death screen or a bed), freeing the mouse. The game stops.
     fn pause_game(&mut self) {
-        if self.playing() && self.screen.is_none() && !self.sleeping && self.pause.is_none() {
+        // The bench keeps flying when the window loses focus.
+        if self.bench.is_none()
+            && self.playing()
+            && self.screen.is_none()
+            && !self.sleeping
+            && self.pause.is_none()
+        {
             self.pause = Some(PauseMenu::default());
             self.set_cursor_grab(false);
         }
@@ -569,8 +595,12 @@ impl App {
         ) else {
             return;
         };
+        if self.bench.is_some() {
+            game.glide(bench::SPEED * dt as f64, bench::HEIGHT);
+        }
         // The pause menu stops the game; the camera still follows it.
         game.advance(if self.pause.is_some() { 0.0 } else { dt });
+        let ticked = Instant::now();
 
         let p = game.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
@@ -582,6 +612,7 @@ impl App {
         for pos in changes.unloaded {
             renderer.remove_chunk(pos);
         }
+        let uploaded = Instant::now();
         renderer.set_outline(game.target.map(|hit| hit.block));
         let crack = game.mining_progress().and_then(|(cell, progress)| {
             let uv = *self.crack_uvs.get(crack::stage(progress))?;
@@ -628,7 +659,11 @@ impl App {
             renderer.set_entities(&mesh);
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();
-            for mob in &game.mobs {
+            let eye = game.camera.position.as_dvec3();
+            let near = |mob: &&crate::entity::mob::Mob| {
+                mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE
+            };
+            for mob in game.mobs.iter().filter(near) {
                 let index = match meshes.iter().position(|(kind, _)| *kind == mob.kind) {
                     Some(index) => index,
                     None => {
@@ -699,7 +734,30 @@ impl App {
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
         let result = renderer.render(&game.camera, &game.environment(), ui);
+        let render_distance = game.chunks.radius();
+        let place = format!(
+            "ended at {:.0}, {} chunks loaded, {} drawn",
+            game.camera.position,
+            game.chunks.world().len(),
+            renderer.chunks_drawn()
+        );
+        let offscreen = renderer.drew_offscreen();
         self.finish_frame(event_loop, now, result);
+        if let Some(bench) = self.bench.as_mut() {
+            bench.record(FrameTimes {
+                frame: dt,
+                game: ticked - now,
+                chunks: uploaded - ticked,
+                draw: uploaded.elapsed(),
+                offscreen,
+            });
+            if bench.done() {
+                let report = format!("{}\n  {place}", bench.report(render_distance));
+                info!("{report}");
+                println!("{report}");
+                event_loop.exit();
+            }
+        }
         if self.options != options_before {
             self.options_changed();
         }
@@ -780,7 +838,8 @@ impl ApplicationHandler for App {
                 self.pause_game();
             }
             WindowEvent::Occluded(occluded) => {
-                self.occluded = occluded;
+                // The bench draws off screen when hidden.
+                self.occluded = occluded && self.bench.is_none();
                 if !occluded && let Some(window) = &self.window {
                     window.request_redraw();
                 }

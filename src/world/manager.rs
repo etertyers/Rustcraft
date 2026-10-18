@@ -13,11 +13,7 @@
 //! With a region store, workers load saved chunks instead of generating
 //! them, and `save` writes the chunks changed since the last save.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    thread::JoinHandle,
-};
+use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
 use glam::IVec3;
 
@@ -31,6 +27,7 @@ use super::{
     block::BlockState,
     block_entity::BlockEntity,
     chunk::{Chunk, ChunkPos, LocalPos},
+    fast_hash::{FastMap, FastSet},
     light::{ChunkLight, light_chunk},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
     save::{RegionStore, SaveError},
@@ -105,27 +102,27 @@ pub struct ChunkManager {
     jobs: Option<Sender<Job>>,
     done: Receiver<Done>,
     workers: Vec<JoinHandle<()>>,
-    generating: HashSet<ChunkPos>,
-    meshing: HashSet<ChunkPos>,
-    meshed: HashSet<ChunkPos>,
+    generating: FastSet<ChunkPos>,
+    meshing: FastSet<ChunkPos>,
+    meshed: FastSet<ChunkPos>,
     /// Chunks within this distance (in chunks, per axis) are meshed and drawn.
     radius: i32,
     /// Offsets within `radius + 1`, nearest first.
     offsets: Vec<(i32, i32)>,
     max_in_flight: usize,
     /// Bumped on every edit so stale mesh jobs can be recognized.
-    revisions: HashMap<ChunkPos, u32>,
+    revisions: FastMap<ChunkPos, u32>,
     /// Chunks changed since they were last saved (every changed chunk when
     /// there's no store). They're kept in memory when unloaded, since
     /// loading or regenerating them would lose the changes.
-    unsaved: HashSet<ChunkPos>,
-    unloaded_edits: HashMap<ChunkPos, Arc<Chunk>>,
+    unsaved: FastSet<ChunkPos>,
+    unloaded_edits: FastMap<ChunkPos, Arc<Chunk>>,
     /// Meshes rebuilt by edits, handed out by the next `update`.
     remeshed: Vec<(ChunkPos, Mesh)>,
     /// Drawn chunks whose light changed, waiting for a background remesh.
-    relight: HashSet<ChunkPos>,
+    relight: FastSet<ChunkPos>,
     /// Light of every drawn chunk.
-    lights: HashMap<ChunkPos, ChunkLight>,
+    lights: FastMap<ChunkPos, ChunkLight>,
 }
 
 /// Offsets within `radius + 1` chunks (one ring more is generated so the
@@ -228,17 +225,17 @@ impl ChunkManager {
             done: done_rx,
             max_in_flight: workers.len() * 2,
             workers,
-            generating: HashSet::new(),
-            meshing: HashSet::new(),
-            meshed: HashSet::new(),
+            generating: FastSet::default(),
+            meshing: FastSet::default(),
+            meshed: FastSet::default(),
             radius,
             offsets,
-            revisions: HashMap::new(),
-            unsaved: HashSet::new(),
-            unloaded_edits: HashMap::new(),
+            revisions: FastMap::default(),
+            unsaved: FastSet::default(),
+            unloaded_edits: FastMap::default(),
             remeshed: Vec::new(),
-            relight: HashSet::new(),
-            lights: HashMap::new(),
+            relight: FastSet::default(),
+            lights: FastMap::default(),
         }
     }
 
@@ -379,9 +376,20 @@ impl ChunkManager {
     /// touched chunk, plus the neighbor across any border an edit sits on,
     /// is remeshed now; chunks only within light range are relit soon after.
     pub fn set_blocks(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.apply_edits(edits, true);
+    }
+
+    /// Like `set_blocks`, but the touched chunks are remeshed on the worker
+    /// threads too, a frame or two later: for changes the world makes on
+    /// its own (flowing fluids, fire), which can touch many chunks a tick.
+    pub fn set_blocks_later(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.apply_edits(edits, false);
+    }
+
+    fn apply_edits(&mut self, edits: &[(IVec3, BlockState)], remesh_now: bool) {
         let size = CHUNK_SIZE as i32;
-        let mut touched = HashSet::new();
-        let mut lit = HashSet::new();
+        let mut touched = FastSet::default();
+        let mut lit = FastSet::default();
         for &(at, block) in edits {
             if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
                 continue;
@@ -414,6 +422,12 @@ impl ChunkManager {
         }
         for &pos in &touched {
             *self.revisions.entry(pos).or_default() += 1;
+            if !remesh_now {
+                if self.meshed.contains(&pos) {
+                    self.relight.insert(pos);
+                }
+                continue;
+            }
             // Chunks not drawn yet get meshed by `update` as usual.
             if self.meshed.contains(&pos)
                 && let Some(area) = self.world.area(pos)
@@ -503,7 +517,10 @@ impl Drop for ChunkManager {
 mod tests {
     use super::*;
     use crate::world::{biome::BiomeColors, block::BlockRegistry, save::TempDir};
-    use std::time::{Duration, Instant};
+    use std::{
+        collections::HashSet,
+        time::{Duration, Instant},
+    };
 
     fn models() -> Arc<BlockModels> {
         let registry = BlockRegistry::load(&crate::assets::dir().join("data/blocks.ron")).unwrap();
@@ -625,6 +642,18 @@ mod tests {
         let remeshed: HashSet<ChunkPos> = changes.meshes.iter().map(|(pos, _)| *pos).collect();
         let expected = [(0, 0), (-1, 0), (0, 1)].map(|(x, z)| ChunkPos::new(x, z));
         assert_eq!(remeshed, expected.into_iter().collect());
+    }
+
+    #[test]
+    fn edits_made_later_are_remeshed_in_the_background() {
+        let mut manager = loaded_flat();
+        manager.set_blocks_later(&[(IVec3::new(5, 70, 5), STONE)]);
+        assert_eq!(manager.world().block(5, 70, 5), Some(STONE));
+        assert!(manager.remeshed.is_empty(), "nothing meshed on this thread");
+        let (meshed, _) = run_until(&mut manager, ChunkPos::new(0, 0), |m, meshed| {
+            !meshed.is_empty() && m.in_flight() == 0 && m.relight.is_empty()
+        });
+        assert!(meshed.contains(&ChunkPos::new(0, 0)));
     }
 
     #[test]
@@ -841,6 +870,50 @@ mod tests {
         assert!(
             worst_update < Duration::from_millis(4),
             "update took {worst_update:?}"
+        );
+    }
+    #[test]
+    fn time_meshing() {
+        use crate::world::worldgen::terrain::Terrain;
+        let terrain = Terrain::new(20_111_118);
+        let mut world = World::default();
+        for z in -3..=3 {
+            for x in -3..=3 {
+                world.insert(terrain.generate(ChunkPos::new(x, z)));
+            }
+        }
+        let models = models();
+        let areas: Vec<_> = (-2..=2)
+            .flat_map(|z| (-2..=2).map(move |x| ChunkPos::new(x, z)))
+            .map(|p| world.area(p).unwrap())
+            .collect();
+        for _ in 0..2 {
+            for a in &areas {
+                let l = light_chunk(&models, a);
+                std::hint::black_box(mesh_chunk(&models, a, &l));
+            }
+        }
+        let rounds = 8;
+        let (mut tl, mut tm) = (Duration::ZERO, Duration::ZERO);
+        let mut verts = 0;
+        for _ in 0..rounds {
+            for a in &areas {
+                let t = Instant::now();
+                let l = light_chunk(&models, a);
+                tl += t.elapsed();
+                let t = Instant::now();
+                let m = mesh_chunk(&models, a, &l);
+                tm += t.elapsed();
+                verts += m.vertices.len();
+                std::hint::black_box(m);
+            }
+        }
+        let n = (rounds * areas.len()) as u32;
+        eprintln!(
+            "light {:?}, mesh {:?} per chunk, {} vertices",
+            tl / n,
+            tm / n,
+            verts / n as usize
         );
     }
 }

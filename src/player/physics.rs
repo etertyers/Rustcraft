@@ -127,8 +127,8 @@ impl Body {
         )
     }
 
-    /// Moves the feet to `feet` without collision, for free flight.
-    #[cfg(debug_assertions)]
+    /// Moves the feet to `feet` without collision, for free flight and the
+    /// bench's route.
     pub fn set_position(&mut self, feet: DVec3) {
         let size = self.bb.max - self.bb.min;
         self.bb = sized_hitbox(feet, size.x, size.y);

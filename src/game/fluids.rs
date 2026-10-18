@@ -19,9 +19,21 @@ use crate::{
 const RANDOM_TICK_CHUNKS: i32 = 8;
 
 impl Game {
-    /// Sets blocks, waking fluids and fires next to them.
+    /// Sets blocks the player changed, waking fluids and fires next to
+    /// them. Their chunks are remeshed at once.
     pub(super) fn edit(&mut self, edits: &[(IVec3, BlockState)]) {
         self.chunks.set_blocks(edits);
+        self.wake_around(edits);
+    }
+
+    /// Sets blocks the world changed on its own, remeshing their chunks in
+    /// the background.
+    fn edit_later(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.chunks.set_blocks_later(edits);
+        self.wake_around(edits);
+    }
+
+    fn wake_around(&mut self, edits: &[(IVec3, BlockState)]) {
         for &(at, _) in edits {
             self.fluids.changed(at);
             self.fires.changed(at);
@@ -116,7 +128,7 @@ impl Game {
                     .push(ItemEntity::from_block(stack, at, &mut random));
             }
         }
-        self.chunks.set_blocks(&outcome.edits);
+        self.chunks.set_blocks_later(&outcome.edits);
         for &(at, _) in &outcome.edits {
             self.fires.changed(at);
         }
@@ -141,7 +153,7 @@ impl Game {
             &mut random,
         );
         if !edits.is_empty() {
-            self.edit(&edits);
+            self.edit_later(&edits);
         }
     }
 
