@@ -55,8 +55,11 @@ cargo clippy -- -D warnings    # must pass before every commit
 cargo fmt                      # must be applied before every commit
 RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
+cargo run --release -- --perf-test   # the performance gate: writes docs/perf/m<N>.md (§7.2)
+cargo bench                    # chunk generation, lighting, meshing and fluid benchmarks
+cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
-screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots
+screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
 ```
 
 Add to `Cargo.toml` so debug builds stay playable:
@@ -102,8 +105,8 @@ docs/
 ```
 
 **Key conventions**
-- **World size:** Y is up. Chunks are 16×16 columns made of vertical 16³ sections. World height is **128** (Y 0..127, 8 sections), with sea level at Y 63 (matches 1.0.0). Default render distance is **9 chunks**. Both are constants in `config.rs`; if 60 FPS isn't reachable, lower them, note it in `DECISIONS.md`, and tell Kenzo.
-- **IDs:** Blocks and items use their original 1.0.0 numeric IDs from `docs/blocks-and-items.md` (`u16`). Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type) live in `assets/data/blocks.ron`. Never scatter block behavior across `match` arms.
+- **World size:** Y is up. Chunks are 16×16 columns made of vertical 16³ sections. World height is **256** (Y 0..255, 16 sections) since M14 (128 in v1.0), with sea level at Y 63. Default render distance is **9 chunks**. Both are constants in `config.rs`; if 60 FPS isn't reachable, lower them, note it in `DECISIONS.md`, and tell Kenzo.
+- **IDs:** Since M14, blocks and items have modern Java Edition names (`minecraft:oak_log`), defined in `assets/data/blocks.ron` and `items.ron`; `build.rs` turns the names into constants (`world::blocks::OAK_LOG`, `inventory::items::STICK`). Runtime IDs are file positions and saves store names. A `BlockState` is a block plus modern block state properties (`world::props`). `assets/data/legacy.ron` maps v1.0's numeric 1.0.0 IDs to the new names. Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type, placement, shape) live in `blocks.ron`. Never scatter block behavior across `match` arms.
 - **Textures:** Use the PNGs Kenzo provided in `assets/textures/` (from M15 on, also any resource pack Kenzo selects). At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
 - **Timing:** Game logic runs at a fixed 20 ticks/second, like Minecraft. Rendering runs at the display refresh rate with interpolation.
 - **Threading:** Chunk generation and meshing run on worker threads. The main thread never blocks on them; it uploads finished meshes to the GPU.
@@ -270,7 +273,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 
 #### Checkpoint A — Foundations
 
-### - [ ] M14 — Foundations for modern content
+### - [x] M14 — Foundations for modern content
 - Switch blocks and items to namespaced string IDs (`minecraft:stone`, `minecraft:oak_log`) matching modern Java names, mapped to compact numeric runtime IDs. Keep a table from v1.0 numeric IDs to the new names.
 - Block states (facing, axis, half, waterlogged, age, powered, etc.) so stairs, logs, slabs, doors, crops and redstone parts are described the modern way.
 - **World height 256** (Y 0–255, 16 sections). Sea level stays 63. Existing v1.0 chunks keep their terrain, with air above Y 127.
