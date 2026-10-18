@@ -42,7 +42,7 @@ use crate::{
         atlas::{Atlas, ITEM_PREFIX, MISSING_TILE},
         camera::Camera,
         crack,
-        entities::{add_particles, item_mesh},
+        entities::{add_falling_blocks, add_particles, item_mesh},
         icons::ItemIcons,
         models::{add_arrow, add_mob},
     },
@@ -712,6 +712,13 @@ impl App {
                 light_at,
             );
             if let Some(models) = &self.models {
+                add_falling_blocks(
+                    &mut mesh,
+                    &game.falling,
+                    models,
+                    game.tick_alpha(),
+                    light_at,
+                );
                 add_particles(
                     &mut mesh,
                     &game.particles,

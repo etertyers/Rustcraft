@@ -10,6 +10,7 @@ mod mobs;
 #[cfg(test)]
 mod progression;
 mod sleep;
+mod updates;
 
 use std::{path::Path, sync::Arc};
 
@@ -116,6 +117,12 @@ pub struct Game {
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
     pub arrows: Vec<Arrow>,
+    /// Sand and gravel falling.
+    pub falling: Vec<crate::entity::falling::FallingBlock>,
+    /// Blocks due to start falling, by tick.
+    falls_due: Vec<(u64, glam::IVec3)>,
+    /// Loaded chunks with upgraded v1.0 blocks to join to their neighbors.
+    post_processing: Vec<ChunkPos>,
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
     mob_defs: Arc<MobRegistry>,
@@ -193,6 +200,9 @@ impl Game {
             entities: Vec::new(),
             particles: Vec::new(),
             arrows: Vec::new(),
+            falling: Vec::new(),
+            falls_due: Vec::new(),
+            post_processing: Vec::new(),
             drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
             mobs: Vec::new(),
@@ -536,6 +546,8 @@ impl Game {
         self.tick_mobs();
         self.tick_fluids();
         self.tick_fires();
+        self.tick_falling();
+        self.post_process();
         self.tick_furnaces();
         self.time += 1;
         self.ticks_since_save += 1;

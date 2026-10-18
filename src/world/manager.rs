@@ -460,6 +460,24 @@ impl ChunkManager {
         }
     }
 
+    /// Takes the blocks of loaded chunk `pos` waiting to be joined to their
+    /// neighbors (`Chunk::post_process`); the chunk is saved without them.
+    pub fn take_post_process(&mut self, pos: ChunkPos) -> Vec<LocalPos> {
+        let Some(chunk) = self.world.get_mut(pos) else {
+            return Vec::new();
+        };
+        let list = std::mem::take(&mut chunk.post_process);
+        if !list.is_empty() {
+            self.unsaved.insert(pos);
+        }
+        list
+    }
+
+    /// Whether the chunk at `pos` and the eight around it are loaded.
+    pub fn loaded_around(&self, pos: ChunkPos) -> bool {
+        (-1..=1).all(|dz| (-1..=1).all(|dx| self.world.get(pos.offset(dx, dz)).is_some()))
+    }
+
     /// The block entity at `at`, if its chunk is loaded and it has one.
     pub fn block_entity(&self, at: IVec3) -> Option<&BlockEntity> {
         let (pos, local) = local_pos(at)?;

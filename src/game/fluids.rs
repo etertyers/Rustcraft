@@ -38,6 +38,8 @@ impl Game {
             self.fluids.changed(at);
             self.fires.changed(at);
         }
+        let cells: Vec<IVec3> = edits.iter().map(|&(at, _)| at).collect();
+        self.update_neighbors(&cells);
     }
 
     /// Whether the selected item is a bucket.
@@ -129,6 +131,9 @@ impl Game {
         for &(at, _) in &outcome.edits {
             self.fires.changed(at);
         }
+        // Fluid flowing past wakes sand and reshapes what it touches.
+        let cells: Vec<IVec3> = outcome.edits.iter().map(|&(at, _)| at).collect();
+        self.update_neighbors(&cells);
     }
 
     /// One tick of fire, and random ticks for the lava in chunks within

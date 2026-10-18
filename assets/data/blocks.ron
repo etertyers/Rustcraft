@@ -41,6 +41,7 @@
 //             Chest or Furnace (opens its slots), Bed (sleeps), Door
 //             (opens and closes both halves; iron doors have none, needing
 //             redstone) or Open (opens and closes a trapdoor or gate)
+//   falls     falls when nothing's under it after a block update (sand)
 //   fluid     Water or Lava for liquids (swimming, fog, slower mining)
 //   burns     (encourage, catch): how readily fire spreads beside it and
 //             how readily it burns away (modern FireBlock values)
@@ -67,8 +68,8 @@
     // Level 0 is a source, 1-7 flowing further from one, 8 and up falling.
     (name: "water", hardness: 100.0, props: [Level], item: false, fluid: Water, drops: Nothing, opacity: 3, replaceable: true, shape: Liquid, layer: Translucent, solid: false, cull_same: true, textures: (end: "water_still", side: "water_flow")),
     (name: "lava", hardness: 100.0, props: [Level], item: false, fluid: Lava, drops: Nothing, opacity: 15, replaceable: true, shape: Liquid, solid: false, light: 15, cull_same: true, textures: (end: "lava_still", side: "lava_flow")),
-    (name: "sand", hardness: 0.5, tool: Shovel, textures: (all: "sand")),
-    (name: "gravel", hardness: 0.6, tool: Shovel, drops: OneOf([(item: "flint", chance: 0.1), (item: "gravel")]), textures: (all: "gravel")),
+    (name: "sand", hardness: 0.5, falls: true, tool: Shovel, textures: (all: "sand")),
+    (name: "gravel", hardness: 0.6, falls: true, tool: Shovel, drops: OneOf([(item: "flint", chance: 0.1), (item: "gravel")]), textures: (all: "gravel")),
     (name: "gold_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "gold_ore")),
     (name: "iron_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Stone), textures: (all: "iron_ore")),
     (name: "coal_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: "coal")]), textures: (all: "coal_ore")),
@@ -276,5 +277,5 @@
     (name: "end_portal", hardness: -1.0, item: false, drops: Nothing, shape: EndPortal, solid: false, light: 15, textures: (all: "end_portal")),
     (name: "end_portal_frame", hardness: -1.0, placement: Facing, props: [Eye, Facing], shape: EndPortalFrame, light: 1, textures: (top: "endframe_top", bottom: "end_stone", side: "endframe_side")),
     (name: "end_stone", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "end_stone")),
-    (name: "dragon_egg", hardness: 3.0, shape: DragonEgg, light: 1, textures: (all: "dragon_egg")),
+    (name: "dragon_egg", hardness: 3.0, falls: true, shape: DragonEgg, light: 1, textures: (all: "dragon_egg")),
 ]

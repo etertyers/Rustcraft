@@ -268,6 +268,7 @@ impl Game {
     /// the first time.
     pub fn on_chunks_loaded(&mut self, chunks: &[ChunkPos]) {
         self.schedule_fluids(chunks);
+        self.queue_post_process(chunks);
         for &pos in chunks {
             if let Some(mobs) = self.stashed_mobs.remove(&pos) {
                 self.mobs.extend(mobs);

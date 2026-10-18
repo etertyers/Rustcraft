@@ -666,6 +666,10 @@ pub struct BlockDef {
     /// What right-clicking it does, if anything.
     #[serde(default)]
     pub activate: Option<Activate>,
+    /// Falls when there's nothing under it (sand, gravel), after a block
+    /// update: being placed, or a neighbor changing.
+    #[serde(default)]
+    pub falls: bool,
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,

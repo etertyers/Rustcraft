@@ -365,7 +365,7 @@ fn smooth_face(
 
 /// Unit cube face corners, counter-clockwise from outside, starting at the
 /// texture's bottom-left.
-fn face_corners(face: Face) -> [[f32; 3]; 4] {
+pub(crate) fn face_corners(face: Face) -> [[f32; 3]; 4] {
     match face {
         Face::Top => [[0., 1., 1.], [1., 1., 1.], [1., 1., 0.], [0., 1., 0.]],
         Face::Bottom => [[0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.]],
