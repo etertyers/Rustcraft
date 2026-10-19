@@ -129,6 +129,7 @@ impl Game {
         let held = self.held().cloned();
         let survival = self.mode.uses_up_items();
         match name.as_str() {
+            "villager" => self.talk_to_villager(index),
             "cow" => {
                 if held.is_some_and(|s| s.id == items::BUCKET) {
                     self.fill_held_bucket(items::MILK_BUCKET);

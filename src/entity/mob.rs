@@ -53,6 +53,9 @@ pub struct MobData {
     /// Taming progress for a horse (temper) or similar.
     #[serde(default)]
     pub temper: u8,
+    /// A villager's job, trades, bed and so on (added in M23).
+    #[serde(default)]
+    pub villager: Option<Box<super::villager::VillagerData>>,
 }
 
 /// A kill within this many ticks of the player's last hit drops

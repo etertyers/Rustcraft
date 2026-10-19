@@ -34,6 +34,8 @@ pub enum Screen {
     Enchanting,
     Anvil,
     Grindstone,
+    /// Trading with a villager.
+    Merchant,
 }
 
 /// What the player did on a screen this frame.
@@ -67,6 +69,30 @@ pub enum ScreenAction {
     Enchant(usize),
     /// Typed in the anvil's name box.
     AnvilName(String),
+    /// Made the villager's trade with this number.
+    Trade(usize),
+}
+
+/// One of a villager's trades, ready to draw.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TradeView {
+    pub buy: SlotView,
+    pub buy_b: Option<SlotView>,
+    pub sell: SlotView,
+    /// What the trade gives, for the tooltip.
+    pub name: String,
+    pub uses_left: u32,
+    /// The player has what it costs and it's in stock.
+    pub affordable: bool,
+}
+
+/// The trading screen's title, level progress and trades.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MerchantView {
+    pub title: String,
+    /// How far to the next level, 0–1 (`None` at master).
+    pub progress: Option<f32>,
+    pub trades: Vec<TradeView>,
 }
 
 /// One of an enchanting table's offers.
@@ -120,6 +146,7 @@ pub struct ScreenView<'a> {
     pub catalog: &'a [(ItemStack, SlotView, String)],
     /// The workstation screens' extras.
     pub bench: Option<BenchView>,
+    pub merchant: Option<MerchantView>,
 }
 
 /// A drag across slots in progress: the button held and the slots crossed.
@@ -187,6 +214,7 @@ fn panel_size(screen: &Screen) -> [f32; 2] {
         | Screen::Anvil
         | Screen::Grindstone => [176.0, 166.0],
         Screen::Hopper => [176.0, 133.0],
+        Screen::Merchant => [176.0, 222.0],
         Screen::Creative { .. } => [195.0, 136.0],
         // 1.0.0's GuiChest: 114 plus 18 per row.
         Screen::Chest => [176.0, 114.0 + CHEST_ROWS as f32 * 18.0],
@@ -211,6 +239,8 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
     // 1.0.0's chest puts the player's rows at 103 + (rows − 4) × 18.
     let below = match screen {
         Screen::Chest => 103.0 + (CHEST_ROWS as f32 - 4.0) * 18.0 - 84.0,
+        // Below the trades, where a six-row chest's inventory is.
+        Screen::Merchant => 103.0 + 2.0 * 18.0 - 84.0,
         // The hopper's player rows start at 51.
         Screen::Hopper => 51.0 - 84.0,
         _ => 0.0,
@@ -266,6 +296,7 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         .into_iter()
         .chain(inventory)
         .collect(),
+        Screen::Merchant => inventory.collect(),
         Screen::Grindstone => [
             (SlotRef::Grid(0), [49.0, 19.0]),
             (SlotRef::Grid(1), [49.0, 40.0]),
@@ -305,6 +336,7 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
             ("Repair & Disenchant", [8.0, 6.0]),
             ("Inventory", [8.0, 73.0]),
         ],
+        Screen::Merchant => &[("Inventory", [8.0, 128.0])],
     }
 }
 
@@ -371,6 +403,7 @@ pub fn show(
         Screen::Enchanting => &textures.enchanting,
         Screen::Anvil => &textures.anvil,
         Screen::Grindstone => &textures.grindstone,
+        Screen::Merchant => &textures.chest,
     };
     if *screen == Screen::Chest {
         // The chest rows, then the inventory part from the bottom of the
@@ -473,6 +506,20 @@ pub fn show(
         }
         if dragged || hovered == Some(slot) {
             painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
+        }
+    }
+    if let (Screen::Merchant, Some(merchant)) = (*screen, &view.merchant) {
+        let widgets = BenchWidgets {
+            ctx,
+            painter: &painter,
+            texture: background.id(),
+            origin,
+            scale,
+            pointer,
+            pressed: left,
+        };
+        if let Some(text) = paint_merchant(&widgets, merchant, &textures.atlas, &mut actions) {
+            tooltip = Some(text);
         }
     }
     if let Some(bench) = &view.bench {
@@ -583,6 +630,98 @@ fn slot_input(
         Some(click) => actions.push(ScreenAction::Click(slot, click)),
         None => {}
     }
+}
+
+/// The trades in two columns of five, each its price, an arrow and what it
+/// gives, with how many are left; the villager's name and level over
+/// them. A trade the player can't afford is dimmed.
+fn paint_merchant(
+    w: &BenchWidgets,
+    merchant: &MerchantView,
+    atlas: &egui::TextureHandle,
+    actions: &mut Vec<ScreenAction>,
+) -> Option<String> {
+    let at = |x: f32, y: f32| w.origin + vec2(x, y) * w.scale;
+    // Cover the chest's slots: the trades go there.
+    w.painter.rect_filled(
+        Rect::from_min_max(at(7.0, 16.0), at(169.0, 125.0)),
+        0.0,
+        Color32::from_rgb(198, 198, 198),
+    );
+    w.painter.text(
+        at(8.0, 5.0),
+        egui::Align2::LEFT_TOP,
+        &merchant.title,
+        egui::FontId::proportional(8.0 * w.scale),
+        Color32::from_gray(0x40),
+    );
+    if let Some(progress) = merchant.progress {
+        let bar = Rect::from_min_size(at(110.0, 7.0), vec2(58.0, 4.0) * w.scale);
+        w.painter.rect_filled(bar, 0.0, Color32::from_gray(80));
+        let mut filled = bar;
+        filled.set_width(bar.width() * progress.clamp(0.0, 1.0));
+        w.painter
+            .rect_filled(filled, 0.0, Color32::from_rgb(128, 255, 32));
+    }
+    let mut tooltip = None;
+    for (i, trade) in merchant.trades.iter().enumerate().take(10) {
+        let (x, y) = (8.0 + (i / 5) as f32 * 81.0, 18.0 + (i % 5) as f32 * 21.0);
+        let row = Rect::from_min_size(at(x, y), vec2(79.0, 19.0) * w.scale);
+        let hovered = w.pointer.is_some_and(|pos| row.contains(pos));
+        let shade = if hovered && trade.affordable {
+            Color32::from_rgb(160, 200, 160)
+        } else {
+            Color32::from_rgb(139, 139, 139)
+        };
+        w.painter.rect_filled(row, 0.0, shade);
+        gui::paint_slot(
+            w.painter,
+            at(x + 1.0, y + 1.5),
+            &trade.buy,
+            w.scale,
+            atlas.id(),
+        );
+        if let Some(b) = &trade.buy_b {
+            gui::paint_slot(w.painter, at(x + 18.0, y + 1.5), b, w.scale, atlas.id());
+        }
+        w.painter.text(
+            at(x + 40.0, y + 9.5),
+            egui::Align2::CENTER_CENTER,
+            "→",
+            egui::FontId::proportional(9.0 * w.scale),
+            Color32::WHITE,
+        );
+        gui::paint_slot(
+            w.painter,
+            at(x + 48.0, y + 1.5),
+            &trade.sell,
+            w.scale,
+            atlas.id(),
+        );
+        let (left, color) = if trade.uses_left == 0 {
+            ("X".to_owned(), Color32::from_rgb(0xFF, 0x50, 0x50))
+        } else {
+            (trade.uses_left.to_string(), Color32::from_gray(0x30))
+        };
+        w.painter.text(
+            at(x + 77.0, y + 10.0),
+            egui::Align2::RIGHT_CENTER,
+            left,
+            egui::FontId::proportional(7.0 * w.scale),
+            color,
+        );
+        if !trade.affordable {
+            w.painter
+                .rect_filled(row, 0.0, Color32::from_black_alpha(70));
+        }
+        if hovered {
+            tooltip = Some(trade.name.clone());
+            if w.pressed && trade.affordable {
+                actions.push(ScreenAction::Trade(i));
+            }
+        }
+    }
+    tooltip
 }
 
 /// What drawing a workstation screen's extras needs.

@@ -149,6 +149,8 @@ pub struct View<'a, T: Terrain> {
     /// The mob (an index into `others`) that hurt or was hurt by the
     /// player: tame wolves help.
     pub threat: Option<usize>,
+    /// Where a villager's day sends it (its job site, the bell, its bed).
+    pub errand: Option<DVec3>,
 }
 
 /// Who a mob's blow lands on.
@@ -290,7 +292,13 @@ pub fn think<T: Terrain>(
     }
 
     let goal = match def.ai {
-        Ai::Passive | Ai::Villager | Ai::Horse => Goal::Idle,
+        Ai::Villager => match view.errand {
+            // Walk there, then stay put.
+            Some(errand) if mob.feet().distance(errand) > 1.5 => Goal::Chase(errand),
+            Some(errand) => Goal::Stand(Some(errand + DVec3::Y)),
+            None => Goal::Idle,
+        },
+        Ai::Passive | Ai::Horse => Goal::Idle,
         Ai::Rabbit => Goal::Idle,
         Ai::Hostile { attack } => melee(mob, def, view, attack, true, &mut intent),
         Ai::Neutral { attack } => {
@@ -1133,6 +1141,7 @@ mod tests {
                 others,
                 owner: player.map(|p| p.feet),
                 threat: None,
+                errand: None,
             };
             let intent = think(mob, def, &view, &mut random);
             mob.tick(&intent.input, grid, false);

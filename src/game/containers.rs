@@ -39,6 +39,8 @@ pub enum Container {
     Cart(usize),
     /// An enchanting table, anvil or grindstone, with the stacks put in it.
     Bench(Bench),
+    /// Trading with the villager whose mob id this is.
+    Merchant(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +66,7 @@ impl Container {
     /// The block whose slots this shows, if it shows a block's.
     pub fn block(&self) -> Option<IVec3> {
         match *self {
-            Self::Crafting { .. } | Self::Cart(_) | Self::Bench(_) => None,
+            Self::Crafting { .. } | Self::Cart(_) | Self::Bench(_) | Self::Merchant(_) => None,
             Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
                 Some(at)
             }
@@ -579,7 +581,7 @@ impl Game {
                 let count = self.block_slots().map_or(0, <[_]>::len);
                 (0..count).map(SlotRef::Block).collect()
             }
-            None => Vec::new(),
+            Some(Container::Merchant(_)) | None => Vec::new(),
         };
         slots.extend((0..SLOTS).map(SlotRef::Inventory));
         for full_stacks in [false, true] {

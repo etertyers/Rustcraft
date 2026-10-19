@@ -192,6 +192,14 @@ const LIGHT_REACH: i32 = 14;
 const MAX_RESULTS_PER_FRAME: usize = 64;
 
 impl ChunkManager {
+    /// The generator, for a generated world.
+    pub fn terrain(&self) -> Option<&crate::world::worldgen::terrain::Terrain> {
+        match &*self.source {
+            ChunkSource::Terrain(terrain) => Some(terrain),
+            _ => None,
+        }
+    }
+
     /// Starts `workers` threads. Chunks are generated one ring beyond
     /// `radius` so border chunks can be meshed against their neighbors.
     pub fn new(source: ChunkSource, models: Arc<BlockModels>, radius: i32, workers: usize) -> Self {

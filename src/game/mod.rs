@@ -28,6 +28,7 @@ mod redstone;
 mod sleep;
 mod updates;
 pub mod view;
+mod villagers;
 
 use std::{path::Path, sync::Arc};
 
