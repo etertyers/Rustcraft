@@ -442,12 +442,13 @@ impl Game {
     /// of a small box around the eye (vanilla's `getMaxZoom`).
     pub fn clip_distance(&self, eye: DVec3, dir: DVec3, wanted: f64) -> f64 {
         let world = self.chunks.world();
-        let blocks = self.items.blocks;
-        let blocking = |cell: IVec3| {
+        let shapes = crate::world::shape::shapes();
+        // The blocks' real shapes, so a ladder you're on or a slab beside
+        // you only stops the camera where its boxes are.
+        let boxes = |cell: IVec3| {
             world
                 .block(cell.x, cell.y, cell.z)
-                .and_then(|block| blocks.get(block.id()))
-                .is_some_and(|def| def.solid)
+                .map_or(&[][..], |block| shapes.collision(block))
         };
         let mut distance = wanted;
         for i in 0..8 {
@@ -469,7 +470,7 @@ impl Game {
                 },
             );
             let start = eye + offset;
-            if let Some(hit) = raycast::raycast(start, dir, wanted + CLIP_MARGIN, blocking) {
+            if let Some(hit) = raycast::raycast_boxes(start, dir, wanted + CLIP_MARGIN, boxes) {
                 distance = distance.min(hit.point.distance(start));
             }
         }
@@ -848,6 +849,39 @@ mod tests {
         game.cycle_view();
         assert_eq!(game.view().mode, ViewMode::First);
         assert_eq!(game.view_camera().position, eye);
+    }
+
+    #[test]
+    fn a_ladder_youre_on_doesnt_pull_the_camera_into_your_head() {
+        use crate::{
+            game::tests::flat_game,
+            player::mode::GameMode,
+            world::{Face, block::BlockState, blocks, props::Prop},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        game.camera.pitch = 0.0;
+        // A wall just north of the player with a ladder in the player's cell,
+        // and a slab behind them.
+        let ladder = BlockState::of(blocks::LADDER).with_face(Prop::Facing, Face::South);
+        game.set_blocks(&[
+            (IVec3::new(0, 65, -1), BlockState::of(blocks::STONE)),
+            (IVec3::new(0, 65, 0), ladder),
+            (IVec3::new(0, 64, 2), BlockState::of(blocks::OAK_SLAB)),
+        ]);
+        game.advance(0.0);
+        let eye = game.camera.position;
+        game.set_view_mode(ViewMode::ThirdBack);
+        let behind = game.view_camera();
+        assert!(
+            ((behind.position - eye).length() - 4.0).abs() < 1e-3,
+            "free behind: {}",
+            (behind.position - eye).length()
+        );
+        // In front, the ladder's plate is the first thing in the way, not
+        // the ladder's whole cell.
+        game.set_view_mode(ViewMode::ThirdFront);
+        let front = (game.view_camera().position - eye).length();
+        assert!(front > 0.1, "{front}");
     }
 
     #[test]
