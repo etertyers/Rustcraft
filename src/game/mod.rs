@@ -8,6 +8,8 @@ mod fluids;
 mod hands;
 mod mobs;
 #[cfg(test)]
+mod moves;
+#[cfg(test)]
 mod progression;
 mod sleep;
 mod updates;
@@ -518,7 +520,12 @@ impl Game {
         let eye = self
             .lying_eye()
             .unwrap_or(feet + DVec3::Y * self.body.eye_height());
-        self.camera.position = eye.as_vec3();
+        // The camera eases between eye heights; what you aim and reach with
+        // is the eye itself.
+        let seen = self
+            .lying_eye()
+            .unwrap_or(feet + DVec3::Y * self.view.eye_height(alpha as f32) as f64);
+        self.camera.position = seen.as_vec3();
         self.target = self.find_target(eye);
     }
 
@@ -649,6 +656,7 @@ impl Game {
             .in_fire(&self.body.aabb()),
             eyes_in_water,
             flying: self.body.flying,
+            no_fall: self.body.on_climbable || self.body.bounced,
         };
         self.stats.tick(&around, vulnerable);
         if vulnerable {

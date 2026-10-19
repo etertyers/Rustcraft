@@ -30,6 +30,14 @@ const CLIP_MARGIN: f64 = 0.1;
 const BOW_FULL_DRAW: f32 = 20.0;
 /// Ticks of eating before the food is eaten.
 const EAT_TICKS: f32 = 32.0;
+/// The view widens by this much sprinting (the speed attribute's 1.3,
+/// halfway to 1) and flying; a fully drawn bow narrows it by 15%.
+const SPRINTING_FOV: f32 = 1.15;
+const FLYING_FOV: f32 = 1.1;
+const BOW_ZOOM: f32 = 0.15;
+/// The view and the eyes ease to where they're going by this much a tick.
+const FOV_EASE: f32 = 0.5;
+const EYE_EASE: f32 = 0.5;
 /// Swimming eases in and out by this much a tick.
 const SWIM_STEP: f32 = 0.09;
 
@@ -68,6 +76,13 @@ pub struct TickInfo {
     pub swimming: bool,
     /// The item type in the selected slot.
     pub item: Option<ItemId>,
+    /// Sprinting, and flying in creative: both widen the view.
+    pub sprinting: bool,
+    pub flying: bool,
+    /// Ticks a bow has been drawn, which narrows the view.
+    pub bow_ticks: Option<u32>,
+    /// Where the eyes are above the feet now (the pose's).
+    pub eye_height: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +112,10 @@ pub struct ViewState {
     limb_swing: f32,
     prev_swim: f32,
     swim: f32,
+    prev_fov: f32,
+    fov: f32,
+    prev_eye: f32,
+    eye: f32,
 }
 
 /// An angle wrapped to −π..π.
@@ -136,6 +155,10 @@ impl ViewState {
             limb_swing: 0.0,
             prev_swim: 0.0,
             swim: 0.0,
+            prev_fov: 1.0,
+            fov: 1.0,
+            prev_eye: crate::config::EYE_HEIGHT as f32,
+            eye: crate::config::EYE_HEIGHT as f32,
         }
     }
 
@@ -203,12 +226,44 @@ impl ViewState {
 
         self.tick_body_yaw(t, walked);
 
+        self.tick_fov(t);
+        self.prev_eye = self.eye;
+        self.eye += (t.eye_height as f32 - self.eye) * EYE_EASE;
+
         self.prev_swim = self.swim;
         self.swim = if t.swimming {
             (self.swim + SWIM_STEP).min(1.0)
         } else {
             (self.swim - SWIM_STEP).max(0.0)
         };
+    }
+
+    /// The view widens when sprinting or flying and narrows drawing a bow,
+    /// easing toward it by half each tick (modern `getFieldOfViewModifier`).
+    fn tick_fov(&mut self, t: &TickInfo) {
+        let mut target = 1.0;
+        if t.flying {
+            target *= FLYING_FOV;
+        }
+        if t.sprinting {
+            target *= SPRINTING_FOV;
+        }
+        if let Some(ticks) = t.bow_ticks {
+            let drawn = (ticks as f32 / BOW_FULL_DRAW).min(1.0);
+            target *= 1.0 - drawn * drawn * BOW_ZOOM;
+        }
+        self.prev_fov = self.fov;
+        self.fov += (target - self.fov) * FOV_EASE;
+    }
+
+    /// What the field of view is multiplied by, `alpha` of the way between ticks.
+    pub fn fov_modifier(&self, alpha: f32) -> f32 {
+        lerp(alpha, self.prev_fov, self.fov)
+    }
+
+    /// The camera's height above the feet, easing between poses.
+    pub fn eye_height(&self, alpha: f32) -> f32 {
+        lerp(alpha, self.prev_eye, self.eye)
     }
 
     /// The body turns after the head (vanilla's `tickHeadTurn`): toward
@@ -341,16 +396,20 @@ impl Game {
             on_ground: self.body.on_ground,
             yaw: self.camera.yaw,
             pitch: self.camera.pitch,
-            swimming: self.is_swimming(),
+            swimming: self.body.pose() == crate::player::physics::Pose::Swimming,
             item: self.inventory.selected_stack().map(|stack| stack.id),
+            sprinting: self.body.sprinting,
+            flying: self.body.flying,
+            bow_ticks: self.drawing,
+            eye_height: self.body.eye_height(),
         };
         self.view.tick(&info);
     }
 
-    /// Swimming: sprinting in water, with the head under (modern
-    /// `isSwimming`). Crawling joins this with M17.
+    /// Swimming: sprinting in water after putting the head under (modern
+    /// `isSwimming`).
     pub fn is_swimming(&self) -> bool {
-        self.body.sprinting && self.body.liquid == Some(crate::world::block::Fluid::Water)
+        self.body.swimming
     }
 
     /// The camera drawing the frame: the player's eyes, or pulled back
@@ -359,6 +418,7 @@ impl Game {
         let alpha = self.tick_alpha() as f32;
         let mut camera = self.camera;
         camera.bob = self.view.view_bob(alpha);
+        camera.fov = (camera.fov * self.view.fov_modifier(alpha)).clamp(1.0, 170.0);
         let flip = match self.view.mode {
             ViewMode::First => return camera,
             ViewMode::ThirdBack => false,
@@ -440,9 +500,9 @@ impl Game {
             age: view.age(alpha),
             head_yaw: wrap(self.camera.yaw - body_yaw),
             head_pitch: -self.camera.pitch,
-            crouching: self.body.sneaking,
+            crouching: self.body.pose() == crate::player::physics::Pose::Crouching,
             swim_amount: view.swim_amount(alpha),
-            in_water: self.body.liquid.is_some(),
+            in_water: self.body.liquid == Some(crate::world::block::Fluid::Water),
             fall_flying: 0.0,
             attack: view.attack_anim(alpha),
             swing_left: false,
@@ -512,6 +572,10 @@ mod tests {
             pitch: 0.0,
             swimming: false,
             item: None,
+            sprinting: false,
+            flying: false,
+            bow_ticks: None,
+            eye_height: 1.62,
         }
     }
 
@@ -847,6 +911,97 @@ mod tests {
         game.on_mouse_button(winit::event::MouseButton::Right, false);
         game.run_ticks(1);
         assert!(game.view().is_swinging());
+    }
+
+    #[test]
+    fn the_view_widens_when_sprinting_and_flying_and_narrows_drawing_a_bow() {
+        let mut view = ViewState::new(0.0, 0.0, None);
+        assert_eq!(view.fov_modifier(1.0), 1.0);
+        let sprint = TickInfo {
+            sprinting: true,
+            ..walking(0.0, -0.2)
+        };
+        for _ in 0..10 {
+            view.tick(&sprint);
+        }
+        assert!((view.fov_modifier(1.0) - 1.15).abs() < 0.01);
+        // Easing: half way there after one tick.
+        let mut view = ViewState::new(0.0, 0.0, None);
+        view.tick(&sprint);
+        assert!((view.fov_modifier(1.0) - 1.075).abs() < 1e-5);
+        assert!((view.fov_modifier(0.0) - 1.0).abs() < 1e-5);
+        // Back to normal when sprinting stops.
+        for _ in 0..10 {
+            view.tick(&walking(0.0, -0.2));
+        }
+        assert!((view.fov_modifier(1.0) - 1.0).abs() < 0.01);
+        let mut view = ViewState::new(0.0, 0.0, None);
+        let fly = TickInfo {
+            flying: true,
+            sprinting: true,
+            ..walking(0.0, -0.2)
+        };
+        for _ in 0..10 {
+            view.tick(&fly);
+        }
+        assert!((view.fov_modifier(1.0) - 1.15 * 1.1).abs() < 0.01);
+        // A bow drawn fully pulls the view in by 15%.
+        let mut view = ViewState::new(0.0, 0.0, None);
+        for _ in 0..10 {
+            view.tick(&TickInfo {
+                bow_ticks: Some(20),
+                ..walking(0.0, 0.0)
+            });
+        }
+        assert!((view.fov_modifier(1.0) - 0.85).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_camera_eases_between_eye_heights() {
+        let mut view = ViewState::new(0.0, 0.0, None);
+        assert_eq!(view.eye_height(1.0), 1.62);
+        let crouched = TickInfo {
+            eye_height: 1.27,
+            ..walking(0.0, 0.0)
+        };
+        view.tick(&crouched);
+        // Half way down after a tick, then closer and closer.
+        assert!((view.eye_height(1.0) - 1.445).abs() < 1e-5);
+        for _ in 0..8 {
+            view.tick(&crouched);
+        }
+        assert!((view.eye_height(1.0) - 1.27).abs() < 0.002);
+        assert!((view.eye_height(0.0) - view.eye_height(1.0)).abs() < 0.002);
+    }
+
+    #[test]
+    fn sprinting_widens_the_game_view_and_sneaking_lowers_the_camera() {
+        use crate::{game::tests::flat_game, player::mode::GameMode};
+        let mut game = flat_game(GameMode::Survival);
+        game.camera.pitch = 0.0;
+        let base = game.view_camera().fov;
+        game.on_key(KeyCode::KeyW, true, false, true);
+        game.on_key(KeyCode::ControlLeft, true, false, true);
+        game.run_ticks(15);
+        game.advance(0.0);
+        assert!(game.body.sprinting);
+        let fov = game.view_camera().fov;
+        assert!((fov / base - 1.15).abs() < 0.02, "{base} -> {fov}");
+        game.on_key(KeyCode::KeyW, false, false, true);
+        game.on_key(KeyCode::ControlLeft, false, false, true);
+        game.run_ticks(20);
+        game.advance(0.0);
+        assert!((game.view_camera().fov / base - 1.0).abs() < 0.01);
+
+        // Sneaking: the hitbox and eyes drop, the camera follows.
+        let standing_eye = game.camera.position.y - game.body.position().y as f32;
+        assert!((standing_eye - 1.62).abs() < 0.01, "{standing_eye}");
+        game.on_key(KeyCode::ShiftLeft, true, false, true);
+        game.run_ticks(10);
+        game.advance(0.0);
+        let sneaking_eye = game.camera.position.y - game.body.position().y as f32;
+        assert!((sneaking_eye - 1.27).abs() < 0.01, "{sneaking_eye}");
+        assert!(game.player_pose().crouching);
     }
 
     #[test]

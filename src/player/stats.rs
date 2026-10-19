@@ -108,6 +108,8 @@ pub struct Surroundings {
     pub eyes_in_water: bool,
     /// Flying in creative, which never builds up a fall.
     pub flying: bool,
+    /// On a ladder or vine, or bouncing on slime: a fall is cancelled.
+    pub no_fall: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,10 +253,10 @@ impl Stats {
         }
     }
 
-    /// 1.0.0's `updateFallState`: a fall hurts on landing; water, lava and
-    /// flight cancel it.
+    /// 1.0.0's `updateFallState`: a fall hurts on landing; water, ladders,
+    /// slime and flight cancel it, lava halves it.
     fn tick_fall(&mut self, around: &Surroundings, vulnerable: bool) {
-        if around.in_water || around.flying {
+        if around.in_water || around.flying || around.no_fall {
             self.fall_distance = 0.0;
         } else if around.in_lava {
             self.fall_distance *= 0.5;
@@ -334,6 +336,7 @@ mod tests {
         in_fire: false,
         eyes_in_water: false,
         flying: false,
+        no_fall: false,
     };
     const AIR: Surroundings = Surroundings {
         on_ground: false,

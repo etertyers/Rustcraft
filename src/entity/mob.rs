@@ -153,6 +153,7 @@ impl Mob {
             in_fire: world.in_fire(&self.body.aabb()),
             eyes_in_water,
             flying: false,
+            no_fall: false,
         };
         self.stats.tick(&around, true);
         // 1.0.0's limb swing: faster walking, bigger strides.
