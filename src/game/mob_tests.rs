@@ -8,7 +8,7 @@ use crate::{
     entity::mob::Mob,
     inventory::{items, stack::ItemStack},
     player::mode::GameMode,
-    world::{biome::Biome, block::BlockState, blocks},
+    world::{biome::Biome, block::BlockState, blocks, worldgen::rng::Rng},
 };
 
 const NIGHT: u64 = 18_000;
@@ -762,7 +762,10 @@ fn every_mob_model_stands_on_its_feet_and_is_about_its_hitbox_tall() {
 
 #[test]
 fn endermen_pick_up_blocks_they_pass_and_drop_them_when_killed() {
-    let mut game = night_game(GameMode::Creative);
+    // By day, so it doesn't teleport away from the sand (1 in 400 ticks at
+    // night), and with a fixed seed so the test can't be unlucky.
+    let mut game = lit_flat_game(GameMode::Creative);
+    game.rng = Rng::new(7);
     // Sand all about it at its own height, where it can reach.
     let sand: Vec<_> = (6..=12)
         .flat_map(|x| (6..=12).map(move |z| (IVec3::new(x, 64, z), BlockState::of(blocks::SAND))))
