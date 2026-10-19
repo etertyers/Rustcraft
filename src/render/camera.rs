@@ -92,6 +92,15 @@ impl Camera {
         }
     }
 
+    /// The view and projection turned but not moved: for the sky, which
+    /// only needs directions. Leaving the position out keeps the inverse
+    /// exact far from the origin.
+    pub fn sky_view_proj(&self, aspect: f32) -> Mat4 {
+        let view = look_to_mat4(Vec3::ZERO, self.forward(), Vec3::Y);
+        let proj = perspective(self.fov.to_radians(), aspect, config::Z_NEAR, config::Z_FAR);
+        proj * self.bob.matrix() * view
+    }
+
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = look_to_mat4(self.position, self.forward(), Vec3::Y);
         // wgpu clip space matches DirectX: depth 0..1, Y up.
@@ -184,6 +193,52 @@ mod tests {
             ..camera
         };
         assert!((ndc(&rolled) - rest).length() > 0.01);
+    }
+
+    /// The sky's view ray for a pixel, as `sky.wgsl` works it out.
+    fn sky_ray(camera: &Camera, ndc: glam::Vec2) -> Vec3 {
+        let inverse = camera.sky_view_proj(16.0 / 9.0).inverse();
+        let at = |z: f32| {
+            let p = inverse * glam::Vec4::new(ndc.x, ndc.y, z, 1.0);
+            p.truncate() / p.w
+        };
+        (at(0.999) - at(0.0)).normalize()
+    }
+
+    #[test]
+    fn the_walking_bob_shifts_the_view_without_turning_the_sky() {
+        let still = Camera::new(Vec3::new(1234.5, 70.0, -987.25), 0.7, 0.2);
+        let shifted = Camera {
+            bob: ViewBob {
+                sideways: 0.05,
+                down: -0.1,
+                ..ViewBob::NONE
+            },
+            ..still
+        };
+        for ndc in [
+            glam::Vec2::ZERO,
+            glam::Vec2::new(0.9, 0.9),
+            glam::Vec2::new(-0.8, 0.3),
+        ] {
+            let (a, b) = (sky_ray(&still, ndc), sky_ray(&shifted, ndc));
+            assert!(a.angle_between(b) < 1e-5, "{ndc}: {a} vs {b}");
+            // And it is the ray the world is drawn with.
+            let world = shifted.view_proj(16.0 / 9.0);
+            let point = shifted.position + b * 40.0;
+            let clip = world * point.extend(1.0);
+            let seen = clip.truncate() / clip.w;
+            assert!(
+                (seen.truncate() - ndc).length() < 0.02,
+                "{ndc} drawn at {seen}"
+            );
+            // The old way, from a point a tenth of a block out minus the
+            // camera position, swung by tens of degrees.
+            let inverse = shifted.view_proj(16.0 / 9.0).inverse();
+            let p = inverse * glam::Vec4::new(ndc.x, ndc.y, 0.5, 1.0);
+            let old = (p.truncate() / p.w - shifted.position).normalize();
+            assert!(old.angle_between(a) > 0.2, "{ndc}: the old ray was fine?");
+        }
     }
 
     #[test]

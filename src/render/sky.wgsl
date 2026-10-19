@@ -74,8 +74,12 @@ fn billboard(dir: vec3<f32>, toward: vec3<f32>, size: f32) -> vec2<f32> {
 
 @fragment
 fn fs_main(in: SkyOutput) -> @location(0) vec4<f32> {
-    let far = globals.inverse_view_proj * vec4<f32>(in.ndc, 0.5, 1.0);
-    let dir = normalize(far.xyz / far.w - globals.camera.xyz);
+    // The view ray through this pixel, from a matrix that turns but doesn't
+    // move: from a point on the near plane to one about 50 blocks out, so
+    // the walking bob's shift can't swing it.
+    let near = globals.inverse_sky_view_proj * vec4<f32>(in.ndc, 0.0, 1.0);
+    let far = globals.inverse_sky_view_proj * vec4<f32>(in.ndc, 0.999, 1.0);
+    let dir = normalize(far.xyz / far.w - near.xyz / near.w);
 
     // Sky color overhead, fog toward and below the horizon.
     var color = globals.fog_color.rgb;

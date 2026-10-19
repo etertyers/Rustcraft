@@ -3,6 +3,9 @@
 struct Globals {
     view_proj: mat4x4<f32>,
     inverse_view_proj: mat4x4<f32>,
+    // The inverse of the view and projection without the camera's position,
+    // for directions (the sky).
+    inverse_sky_view_proj: mat4x4<f32>,
     // xyz: camera position; w: game time in ticks.
     camera: vec4<f32>,
     // rgb: fog color (sRGB); w: linear fog start distance.

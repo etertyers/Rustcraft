@@ -45,6 +45,7 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 struct Globals {
     view_proj: [[f32; 4]; 4],
     inverse_view_proj: [[f32; 4]; 4],
+    inverse_sky_view_proj: [[f32; 4]; 4],
     camera: [f32; 4],
     fog_color: [f32; 4],
     fog: [f32; 4],
@@ -776,7 +777,12 @@ impl Renderer {
             self.old_atlases
                 .retain(|(generation, _)| chunks.values().any(|c| c.atlas == *generation));
         }
-        let frame_globals = globals(view_proj, camera.position, environment);
+        let frame_globals = globals(
+            view_proj,
+            camera.sky_view_proj(self.aspect()),
+            camera.position,
+            environment,
+        );
         self.queue
             .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&frame_globals));
         let outline = self.outline.prepare(&self.queue);
@@ -892,7 +898,8 @@ impl Renderer {
                 fog_density: 0.0,
                 ..*environment
             };
-            let hand = globals(hand::hand_projection(self.aspect()), Vec3::ZERO, &hand_env);
+            let hand_proj = hand::hand_projection(self.aspect());
+            let hand = globals(hand_proj, hand_proj, Vec3::ZERO, &hand_env);
             self.queue
                 .write_buffer(&self.hand_globals_buffer, 0, bytemuck::bytes_of(&hand));
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -990,11 +997,18 @@ fn draw_range(pass: &mut wgpu::RenderPass<'_>, mesh: &ChunkBuffers, range: std::
     pass.draw_indexed(range, 0, 0..1);
 }
 
-fn globals(view_proj: glam::Mat4, camera: Vec3, env: &Environment) -> Globals {
+/// `sky_view_proj` is the view and projection without the camera's position.
+fn globals(
+    view_proj: glam::Mat4,
+    sky_view_proj: glam::Mat4,
+    camera: Vec3,
+    env: &Environment,
+) -> Globals {
     let (sunrise, strength) = env.sunrise.unwrap_or((Vec3::ZERO, 0.0));
     Globals {
         view_proj: view_proj.to_cols_array_2d(),
         inverse_view_proj: view_proj.inverse().to_cols_array_2d(),
+        inverse_sky_view_proj: sky_view_proj.inverse().to_cols_array_2d(),
         camera: camera.extend(env.time).to_array(),
         fog_color: env.fog_color.extend(env.fog_start).to_array(),
         fog: [
