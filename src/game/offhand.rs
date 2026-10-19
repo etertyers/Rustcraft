@@ -361,3 +361,20 @@ fn fire_spreads_to_wood_beside_it() {
         .unwrap_or(false);
     assert!(burnt, "the planks burned away");
 }
+
+#[test]
+fn the_survival_screen_can_put_items_in_the_off_hand_slot() {
+    use crate::inventory::slots::{Click, SlotRef};
+    let mut game = flat_game(GameMode::Survival);
+    game.cursor = Some(ItemStack::new(items::SHIELD, 1));
+    game.click_slot(SlotRef::Inventory(OFFHAND), Click::Left);
+    assert!(game.cursor.is_none());
+    assert_eq!(
+        game.inventory.hand_stack(Hand::Off).unwrap().id,
+        items::SHIELD
+    );
+    // Picking it back up empties the slot.
+    game.click_slot(SlotRef::Inventory(OFFHAND), Click::Left);
+    assert!(game.inventory.hand_stack(Hand::Off).is_none());
+    assert_eq!(game.cursor.unwrap().id, items::SHIELD);
+}
