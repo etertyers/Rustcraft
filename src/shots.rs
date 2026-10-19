@@ -183,6 +183,16 @@ pub static SHOTS: &[Shot] = &[
         stage: third_sneak,
     },
     Shot {
+        name: "m23-village",
+        about: "a plains village by spawn on seed 80: the well, streets, houses, farms and lamps",
+        world: Some(WorldKind::Generated { seed: 80 }),
+        view: Some(([8.5, 96.0, 30.5], std::f32::consts::PI, -0.42)),
+        time: Some(4000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m22-glint",
         about: "an enchanted pickaxe in hand, enchanted and plain swords lying ahead, experience orbs and the XP bar",
         world: Some(WorldKind::Flat),

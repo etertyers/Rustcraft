@@ -26,6 +26,8 @@ pub fn solid(terrain: &Terrain, at: IVec3) -> bool {
 
 pub fn generate(terrain: &Terrain, start: ChunkPos, rng: &mut Rng) -> Option<Vec<Piece>> {
     let (x0, z0) = start.min_block();
+    // The ground's height once for the chunk: a room stays well under it.
+    let ground = terrain.height(x0 + 8, z0 + 8);
     for _ in 0..TRIES {
         let center = IVec3::new(
             x0 + rng.below(16) as i32,
@@ -33,6 +35,9 @@ pub fn generate(terrain: &Terrain, start: ChunkPos, rng: &mut Rng) -> Option<Vec
             z0 + rng.below(16) as i32,
         );
         let (rx, rz) = (2 + rng.below(2) as i32, 2 + rng.below(2) as i32);
+        if center.y + 5 + 12 > ground {
+            continue;
+        }
         if let Some(piece) = room(terrain, center, rx, rz, rng) {
             return Some(vec![piece]);
         }
@@ -40,33 +45,44 @@ pub fn generate(terrain: &Terrain, start: ChunkPos, rng: &mut Rng) -> Option<Vec
     None
 }
 
+/// Rock here (the caller keeps rooms 12 blocks under the ground, so only
+/// caves matter).
+fn rock(terrain: &Terrain, at: IVec3) -> bool {
+    at.y > 0 && !terrain.is_cave(at.x, at.y, at.z)
+}
+
 fn room(terrain: &Terrain, c: IVec3, rx: i32, rz: i32, rng: &mut Rng) -> Option<Piece> {
     let (lo, hi) = (
         c + IVec3::new(-rx - 1, -1, -rz - 1),
         c + IVec3::new(rx + 1, 4, rz + 1),
     );
-    if hi.y + 4 > terrain.height(c.x, c.z) {
-        return None;
-    }
+    // Openings first: most spots have no cave near, and that's cheap to
+    // see. An opening is a cave at the wall's foot with room above it.
     let mut openings = 0;
     for x in lo.x..=hi.x {
         for z in lo.z..=hi.z {
-            // Floor and ceiling must be rock.
-            if !solid(terrain, IVec3::new(x, lo.y, z)) || !solid(terrain, IVec3::new(x, hi.y, z)) {
-                return None;
-            }
-            // Openings: a cave at the wall's foot with room above it.
             let wall = x == lo.x || x == hi.x || z == lo.z || z == hi.z;
             if wall
-                && !solid(terrain, IVec3::new(x, c.y, z))
-                && !solid(terrain, IVec3::new(x, c.y + 1, z))
+                && !rock(terrain, IVec3::new(x, c.y, z))
+                && !rock(terrain, IVec3::new(x, c.y + 1, z))
             {
                 openings += 1;
+                if openings > 5 {
+                    return None;
+                }
             }
         }
     }
-    if !(1..=5).contains(&openings) {
+    if openings == 0 {
         return None;
+    }
+    // Floor and ceiling must be rock.
+    for x in lo.x..=hi.x {
+        for z in lo.z..=hi.z {
+            if !rock(terrain, IVec3::new(x, lo.y, z)) || !rock(terrain, IVec3::new(x, hi.y, z)) {
+                return None;
+            }
+        }
     }
     let mut build = Build::new();
     let cobble = BlockState::of(blocks::COBBLESTONE);
@@ -84,7 +100,7 @@ fn room(terrain: &Terrain, c: IVec3, rx: i32, rz: i32, rng: &mut Rng) -> Option<
                     mossy
                 } else if y == lo.y || y == hi.y {
                     cobble
-                } else if !solid(terrain, at) {
+                } else if !rock(terrain, at) {
                     // Leave the openings the cave made.
                     continue;
                 } else {
