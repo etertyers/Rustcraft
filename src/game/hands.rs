@@ -39,6 +39,11 @@ const SPRINT_KNOCKBACK: f64 = 0.5;
 const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
 
 impl Game {
+    /// Eating or drawing a bow, which slows the player to a fifth.
+    pub(super) fn using_item(&self) -> bool {
+        self.eating.is_some() || self.drawing.is_some()
+    }
+
     /// The block being mined and how far along it is (0–1), for the crack.
     pub fn mining_progress(&self) -> Option<(IVec3, f32)> {
         self.mining

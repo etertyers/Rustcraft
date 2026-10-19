@@ -38,7 +38,7 @@ use crate::{
         collision::{Collider, WorldCollider},
         input::MoveKeys,
         mode::GameMode,
-        physics::Body,
+        physics::{Body, MoveInput},
         raycast::{self, Hit},
         stats::{DamageSource, Stats, Surroundings},
     },
@@ -580,8 +580,12 @@ impl Game {
         if !collider.is_loaded(&self.body.aabb()) {
             return;
         }
-        self.body
-            .tick(&self.keys.move_input(), self.camera.yaw, &collider);
+        let input = MoveInput {
+            look_y: self.camera.pitch.sin() as f64,
+            using_item: self.using_item(),
+            ..self.keys.move_input()
+        };
+        self.body.tick(&input, self.camera.yaw, &collider);
         if self.body.position().y < VOID_Y {
             if self.mode.is_vulnerable() {
                 self.stats.damage(VOID_DAMAGE, DamageSource::Fall);
