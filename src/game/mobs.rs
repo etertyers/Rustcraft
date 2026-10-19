@@ -603,7 +603,7 @@ impl Game {
                 let (min_x, min_z) = pos.min_block();
                 let mut cell = IVec3::new(
                     min_x + (self.rng.next_f64() * 16.0) as i32,
-                    (self.rng.next_f64() * top as f64) as i32,
+                    (self.rng.next_f64() * (top + 1) as f64) as i32,
                     min_z + (self.rng.next_f64() * 16.0) as i32,
                 );
                 let biome = self.biome_at(cell.x, cell.z);

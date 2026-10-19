@@ -822,14 +822,14 @@ fn endermen_pick_up_blocks_they_pass_and_drop_them_when_killed() {
     let mut game = lit_flat_game(GameMode::Creative);
     game.rng = Rng::new(7);
     // Sand all about it at its own height, where it can reach.
-    let sand: Vec<_> = (6..=12)
-        .flat_map(|x| (6..=12).map(move |z| (IVec3::new(x, 64, z), BlockState::of(blocks::SAND))))
+    let sand: Vec<_> = (0..=18)
+        .flat_map(|x| (0..=18).map(move |z| (IVec3::new(x, 64, z), BlockState::of(blocks::SAND))))
         .filter(|&(c, _)| c.x != 9 || c.z != 9)
         .collect();
     game.set_blocks(&sand);
     let id = spawn(&mut game, "enderman", 9.5, 9.5);
     let mut carried = None;
-    for _ in 0..600 {
+    for _ in 0..1200 {
         run(&mut game, 1);
         if let Some(block) = mob(&game, id).carrying {
             carried = Some(block);
