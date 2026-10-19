@@ -354,7 +354,20 @@ mod tests {
     fn every_item_texture_exists() {
         let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
         let missing = registry().missing_textures(|name| base.texture(name).is_some());
-        assert!(missing.is_empty(), "missing item textures: {missing:?}");
+        // M21's modern items, which Kenzo's 1.12-era textures predate; a
+        // resource pack brings them.
+        let needs_pack: BTreeSet<String> = [
+            "amethyst_shard",
+            "bamboo_door",
+            "cherry_door",
+            "copper_ingot",
+            "glow_berries",
+            "mangrove_door",
+            "raw_copper",
+        ]
+        .map(|name| format!("item/{name}"))
+        .into();
+        assert_eq!(missing, needs_pack, "missing item textures");
     }
 
     #[test]

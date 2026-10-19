@@ -102,6 +102,12 @@ impl BlockState {
         registry().def(self.id)
     }
 
+    /// The block whose behavior this one shares (`BlockDef::acts_as`), or
+    /// its own: what code that names blocks matches on.
+    pub fn kind(self) -> BlockId {
+        self.def().acts_as.unwrap_or(self.id)
+    }
+
     /// Whether the block has property `prop`.
     pub fn has(self, prop: Prop) -> bool {
         registry().layout(self.id).slot(prop).is_some()
@@ -483,6 +489,8 @@ pub enum Shape {
     EndPortal,
     EndPortalFrame,
     DragonEgg,
+    /// A 3×3-pixel stalk (bamboo).
+    Bamboo,
 }
 
 /// How placing a block picks its state (modern `getStateForPlacement`).
@@ -529,6 +537,8 @@ pub enum Placement {
     Rail,
     /// Hoppers, spout toward the clicked block (down if clicked from below).
     Hopper,
+    /// Two-block plants (tall grass, sunflowers): the upper half goes above.
+    Tall,
 }
 
 /// The way from a bed's foot to its head.
@@ -708,6 +718,11 @@ pub struct BlockDef {
     /// The block it turns into touching water (concrete powder).
     #[serde(default)]
     pub hardens: Option<BlockId>,
+    /// A block whose behavior it shares where code names blocks: every
+    /// wooden button presses like the oak button, every kind of leaves
+    /// acts like oak leaves.
+    #[serde(default)]
+    pub acts_as: Option<BlockId>,
     /// Liquids swim, slow mining and color the fog.
     #[serde(default)]
     pub fluid: Option<Fluid>,
@@ -841,10 +856,10 @@ impl BlockDef {
     }
 
     /// Every neighbor whose removal takes this block with it: what holds
-    /// it up, plus a door's upper half for its lower half.
+    /// it up, plus the upper half of a door or tall plant for its lower half.
     pub fn held_by(&self, state: BlockState) -> Vec<IVec3> {
         let mut by: Vec<IVec3> = self.support(state).into_iter().collect();
-        if self.placement == Placement::Door
+        if matches!(self.placement, Placement::Door | Placement::Tall)
             && state.get(Prop::DoubleBlockHalf) == super::props::door_half::LOWER
         {
             by.push(IVec3::Y);
@@ -1313,6 +1328,104 @@ mod tests {
         ] {
             expected.push(format!("block/{color}_concrete"));
             expected.push(format!("block/{color}_concrete_powder"));
+        }
+        // M21's modern blocks, which Kenzo's 1.12-era textures predate.
+        for name in [
+            "amethyst_block",
+            "amethyst_cluster",
+            "azalea_leaves",
+            "bamboo_block",
+            "bamboo_block_top",
+            "bamboo_door_bottom",
+            "bamboo_door_top",
+            "bamboo_mosaic",
+            "bamboo_planks",
+            "bamboo_stalk",
+            "bamboo_trapdoor",
+            "blue_ice",
+            "budding_amethyst",
+            "calcite",
+            "cave_vines",
+            "cave_vines_lit",
+            "cave_vines_plant",
+            "cave_vines_plant_lit",
+            "cherry_door_bottom",
+            "cherry_door_top",
+            "cherry_leaves",
+            "cherry_log",
+            "cherry_log_top",
+            "cherry_planks",
+            "cherry_sapling",
+            "cherry_trapdoor",
+            "cobbled_deepslate",
+            "copper_block",
+            "copper_ore",
+            "cornflower",
+            "deepslate",
+            "deepslate_coal_ore",
+            "deepslate_copper_ore",
+            "deepslate_diamond_ore",
+            "deepslate_emerald_ore",
+            "deepslate_gold_ore",
+            "deepslate_iron_ore",
+            "deepslate_lapis_ore",
+            "deepslate_redstone_ore",
+            "deepslate_top",
+            "dripstone_block",
+            "flowering_azalea_leaves",
+            "large_amethyst_bud",
+            "mangrove_door_bottom",
+            "mangrove_door_top",
+            "mangrove_leaves",
+            "mangrove_log",
+            "mangrove_log_top",
+            "mangrove_planks",
+            "mangrove_propagule",
+            "mangrove_roots_side",
+            "mangrove_roots_top",
+            "mangrove_trapdoor",
+            "medium_amethyst_bud",
+            "moss_block",
+            "mud",
+            "mud_bricks",
+            "muddy_mangrove_roots_side",
+            "muddy_mangrove_roots_top",
+            "packed_mud",
+            "pink_petals",
+            "pointed_dripstone_down_base",
+            "pointed_dripstone_down_frustum",
+            "pointed_dripstone_down_middle",
+            "pointed_dripstone_down_tip",
+            "pointed_dripstone_down_tip_merge",
+            "pointed_dripstone_up_base",
+            "pointed_dripstone_up_frustum",
+            "pointed_dripstone_up_middle",
+            "pointed_dripstone_up_tip",
+            "pointed_dripstone_up_tip_merge",
+            "rooted_dirt",
+            "small_amethyst_bud",
+            "smooth_basalt",
+            "stripped_acacia_log",
+            "stripped_acacia_log_top",
+            "stripped_bamboo_block",
+            "stripped_bamboo_block_top",
+            "stripped_birch_log",
+            "stripped_birch_log_top",
+            "stripped_cherry_log",
+            "stripped_cherry_log_top",
+            "stripped_dark_oak_log",
+            "stripped_dark_oak_log_top",
+            "stripped_jungle_log",
+            "stripped_jungle_log_top",
+            "stripped_mangrove_log",
+            "stripped_mangrove_log_top",
+            "stripped_oak_log",
+            "stripped_oak_log_top",
+            "stripped_spruce_log",
+            "stripped_spruce_log_top",
+            "tuff",
+        ] {
+            expected.push(format!("block/{name}"));
         }
         assert_eq!(missing, expected.into_iter().collect());
     }

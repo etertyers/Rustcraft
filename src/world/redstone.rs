@@ -190,7 +190,7 @@ impl Redstone {
 /// Whether `state` is a part redstone looks at when its chunk loads.
 fn is_part(state: BlockState) -> bool {
     matches!(
-        state.id(),
+        state.kind(),
         blocks::REDSTONE_WIRE
             | blocks::REDSTONE_TORCH
             | blocks::REDSTONE_WALL_TORCH
@@ -212,7 +212,7 @@ fn is_part(state: BlockState) -> bool {
 /// Buttons, plates and detector rails let go on their own.
 fn releases_itself(state: BlockState) -> bool {
     matches!(
-        state.id(),
+        state.kind(),
         blocks::STONE_BUTTON
             | blocks::OAK_BUTTON
             | blocks::STONE_PRESSURE_PLATE
@@ -223,7 +223,7 @@ fn releases_itself(state: BlockState) -> bool {
 
 /// How long after being pressed `state` is looked at again.
 pub fn press_ticks(state: BlockState) -> u64 {
-    match state.id() {
+    match state.kind() {
         blocks::STONE_BUTTON => STONE_BUTTON_TICKS,
         blocks::OAK_BUTTON => WOOD_BUTTON_TICKS,
         _ => PLATE_TICKS,
@@ -257,7 +257,7 @@ pub fn conductor(state: BlockState) -> bool {
     if !def.solid || !def.is_opaque_cube_state(state) {
         return false;
     }
-    match state.id() {
+    match state.kind() {
         blocks::REDSTONE_BLOCK => false,
         blocks::PISTON | blocks::STICKY_PISTON => !state.bool(Prop::Extended),
         _ => true,
@@ -435,7 +435,7 @@ impl Step<'_> {
     /// (`getSignal`).
     fn output(&self, state: BlockState, dir: Face, wires: bool) -> u8 {
         let on = |yes: bool| if yes { 15 } else { 0 };
-        match state.id() {
+        match state.kind() {
             blocks::REDSTONE_WIRE => self.wire_output(state, dir, wires),
             blocks::REDSTONE_TORCH => on(lit(state) && dir != Face::Top),
             blocks::REDSTONE_WALL_TORCH => on(lit(state) && state.face(Prop::Facing) != dir),
@@ -466,7 +466,7 @@ impl Step<'_> {
     /// What `state` gives a solid block it touches, looked at from `dir`
     /// away (`getDirectSignal`).
     fn direct(&self, state: BlockState, dir: Face, wires: bool) -> u8 {
-        match state.id() {
+        match state.kind() {
             blocks::REDSTONE_WIRE => self.wire_output(state, dir, wires),
             blocks::REDSTONE_TORCH | blocks::REDSTONE_WALL_TORCH => {
                 if dir == Face::Bottom {
@@ -524,7 +524,7 @@ impl Step<'_> {
         let Some(state) = self.get(at) else {
             return;
         };
-        match state.id() {
+        match state.kind() {
             blocks::REDSTONE_WIRE => self.update_wire(at, state),
             blocks::REPEATER => self.update_repeater(at, state),
             blocks::REDSTONE_TORCH | blocks::REDSTONE_WALL_TORCH => self.update_torch(at, state),
@@ -940,7 +940,7 @@ impl Step<'_> {
         let Some(state) = self.get(at) else {
             return;
         };
-        match state.id() {
+        match state.kind() {
             blocks::REPEATER => self.repeater_tick(at, state),
             blocks::REDSTONE_TORCH | blocks::REDSTONE_WALL_TORCH => self.torch_tick(at, state),
             blocks::REDSTONE_LAMP => {
@@ -970,4 +970,20 @@ impl Step<'_> {
 
 fn lit(state: BlockState) -> bool {
     state.bool(Prop::Lit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_wooden_button_and_plate_acts_as_oak() {
+        let of = BlockState::of;
+        assert_eq!(press_ticks(of(blocks::CHERRY_BUTTON)), WOOD_BUTTON_TICKS);
+        assert_eq!(press_ticks(of(blocks::STONE_BUTTON)), STONE_BUTTON_TICKS);
+        for block in [blocks::BIRCH_BUTTON, blocks::BAMBOO_PRESSURE_PLATE] {
+            assert!(is_part(of(block)), "{}", block.name());
+            assert!(releases_itself(of(block)), "{}", block.name());
+        }
+    }
 }

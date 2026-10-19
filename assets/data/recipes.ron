@@ -6,7 +6,8 @@
 // named as in modern Minecraft; the recipes themselves are still 1.0.0's.
 // Shaped recipes fit anywhere in the grid and may be mirrored.
 //
-// Redstone, rails and minecarts (M19) use modern recipes.
+// Redstone, rails and minecarts (M19) and every wood (M21) use modern
+// recipes; anything made of planks takes any planks.
 //
 // Left out, because their systems aren't in the game (see DECISIONS.md):
 // boat, fishing rod, map, painting, cake (no milk), enchanting table, brewing
@@ -15,25 +16,35 @@
 #![enable(implicit_some)]
 (
     tags: {
-        "logs": ["oak_log", "spruce_log", "birch_log"],
+        "logs": ["oak_log", "oak_wood", "stripped_oak_log", "stripped_oak_wood", "spruce_log", "spruce_wood", "stripped_spruce_log", "stripped_spruce_wood", "birch_log", "birch_wood", "stripped_birch_log", "stripped_birch_wood", "jungle_log", "jungle_wood", "stripped_jungle_log", "stripped_jungle_wood", "acacia_log", "acacia_wood", "stripped_acacia_log", "stripped_acacia_wood", "dark_oak_log", "dark_oak_wood", "stripped_dark_oak_log", "stripped_dark_oak_wood", "mangrove_log", "mangrove_wood", "stripped_mangrove_log", "stripped_mangrove_wood", "cherry_log", "cherry_wood", "stripped_cherry_log", "stripped_cherry_wood"],
+        "planks": ["oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "bamboo_planks"],
+        "wooden_slabs": ["oak_slab", "spruce_slab", "birch_slab", "jungle_slab", "acacia_slab", "dark_oak_slab", "mangrove_slab", "cherry_slab", "bamboo_slab"],
+        "oak_logs": ["oak_log", "oak_wood", "stripped_oak_log", "stripped_oak_wood"],
+        "spruce_logs": ["spruce_log", "spruce_wood", "stripped_spruce_log", "stripped_spruce_wood"],
+        "birch_logs": ["birch_log", "birch_wood", "stripped_birch_log", "stripped_birch_wood"],
+        "jungle_logs": ["jungle_log", "jungle_wood", "stripped_jungle_log", "stripped_jungle_wood"],
+        "acacia_logs": ["acacia_log", "acacia_wood", "stripped_acacia_log", "stripped_acacia_wood"],
+        "dark_oak_logs": ["dark_oak_log", "dark_oak_wood", "stripped_dark_oak_log", "stripped_dark_oak_wood"],
+        "mangrove_logs": ["mangrove_log", "mangrove_wood", "stripped_mangrove_log", "stripped_mangrove_wood"],
+        "cherry_logs": ["cherry_log", "cherry_wood", "stripped_cherry_log", "stripped_cherry_wood"],
+        "bamboo_blocks": ["bamboo_block", "stripped_bamboo_block"],
         "wool": ["white_wool", "orange_wool", "magenta_wool", "light_blue_wool", "yellow_wool", "lime_wool", "pink_wool", "gray_wool", "light_gray_wool", "cyan_wool", "purple_wool", "blue_wool", "brown_wool", "green_wool", "red_wool", "black_wool"],
     },
     shaped: [
         // Wood and basics
-        (result: (item: "oak_planks", count: 4), pattern: ["#"], key: {'#': (tag: "logs")}),  // planks from any log
-        (result: (item: "stick", count: 4), pattern: ["#", "#"], key: {'#': (item: "oak_planks")}),  // sticks
-        (result: (item: "crafting_table", count: 1), pattern: ["##", "##"], key: {'#': (item: "oak_planks")}),  // crafting table
+        (result: (item: "stick", count: 4), pattern: ["#", "#"], key: {'#': (tag: "planks")}),  // sticks
+        (result: (item: "crafting_table", count: 1), pattern: ["##", "##"], key: {'#': (tag: "planks")}),  // crafting table
         (result: (item: "furnace", count: 1), pattern: ["###", "# #", "###"], key: {'#': (item: "cobblestone")}),  // furnace
-        (result: (item: "chest", count: 1), pattern: ["###", "# #", "###"], key: {'#': (item: "oak_planks")}),  // chest
+        (result: (item: "chest", count: 1), pattern: ["###", "# #", "###"], key: {'#': (tag: "planks")}),  // chest
         (result: (item: "torch", count: 4), pattern: ["X", "#"], key: {'X': (item: "coal"), '#': (item: "stick")}),  // torch (coal)
         (result: (item: "torch", count: 4), pattern: ["X", "#"], key: {'X': (item: "charcoal"), '#': (item: "stick")}),  // torch (charcoal)
         // Tools and weapons
-        (result: (item: "shield", count: 1), pattern: ["#X#", "###", " # "], key: {'#': (item: "oak_planks"), 'X': (item: "iron_ingot")}),  // shield (modern)
-        (result: (item: "wooden_pickaxe", count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood pickaxe
-        (result: (item: "wooden_shovel", count: 1), pattern: ["X", "#", "#"], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood shovel
-        (result: (item: "wooden_axe", count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood axe
-        (result: (item: "wooden_hoe", count: 1), pattern: ["XX", " #", " #"], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood hoe
-        (result: (item: "wooden_sword", count: 1), pattern: ["X", "X", "#"], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood sword
+        (result: (item: "shield", count: 1), pattern: ["#X#", "###", " # "], key: {'#': (tag: "planks"), 'X': (item: "iron_ingot")}),  // shield (modern)
+        (result: (item: "wooden_pickaxe", count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (tag: "planks"), '#': (item: "stick")}),  // wood pickaxe
+        (result: (item: "wooden_shovel", count: 1), pattern: ["X", "#", "#"], key: {'X': (tag: "planks"), '#': (item: "stick")}),  // wood shovel
+        (result: (item: "wooden_axe", count: 1), pattern: ["XX", "X#", " #"], key: {'X': (tag: "planks"), '#': (item: "stick")}),  // wood axe
+        (result: (item: "wooden_hoe", count: 1), pattern: ["XX", " #", " #"], key: {'X': (tag: "planks"), '#': (item: "stick")}),  // wood hoe
+        (result: (item: "wooden_sword", count: 1), pattern: ["X", "X", "#"], key: {'X': (tag: "planks"), '#': (item: "stick")}),  // wood sword
         (result: (item: "stone_pickaxe", count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: "cobblestone"), '#': (item: "stick")}),  // stone pickaxe
         (result: (item: "stone_shovel", count: 1), pattern: ["X", "#", "#"], key: {'X': (item: "cobblestone"), '#': (item: "stick")}),  // stone shovel
         (result: (item: "stone_axe", count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: "cobblestone"), '#': (item: "stick")}),  // stone axe
@@ -81,24 +92,18 @@
         // Building blocks
         (result: (item: "smooth_stone_slab", count: 3), pattern: ["###"], key: {'#': (item: "stone")}),  // stone slabs
         (result: (item: "sandstone_slab", count: 3), pattern: ["###"], key: {'#': (item: "sandstone")}),  // sandstone slabs
-        (result: (item: "oak_slab", count: 3), pattern: ["###"], key: {'#': (item: "oak_planks")}),  // wooden slabs (block 126, as since 1.3)
         (result: (item: "cobblestone_slab", count: 3), pattern: ["###"], key: {'#': (item: "cobblestone")}),  // cobblestone slabs
         (result: (item: "brick_slab", count: 3), pattern: ["###"], key: {'#': (item: "bricks")}),  // brick slabs
         (result: (item: "stone_brick_slab", count: 3), pattern: ["###"], key: {'#': (item: "stone_bricks")}),  // stone brick slabs
-        (result: (item: "oak_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "oak_planks")}),  // wooden stairs
         (result: (item: "cobblestone_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "cobblestone")}),  // cobblestone stairs
         (result: (item: "brick_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "bricks")}),  // brick stairs
         (result: (item: "stone_brick_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "stone_bricks")}),  // stone brick stairs
         (result: (item: "ladder", count: 2), pattern: ["# #", "###", "# #"], key: {'#': (item: "stick")}),  // ladder
-        (result: (item: "oak_fence", count: 2), pattern: ["###", "###"], key: {'#': (item: "stick")}),  // fence
-        (result: (item: "oak_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "oak_planks")}),  // fence gate
-        (result: (item: "oak_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "oak_planks")}),  // trapdoor
-        (result: (item: "oak_door", count: 1), pattern: ["##", "##", "##"], key: {'#': (item: "oak_planks")}),  // wooden door
         (result: (item: "iron_door", count: 1), pattern: ["##", "##", "##"], key: {'#': (item: "iron_ingot")}),  // iron door
-        (result: (item: "oak_sign", count: 1), pattern: ["###", "###", " X "], key: {'#': (item: "oak_planks"), 'X': (item: "stick")}),  // sign
-        (result: (item: "bookshelf", count: 1), pattern: ["###", "XXX", "###"], key: {'#': (item: "oak_planks"), 'X': (item: "book")}),  // bookshelf
-        (result: (item: "jukebox", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: "oak_planks"), 'X': (item: "diamond")}),  // jukebox
-        (result: (item: "note_block", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: "oak_planks"), 'X': (item: "redstone")}),  // note block
+        (result: (item: "oak_sign", count: 1), pattern: ["###", "###", " X "], key: {'#': (tag: "planks"), 'X': (item: "stick")}),  // sign
+        (result: (item: "bookshelf", count: 1), pattern: ["###", "XXX", "###"], key: {'#': (tag: "planks"), 'X': (item: "book")}),  // bookshelf
+        (result: (item: "jukebox", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (tag: "planks"), 'X': (item: "diamond")}),  // jukebox
+        (result: (item: "note_block", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (tag: "planks"), 'X': (item: "redstone")}),  // note block
         (result: (item: "snow_block", count: 1), pattern: ["##", "##"], key: {'#': (item: "snowball")}),  // snow block
         (result: (item: "clay", count: 1), pattern: ["##", "##"], key: {'#': (item: "clay_ball")}),  // clay block
         (result: (item: "bricks", count: 1), pattern: ["##", "##"], key: {'#': (item: "brick")}),  // brick block
@@ -111,7 +116,7 @@
         (result: (item: "iron_bars", count: 16), pattern: ["###", "###"], key: {'#': (item: "iron_ingot")}),  // iron bars
         (result: (item: "jack_o_lantern", count: 1), pattern: ["A", "B"], key: {'A': (item: "carved_pumpkin"), 'B': (item: "torch")}),  // jack o'lantern
         (result: (item: "melon", count: 1), pattern: ["MMM", "MMM", "MMM"], key: {'M': (item: "melon_slice")}),  // melon block
-        (result: (item: "red_bed", count: 1), pattern: ["###", "XXX"], key: {'#': (tag: "wool"), 'X': (item: "oak_planks")}),  // bed (any wool)
+        (result: (item: "red_bed", count: 1), pattern: ["###", "XXX"], key: {'#': (tag: "wool"), 'X': (tag: "planks")}),  // bed (any wool)
         (result: (item: "gold_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "gold_ingot")}),  // gold block
         (result: (item: "iron_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "iron_ingot")}),  // iron block
         (result: (item: "diamond_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "diamond")}),  // diamond block
@@ -122,8 +127,7 @@
         (result: (item: "repeater", count: 1), pattern: ["#X#", "III"], key: {'#': (item: "redstone_torch"), 'X': (item: "redstone"), 'I': (item: "stone")}),  // repeater
         (result: (item: "lever", count: 1), pattern: ["X", "#"], key: {'X': (item: "stick"), '#': (item: "cobblestone")}),  // lever
         (result: (item: "stone_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "stone")}),  // stone pressure plate
-        (result: (item: "oak_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "oak_planks")}),  // wooden pressure plate
-        (result: (item: "piston", count: 1), pattern: ["TTT", "#X#", "#R#"], key: {'T': (item: "oak_planks"), '#': (item: "cobblestone"), 'X': (item: "iron_ingot"), 'R': (item: "redstone")}),  // piston
+        (result: (item: "piston", count: 1), pattern: ["TTT", "#X#", "#R#"], key: {'T': (tag: "planks"), '#': (item: "cobblestone"), 'X': (item: "iron_ingot"), 'R': (item: "redstone")}),  // piston
         (result: (item: "sticky_piston", count: 1), pattern: ["S", "P"], key: {'S': (item: "slime_ball"), 'P': (item: "piston")}),  // sticky piston
         (result: (item: "dispenser", count: 1), pattern: ["###", "#B#", "#R#"], key: {'#': (item: "cobblestone"), 'B': (item: "bow"), 'R': (item: "redstone")}),  // dispenser
         (result: (item: "dropper", count: 1), pattern: ["###", "# #", "#R#"], key: {'#': (item: "cobblestone"), 'R': (item: "redstone")}),  // dropper
@@ -137,7 +141,7 @@
         (result: (item: "activator_rail", count: 6), pattern: ["XSX", "X#X", "XSX"], key: {'X': (item: "iron_ingot"), 'S': (item: "stick"), '#': (item: "redstone_torch")}),  // activator rails
         (result: (item: "minecart", count: 1), pattern: ["I I", "III"], key: {'I': (item: "iron_ingot")}),  // minecart
         // Food and materials
-        (result: (item: "bowl", count: 4), pattern: ["# #", " # "], key: {'#': (item: "oak_planks")}),  // bowls
+        (result: (item: "bowl", count: 4), pattern: ["# #", " # "], key: {'#': (tag: "planks")}),  // bowls
         (result: (item: "bread", count: 1), pattern: ["###"], key: {'#': (item: "wheat")}),  // bread
         (result: (item: "cookie", count: 8), pattern: ["#X#"], key: {'#': (item: "wheat"), 'X': (item: "cocoa_beans")}),  // cookies
         (result: (item: "paper", count: 3), pattern: ["###"], key: {'#': (item: "sugar_cane")}),  // paper
@@ -163,11 +167,128 @@
         (result: (item: "cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "cobblestone")}),
         (result: (item: "mossy_cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "mossy_cobblestone")}),
         (result: (item: "anvil", count: 1), pattern: ["###", " i ", "iii"], key: {'#': (item: "iron_block"), 'i': (item: "iron_ingot")}),
+        // M21 (modern recipes)
+        (result: (item: "oak_slab", count: 6), pattern: ["###"], key: {'#': (item: "oak_planks")}),
+        (result: (item: "oak_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "oak_planks")}),
+        (result: (item: "oak_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "oak_planks"), '#': (item: "stick")}),
+        (result: (item: "oak_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "oak_planks")}),
+        (result: (item: "oak_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "oak_planks")}),
+        (result: (item: "oak_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "oak_planks")}),
+        (result: (item: "oak_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "oak_planks")}),
+        (result: (item: "oak_planks", count: 4), pattern: ["#"], key: {'#': (tag: "oak_logs")}),
+        (result: (item: "oak_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "oak_log")}),
+        (result: (item: "stripped_oak_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_oak_log")}),
+        (result: (item: "spruce_slab", count: 6), pattern: ["###"], key: {'#': (item: "spruce_planks")}),
+        (result: (item: "spruce_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "spruce_planks")}),
+        (result: (item: "spruce_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "spruce_planks"), '#': (item: "stick")}),
+        (result: (item: "spruce_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "spruce_planks")}),
+        (result: (item: "spruce_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "spruce_planks")}),
+        (result: (item: "spruce_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "spruce_planks")}),
+        (result: (item: "spruce_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "spruce_planks")}),
+        (result: (item: "spruce_planks", count: 4), pattern: ["#"], key: {'#': (tag: "spruce_logs")}),
+        (result: (item: "spruce_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "spruce_log")}),
+        (result: (item: "stripped_spruce_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_spruce_log")}),
+        (result: (item: "birch_slab", count: 6), pattern: ["###"], key: {'#': (item: "birch_planks")}),
+        (result: (item: "birch_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "birch_planks")}),
+        (result: (item: "birch_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "birch_planks"), '#': (item: "stick")}),
+        (result: (item: "birch_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "birch_planks")}),
+        (result: (item: "birch_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "birch_planks")}),
+        (result: (item: "birch_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "birch_planks")}),
+        (result: (item: "birch_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "birch_planks")}),
+        (result: (item: "birch_planks", count: 4), pattern: ["#"], key: {'#': (tag: "birch_logs")}),
+        (result: (item: "birch_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "birch_log")}),
+        (result: (item: "stripped_birch_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_birch_log")}),
+        (result: (item: "jungle_slab", count: 6), pattern: ["###"], key: {'#': (item: "jungle_planks")}),
+        (result: (item: "jungle_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "jungle_planks")}),
+        (result: (item: "jungle_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "jungle_planks"), '#': (item: "stick")}),
+        (result: (item: "jungle_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "jungle_planks")}),
+        (result: (item: "jungle_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "jungle_planks")}),
+        (result: (item: "jungle_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "jungle_planks")}),
+        (result: (item: "jungle_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "jungle_planks")}),
+        (result: (item: "jungle_planks", count: 4), pattern: ["#"], key: {'#': (tag: "jungle_logs")}),
+        (result: (item: "jungle_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "jungle_log")}),
+        (result: (item: "stripped_jungle_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_jungle_log")}),
+        (result: (item: "acacia_slab", count: 6), pattern: ["###"], key: {'#': (item: "acacia_planks")}),
+        (result: (item: "acacia_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "acacia_planks")}),
+        (result: (item: "acacia_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "acacia_planks"), '#': (item: "stick")}),
+        (result: (item: "acacia_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "acacia_planks")}),
+        (result: (item: "acacia_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "acacia_planks")}),
+        (result: (item: "acacia_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "acacia_planks")}),
+        (result: (item: "acacia_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "acacia_planks")}),
+        (result: (item: "acacia_planks", count: 4), pattern: ["#"], key: {'#': (tag: "acacia_logs")}),
+        (result: (item: "acacia_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "acacia_log")}),
+        (result: (item: "stripped_acacia_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_acacia_log")}),
+        (result: (item: "dark_oak_slab", count: 6), pattern: ["###"], key: {'#': (item: "dark_oak_planks")}),
+        (result: (item: "dark_oak_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "dark_oak_planks")}),
+        (result: (item: "dark_oak_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "dark_oak_planks"), '#': (item: "stick")}),
+        (result: (item: "dark_oak_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "dark_oak_planks")}),
+        (result: (item: "dark_oak_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "dark_oak_planks")}),
+        (result: (item: "dark_oak_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "dark_oak_planks")}),
+        (result: (item: "dark_oak_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "dark_oak_planks")}),
+        (result: (item: "dark_oak_planks", count: 4), pattern: ["#"], key: {'#': (tag: "dark_oak_logs")}),
+        (result: (item: "dark_oak_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "dark_oak_log")}),
+        (result: (item: "stripped_dark_oak_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_dark_oak_log")}),
+        (result: (item: "mangrove_slab", count: 6), pattern: ["###"], key: {'#': (item: "mangrove_planks")}),
+        (result: (item: "mangrove_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "mangrove_planks")}),
+        (result: (item: "mangrove_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "mangrove_planks"), '#': (item: "stick")}),
+        (result: (item: "mangrove_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "mangrove_planks")}),
+        (result: (item: "mangrove_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "mangrove_planks")}),
+        (result: (item: "mangrove_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "mangrove_planks")}),
+        (result: (item: "mangrove_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "mangrove_planks")}),
+        (result: (item: "mangrove_planks", count: 4), pattern: ["#"], key: {'#': (tag: "mangrove_logs")}),
+        (result: (item: "mangrove_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "mangrove_log")}),
+        (result: (item: "stripped_mangrove_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_mangrove_log")}),
+        (result: (item: "cherry_slab", count: 6), pattern: ["###"], key: {'#': (item: "cherry_planks")}),
+        (result: (item: "cherry_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "cherry_planks")}),
+        (result: (item: "cherry_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "cherry_planks"), '#': (item: "stick")}),
+        (result: (item: "cherry_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "cherry_planks")}),
+        (result: (item: "cherry_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "cherry_planks")}),
+        (result: (item: "cherry_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "cherry_planks")}),
+        (result: (item: "cherry_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "cherry_planks")}),
+        (result: (item: "cherry_planks", count: 4), pattern: ["#"], key: {'#': (tag: "cherry_logs")}),
+        (result: (item: "cherry_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "cherry_log")}),
+        (result: (item: "stripped_cherry_wood", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_cherry_log")}),
+        (result: (item: "bamboo_slab", count: 6), pattern: ["###"], key: {'#': (item: "bamboo_planks")}),
+        (result: (item: "bamboo_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "bamboo_planks")}),
+        (result: (item: "bamboo_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "bamboo_planks"), '#': (item: "stick")}),
+        (result: (item: "bamboo_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "bamboo_planks")}),
+        (result: (item: "bamboo_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "bamboo_planks")}),
+        (result: (item: "bamboo_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "bamboo_planks")}),
+        (result: (item: "bamboo_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "bamboo_planks")}),
+        (result: (item: "bamboo_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "bamboo")}),
+        (result: (item: "bamboo_planks", count: 2), pattern: ["#"], key: {'#': (tag: "bamboo_blocks")}),
+        (result: (item: "bamboo_mosaic", count: 1), pattern: ["#", "#"], key: {'#': (item: "bamboo_slab")}),
+        (result: (item: "stick", count: 1), pattern: ["#", "#"], key: {'#': (item: "bamboo")}),
+        (result: (item: "white_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "white_dye")}),
+        (result: (item: "orange_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "orange_dye")}),
+        (result: (item: "magenta_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "magenta_dye")}),
+        (result: (item: "light_blue_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "light_blue_dye")}),
+        (result: (item: "yellow_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "yellow_dye")}),
+        (result: (item: "lime_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "lime_dye")}),
+        (result: (item: "pink_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "pink_dye")}),
+        (result: (item: "gray_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "gray_dye")}),
+        (result: (item: "light_gray_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "light_gray_dye")}),
+        (result: (item: "cyan_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "cyan_dye")}),
+        (result: (item: "purple_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "purple_dye")}),
+        (result: (item: "blue_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "blue_dye")}),
+        (result: (item: "brown_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "cocoa_beans")}),
+        (result: (item: "green_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "green_dye")}),
+        (result: (item: "red_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "red_dye")}),
+        (result: (item: "black_terracotta", count: 8), pattern: ["###", "#D#", "###"], key: {'#': (item: "terracotta"), 'D': (item: "ink_sac")}),
+        (result: (item: "packed_ice", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "ice")}),
+        (result: (item: "blue_ice", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "packed_ice")}),
+        (result: (item: "coarse_dirt", count: 4), pattern: ["DG", "GD"], key: {'D': (item: "dirt"), 'G': (item: "gravel")}),
+        (result: (item: "mud_bricks", count: 4), pattern: ["##", "##"], key: {'#': (item: "packed_mud")}),
+        (result: (item: "moss_carpet", count: 3), pattern: ["##"], key: {'#': (item: "moss_block")}),
+        (result: (item: "red_sandstone", count: 1), pattern: ["##", "##"], key: {'#': (item: "red_sand")}),
+        (result: (item: "dripstone_block", count: 1), pattern: ["##", "##"], key: {'#': (item: "pointed_dripstone")}),
+        (result: (item: "amethyst_block", count: 1), pattern: ["##", "##"], key: {'#': (item: "amethyst_shard")}),
+        (result: (item: "copper_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "copper_ingot")}),
+        (result: (item: "emerald_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "emerald")}),
     ],
     shapeless: [
         (result: (item: "redstone", count: 9), ingredients: [(item: "redstone_block")]),  // redstone from its block
         (result: (item: "stone_button", count: 1), ingredients: [(item: "stone")]),  // stone button
-        (result: (item: "oak_button", count: 1), ingredients: [(item: "oak_planks")]),  // wooden button
         (result: (item: "chest_minecart", count: 1), ingredients: [(item: "chest"), (item: "minecart")]),  // minecart with chest
         (result: (item: "hopper_minecart", count: 1), ingredients: [(item: "hopper"), (item: "minecart")]),  // minecart with hopper
         (result: (item: "tnt_minecart", count: 1), ingredients: [(item: "tnt"), (item: "minecart")]),  // minecart with TNT
@@ -229,6 +350,36 @@
         (result: (item: "green_concrete_powder", count: 8), ingredients: [(item: "green_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
         (result: (item: "red_concrete_powder", count: 8), ingredients: [(item: "red_dye"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
         (result: (item: "black_concrete_powder", count: 8), ingredients: [(item: "ink_sac"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "sand"), (item: "gravel"), (item: "gravel"), (item: "gravel"), (item: "gravel")]),
+        // M21 (modern recipes)
+        (result: (item: "oak_button", count: 1), ingredients: [(item: "oak_planks")]),
+        (result: (item: "spruce_button", count: 1), ingredients: [(item: "spruce_planks")]),
+        (result: (item: "birch_button", count: 1), ingredients: [(item: "birch_planks")]),
+        (result: (item: "jungle_button", count: 1), ingredients: [(item: "jungle_planks")]),
+        (result: (item: "acacia_button", count: 1), ingredients: [(item: "acacia_planks")]),
+        (result: (item: "dark_oak_button", count: 1), ingredients: [(item: "dark_oak_planks")]),
+        (result: (item: "mangrove_button", count: 1), ingredients: [(item: "mangrove_planks")]),
+        (result: (item: "cherry_button", count: 1), ingredients: [(item: "cherry_planks")]),
+        (result: (item: "bamboo_button", count: 1), ingredients: [(item: "bamboo_planks")]),
+        (result: (item: "packed_mud", count: 1), ingredients: [(item: "mud"), (item: "wheat")]),
+        (result: (item: "copper_ingot", count: 9), ingredients: [(item: "copper_block")]),
+        (result: (item: "emerald", count: 9), ingredients: [(item: "emerald_block")]),
+        (result: (item: "magenta_dye", count: 1), ingredients: [(item: "allium")]),
+        (result: (item: "light_gray_dye", count: 1), ingredients: [(item: "azure_bluet")]),
+        (result: (item: "light_blue_dye", count: 1), ingredients: [(item: "blue_orchid")]),
+        (result: (item: "red_dye", count: 1), ingredients: [(item: "red_tulip")]),
+        (result: (item: "orange_dye", count: 1), ingredients: [(item: "orange_tulip")]),
+        (result: (item: "light_gray_dye", count: 1), ingredients: [(item: "white_tulip")]),
+        (result: (item: "pink_dye", count: 1), ingredients: [(item: "pink_tulip")]),
+        (result: (item: "light_gray_dye", count: 1), ingredients: [(item: "oxeye_daisy")]),
+        (result: (item: "blue_dye", count: 1), ingredients: [(item: "cornflower")]),
+        (result: (item: "white_dye", count: 1), ingredients: [(item: "lily_of_the_valley")]),
+        (result: (item: "pink_dye", count: 1), ingredients: [(item: "pink_petals")]),
+        (result: (item: "yellow_dye", count: 2), ingredients: [(item: "sunflower")]),
+        (result: (item: "magenta_dye", count: 2), ingredients: [(item: "lilac")]),
+        (result: (item: "red_dye", count: 2), ingredients: [(item: "rose_bush")]),
+        (result: (item: "pink_dye", count: 2), ingredients: [(item: "peony")]),
+        (result: (item: "white_wool", count: 1), ingredients: [(item: "white_dye"), (tag: "wool")]),
+        (result: (item: "blue_wool", count: 1), ingredients: [(item: "blue_dye"), (item: "white_wool")]),
     ],
     smelting: [
         (input: (item: "iron_ore"), result: (item: "iron_ingot", count: 1)),  // iron
@@ -246,24 +397,100 @@
         (input: (item: "clay_ball"), result: (item: "brick", count: 1)),  // brick
         (input: (item: "cactus"), result: (item: "green_dye", count: 1)),  // cactus green
         (input: (tag: "logs"), result: (item: "charcoal", count: 1)),  // charcoal
+        // M21 (modern recipes)
+        (input: (item: "clay"), result: (item: "terracotta", count: 1)),
+        (input: (item: "cobbled_deepslate"), result: (item: "deepslate", count: 1)),
+        (input: (item: "red_sand"), result: (item: "glass", count: 1)),
+        (input: (item: "raw_copper"), result: (item: "copper_ingot", count: 1)),
+        (input: (item: "copper_ore"), result: (item: "copper_ingot", count: 1)),
+        (input: (item: "deepslate_copper_ore"), result: (item: "copper_ingot", count: 1)),
+        (input: (item: "emerald_ore"), result: (item: "emerald", count: 1)),
+        (input: (item: "deepslate_emerald_ore"), result: (item: "emerald", count: 1)),
+        (input: (item: "deepslate_iron_ore"), result: (item: "iron_ingot", count: 1)),
+        (input: (item: "deepslate_gold_ore"), result: (item: "gold_ingot", count: 1)),
+        (input: (item: "deepslate_diamond_ore"), result: (item: "diamond", count: 1)),
+        (input: (item: "coal_ore"), result: (item: "coal", count: 1)),
+        (input: (item: "deepslate_coal_ore"), result: (item: "coal", count: 1)),
+        (input: (item: "lapis_ore"), result: (item: "lapis_lazuli", count: 1)),
+        (input: (item: "deepslate_lapis_ore"), result: (item: "lapis_lazuli", count: 1)),
+        (input: (item: "redstone_ore"), result: (item: "redstone", count: 1)),
+        (input: (item: "deepslate_redstone_ore"), result: (item: "redstone", count: 1)),
     ],
     fuels: [
-        (item: "oak_planks", ticks: 300),  // planks
-        (item: "oak_slab", ticks: 150),  // wooden slab (as since 1.3)
+        (tag: "planks", ticks: 300),  // planks
+        (tag: "wooden_slabs", ticks: 150),  // wooden slabs
         (tag: "logs", ticks: 300),  // log
         (item: "bookshelf", ticks: 300),  // bookshelf
-        (item: "oak_stairs", ticks: 300),  // wooden stairs
         (item: "chest", ticks: 300),  // chest
         (item: "crafting_table", ticks: 300),  // crafting table
         (item: "note_block", ticks: 300),  // note block
         (item: "jukebox", ticks: 300),  // jukebox
-        (item: "oak_fence", ticks: 300),  // fence
-        (item: "oak_trapdoor", ticks: 300),  // trapdoor
-        (item: "oak_fence_gate", ticks: 300),  // fence gate
-        (item: "oak_pressure_plate", ticks: 300),  // wooden pressure plate
-        (item: "oak_button", ticks: 100),  // wooden button
         (item: "stick", ticks: 100),  // stick
-        (item: "oak_sapling", ticks: 100),  // sapling
+        // M21: every wood
+        (item: "oak_stairs", ticks: 300),
+        (item: "oak_fence", ticks: 300),
+        (item: "oak_fence_gate", ticks: 300),
+        (item: "oak_trapdoor", ticks: 300),
+        (item: "oak_pressure_plate", ticks: 300),
+        (item: "oak_button", ticks: 100),
+        (item: "oak_sapling", ticks: 100),
+        (item: "spruce_stairs", ticks: 300),
+        (item: "spruce_fence", ticks: 300),
+        (item: "spruce_fence_gate", ticks: 300),
+        (item: "spruce_trapdoor", ticks: 300),
+        (item: "spruce_pressure_plate", ticks: 300),
+        (item: "spruce_button", ticks: 100),
+        (item: "spruce_sapling", ticks: 100),
+        (item: "birch_stairs", ticks: 300),
+        (item: "birch_fence", ticks: 300),
+        (item: "birch_fence_gate", ticks: 300),
+        (item: "birch_trapdoor", ticks: 300),
+        (item: "birch_pressure_plate", ticks: 300),
+        (item: "birch_button", ticks: 100),
+        (item: "birch_sapling", ticks: 100),
+        (item: "jungle_stairs", ticks: 300),
+        (item: "jungle_fence", ticks: 300),
+        (item: "jungle_fence_gate", ticks: 300),
+        (item: "jungle_trapdoor", ticks: 300),
+        (item: "jungle_pressure_plate", ticks: 300),
+        (item: "jungle_button", ticks: 100),
+        (item: "jungle_sapling", ticks: 100),
+        (item: "acacia_stairs", ticks: 300),
+        (item: "acacia_fence", ticks: 300),
+        (item: "acacia_fence_gate", ticks: 300),
+        (item: "acacia_trapdoor", ticks: 300),
+        (item: "acacia_pressure_plate", ticks: 300),
+        (item: "acacia_button", ticks: 100),
+        (item: "acacia_sapling", ticks: 100),
+        (item: "dark_oak_stairs", ticks: 300),
+        (item: "dark_oak_fence", ticks: 300),
+        (item: "dark_oak_fence_gate", ticks: 300),
+        (item: "dark_oak_trapdoor", ticks: 300),
+        (item: "dark_oak_pressure_plate", ticks: 300),
+        (item: "dark_oak_button", ticks: 100),
+        (item: "dark_oak_sapling", ticks: 100),
+        (item: "mangrove_stairs", ticks: 300),
+        (item: "mangrove_fence", ticks: 300),
+        (item: "mangrove_fence_gate", ticks: 300),
+        (item: "mangrove_trapdoor", ticks: 300),
+        (item: "mangrove_pressure_plate", ticks: 300),
+        (item: "mangrove_button", ticks: 100),
+        (item: "mangrove_propagule", ticks: 100),
+        (item: "cherry_stairs", ticks: 300),
+        (item: "cherry_fence", ticks: 300),
+        (item: "cherry_fence_gate", ticks: 300),
+        (item: "cherry_trapdoor", ticks: 300),
+        (item: "cherry_pressure_plate", ticks: 300),
+        (item: "cherry_button", ticks: 100),
+        (item: "cherry_sapling", ticks: 100),
+        (item: "bamboo_stairs", ticks: 300),
+        (item: "bamboo_fence", ticks: 300),
+        (item: "bamboo_fence_gate", ticks: 300),
+        (item: "bamboo_trapdoor", ticks: 300),
+        (item: "bamboo_pressure_plate", ticks: 300),
+        (item: "bamboo_button", ticks: 100),
+        (item: "bamboo", ticks: 50),
+        (tag: "bamboo_blocks", ticks: 300),
         (item: "coal", ticks: 1600),
         (item: "charcoal", ticks: 1600),
         (item: "lava_bucket", ticks: 20000),  // lava bucket

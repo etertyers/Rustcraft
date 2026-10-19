@@ -18,7 +18,7 @@ use crate::{
 const IDS_PER_ROW: usize = 16;
 const COLUMN_SPACING: i32 = 3;
 /// Leaves room for a block and its variants plus a gap between rows.
-const ROW_SPACING: i32 = 10;
+const ROW_SPACING: i32 = 12;
 const FLOOR: BlockState = BlockState::of(blocks::GRASS_BLOCK);
 const FLOOR_Y: i32 = SEA_LEVEL;
 
