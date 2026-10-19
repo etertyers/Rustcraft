@@ -319,7 +319,7 @@ impl Game {
         let Some(state) = self.chunks.world().block(cell.x, cell.y, cell.z) else {
             return false;
         };
-        match state.id() {
+        match state.kind() {
             blocks::LEVER => {
                 let on = !state.bool(Prop::Powered);
                 self.edit(&[(cell, state.with_bool(Prop::Powered, on))]);
@@ -374,7 +374,7 @@ pub(super) enum Presser {
 impl Presser {
     /// Whether this kind of thing presses the block `state`.
     fn presses(self, state: BlockState) -> bool {
-        match state.id() {
+        match state.kind() {
             blocks::STONE_PRESSURE_PLATE => matches!(self, Self::Living),
             blocks::OAK_PRESSURE_PLATE => true,
             blocks::DETECTOR_RAIL => matches!(self, Self::Cart),

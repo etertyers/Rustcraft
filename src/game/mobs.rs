@@ -32,6 +32,9 @@ use crate::{
 const MIN_SPAWN_DISTANCE: f64 = 24.0;
 /// Chunks this far from the player (Chebyshev) take part in spawning.
 const SPAWN_CHUNK_RADIUS: i32 = 8;
+/// Heights slimes spawn at in swamps (modern y 51..70, above sea level,
+/// so the same here).
+const SWAMP_SLIMES: std::ops::Range<i32> = 51..70;
 /// 1.0.0's monster cap: this many per 256 eligible chunks.
 const MONSTERS_PER_256_CHUNKS: usize = 70;
 /// The cap on sea creatures (modern: 5 squid, 20 fish; one cap here).
@@ -546,19 +549,25 @@ impl Game {
 
     /// Feet position on top of column (x, z) if its surface is one of
     /// `ground` with two free blocks above.
-    fn ground_spot(&self, x: i32, z: i32, ground: &[BlockId]) -> Option<DVec3> {
+    pub(super) fn ground_spot(&self, x: i32, z: i32, ground: &[BlockId]) -> Option<DVec3> {
         let world = self.chunks.world();
         let top = (0..crate::config::WORLD_HEIGHT as i32)
             .rev()
             .find(|&y| world.block(x, y, z).is_some_and(|b| !b.is_air()))?;
-        let surface = world.block(x, top, z)?;
+        let mut surface = world.block(x, top, z)?;
         let free = |y| {
             world
                 .block(x, y, z)
                 .is_some_and(|b: crate::world::block::BlockState| b.is_air())
         };
-        (ground.contains(&surface.id()) && free(top + 1) && free(top + 2))
-            .then(|| DVec3::new(x as f64 + 0.5, (top + 1) as f64, z as f64 + 0.5))
+        // Standing in a snow layer on the ground below it.
+        let mut feet = top + 1;
+        if surface.id() == crate::world::blocks::SNOW {
+            surface = world.block(x, top - 1, z)?;
+            feet = top;
+        }
+        (ground.contains(&surface.id()) && free(top + 1) && free(feet + 1))
+            .then(|| DVec3::new(x as f64 + 0.5, feet as f64, z as f64 + 0.5))
     }
 
     /// The monsters near the player, and how many may be (the cap grows with
@@ -585,13 +594,16 @@ impl Game {
                     return;
                 }
                 let pos = center.offset(dx, dz);
-                if self.chunks.world().get(pos).is_none() {
+                // Up to the top of the chunk's highest blocks (modern
+                // picks a height up to the surface), so mountains get
+                // monsters too.
+                let Some(top) = self.chunks.world().get(pos).map(|c| c.height_bound()) else {
                     continue;
-                }
+                };
                 let (min_x, min_z) = pos.min_block();
                 let mut cell = IVec3::new(
                     min_x + (self.rng.next_f64() * 16.0) as i32,
-                    (self.rng.next_f64() * 128.0) as i32,
+                    (self.rng.next_f64() * (top + 1) as f64) as i32,
                     min_z + (self.rng.next_f64() * 16.0) as i32,
                 );
                 let biome = self.biome_at(cell.x, cell.z);
@@ -621,6 +633,10 @@ impl Game {
         cell: IVec3,
         chunk: ChunkPos,
     ) -> Option<(MobKind, u8, u8)> {
+        // Mushroom fields never have monsters (modern `MobSpawnSettings`).
+        if biome == Biome::MushroomFields {
+            return None;
+        }
         let seed = self.chunks.seed().unwrap_or(0);
         let mut options: Vec<(MobKind, u8, u8, u32)> = Vec::new();
         for (kind, def) in self.mob_defs.iter() {
@@ -636,6 +652,12 @@ impl Game {
                 // Slimes come out of the ground in slime chunks, deep down.
                 Spawn::SlimeChunk { below } if cell.y < below && is_slime_chunk(seed, chunk) => {
                     options.push((kind, 15, 1, 100));
+                }
+                // And out of swamps at night, from y 51 to 69 (modern).
+                Spawn::SlimeChunk { .. }
+                    if biome == Biome::Swamp && (SWAMP_SLIMES).contains(&cell.y) =>
+                {
+                    options.push((kind, 7, 1, 100));
                 }
                 _ => {}
             }

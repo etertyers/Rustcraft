@@ -46,6 +46,16 @@ impl ChunkPos {
 
 type Section = [BlockState; SECTION_VOLUME];
 
+/// Cave biome cells per chunk: 4×4 across, one per 4 blocks of height.
+pub const CAVE_CELLS: usize = 4 * 4 * (WORLD_HEIGHT / 4);
+/// A cave biome cell with no cave biome.
+pub const NO_CAVE: u8 = u8::MAX;
+
+/// Index of the cave biome cell holding a block, `(y, z, x)` order.
+fn cave_cell(x: usize, y: usize, z: usize) -> usize {
+    ((y / 4) * 4 + z / 4) * 4 + x / 4
+}
+
 /// One chunk column. All-air sections take no memory.
 #[derive(Clone)]
 pub struct Chunk {
@@ -53,6 +63,10 @@ pub struct Chunk {
     sections: [Option<Box<Section>>; SECTION_COUNT],
     /// Biome of each column, indexed `z * 16 + x`.
     biomes: [Biome; CHUNK_SIZE * CHUNK_SIZE],
+    /// Cave biomes (lush and dripstone caves) underground, in 4×4×4 cells
+    /// as modern Minecraft stores biomes; `NO_CAVE` cells take the
+    /// column's biome. `None` when the chunk has no cave biome at all.
+    cave_biomes: Option<Box<[u8; CAVE_CELLS]>>,
     block_entities: BTreeMap<LocalPos, BlockEntity>,
     /// Blocks whose state hangs on their neighbors (fence connections,
     /// stair corners) and must be worked out again once the chunks around
@@ -66,6 +80,7 @@ impl Chunk {
             pos,
             sections: Default::default(),
             biomes: [Biome::default(); CHUNK_SIZE * CHUNK_SIZE],
+            cave_biomes: None,
             block_entities: BTreeMap::new(),
             post_process: Vec::new(),
         }
@@ -102,6 +117,33 @@ impl Chunk {
 
     pub fn set_biome(&mut self, x: usize, z: usize, biome: Biome) {
         self.biomes[z * CHUNK_SIZE + x] = biome;
+    }
+
+    /// The biome at a block: a cave biome if one fills its cell, otherwise
+    /// the column's.
+    pub fn biome_at(&self, x: usize, y: usize, z: usize) -> Biome {
+        self.cave_biomes
+            .as_ref()
+            .and_then(|cells| Biome::from_id(cells[cave_cell(x, y, z)]))
+            .unwrap_or_else(|| self.biome(x, z))
+    }
+
+    /// Puts a cave biome (or, with `None`, the column's) in the 4×4×4 cell
+    /// holding a block.
+    pub fn set_cave_biome(&mut self, x: usize, y: usize, z: usize, biome: Option<Biome>) {
+        let id = biome.map_or(NO_CAVE, Biome::id);
+        if id == NO_CAVE && self.cave_biomes.is_none() {
+            return;
+        }
+        let cells = self
+            .cave_biomes
+            .get_or_insert_with(|| Box::new([NO_CAVE; CAVE_CELLS]));
+        cells[cave_cell(x, y, z)] = id;
+    }
+
+    /// The cave biome cells, `None` if there are none.
+    pub fn cave_biomes(&self) -> Option<&[u8; CAVE_CELLS]> {
+        self.cave_biomes.as_deref()
     }
 
     fn index(x: usize, y: usize, z: usize) -> (usize, usize) {
@@ -151,6 +193,15 @@ impl Chunk {
     }
 
     /// Whether section `index` (0 = bottom) holds no blocks at all.
+    /// One above the top of the highest section holding any block: no
+    /// block in the chunk is at or above this height.
+    pub fn height_bound(&self) -> usize {
+        (0..SECTION_COUNT)
+            .rev()
+            .find(|&index| !self.section_is_empty(index))
+            .map_or(0, |index| (index + 1) * SECTION_SIZE)
+    }
+
     pub fn section_is_empty(&self, index: usize) -> bool {
         self.sections[index].is_none()
     }

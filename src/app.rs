@@ -889,7 +889,7 @@ impl App {
         let stats = DebugStats {
             chunks_drawn: renderer.chunks_drawn(),
             chunks_loaded: chunks.world().len(),
-            biome: chunks.world().biome_at(x, z),
+            biome: chunks.world().biome_at_block(x, p.y.floor() as i32, z),
             seed: chunks.seed(),
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,

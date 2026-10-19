@@ -1,5 +1,6 @@
-//! Seeded terrain: climate noise picks the biome, and height, surface layers,
-//! water and bedrock follow from it.
+//! Seeded terrain: modern climate noise (see `climate`) shapes the land and
+//! picks the biome, and height, surface layers, water, deepslate, caves and
+//! bedrock follow from it.
 //!
 //! Every function here is pure (it depends only on the seed and coordinates),
 //! so any chunk can be generated on its own, in any order, on any thread, and
@@ -9,7 +10,12 @@ use std::collections::HashMap;
 
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
-use super::rng::{Rng, mix};
+use super::{
+    climate::{
+        self, COAST, CaveBiomes, Climate, ClimateNoise, Lay, OCEAN, noise_offset, noise_seed,
+    },
+    rng::{Rng, mix},
+};
 use crate::{
     config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT},
     world::{
@@ -26,51 +32,45 @@ pub const DIRT: BlockState = BlockState::of(blocks::DIRT);
 pub const BEDROCK: BlockState = BlockState::of(blocks::BEDROCK);
 pub const WATER: BlockState = BlockState::of(blocks::WATER);
 pub const SAND: BlockState = BlockState::of(blocks::SAND);
+pub const RED_SAND: BlockState = BlockState::of(blocks::RED_SAND);
 pub const GRAVEL: BlockState = BlockState::of(blocks::GRAVEL);
 pub const SANDSTONE: BlockState = BlockState::of(blocks::SANDSTONE);
 pub const LAVA: BlockState = BlockState::of(blocks::LAVA);
+pub const DEEPSLATE: BlockState = BlockState::of(blocks::DEEPSLATE);
+pub const PODZOL: BlockState = BlockState::of(blocks::PODZOL);
+pub const MYCELIUM: BlockState = BlockState::of(blocks::MYCELIUM);
+pub const MUD: BlockState = BlockState::of(blocks::MUD);
+pub const CLAY: BlockState = BlockState::of(blocks::CLAY);
+pub const SNOW_BLOCK: BlockState = BlockState::of(blocks::SNOW_BLOCK);
+pub const PACKED_ICE: BlockState = BlockState::of(blocks::PACKED_ICE);
+pub const TERRACOTTA: BlockState = BlockState::of(blocks::TERRACOTTA);
+pub const COARSE_DIRT: BlockState = BlockState::of(blocks::COARSE_DIRT);
 
 /// Caves are where two 3D noise fields are both near zero; this is the
 /// squared distance from zero that counts (wider = bigger tunnels).
-const CAVE_WIDTH: f64 = 0.0045;
-/// Air carved at or below this height becomes lava, as in 1.0.0.
-const LAVA_LEVEL: i32 = 10;
+const TUNNEL_WIDTH: f64 = 0.0045;
+/// Big caverns (modern "cheese caves") open where this noise is high.
+const CAVERN_EDGE: f64 = 0.62;
+/// Caverns stay below this height and fade out toward it.
+const CAVERN_TOP: i32 = 56;
+/// Air carved at or below this height becomes lava: modern's y -55,
+/// squeezed into our y 0..63 like the ores.
+const LAVA_LEVEL: i32 = 5;
 /// Caves stay this far below the floor of any water.
 const CAVE_WATER_MARGIN: i32 = 3;
-
-/// Continent noise below this is ocean.
-const OCEAN_THRESHOLD: f64 = -0.16;
-/// Blocks of depth per unit of continent noise below the threshold.
-const OCEAN_SLOPE: f64 = 90.0;
-const MAX_OCEAN_DEPTH: f64 = 24.0;
-/// Blocks of rise per unit of continent noise above the threshold (inland is higher).
-const INLAND_SLOPE: f64 = 14.0;
-
-/// Climate thresholds: hot and dry is desert, humid is forest, the rest plains.
-const DESERT_TEMPERATURE: f64 = 0.0;
-const DESERT_HUMIDITY: f64 = 0.0;
-const FOREST_HUMIDITY: f64 = 0.1;
-/// Half-width of the climate band over which terrain shape blends between biomes.
-const BLEND: f64 = 0.08;
-
-/// Per-biome terrain shape: height above sea level and hill amplitude in blocks.
-struct Shape {
-    base: f64,
-    hills: f64,
-}
-
-const PLAINS_SHAPE: Shape = Shape {
-    base: 3.0,
-    hills: 4.0,
-};
-const FOREST_SHAPE: Shape = Shape {
-    base: 4.0,
-    hills: 10.0,
-};
-const DESERT_SHAPE: Shape = Shape {
-    base: 3.0,
-    hills: 5.0,
-};
+/// Caves stop this far under the surface, except at cave entrances.
+const CAVE_ROOF: i32 = 3;
+/// Cave noise is sampled every `CAVE_CELL_XZ` blocks across and
+/// `CAVE_CELL_Y` up, and blended in between.
+const CAVE_CELL_XZ: i32 = 4;
+const CAVE_CELL_Y: i32 = 4;
+/// Deepslate replaces stone below this (modern y 0, squeezed), blending
+/// over the four blocks above (modern 0..8).
+pub const DEEPSLATE_LEVEL: i32 = 32;
+/// Cave biomes fill cells at least this far under the surface.
+const CAVE_BIOME_DEPTH: i32 = 16;
+/// Lowest height a cave biome reaches.
+const CAVE_BIOME_FLOOR: i32 = 6;
 
 /// Everything about a column that doesn't depend on caves or features.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -78,48 +78,82 @@ pub struct Column {
     pub biome: Biome,
     /// Y of the topmost solid block.
     pub height: i32,
-    /// The block on top (grass, sand, dirt or gravel).
+    /// The block on top (grass, sand, snow...).
     pub top: BlockState,
+    /// Whether caves may break through the surface here.
+    pub entrance: bool,
+    /// The cave biome deep underneath, if any.
+    pub cave: Option<Biome>,
+    /// Steepest drop to a neighboring column, in blocks.
+    pub slope: i32,
+}
+
+impl Column {
+    /// Whether plants and trees can grow on it: grass (or podzol) that no
+    /// cave cuts away.
+    pub fn grassy(&self) -> bool {
+        matches!(self.top.id(), blocks::GRASS_BLOCK | blocks::PODZOL) && !self.entrance
+    }
 }
 
 pub struct Terrain {
     seed: u64,
-    continent: Fbm<Perlin>,
-    temperature: Fbm<Perlin>,
-    humidity: Fbm<Perlin>,
+    /// Coordinate shifts for the detail noise (see `noise_offset`).
+    shift: [f64; 3],
+    climate: ClimateNoise,
+    caves_below: CaveBiomes,
     hills: Fbm<Perlin>,
+    ridges: Fbm<Perlin>,
+    rivers: Fbm<Perlin>,
     /// Varies surface layer depth and beach/gravel patches.
     surface: Perlin,
-    cave_a: Perlin,
-    cave_b: Perlin,
+    entrances: Perlin,
+    tunnel_a: Perlin,
+    tunnel_b: Perlin,
+    cavern: Fbm<Perlin>,
+    /// Badlands terracotta bands, by height.
+    bands: [BlockState; BAND_COUNT],
 }
 
-/// A 32-bit noise seed derived from the world seed, different for each `index`.
-fn noise_seed(seed: u64, index: u64) -> u32 {
-    mix(seed ^ mix(index)) as u32
-}
-
-fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {
+pub fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
+fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+/// Rivers run where the river noise crosses zero, this far either side.
+const RIVER_BED: f64 = 0.02;
+/// Their valleys reach this far either side.
+const RIVER_VALLEY: f64 = 0.075;
+/// The bottom of a river bed.
+const RIVER_FLOOR: f64 = SEA_LEVEL as f64 - 4.0;
+
+const BAND_COUNT: usize = 64;
+
 impl Terrain {
     pub fn new(seed: u64) -> Self {
-        let fbm = |index, octaves, frequency| {
+        let fbm = |index, octaves, wavelength: f64| {
             Fbm::<Perlin>::new(noise_seed(seed, index))
                 .set_octaves(octaves)
-                .set_frequency(frequency)
+                .set_frequency(1.0 / wavelength)
         };
         Self {
             seed,
-            continent: fbm(1, 4, 1.0 / 500.0),
-            temperature: fbm(2, 3, 1.0 / 300.0),
-            humidity: fbm(3, 3, 1.0 / 260.0),
-            hills: fbm(4, 4, 1.0 / 90.0),
+            shift: noise_offset(seed, 0),
+            climate: ClimateNoise::new(seed),
+            caves_below: CaveBiomes::new(seed),
+            hills: fbm(4, 4, 140.0),
+            ridges: fbm(14, 3, 70.0),
+            rivers: fbm(15, 2, 520.0),
             surface: Perlin::new(noise_seed(seed, 5)),
-            cave_a: Perlin::new(noise_seed(seed, 6)),
-            cave_b: Perlin::new(noise_seed(seed, 7)),
+            entrances: Perlin::new(noise_seed(seed, 16)),
+            tunnel_a: Perlin::new(noise_seed(seed, 6)),
+            tunnel_b: Perlin::new(noise_seed(seed, 7)),
+            cavern: fbm(17, 2, 90.0),
+            bands: badlands_bands(seed),
         }
     }
 
@@ -127,112 +161,364 @@ impl Terrain {
         self.seed
     }
 
-    fn climate(&self, x: i32, z: i32) -> (f64, f64, f64) {
-        let p = [x as f64, z as f64];
-        (
-            self.continent.get(p),
-            self.temperature.get(p),
-            self.humidity.get(p),
-        )
+    /// The climate at a column.
+    pub fn climate(&self, x: i32, z: i32) -> Climate {
+        self.climate.at(x, z)
     }
 
-    fn classify(continent: f64, temperature: f64, humidity: f64) -> Biome {
-        if continent < OCEAN_THRESHOLD {
-            Biome::Ocean
-        } else if temperature > DESERT_TEMPERATURE && humidity < DESERT_HUMIDITY {
-            Biome::Desert
-        } else if humidity > FOREST_HUMIDITY {
-            Biome::Forest
-        } else {
-            Biome::Plains
+    /// How the land lies at a column with climate `c`.
+    fn lay(&self, x: i32, z: i32, c: &Climate) -> Lay {
+        let sea = SEA_LEVEL as f64;
+        let (fx, fz) = (x as f64 + self.shift[0], z as f64 + self.shift[2]);
+        let continent = c.continent;
+        // 0 at the shore, 1 far inland.
+        let inland = smoothstep(COAST, 0.45, continent);
+        // Ocean floors deepen away from the shore: 58 at the edge of the
+        // ocean, about 42 where it turns deep, 28 at the deepest.
+        let deep = ((OCEAN - continent) / (1.0 + OCEAN)).clamp(0.0, 1.0);
+        let ocean_floor = sea - 5.0 - 30.0 * deep.powf(0.7);
+        let land = sea + 2.0 + 16.0 * inland;
+        let shelf = smoothstep(OCEAN - 0.08, COAST, continent);
+        let mut height = lerp(ocean_floor, land, shelf);
+
+        // Mountains rise far enough inland where erosion is low, highest
+        // where weirdness folds into peaks.
+        let mountain = inland.powf(1.2) * smoothstep(0.05, -0.75, c.erosion);
+        let peaks = smoothstep(-0.3, 1.0, c.peaks());
+        height += mountain * (25.0 + 125.0 * peaks);
+        let roughness = 1.0 - smoothstep(-1.0, 1.0, c.erosion);
+        let hills = self.hills.get([fx, fz]);
+        height += hills * (3.0 + 10.0 * inland * roughness + 22.0 * mountain);
+        if mountain > 0.05 {
+            let ridge = 1.0 - self.ridges.get([fx, fz]).abs() * 1.6;
+            height += ridge.max(0.0).powi(2) * 20.0 * mountain * peaks;
+        }
+
+        // Worn-flat land sinks to the sea: swamps.
+        let flat = smoothstep(0.5, 0.78, c.erosion)
+            * (1.0 - mountain)
+            * smoothstep(COAST, COAST + 0.12, continent);
+        height = lerp(height, sea - 0.4 + hills * 1.5, flat);
+
+        // Rivers cut valleys down to just under sea level, then a bed.
+        let strength = (1.0 - smoothstep(0.08, 0.3, mountain))
+            * (1.0 - smoothstep(95.0, 125.0, height))
+            * smoothstep(OCEAN, COAST, continent);
+        let off = self.rivers.get([fx, fz]).abs();
+        let valley = (1.0 - smoothstep(0.0, RIVER_VALLEY, off)) * strength;
+        let river = (1.0 - smoothstep(0.0, RIVER_BED, off)) * strength;
+        height = lerp(height, height.min(sea + 1.0), valley);
+        height = lerp(height, RIVER_FLOOR, river);
+
+        // Mushroom islands: low hills far out at sea.
+        let island = self.climate.mushroom(x, z, c);
+        if island > 0.0 {
+            height = lerp(height, sea + 3.0 + hills.abs() * 6.0, island);
+        }
+        let mushroom = island > 0.5;
+        Lay {
+            height: height.round().clamp(6.0, WORLD_HEIGHT as f64 - 16.0) as i32,
+            mountain,
+            river,
+            flat,
+            mushroom,
         }
     }
 
-    /// Height of the topmost solid block. Biome shapes are mixed by smooth
-    /// weights around the climate thresholds, so borders never step.
-    fn height(&self, x: i32, z: i32, continent: f64, temperature: f64, humidity: f64) -> i32 {
-        let forest = smoothstep(FOREST_HUMIDITY - BLEND, FOREST_HUMIDITY + BLEND, humidity);
-        let desert = smoothstep(
-            DESERT_TEMPERATURE - BLEND,
-            DESERT_TEMPERATURE + BLEND,
-            temperature,
-        ) * smoothstep(DESERT_HUMIDITY + BLEND, DESERT_HUMIDITY - BLEND, humidity);
-        let mix_shape = |f: fn(&Shape) -> f64| {
-            let land = f(&PLAINS_SHAPE) + (f(&FOREST_SHAPE) - f(&PLAINS_SHAPE)) * forest;
-            land + (f(&DESERT_SHAPE) - land) * desert
-        };
-        // 0 deep in the ocean, 1 on land; flattens hills under water.
-        let land = smoothstep(OCEAN_THRESHOLD - 0.06, OCEAN_THRESHOLD + 0.02, continent);
-        let shelf = if continent < OCEAN_THRESHOLD {
-            ((continent - OCEAN_THRESHOLD) * OCEAN_SLOPE).max(-MAX_OCEAN_DEPTH)
-        } else {
-            (continent - OCEAN_THRESHOLD) * INLAND_SLOPE
-        };
-        let hills = self.hills.get([x as f64, z as f64]) * mix_shape(|s| s.hills);
-        let height =
-            SEA_LEVEL as f64 + shelf + mix_shape(|s| s.base) * land + hills * (0.25 + 0.75 * land);
-        height.round().clamp(8.0, WORLD_HEIGHT as f64 - 24.0) as i32
+    /// Height of the topmost solid block.
+    pub fn height(&self, x: i32, z: i32) -> i32 {
+        self.lay(x, z, &self.climate(x, z)).height
     }
 
     /// Noise in -1..1 for surface details at a column.
     fn surface_noise(&self, x: i32, z: i32, scale: f64, offset: f64) -> f64 {
-        self.surface
-            .get([x as f64 / scale + offset, z as f64 / scale - offset])
+        self.surface.get([
+            (x as f64 + self.shift[0]) / scale + offset,
+            (z as f64 + self.shift[2]) / scale - offset,
+        ])
     }
 
+    /// The column at (x, z), working out its neighbors' heights for the slope.
     pub fn column(&self, x: i32, z: i32) -> Column {
-        let (c, t, h) = self.climate(x, z);
-        let biome = Self::classify(c, t, h);
-        let height = self.height(x, z, c, t, h);
+        let around = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.height(x + dx, z + dz));
+        let c = self.climate(x, z);
+        self.column_with(x, z, c, self.lay(x, z, &c), around)
+    }
+
+    /// The column at (x, z) with climate `c` and lay `lay`, given its four
+    /// neighbors' heights.
+    fn column_with(&self, x: i32, z: i32, c: Climate, lay: Lay, around: [i32; 4]) -> Column {
+        let biome = climate::pick(&c, &lay, SEA_LEVEL);
+        let slope = around
+            .iter()
+            .map(|&h| (lay.height - h).abs())
+            .max()
+            .unwrap_or(0);
+        let top = self.top(x, z, biome, lay.height, slope);
+        let entrance = self.entrances.get([
+            (x as f64 + self.shift[0]) / 23.0,
+            (z as f64 + self.shift[2]) / 23.0,
+        ]) > 0.55;
+        let cave = (lay.height > CAVE_BIOME_FLOOR + CAVE_BIOME_DEPTH)
+            .then(|| self.caves_below.at(x, z))
+            .flatten();
+        Column {
+            biome,
+            height: lay.height,
+            top,
+            entrance,
+            cave,
+            slope,
+        }
+    }
+
+    /// The block on top of a column.
+    fn top(&self, x: i32, z: i32, biome: Biome, height: i32, slope: i32) -> BlockState {
         let patch = self.surface_noise(x, z, 12.0, 0.5);
-        let top = if biome == Biome::Desert {
-            SAND
-        } else if height < SEA_LEVEL - 1 {
-            // Underwater floors are sand, gravel or dirt in patches.
-            if patch > 0.25 {
-                GRAVEL
-            } else if patch > -0.35 || biome == Biome::Ocean {
-                SAND
-            } else {
-                DIRT
+        let steep = slope >= 3;
+        let underwater = height < SEA_LEVEL - 1;
+        match biome {
+            Biome::Desert | Biome::Beach => SAND,
+            Biome::StonyShore => STONE,
+            Biome::Badlands if steep || height > 100 => self.band(x, height, z),
+            Biome::Badlands => RED_SAND,
+            Biome::MushroomFields => MYCELIUM,
+            Biome::MangroveSwamp => MUD,
+            Biome::FrozenPeaks if steep => {
+                if patch > 0.0 {
+                    PACKED_ICE
+                } else {
+                    STONE
+                }
             }
-        } else if height <= SEA_LEVEL + 1 && patch > -0.2 {
-            // Beaches.
-            SAND
-        } else {
-            GRASS
+            Biome::JaggedPeaks | Biome::SnowySlopes | Biome::FrozenPeaks if steep => STONE,
+            Biome::JaggedPeaks | Biome::SnowySlopes | Biome::FrozenPeaks => SNOW_BLOCK,
+            Biome::WindsweptHills if steep => STONE,
+            Biome::WindsweptHills if patch > 0.45 => GRAVEL,
+            Biome::DeepOcean
+            | Biome::DeepColdOcean
+            | Biome::DeepFrozenOcean
+            | Biome::ColdOcean
+            | Biome::FrozenOcean => GRAVEL,
+            Biome::DeepLukewarmOcean | Biome::LukewarmOcean | Biome::WarmOcean | Biome::Ocean => {
+                if patch > 0.4 {
+                    GRAVEL
+                } else {
+                    SAND
+                }
+            }
+            Biome::River => {
+                if patch > 0.3 {
+                    GRAVEL
+                } else if patch < -0.45 {
+                    CLAY
+                } else {
+                    SAND
+                }
+            }
+            _ if underwater => {
+                if patch > 0.25 {
+                    GRAVEL
+                } else if patch > -0.35 {
+                    SAND
+                } else {
+                    DIRT
+                }
+            }
+            _ if steep && height > 100 => STONE,
+            Biome::Taiga | Biome::SnowyTaiga | Biome::BambooJungle if patch > 0.4 => PODZOL,
+            Biome::Savanna if patch > 0.55 => COARSE_DIRT,
+            _ if height <= SEA_LEVEL + 1 && patch > -0.2 && !matches!(biome, Biome::Swamp) => SAND,
+            _ => GRASS,
+        }
+    }
+
+    /// A badlands terracotta band at a height (modern `BandsTerracotta`,
+    /// gently tilted across the land).
+    fn band(&self, x: i32, y: i32, z: i32) -> BlockState {
+        let tilt = (self.surface_noise(x, z, 60.0, 3.1) * 2.0).round() as i32;
+        self.bands[(y + tilt).rem_euclid(BAND_COUNT as i32) as usize]
+    }
+
+    /// The columns of a chunk and a margin around it, for generating it
+    /// and replaying its neighbors' trees and veins.
+    pub fn area(&self, center: ChunkPos) -> Area {
+        let (cx, cz) = center.min_block();
+        let (min_x, min_z) = (cx - Area::MARGIN, cz - Area::MARGIN);
+        let side = Area::SIDE;
+        // Climate on the grid, covering one column more each way for the slopes.
+        let grid = climate::GRID;
+        let (gx0, gz0) = ((min_x - 1).div_euclid(grid), (min_z - 1).div_euclid(grid));
+        let (gx1, gz1) = (
+            (min_x + side).div_euclid(grid) + 1,
+            (min_z + side).div_euclid(grid) + 1,
+        );
+        let row = (gx1 - gx0 + 1) as usize;
+        let samples: Vec<Climate> = (gz0..=gz1)
+            .flat_map(|j| (gx0..=gx1).map(move |i| (i, j)))
+            .map(|(i, j)| self.climate.sample(i * grid, j * grid))
+            .collect();
+        let climate_at = |x: i32, z: i32| {
+            let (gx, gz) = (x.div_euclid(grid), z.div_euclid(grid));
+            let (i, j) = ((gx - gx0) as usize, (gz - gz0) as usize);
+            let tx = (x - gx * grid) as f64 / grid as f64;
+            let tz = (z - gz * grid) as f64 / grid as f64;
+            climate::blend(
+                [
+                    samples[j * row + i],
+                    samples[j * row + i + 1],
+                    samples[(j + 1) * row + i],
+                    samples[(j + 1) * row + i + 1],
+                ],
+                tx,
+                tz,
+            )
         };
-        Column { biome, height, top }
+        // Lays one column further each way, for the slopes.
+        let wide = (side + 2) as usize;
+        let mut climates = Vec::with_capacity(wide * wide);
+        let mut lays = Vec::with_capacity(wide * wide);
+        for z in min_z - 1..min_z + side + 1 {
+            for x in min_x - 1..min_x + side + 1 {
+                let c = climate_at(x, z);
+                lays.push(self.lay(x, z, &c));
+                climates.push(c);
+            }
+        }
+        let mut columns = Vec::with_capacity((side * side) as usize);
+        for z in 0..side {
+            for x in 0..side {
+                let i = (z as usize + 1) * wide + x as usize + 1;
+                let around = [i + 1, i - 1, i + wide, i - wide].map(|j| lays[j].height);
+                columns.push(self.column_with(min_x + x, min_z + z, climates[i], lays[i], around));
+            }
+        }
+        Area {
+            min_x,
+            min_z,
+            columns,
+        }
+    }
+
+    /// The tunnel and cavern noise at a point (both carve where positive).
+    fn cave_noise(&self, x: i32, y: i32, z: i32) -> f64 {
+        // Tunnels are stretched sideways: caves wind more than they climb.
+        let [sx, sy, sz] = self.shift;
+        let (x, y, z) = (x as f64 + sx, y as f64, z as f64 + sz);
+        let p = [x / 48.0, y / 24.0 + sy, z / 48.0];
+        let (a, b) = (self.tunnel_a.get(p), self.tunnel_b.get(p));
+        let tunnel = TUNNEL_WIDTH - (a * a + b * b);
+        let fade = smoothstep(CAVERN_TOP as f64, CAVERN_TOP as f64 - 16.0, y)
+            * smoothstep(LAVA_LEVEL as f64 - 2.0, LAVA_LEVEL as f64 + 6.0, y);
+        let q = [x, y * 1.6 + sy, z];
+        let cavern = (self.cavern.get(q) + 0.5) * fade - CAVERN_EDGE;
+        // Scale the cavern field down to the tunnel field's size.
+        tunnel.max(cavern * 0.05)
     }
 
     /// Whether a cave runs through (x, y, z), ignoring what block is there.
+    /// Cave noise is blended between samples on a coarse grid, exactly as
+    /// `carve_caves` does.
     pub fn is_cave(&self, x: i32, y: i32, z: i32) -> bool {
         if y < 1 {
             return false;
         }
-        // Tunnels are stretched sideways: caves wind more than they climb.
-        let p = [x as f64 / 48.0, y as f64 / 24.0, z as f64 / 48.0];
-        let a = self.cave_a.get(p);
-        let b = self.cave_b.get(p);
-        a * a + b * b < CAVE_WIDTH
+        let (cx, cy, cz) = (
+            x.div_euclid(CAVE_CELL_XZ) * CAVE_CELL_XZ,
+            y.div_euclid(CAVE_CELL_Y) * CAVE_CELL_Y,
+            z.div_euclid(CAVE_CELL_XZ) * CAVE_CELL_XZ,
+        );
+        let corner = |dx: i32, dy: i32, dz: i32| {
+            self.cave_noise(
+                cx + dx * CAVE_CELL_XZ,
+                cy + dy * CAVE_CELL_Y,
+                cz + dz * CAVE_CELL_XZ,
+            )
+        };
+        let c = [
+            [
+                [corner(0, 0, 0), corner(1, 0, 0)],
+                [corner(0, 0, 1), corner(1, 0, 1)],
+            ],
+            [
+                [corner(0, 1, 0), corner(1, 1, 0)],
+                [corner(0, 1, 1), corner(1, 1, 1)],
+            ],
+        ];
+        let t = (
+            (x - cx) as f64 / CAVE_CELL_XZ as f64,
+            (y - cy) as f64 / CAVE_CELL_Y as f64,
+            (z - cz) as f64 / CAVE_CELL_XZ as f64,
+        );
+        trilinear(&c, t) > 0.0
+    }
+
+    /// The highest block caves may carve in a column.
+    fn cave_top(column: &Column) -> i32 {
+        if column.height < SEA_LEVEL {
+            column.height - CAVE_WATER_MARGIN
+        } else if column.entrance {
+            column.height
+        } else {
+            column.height - CAVE_ROOF
+        }
     }
 
     /// Carves caves into a filled chunk, leaving bedrock, water and the
     /// ground just under water alone.
-    fn carve_caves(&self, chunk: &mut Chunk) {
+    fn carve_caves(&self, chunk: &mut Chunk, area: &Area) {
         let (min_x, min_z) = chunk.pos.min_block();
+        let top = (0..CHUNK_SIZE * CHUNK_SIZE)
+            .map(|i| {
+                let column = area.get(min_x + (i % 16) as i32, min_z + (i / 16) as i32);
+                Self::cave_top(column)
+            })
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        // Noise on a coarse grid over the chunk, up to the highest top.
+        let nx = CHUNK_SIZE as i32 / CAVE_CELL_XZ + 1;
+        let ny = top / CAVE_CELL_Y + 2;
+        let mut grid = vec![0.0; (nx * nx * ny) as usize];
+        let index = |i: i32, j: i32, k: i32| ((j * nx + k) * nx + i) as usize;
+        for j in 0..ny {
+            for k in 0..nx {
+                for i in 0..nx {
+                    grid[index(i, j, k)] = self.cave_noise(
+                        min_x + i * CAVE_CELL_XZ,
+                        j * CAVE_CELL_Y,
+                        min_z + k * CAVE_CELL_XZ,
+                    );
+                }
+            }
+        }
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
-                let (wx, wz) = (min_x + x as i32, min_z + z as i32);
-                let column = self.column(wx, wz);
-                let top = if column.height < SEA_LEVEL {
-                    column.height - CAVE_WATER_MARGIN
-                } else {
-                    column.height
-                };
-                for y in 1..=top {
+                let column = area.get(min_x + x as i32, min_z + z as i32);
+                let (i, k) = (x as i32 / CAVE_CELL_XZ, z as i32 / CAVE_CELL_XZ);
+                let tx = (x as i32 % CAVE_CELL_XZ) as f64 / CAVE_CELL_XZ as f64;
+                let tz = (z as i32 % CAVE_CELL_XZ) as f64 / CAVE_CELL_XZ as f64;
+                for y in 1..=Self::cave_top(column) {
+                    let j = y / CAVE_CELL_Y;
+                    let ty = (y % CAVE_CELL_Y) as f64 / CAVE_CELL_Y as f64;
+                    let c = [
+                        [
+                            [grid[index(i, j, k)], grid[index(i + 1, j, k)]],
+                            [grid[index(i, j, k + 1)], grid[index(i + 1, j, k + 1)]],
+                        ],
+                        [
+                            [grid[index(i, j + 1, k)], grid[index(i + 1, j + 1, k)]],
+                            [
+                                grid[index(i, j + 1, k + 1)],
+                                grid[index(i + 1, j + 1, k + 1)],
+                            ],
+                        ],
+                    ];
+                    if trilinear(&c, (tx, ty, tz)) <= 0.0 {
+                        continue;
+                    }
                     let block = chunk.get(x, y as usize, z);
-                    if block == BEDROCK || !self.is_cave(wx, y, wz) {
+                    if block == BEDROCK {
                         continue;
                     }
                     let carved = if y <= LAVA_LEVEL {
@@ -256,7 +542,10 @@ impl Terrain {
                 for (x, z) in [(i, -ring), (i, ring), (-ring, i), (ring, i)] {
                     let (x, z) = (x * STEP, z * STEP);
                     let column = self.column(x, z);
-                    if column.biome == Biome::Ocean || column.height < SEA_LEVEL {
+                    if column.biome.is_ocean()
+                        || column.biome == Biome::River
+                        || column.height < SEA_LEVEL
+                    {
                         continue;
                     }
                     // Check the generated column too: a cave can carve the
@@ -266,8 +555,10 @@ impl Terrain {
                         .or_insert_with_key(|&pos| self.generate(pos));
                     let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
                     let y = column.height as usize;
-                    if chunk.get(lx, y, lz) == column.top
-                        && chunk.get(lx, y + 1, lz).is_air()
+                    let ground = chunk.get(lx, y, lz);
+                    if ground.def().solid
+                        && ground.def().fluid.is_none()
+                        && chunk.get(lx, y + 1, lz).def().replaceable
                         && chunk.get(lx, y + 2, lz).is_air()
                     {
                         return (x, column.height + 1, z);
@@ -280,32 +571,27 @@ impl Terrain {
 
     /// Fills a chunk with stone, surface layers, water and bedrock (no caves or features).
     pub fn fill(&self, chunk: &mut Chunk) {
+        let area = self.area(chunk.pos);
+        self.fill_from(chunk, &area);
+    }
+
+    fn fill_from(&self, chunk: &mut Chunk, area: &Area) {
         let (min_x, min_z) = chunk.pos.min_block();
-        let mut bedrock_rng = Rng::for_chunk(self.seed, chunk.pos.x, chunk.pos.z, 0xBED);
+        let mut rng = Rng::for_chunk(self.seed, chunk.pos.x, chunk.pos.z, 0xBED);
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
                 let (wx, wz) = (min_x + x as i32, min_z + z as i32);
-                let column = self.column(wx, wz);
+                let column = *area.get(wx, wz);
                 chunk.set_biome(x, z, column.biome);
+                if let Some(cave) = column.cave {
+                    let top = column.height - CAVE_BIOME_DEPTH;
+                    for y in (CAVE_BIOME_FLOOR..=top).step_by(4) {
+                        chunk.set_cave_biome(x, y as usize, z, Some(cave));
+                    }
+                }
                 let depth = 3 + (self.surface_noise(wx, wz, 8.0, 7.3) * 1.5 + 1.5) as i32;
-                let (filler, under) = match column.top {
-                    SAND if column.biome == Biome::Desert => (SAND, Some(SANDSTONE)),
-                    SAND | GRAVEL => (column.top, None),
-                    _ => (DIRT, None),
-                };
                 for y in 1..=column.height {
-                    let below_top = column.height - y;
-                    let block = if below_top == 0 {
-                        column.top
-                    } else if below_top < depth {
-                        filler
-                    } else if below_top < depth + 3
-                        && let Some(under) = under
-                    {
-                        under
-                    } else {
-                        STONE
-                    };
+                    let block = self.layer(&column, wx, y, wz, depth, &mut rng);
                     chunk.set(x, y as usize, z, block);
                 }
                 for y in column.height + 1..=SEA_LEVEL {
@@ -314,7 +600,7 @@ impl Terrain {
                 // A bedrock floor, ragged for four blocks like 1.0.0.
                 chunk.set(x, 0, z, BEDROCK);
                 for y in 1..5 {
-                    if (bedrock_rng.below(5) as usize) >= y {
+                    if (rng.below(5) as usize) >= y {
                         chunk.set(x, y, z, BEDROCK);
                     }
                 }
@@ -322,21 +608,166 @@ impl Terrain {
         }
     }
 
-    /// Generates a chunk: terrain, caves, ores, trees and plants.
+    /// The block at height `y` in a column: the top, the layers under it,
+    /// then stone, or deepslate low down.
+    fn layer(
+        &self,
+        column: &Column,
+        x: i32,
+        y: i32,
+        z: i32,
+        depth: i32,
+        rng: &mut Rng,
+    ) -> BlockState {
+        let below_top = column.height - y;
+        let top = column.top;
+        if below_top == 0 {
+            return top;
+        }
+        let filler = match top.id() {
+            blocks::GRASS_BLOCK | blocks::PODZOL | blocks::MYCELIUM | blocks::COARSE_DIRT => {
+                Some((DIRT, depth))
+            }
+            blocks::SAND => Some((SAND, depth)),
+            blocks::RED_SAND => Some((RED_SAND, 2)),
+            blocks::GRAVEL | blocks::CLAY | blocks::MUD | blocks::PACKED_ICE => Some((top, depth)),
+            blocks::SNOW_BLOCK => Some((SNOW_BLOCK, 2)),
+            _ => None,
+        };
+        let mut used = 0;
+        if let Some((block, n)) = filler {
+            if below_top < n {
+                return block;
+            }
+            used = n;
+        }
+        // Sand lies on sandstone; badlands on bands of terracotta.
+        if top == SAND && column.biome != Biome::River && below_top < used + 3 {
+            return SANDSTONE;
+        }
+        if column.biome == Biome::Badlands && (top.id() != blocks::STONE) && y > SEA_LEVEL - 8 {
+            return self.band(x, y, z);
+        }
+        if y < DEEPSLATE_LEVEL
+            || (y < DEEPSLATE_LEVEL + 4 && rng.below(4) as i32 >= y - DEEPSLATE_LEVEL)
+        {
+            DEEPSLATE
+        } else {
+            STONE
+        }
+    }
+
+    /// Generates a chunk: terrain, caves, ores, underground features, trees
+    /// and plants.
     pub fn generate(&self, pos: ChunkPos) -> Chunk {
+        let area = self.area(pos);
         let mut chunk = Chunk::new(pos);
-        self.fill(&mut chunk);
-        self.carve_caves(&mut chunk);
-        super::ores::populate(self, &mut chunk);
-        super::features::populate(self, &mut chunk);
+        self.fill_from(&mut chunk, &area);
+        self.carve_caves(&mut chunk, &area);
+        super::ores::populate(self, &area, &mut chunk);
+        super::underground::populate(self, &area, &mut chunk);
+        super::features::populate(self, &area, &mut chunk);
         chunk
+    }
+}
+
+/// Trilinear blend of a cell's corners, indexed `[y][z][x]`.
+fn trilinear(c: &[[[f64; 2]; 2]; 2], (tx, ty, tz): (f64, f64, f64)) -> f64 {
+    let x = |y: usize, z: usize| lerp(c[y][z][0], c[y][z][1], tx);
+    let z = |y: usize| lerp(x(y, 0), x(y, 1), tz);
+    lerp(z(0), z(1), ty)
+}
+
+/// Modern badlands bands: orange terracotta with bands of plain, yellow,
+/// brown, red, white and light gray, placed by the seed.
+fn badlands_bands(seed: u64) -> [BlockState; BAND_COUNT] {
+    let of = BlockState::of;
+    let mut bands = [of(blocks::ORANGE_TERRACOTTA); BAND_COUNT];
+    let mut rng = Rng::new(mix(seed ^ 0xBAD));
+    let mut i = 0;
+    while i < BAND_COUNT {
+        i += 1 + rng.below(5) as usize;
+        if i < BAND_COUNT {
+            bands[i] = TERRACOTTA;
+        }
+    }
+    for (block, count, width) in [
+        (blocks::YELLOW_TERRACOTTA, 3, 1),
+        (blocks::BROWN_TERRACOTTA, 3, 2),
+        (blocks::RED_TERRACOTTA, 3, 1),
+        (blocks::WHITE_TERRACOTTA, 2, 2),
+        (blocks::LIGHT_GRAY_TERRACOTTA, 2, 1),
+    ] {
+        for _ in 0..count {
+            let start = rng.below(BAND_COUNT as u32) as usize;
+            for k in 0..width + rng.below(2) as usize {
+                bands[(start + k) % BAND_COUNT] = of(block);
+            }
+        }
+    }
+    bands
+}
+
+/// The columns of a chunk and a margin around it: as far as any tree,
+/// ice spike or vein from beyond can reach into the chunk.
+pub struct Area {
+    min_x: i32,
+    min_z: i32,
+    columns: Vec<Column>,
+}
+
+impl Area {
+    pub const MARGIN: i32 = 12;
+    const SIDE: i32 = CHUNK_SIZE as i32 + 2 * Self::MARGIN;
+
+    /// The column at (x, z), which must be in the chunk or next to it.
+    pub fn get(&self, x: i32, z: i32) -> &Column {
+        let (i, j) = (x - self.min_x, z - self.min_z);
+        debug_assert!(
+            (0..Self::SIDE).contains(&i) && (0..Self::SIDE).contains(&j),
+            "column {x},{z} is outside the area"
+        );
+        &self.columns[(j * Self::SIDE + i) as usize]
+    }
+
+    /// The column at (x, z) if it's in the area.
+    pub fn try_get(&self, x: i32, z: i32) -> Option<&Column> {
+        let (i, j) = (x - self.min_x, z - self.min_z);
+        ((0..Self::SIDE).contains(&i) && (0..Self::SIDE).contains(&j))
+            .then(|| &self.columns[(j * Self::SIDE + i) as usize])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
+
+    fn local(x: i32, z: i32) -> (usize, usize) {
+        (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize)
+    }
+
+    /// The first column (on a coarse spiral from the origin) that `pick`
+    /// accepts.
+    pub(crate) fn find(
+        terrain: &Terrain,
+        what: &str,
+        pick: impl Fn(&Column) -> bool,
+    ) -> (i32, i32) {
+        (0..4000)
+            .flat_map(|r: i32| {
+                let n = r.max(1) * 8;
+                (0..n).map(move |k| {
+                    let a = k as f64 / n as f64 * std::f64::consts::TAU;
+                    (
+                        (a.cos() * r as f64 * 24.0) as i32,
+                        (a.sin() * r as f64 * 24.0) as i32,
+                    )
+                })
+            })
+            .find(|&(x, z)| pick(&terrain.column(x, z)))
+            .unwrap_or_else(|| panic!("no {what} found"))
+    }
 
     #[test]
     fn same_seed_same_chunk_different_seed_different_chunk() {
@@ -354,107 +785,148 @@ mod tests {
         assert_ne!(blocks(&a), blocks(&c));
     }
 
-    /// M3 "done when": flying in one direction for 2 minutes (about 1,300
-    /// blocks at fly speed) passes all four biomes.
     #[test]
-    fn a_two_minute_flight_crosses_all_four_biomes() {
-        let mut hits = 0;
-        let trials = 40;
-        for seed in 0..trials {
+    fn the_area_agrees_with_single_columns() {
+        let terrain = Terrain::new(77);
+        for pos in [
+            ChunkPos::new(0, 0),
+            ChunkPos::new(-31, 17),
+            ChunkPos::new(140, -260),
+        ] {
+            let area = terrain.area(pos);
+            let (x0, z0) = pos.min_block();
+            for (dx, dz) in [(0, 0), (15, 15), (-12, 7), (27, -12), (8, 3)] {
+                let (x, z) = (x0 + dx, z0 + dz);
+                assert_eq!(*area.get(x, z), terrain.column(x, z), "{x},{z}");
+            }
+        }
+    }
+
+    /// M21 "done when": a seed shows every new biome.
+    #[test]
+    fn every_surface_biome_appears_within_reach() {
+        for seed in [20111118, 1] {
             let terrain = Terrain::new(seed);
-            let mut rng = Rng::new(seed);
-            let (x0, z0) = (
-                rng.below(20_000) as i32 - 10_000,
-                rng.below(20_000) as i32 - 10_000,
-            );
-            let angle = rng.next_f64() * std::f64::consts::TAU;
-            let biomes: HashSet<Biome> = (0..1300)
-                .step_by(4)
-                .map(|d| {
-                    let x = x0 + (angle.cos() * d as f64) as i32;
-                    let z = z0 + (angle.sin() * d as f64) as i32;
-                    terrain.column(x, z).biome
-                })
+            let mut seen = HashSet::new();
+            for z in (-6000..6000).step_by(48) {
+                for x in (-6000..6000).step_by(48) {
+                    seen.insert(terrain.column(x, z).biome);
+                }
+            }
+            let missing: Vec<_> = Biome::ALL
+                .iter()
+                .filter(|b| !b.is_cave() && !seen.contains(b))
                 .collect();
-            if biomes.len() == 4 {
-                hits += 1;
-            }
+            assert!(missing.is_empty(), "seed {seed} lacks {missing:?}");
         }
-        // Not every random line can cross every biome (39/40 did when tuned).
-        assert!(
-            hits * 10 >= trials * 9,
-            "only {hits}/{trials} flights saw all four biomes"
-        );
     }
 
     #[test]
-    fn biome_mix_is_reasonable() {
+    fn biome_shares_are_reasonable() {
         let terrain = Terrain::new(12345);
-        let mut counts = [0usize; 4];
-        for z in (-4000..4000).step_by(64) {
-            for x in (-4000..4000).step_by(64) {
-                counts[terrain.column(x, z).biome as usize] += 1;
+        let mut counts: HashMap<Biome, usize> = HashMap::new();
+        for z in (-8000..8000).step_by(80) {
+            for x in (-8000..8000).step_by(80) {
+                *counts.entry(terrain.column(x, z).biome).or_insert(0) += 1;
             }
         }
-        let total: usize = counts.iter().sum();
-        for (biome, count) in Biome::ALL.iter().zip(counts) {
-            let share = count as f64 / total as f64;
-            assert!((0.08..0.55).contains(&share), "{biome:?} covers {share:.2}");
+        let total: usize = counts.values().sum();
+        let share = |n: usize| n as f64 / total as f64;
+        for (biome, &n) in &counts {
+            assert!(share(n) < 0.12, "{biome:?} covers {:.2}", share(n));
         }
+        let ocean: usize = counts
+            .iter()
+            .filter(|(b, _)| b.is_ocean())
+            .map(|(_, n)| n)
+            .sum();
+        assert!(
+            (0.25..0.5).contains(&share(ocean)),
+            "oceans cover {:.2}",
+            share(ocean)
+        );
     }
 
     #[test]
-    fn borders_are_continuous() {
-        // Neighboring columns never differ by more than a few blocks, even
-        // across biome borders.
+    fn mountains_reach_high_and_oceans_deep() {
+        let terrain = Terrain::new(20111118);
+        let mut heights: Vec<i32> = (-4000..4000)
+            .step_by(40)
+            .flat_map(|z| (-4000..4000).step_by(40).map(move |x| (x, z)))
+            .map(|(x, z)| terrain.height(x, z))
+            .collect();
+        heights.sort();
+        let q = |p: f64| heights[((heights.len() - 1) as f64 * p) as usize];
+        assert!(q(0.995) > 200, "highest peaks reach only {}", q(0.995));
+        assert!(*heights.last().unwrap() <= WORLD_HEIGHT as i32 - 16);
+        assert!(q(0.02) < 40, "deep oceans only reach {}", q(0.02));
+        assert!((60..75).contains(&q(0.5)), "median height {}", q(0.5));
+    }
+
+    #[test]
+    fn lowlands_are_smooth_and_mountains_steep_but_continuous() {
         let terrain = Terrain::new(99);
-        let mut steepest = 0;
-        for z in (-2000..2000).step_by(7) {
-            let mut previous = terrain.column(-2000, z).height;
-            for x in -1999..2000 {
-                let height = terrain.column(x, z).height;
-                steepest = steepest.max((height - previous).abs());
-                previous = height;
+        let (mut lowland, mut anywhere) = (0, 0);
+        for z in (-3000..3000).step_by(61) {
+            let mut previous = terrain.height(-3000, z);
+            for x in -2999..3000 {
+                let c = terrain.climate(x, z);
+                let lay = terrain.lay(x, z, &c);
+                let step = (lay.height - previous).abs();
+                anywhere = anywhere.max(step);
+                // Lowlands, not counting the sea floor far under water.
+                if lay.mountain < 0.02 && lay.height > SEA_LEVEL - 12 {
+                    lowland = lowland.max(step);
+                }
+                previous = lay.height;
             }
         }
-        assert!(
-            steepest <= 4,
-            "a {steepest}-block cliff between neighboring columns"
-        );
+        assert!(lowland <= 5, "a {lowland}-block step in the lowlands");
+        assert!(anywhere <= 14, "a {anywhere}-block cliff");
     }
 
     #[test]
     fn oceans_are_water_down_to_the_floor() {
         let terrain = Terrain::new(5);
-        let (x, z) = (-6000..6000)
-            .step_by(16)
-            .flat_map(|x| (-6000..6000).step_by(16).map(move |z| (x, z)))
-            .find(|&(x, z)| terrain.column(x, z).height < SEA_LEVEL - 5)
-            .expect("no ocean found");
+        let (x, z) = find(&terrain, "ocean", |c| {
+            c.biome.is_ocean() && c.height < SEA_LEVEL - 5
+        });
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
-        let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+        let (lx, lz) = local(x, z);
         let column = terrain.column(x, z);
-        assert_eq!(chunk.get(lx, SEA_LEVEL as usize, lz), WATER);
+        assert!(matches!(
+            chunk.get(lx, SEA_LEVEL as usize, lz).id(),
+            blocks::WATER | blocks::ICE | blocks::PACKED_ICE
+        ));
         assert_eq!(chunk.get(lx, column.height as usize + 1, lz), WATER);
         assert_eq!(chunk.get(lx, column.height as usize, lz), column.top);
-        assert!(chunk.get(lx, SEA_LEVEL as usize + 1, lz).is_air());
+    }
+
+    #[test]
+    fn rivers_carry_water_below_the_land_around() {
+        let terrain = Terrain::new(5);
+        let (x, z) = find(&terrain, "river", |c| {
+            c.biome == Biome::River && c.height < SEA_LEVEL - 1
+        });
+        let chunk = terrain.generate(ChunkPos::of_block(x, z));
+        let (lx, lz) = local(x, z);
+        let top = chunk.get(lx, SEA_LEVEL as usize, lz).id();
+        assert!(matches!(top, blocks::WATER | blocks::ICE), "{top:?}");
     }
 
     #[test]
     fn spawn_is_on_open_dry_land() {
-        // Seed 42 used to spawn where a cave had carved away the surface.
-        for seed in (0..10).chain([42]) {
+        for seed in (0..6).chain([42, 20111118]) {
             let terrain = Terrain::new(seed);
             let (x, y, z) = terrain.spawn_point();
             let column = terrain.column(x, z);
-            assert_ne!(column.biome, Biome::Ocean);
+            assert!(!column.biome.is_ocean(), "seed {seed}");
             assert_eq!(y, column.height + 1);
             assert!(column.height >= SEA_LEVEL);
             let chunk = terrain.generate(ChunkPos::of_block(x, z));
-            let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+            let (lx, lz) = local(x, z);
             let y = y as usize;
-            assert_eq!(chunk.get(lx, y - 1, lz), column.top, "seed {seed}");
-            assert!(chunk.get(lx, y, lz).is_air(), "seed {seed}");
+            assert!(chunk.get(lx, y - 1, lz).def().solid, "seed {seed}");
             assert!(chunk.get(lx, y + 1, lz).is_air(), "seed {seed}");
         }
     }
@@ -490,54 +962,251 @@ mod tests {
             }
         }
         assert!(
-            air_below_surface > 1000,
+            air_below_surface > 2000,
             "only {air_below_surface} cave blocks in 64 chunks"
         );
         assert!(lava > 0, "no lava in deep caves");
     }
 
     #[test]
-    fn surface_layers_and_bedrock() {
-        let terrain = Terrain::new(77);
-        let chunk = terrain.generate(ChunkPos::new(0, 0));
-        for z in 0..16 {
-            for x in 0..16 {
-                assert_eq!(chunk.get(x, 0, z), BEDROCK);
-                let column = terrain.column(x as i32, z as i32);
-                assert_eq!(chunk.biome(x, z), column.biome);
-                if terrain.is_cave(x as i32, column.height, z as i32)
-                    || terrain.is_cave(x as i32, column.height - 1, z as i32)
-                {
-                    continue;
-                }
-                let top = chunk.get(x, column.height as usize, z);
-                // Trees turn the grass under their trunk to dirt.
-                assert!(top == column.top || top == DIRT, "{top:?} at {x},{z}");
-                if column.top == GRASS {
-                    assert_eq!(chunk.get(x, column.height as usize - 1, z), DIRT);
+    fn is_cave_matches_the_carved_chunk() {
+        let terrain = Terrain::new(8);
+        let pos = ChunkPos::new(2, -3);
+        let chunk = terrain.generate(pos);
+        let (min_x, min_z) = pos.min_block();
+        let mut checked = 0;
+        for (x, z) in [(3usize, 4usize), (10, 12), (15, 0)] {
+            for y in 12..40 {
+                let block = chunk.get(x, y, z);
+                if matches!(block.id(), blocks::STONE | blocks::DEEPSLATE) {
+                    assert!(!terrain.is_cave(min_x + x as i32, y as i32, min_z + z as i32));
+                    checked += 1;
                 }
             }
         }
+        assert!(checked > 20);
     }
 
     #[test]
-    fn deserts_have_sand_over_sandstone() {
+    fn deepslate_lies_below_stone() {
         let terrain = Terrain::new(3);
-        let (x, z) = (-8000..8000)
-            .step_by(32)
-            .flat_map(|x| (-8000..8000).step_by(32).map(move |z| (x, z)))
-            .find(|&(x, z)| {
-                let c = terrain.column(x, z);
-                c.biome == Biome::Desert
-                    && c.height > SEA_LEVEL + 2
-                    && (c.height - 10..=c.height).all(|y| !terrain.is_cave(x, y, z))
-            })
-            .expect("no desert found");
+        let chunk = terrain.generate(ChunkPos::new(5, 5));
+        let count = |range: std::ops::Range<usize>, block: BlockState| {
+            range
+                .flat_map(|y| (0..256).map(move |i| (i % 16, y, i / 16)))
+                .filter(|&(x, y, z)| chunk.get(x, y, z) == block)
+                .count()
+        };
+        assert_eq!(count(37..WORLD_HEIGHT, DEEPSLATE), 0);
+        assert_eq!(count(5..DEEPSLATE_LEVEL as usize, STONE), 0);
+        assert!(count(5..30, DEEPSLATE) > 1000);
+    }
+
+    /// Generates the chunk holding (x, z) and returns its column there.
+    fn column_blocks(terrain: &Terrain, x: i32, z: i32) -> Vec<BlockState> {
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
-        let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
-        let blocks: Vec<BlockState> = (0..WORLD_HEIGHT).map(|y| chunk.get(lx, y, lz)).collect();
-        let top = terrain.column(x, z).height as usize;
-        assert_eq!(blocks[top], SAND);
-        assert!(blocks[..top].contains(&SANDSTONE));
+        let (lx, lz) = local(x, z);
+        (0..WORLD_HEIGHT).map(|y| chunk.get(lx, y, lz)).collect()
+    }
+
+    /// An open column (no cave entrance) of `biome`, not on a slope.
+    fn open(terrain: &Terrain, biome: Biome) -> (i32, i32, Column) {
+        let (x, z) = find(terrain, biome.name(), |c| {
+            c.biome == biome && !c.entrance && c.slope <= 1 && c.height > SEA_LEVEL
+        });
+        (x, z, terrain.column(x, z))
+    }
+
+    #[test]
+    fn biomes_have_their_own_ground() {
+        let terrain = Terrain::new(20111118);
+        for (biome, top) in [
+            (Biome::Desert, SAND),
+            (Biome::MushroomFields, MYCELIUM),
+            (Biome::MangroveSwamp, MUD),
+            (Biome::JaggedPeaks, SNOW_BLOCK),
+            (Biome::Plains, GRASS),
+        ] {
+            let (x, z, column) = open(&terrain, biome);
+            assert_eq!(column.top, top, "{biome:?}");
+            let blocks = column_blocks(&terrain, x, z);
+            let h = column.height as usize;
+            if column.top == SAND {
+                assert!(
+                    blocks[..h].contains(&SANDSTONE),
+                    "sandstone under {biome:?}"
+                );
+            }
+            assert!(
+                blocks[h].id() == top.id() || blocks[h].id() == blocks::DIRT,
+                "{biome:?}: {:?}",
+                blocks[h]
+            );
+        }
+        // Badlands: red sand on bands of terracotta.
+        let (x, z, column) = open(&terrain, Biome::Badlands);
+        let blocks = column_blocks(&terrain, x, z);
+        let h = column.height as usize;
+        assert!(
+            blocks[h - 10..h]
+                .iter()
+                .any(|b| b.id().name().ends_with("terracotta"))
+        );
+        // Cold biomes: snow on top, snowy grass.
+        let (x, z, column) = open(&terrain, Biome::SnowyPlains);
+        let blocks = column_blocks(&terrain, x, z);
+        let h = column.height as usize;
+        assert_eq!(blocks[h + 1].id(), blocks::SNOW, "{:?}", &blocks[h..h + 3]);
+        assert!(blocks[h].bool(crate::world::props::Prop::Snowy));
+        // Frozen oceans freeze over.
+        let (x, z) = find(&terrain, "frozen ocean", |c| c.biome == Biome::FrozenOcean);
+        let blocks = column_blocks(&terrain, x, z);
+        assert!(matches!(
+            blocks[SEA_LEVEL as usize].id(),
+            blocks::ICE | blocks::PACKED_ICE | blocks::SNOW_BLOCK
+        ));
+    }
+
+    #[test]
+    fn cave_biomes_are_stored_deep_under_their_columns() {
+        let terrain = Terrain::new(31);
+        let (x, z) = find(&terrain, "lush caves", |c| {
+            c.cave == Some(Biome::LushCaves) && c.height > 80
+        });
+        let column = terrain.column(x, z);
+        let chunk = terrain.generate(ChunkPos::of_block(x, z));
+        let (lx, lz) = local(x, z);
+        assert_eq!(chunk.biome_at(lx, 20, lz), Biome::LushCaves);
+        assert_eq!(chunk.biome_at(lx, column.height as usize, lz), column.biome);
+    }
+
+    /// Prints biome shares, heights and slopes over a big square:
+    /// `cargo test --release survey -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn survey() {
+        for seed in [1u64, 12345, 20111118] {
+            let terrain = Terrain::new(seed);
+            let mut counts: HashMap<Biome, usize> = HashMap::new();
+            let mut heights = Vec::new();
+            let mut first: HashMap<Biome, (i32, i32)> = HashMap::new();
+            let step = 32;
+            for z in (-8000..8000).step_by(step) {
+                for x in (-8000..8000).step_by(step) {
+                    let c = terrain.column(x, z);
+                    *counts.entry(c.biome).or_insert(0) += 1;
+                    heights.push(c.height);
+                    let d = x.abs().max(z.abs());
+                    first
+                        .entry(c.biome)
+                        .and_modify(|p| {
+                            if d < p.0.abs().max(p.1.abs()) {
+                                *p = (x, z)
+                            }
+                        })
+                        .or_insert((x, z));
+                }
+            }
+            let total: usize = counts.values().sum();
+            let mut list: Vec<_> = counts.iter().collect();
+            list.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+            println!("seed {seed}:");
+            for (biome, n) in &list {
+                println!(
+                    "  {:20} {:5.2}%  nearest {:?}",
+                    biome.name(),
+                    **n as f64 * 100.0 / total as f64,
+                    first[biome]
+                );
+            }
+            let missing: Vec<_> = Biome::ALL
+                .iter()
+                .filter(|b| !b.is_cave() && !counts.contains_key(b))
+                .collect();
+            println!("  missing: {missing:?}");
+            heights.sort();
+            let q = |p: f64| heights[((heights.len() - 1) as f64 * p) as usize];
+            println!(
+                "  heights q01 {} q10 {} q50 {} q90 {} q99 {} max {}",
+                q(0.01),
+                q(0.1),
+                q(0.5),
+                q(0.9),
+                q(0.99),
+                heights.last().unwrap()
+            );
+            // Steepness along lines.
+            let mut steps = vec![0usize; 64];
+            for z in (-2000..2000).step_by(97) {
+                let mut prev = terrain.height(-2000, z);
+                for x in -1999..2000 {
+                    let h = terrain.height(x, z);
+                    steps[((h - prev).unsigned_abs() as usize).min(63)] += 1;
+                    if (h - prev).abs() > 9 {
+                        let c = terrain.climate(x, z);
+                        let lay = terrain.lay(x, z, &c);
+                        println!(
+                            "    step {} at {x},{z}: {:?} m {:.2} river {:.2} flat {:.2} {:?}",
+                            h - prev,
+                            terrain.column(x, z).biome,
+                            lay.mountain,
+                            lay.river,
+                            lay.flat,
+                            lay.mushroom
+                        );
+                    }
+                    prev = h;
+                }
+            }
+            let big: Vec<_> = steps
+                .iter()
+                .enumerate()
+                .filter(|(i, n)| *i > 3 && **n > 0)
+                .collect();
+            println!("  steps >3: {big:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+    use std::time::Instant;
+
+    /// `cargo test --release timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn stages() {
+        let terrain = Terrain::new(20111118);
+        let n = 300;
+        let mut t = [0.0f64; 6];
+        for i in 0..n {
+            let pos = ChunkPos::new(i % 20, i / 20 + 3);
+            let s = Instant::now();
+            let area = terrain.area(pos);
+            t[0] += s.elapsed().as_secs_f64();
+            let mut chunk = Chunk::new(pos);
+            let s = Instant::now();
+            terrain.fill_from(&mut chunk, &area);
+            t[1] += s.elapsed().as_secs_f64();
+            let s = Instant::now();
+            terrain.carve_caves(&mut chunk, &area);
+            t[2] += s.elapsed().as_secs_f64();
+            let s = Instant::now();
+            super::super::ores::populate(&terrain, &area, &mut chunk);
+            t[3] += s.elapsed().as_secs_f64();
+            let s = Instant::now();
+            super::super::underground::populate(&terrain, &area, &mut chunk);
+            t[4] += s.elapsed().as_secs_f64();
+            let s = Instant::now();
+            super::super::features::populate(&terrain, &area, &mut chunk);
+            t[5] += s.elapsed().as_secs_f64();
+        }
+        for (name, v) in ["area", "fill", "caves", "ores", "underground", "features"]
+            .iter()
+            .zip(t)
+        {
+            println!("{name:12} {:.3} ms", v * 1000.0 / n as f64);
+        }
     }
 }

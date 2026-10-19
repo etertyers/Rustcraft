@@ -82,7 +82,10 @@ impl Game {
             return;
         };
         let def = state.def();
-        if matches!(def.placement, Placement::Bed | Placement::Door) {
+        if matches!(
+            def.placement,
+            Placement::Bed | Placement::Door | Placement::Tall
+        ) {
             return;
         }
         let Some(offset) = def.support(state) else {

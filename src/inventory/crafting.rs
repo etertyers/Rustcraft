@@ -294,10 +294,16 @@ mod tests {
     #[test]
     fn planks_from_any_log_anywhere_in_either_grid() {
         let recipes = recipes();
+        // Each log makes its own planks (modern).
         let birch = grid(2, &[(1, 1, items::BIRCH_LOG)]);
         assert_eq!(
             recipes.craft(&birch, 2),
-            Some(ItemStack::new(items::OAK_PLANKS, 4))
+            Some(ItemStack::new(items::BIRCH_PLANKS, 4))
+        );
+        let stripped = grid(2, &[(0, 0, items::STRIPPED_MANGROVE_WOOD)]);
+        assert_eq!(
+            recipes.craft(&stripped, 2),
+            Some(ItemStack::new(items::MANGROVE_PLANKS, 4))
         );
         let corner = grid(3, &[(0, 2, items::OAK_LOG)]);
         assert_eq!(
@@ -450,9 +456,49 @@ mod tests {
         let row = grid(3, &[(0, 1, planks), (1, 1, planks), (2, 1, planks)]);
         assert_eq!(
             recipes.craft(&row, 3),
-            Some(ItemStack::new(items::OAK_SLAB, 3))
+            Some(ItemStack::new(items::OAK_SLAB, 6))
         );
         assert_eq!(recipes.burn_ticks(items::OAK_SLAB), 150);
+        assert_eq!(recipes.burn_ticks(items::CHERRY_SLAB), 150);
+        // Sticks, tables and tools take any planks.
+        let cherry = items::CHERRY_PLANKS;
+        let column = grid(3, &[(1, 0, cherry), (1, 1, cherry)]);
+        assert_eq!(
+            recipes.craft(&column, 3),
+            Some(ItemStack::new(items::STICK, 4))
+        );
+    }
+
+    #[test]
+    fn every_wood_makes_its_own_set() {
+        let recipes = recipes();
+        let item = |name: &str| items::by_name(name).unwrap_or_else(|| panic!("no {name}"));
+        for wood in [
+            "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "mangrove", "cherry",
+            "bamboo",
+        ] {
+            let planks = item(&format!("{wood}_planks"));
+            let stick = items::STICK;
+            let door = grid(
+                3,
+                &[0, 1, 2].map(|y| [(0, y, planks), (1, y, planks)]).concat(),
+            );
+            let fence = grid(
+                3,
+                &[(0, 0, planks), (1, 0, stick), (2, 0, planks)]
+                    .into_iter()
+                    .chain([(0, 1, planks), (1, 1, stick), (2, 1, planks)])
+                    .collect::<Vec<_>>(),
+            );
+            for (grid, part, count) in [(door, "door", 3), (fence, "fence", 3)] {
+                assert_eq!(
+                    recipes.craft(&grid, 3),
+                    Some(ItemStack::new(item(&format!("{wood}_{part}")), count)),
+                    "{wood} {part}"
+                );
+            }
+            assert_eq!(recipes.burn_ticks(planks), 300, "{wood}");
+        }
     }
 
     #[test]

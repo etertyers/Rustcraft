@@ -103,6 +103,7 @@ src/
   entity/{minecart,tnt}.rs   # rail physics, primed TNT
   entity/{mobs,mob,ai}.rs   # mob definitions (mobs.ron), a living mob, what each kind decides
   game/{mobs,mob_acts,animals}.rs   # mob ticks and spawning, what mobs do to the world, the player and animals
+  world/worldgen/{climate,terrain,underground,features,ores}.rs   # climate noise and the biome table, land, surfaces and caves, cave biomes and geodes, trees and plants, veins
   audio/
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
@@ -118,7 +119,7 @@ docs/
 
 **Key conventions**
 - **World size:** Y is up. Chunks are 16×16 columns made of vertical 16³ sections. World height is **256** (Y 0..255, 16 sections) since M14 (128 in v1.0), with sea level at Y 63. Default render distance is **9 chunks**. Both are constants in `config.rs`; if 60 FPS isn't reachable, lower them, note it in `DECISIONS.md`, and tell Kenzo.
-- **IDs:** Since M14, blocks and items have modern Java Edition names (`minecraft:oak_log`), defined in `assets/data/blocks.ron` and `items.ron`; `build.rs` turns the names into constants (`world::blocks::OAK_LOG`, `inventory::items::STICK`). Runtime IDs are file positions and saves store names. A `BlockState` is a block plus modern block state properties (`world::props`). `assets/data/legacy.ron` maps v1.0's numeric 1.0.0 IDs to the new names. Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type, placement, shape) live in `blocks.ron`. Never scatter block behavior across `match` arms.
+- **IDs:** Since M14, blocks and items have modern Java Edition names (`minecraft:oak_log`), defined in `assets/data/blocks.ron` and `items.ron`; `build.rs` turns the names into constants (`world::blocks::OAK_LOG`, `inventory::items::STICK`). Runtime IDs are file positions and saves store names. A `BlockState` is a block plus modern block state properties (`world::props`). `assets/data/legacy.ron` maps v1.0's numeric 1.0.0 IDs to the new names. Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type, placement, shape) live in `blocks.ron`. Never scatter block behavior across `match` arms; a block that behaves like another names it with `acts_as` (every wooden button acts as `oak_button`, every kind of leaves as `oak_leaves`), and code matches on `BlockState::kind()`.
 - **Textures (M15):** textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/`; older names are in `assets/data/texture_names.ron`. `look::Look` builds everything texture-derived and is rebuilt when the packs change. At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
 - **Timing:** Game logic runs at a fixed 20 ticks/second, like Minecraft. Rendering runs at the display refresh rate with interpolation.
 - **Threading:** Chunk generation and meshing run on worker threads. The main thread never blocks on them; it uploads finished meshes to the GPU.
@@ -353,7 +354,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - **Line-of-sight attacks:** melee mobs (zombies, spiders, etc.) can only hit you if a raycast from their eye position to your hitbox is clear and within their modern attack reach. No hitting through walls, floors or corners. Ranged mobs (skeletons, witches) also need line of sight to shoot. Apply this to the v1.0 zombie too, and cover it with unit tests (a mob behind a wall or a 1-block ceiling can't attack).
 - **Done when:** a full day/night cycle shows a natural mix of passive and hostile mobs, each behaving and dropping like modern Minecraft, and a zombie behind a wall or under a slab ceiling can't hit you.
 
-### - [ ] M21 — More biomes
+### - [x] M21 — More biomes
 - Modern climate-based biome placement (temperature, humidity, continentalness, erosion, weirdness noise), using the full 256-block height for mountains and deep caves.
 - Add: beach, stony shore, river, taiga, snowy plains, snowy taiga, ice spikes, jungle, bamboo jungle, swamp, mangrove swamp, savanna, badlands, birch forest, dark forest, windswept hills, meadow, grove, snowy slopes, jagged/frozen peaks, cherry grove, mushroom fields, frozen/cold/lukewarm/warm/deep oceans, and lush and dripstone caves.
 - All the blocks these need (spruce, jungle, acacia, dark oak, mangrove, cherry and bamboo wood sets, terracotta, ice variants, mud, moss, dripstone, amethyst, etc.), with recipes.

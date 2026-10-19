@@ -17,7 +17,7 @@ use super::{
     biome::Biome,
     block::BlockState,
     block_entity::BlockEntity,
-    chunk::{Chunk, ChunkPos, LocalPos, SECTION_COUNT, SECTION_VOLUME},
+    chunk::{CAVE_CELLS, Chunk, ChunkPos, LocalPos, NO_CAVE, SECTION_COUNT, SECTION_VOLUME},
     fast_hash::FastMap,
 };
 
@@ -29,9 +29,9 @@ pub enum SaveError {
     Corrupt(String),
 }
 
-/// The chunk format: 2 stores blocks by name (v1.1); 1 was v1.0's numeric
-/// 1.0.0 IDs, which `legacy` upgrades.
-pub const CHUNK_VERSION: u32 = 2;
+/// The chunk format: 3 adds cave biomes (M21); 2 stores blocks by name
+/// (v1.1); 1 was v1.0's numeric 1.0.0 IDs, which `legacy` upgrades.
+pub const CHUNK_VERSION: u32 = 3;
 
 /// A chunk as stored on disk. All-air sections are left out.
 #[derive(Serialize, Deserialize)]
@@ -46,6 +46,35 @@ struct ChunkData {
     block_entities: Vec<(LocalPos, BlockEntity)>,
     /// `Chunk::post_process`.
     post_process: Vec<LocalPos>,
+    /// `Chunk::cave_biomes`: `CAVE_CELLS` biome ids, or empty for none.
+    cave_biomes: Vec<u8>,
+}
+
+/// Version 2, which is version 3 without cave biomes.
+#[derive(Deserialize)]
+struct ChunkDataV2 {
+    version: u32,
+    x: i32,
+    z: i32,
+    sections: Vec<SectionData>,
+    biomes: Vec<u8>,
+    block_entities: Vec<(LocalPos, BlockEntity)>,
+    post_process: Vec<LocalPos>,
+}
+
+impl From<ChunkDataV2> for ChunkData {
+    fn from(old: ChunkDataV2) -> Self {
+        Self {
+            version: old.version,
+            x: old.x,
+            z: old.z,
+            sections: old.sections,
+            biomes: old.biomes,
+            block_entities: old.block_entities,
+            post_process: old.post_process,
+            cave_biomes: Vec::new(),
+        }
+    }
 }
 
 /// A section's blocks as indices into its own list of states, which are
@@ -107,6 +136,9 @@ pub fn encode_chunk(chunk: &Chunk) -> Vec<u8> {
             .map(|(at, entity)| (at, entity.clone()))
             .collect(),
         post_process: chunk.post_process.clone(),
+        cave_biomes: chunk
+            .cave_biomes()
+            .map_or(Vec::new(), |cells| cells.to_vec()),
     };
     let bytes = bincode::serde::encode_to_vec(&data, bincode_config())
         .expect("encoding to memory can't fail");
@@ -118,11 +150,24 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
     let corrupt = |what: String| SaveError::Corrupt(what);
     let bytes = lz4_flex::decompress_size_prepended(bytes)
         .map_err(|err| corrupt(format!("chunk decompression: {err}")))?;
-    let (data, _): (ChunkData, usize) = bincode::serde::decode_from_slice(&bytes, bincode_config())
-        .map_err(|err| corrupt(format!("chunk decoding: {err}")))?;
-    if data.version != CHUNK_VERSION {
-        return Err(corrupt(format!("chunk version {}", data.version)));
-    }
+    // The version comes first, as a fixed-size little-endian u32.
+    let version = bytes
+        .first_chunk::<4>()
+        .map(|b| u32::from_le_bytes(*b))
+        .ok_or_else(|| corrupt("empty chunk".into()))?;
+    let decoding = |err| corrupt(format!("chunk decoding: {err}"));
+    let data: ChunkData = match version {
+        CHUNK_VERSION => {
+            bincode::serde::decode_from_slice(&bytes, bincode_config())
+                .map_err(decoding)?
+                .0
+        }
+        2 => bincode::serde::decode_from_slice::<ChunkDataV2, _>(&bytes, bincode_config())
+            .map_err(decoding)?
+            .0
+            .into(),
+        _ => return Err(corrupt(format!("chunk version {version}"))),
+    };
     let mut chunk = Chunk::new(ChunkPos::new(data.x, data.z));
     for section in data.sections {
         let index = section.index as usize;
@@ -144,6 +189,20 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
         let biome = Biome::from_id(id).ok_or_else(|| corrupt(format!("biome id {id}")))?;
         chunk.set_biome(i % CHUNK_SIZE, i / CHUNK_SIZE, biome);
     }
+    match data.cave_biomes.len() {
+        0 => {}
+        CAVE_CELLS => {
+            for (i, &id) in data.cave_biomes.iter().enumerate() {
+                let biome = match id {
+                    NO_CAVE => None,
+                    _ => Some(Biome::from_id(id).ok_or_else(|| corrupt(format!("biome id {id}")))?),
+                };
+                let (x, z, y) = (i % 4 * 4, i / 4 % 4 * 4, i / 16 * 4);
+                chunk.set_cave_biome(x, y, z, biome);
+            }
+        }
+        n => return Err(corrupt(format!("{n} cave biomes"))),
+    }
     for (at, entity) in data.block_entities {
         let [x, y, z] = at.map(usize::from);
         if x >= CHUNK_SIZE || z >= CHUNK_SIZE || y >= SECTION_COUNT * CHUNK_SIZE {
@@ -159,7 +218,7 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
 pub const REGION_SIZE: i32 = 32;
 pub(crate) const REGION_CHUNKS: usize = (REGION_SIZE * REGION_SIZE) as usize;
 const REGION_MAGIC: &[u8; 4] = b"RCRG";
-/// 2 since v1.1 (chunks inside are `CHUNK_VERSION` 2).
+/// 2 since v1.1 (chunks inside are `CHUNK_VERSION` 2 or 3).
 const REGION_VERSION: u32 = 2;
 /// Magic and version, then an (offset, length) pair per chunk.
 const HEADER_LEN: usize = 8 + REGION_CHUNKS * 8;
@@ -426,7 +485,55 @@ mod tests {
                 assert_eq!(a.biome(x, z), b.biome(x, z));
             }
         }
+        assert_eq!(a.cave_biomes(), b.cave_biomes());
         assert!(a.block_entities().eq(b.block_entities()));
+    }
+
+    #[test]
+    fn cave_biomes_round_trip() {
+        let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+        chunk.set_biome(5, 5, Biome::Forest);
+        chunk.set_cave_biome(5, 20, 5, Some(Biome::LushCaves));
+        chunk.set_cave_biome(12, 200, 1, Some(Biome::DripstoneCaves));
+        let decoded = decode_chunk(&encode_chunk(&chunk)).unwrap();
+        assert_same_chunk(&decoded, &chunk);
+        assert_eq!(decoded.biome_at(4, 23, 7), Biome::LushCaves);
+        assert_eq!(decoded.biome_at(5, 24, 5), Biome::Forest);
+        assert_eq!(decoded.biome_at(13, 201, 2), Biome::DripstoneCaves);
+    }
+
+    #[test]
+    fn version_2_chunks_still_load() {
+        #[derive(Serialize)]
+        struct V2 {
+            version: u32,
+            x: i32,
+            z: i32,
+            sections: Vec<SectionData>,
+            biomes: Vec<u8>,
+            block_entities: Vec<(LocalPos, BlockEntity)>,
+            post_process: Vec<LocalPos>,
+        }
+        let stone = BlockState::of(blocks::STONE);
+        let old = V2 {
+            version: 2,
+            x: 4,
+            z: -1,
+            sections: vec![SectionData {
+                index: 3,
+                palette: vec![stone],
+                blocks: vec![0; SECTION_VOLUME],
+            }],
+            biomes: vec![Biome::Desert.id(); CHUNK_SIZE * CHUNK_SIZE],
+            block_entities: Vec::new(),
+            post_process: Vec::new(),
+        };
+        let bytes = bincode::serde::encode_to_vec(&old, bincode_config()).unwrap();
+        let chunk = decode_chunk(&lz4_flex::compress_prepend_size(&bytes)).unwrap();
+        assert_eq!(chunk.pos, ChunkPos::new(4, -1));
+        assert_eq!(chunk.get(3, 50, 9), stone);
+        assert_eq!(chunk.biome_at(3, 50, 9), Biome::Desert);
+        assert!(chunk.cave_biomes().is_none());
     }
 
     #[test]

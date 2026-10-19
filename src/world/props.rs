@@ -99,6 +99,9 @@ pub enum Prop {
     Stage,
     Note,
     Instrument,
+    Thickness,
+    VerticalDirection,
+    Berries,
 }
 
 const BOOL: &[&str] = &["false", "true"];
@@ -172,6 +175,9 @@ impl Prop {
             Stage => "stage",
             Note => "note",
             Instrument => "instrument",
+            Thickness => "thickness",
+            VerticalDirection => "vertical_direction",
+            Berries => "berries",
         }
     }
 
@@ -256,6 +262,8 @@ impl Prop {
                 "banjo",
                 "pling",
             ],
+            Thickness => &["tip_merge", "tip", "frustum", "middle", "base"],
+            VerticalDirection => &["up", "down"],
             _ => BOOL,
         }
     }
@@ -267,7 +275,7 @@ impl Prop {
     pub fn default_index(self) -> u8 {
         use Prop::*;
         match self {
-            Axis | Half | DoubleBlockHalf | BedPart | SlabType | AttachFace => 1,
+            Axis | Half | DoubleBlockHalf | BedPart | SlabType | AttachFace | Thickness => 1,
             WallNorth | WallEast | WallSouth | WallWest => 0,
             WireNorth | WireEast | WireSouth | WireWest => 2,
             Distance => 6,
@@ -426,6 +434,21 @@ pub mod rail_shape {
     pub const SOUTH_WEST: u8 = 7;
     pub const NORTH_WEST: u8 = 8;
     pub const NORTH_EAST: u8 = 9;
+}
+
+/// Values of `Prop::Thickness` (pointed dripstone, tip first).
+pub mod thickness {
+    pub const TIP_MERGE: u8 = 0;
+    pub const TIP: u8 = 1;
+    pub const FRUSTUM: u8 = 2;
+    pub const MIDDLE: u8 = 3;
+    pub const BASE: u8 = 4;
+}
+
+/// Values of `Prop::VerticalDirection`.
+pub mod vertical_direction {
+    pub const UP: u8 = 0;
+    pub const DOWN: u8 = 1;
 }
 
 #[cfg(test)]

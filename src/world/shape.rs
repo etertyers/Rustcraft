@@ -11,7 +11,7 @@ use super::{
     Face,
     block::{BlockState, Shape},
     blocks,
-    props::{Prop, attach_face, half, slab_type, stairs_shape, wall_side},
+    props::{Prop, attach_face, half, slab_type, stairs_shape, thickness, wall_side},
 };
 
 /// A box in block units, relative to its cell's minimum corner. Collision
@@ -211,14 +211,33 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
     match def.shape {
         Shape::None | Shape::Liquid => Vec::new(),
         Shape::Cube => one(Cuboid::FULL),
-        Shape::Cross => one(match state.id() {
-            blocks::DANDELION | blocks::POPPY => Cuboid::px(5.0, 0.0, 5.0, 11.0, 10.0, 11.0),
+        Shape::Cross => one(match state.kind() {
+            blocks::POPPY => Cuboid::px(5.0, 0.0, 5.0, 11.0, 10.0, 11.0),
             blocks::BROWN_MUSHROOM | blocks::RED_MUSHROOM => {
                 Cuboid::px(5.0, 0.0, 5.0, 11.0, 6.0, 11.0)
             }
-            blocks::OAK_SAPLING | blocks::SPRUCE_SAPLING | blocks::BIRCH_SAPLING => {
-                Cuboid::px(2.0, 0.0, 2.0, 14.0, 12.0, 14.0)
+            blocks::OAK_SAPLING => Cuboid::px(2.0, 0.0, 2.0, 14.0, 12.0, 14.0),
+            blocks::TALL_GRASS
+            | blocks::LARGE_FERN
+            | blocks::SUNFLOWER
+            | blocks::LILAC
+            | blocks::ROSE_BUSH
+            | blocks::PEONY => Cuboid::px(2.0, 0.0, 2.0, 14.0, 16.0, 14.0),
+            blocks::CAVE_VINES | blocks::CAVE_VINES_PLANT => {
+                Cuboid::px(1.0, 0.0, 1.0, 15.0, 16.0, 15.0)
             }
+            blocks::POINTED_DRIPSTONE => match state.get(Prop::Thickness) {
+                thickness::TIP_MERGE | thickness::TIP => {
+                    Cuboid::px(5.0, 0.0, 5.0, 11.0, 11.0, 11.0)
+                }
+                thickness::FRUSTUM => Cuboid::px(4.0, 0.0, 4.0, 12.0, 16.0, 12.0),
+                thickness::MIDDLE => Cuboid::px(3.0, 0.0, 3.0, 13.0, 16.0, 13.0),
+                _ => Cuboid::px(2.0, 0.0, 2.0, 14.0, 16.0, 14.0),
+            },
+            blocks::SMALL_AMETHYST_BUD => Cuboid::px(4.0, 0.0, 4.0, 12.0, 3.0, 12.0),
+            blocks::MEDIUM_AMETHYST_BUD => Cuboid::px(3.0, 0.0, 3.0, 13.0, 4.0, 13.0),
+            blocks::LARGE_AMETHYST_BUD => Cuboid::px(3.0, 0.0, 3.0, 13.0, 5.0, 13.0),
+            blocks::AMETHYST_CLUSTER => Cuboid::px(3.0, 0.0, 3.0, 13.0, 7.0, 13.0),
             blocks::SUGAR_CANE => Cuboid::px(2.0, 0.0, 2.0, 14.0, 16.0, 14.0),
             blocks::COBWEB => Cuboid::FULL,
             _ => Cuboid::px(2.0, 0.0, 2.0, 14.0, 13.0, 14.0),
@@ -397,6 +416,7 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
             boxes
         }
         Shape::DragonEgg => one(Cuboid::px(1.0, 0.0, 1.0, 15.0, 16.0, 15.0)),
+        Shape::Bamboo => one(Cuboid::px(6.5, 0.0, 6.5, 9.5, 16.0, 9.5)),
         Shape::Anvil => {
             // Minecraft's anvil, lying along x; turned for north/south.
             let boxes = vec![

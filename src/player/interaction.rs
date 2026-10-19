@@ -143,7 +143,7 @@ pub fn place_block_looking(
     let upper = hit.height_in_block() > 0.5;
     let def = blocks.get(block.id())?;
     let state = match def.placement {
-        Placement::Plain => block,
+        Placement::Plain | Placement::Tall => block,
         Placement::Torch { wall } => match face {
             Face::Top => block,
             Face::Bottom => return None,
@@ -303,6 +303,16 @@ pub fn place_block_looking(
     let edits = match new.placement {
         Placement::Bed => place_bed(world, blocks, hit, (at, state), player)?.to_vec(),
         Placement::Door => place_door(world, blocks, hit, (at, state), player)?.to_vec(),
+        Placement::Tall => {
+            let upper = at + IVec3::Y;
+            if !state_at(world, upper).is_some_and(|b| b.def().replaceable) {
+                return None;
+            }
+            vec![
+                (at, state.with(Prop::DoubleBlockHalf, door_half::LOWER)),
+                (upper, state.with(Prop::DoubleBlockHalf, door_half::UPPER)),
+            ]
+        }
         Placement::Rail => rails::place(&|p| state_at(world, p), at, state),
         _ => vec![(at, state)],
     };
@@ -327,6 +337,8 @@ pub fn place_block_looking(
 /// (not air, water or plants) for the rest.
 pub fn holds(shape: Shape, support: BlockState) -> bool {
     match shape {
+        // The upper half of a tall plant stands on its lower half.
+        Shape::Cross if support.def().placement == Placement::Tall => true,
         Shape::Torch | Shape::Ladder | Shape::Lever | Shape::Button => sturdy(support),
         _ => !support.def().replaceable,
     }
@@ -598,6 +610,43 @@ mod tests {
         set(&mut world, &halves);
         let broken = break_block(&world, blocks(), IVec3::new(6, 64, 5));
         assert_eq!(broken.len(), 2);
+    }
+
+    #[test]
+    fn tall_plants_take_two_blocks_and_go_as_a_pair() {
+        let sunflower = BlockState::of(blocks::SUNFLOWER);
+        let lower = sunflower.with(Prop::DoubleBlockHalf, door_half::LOWER);
+        let upper = sunflower.with(Prop::DoubleBlockHalf, door_half::UPPER);
+        let mut world = world_with(&[(IVec3::new(3, 65, 3), STONE)]);
+        let halves = place(
+            &world,
+            &hit(IVec3::new(6, 63, 6), Face::Top),
+            sunflower,
+            0.0,
+        );
+        assert_eq!(
+            halves,
+            Some(vec![
+                (IVec3::new(6, 64, 6), lower),
+                (IVec3::new(6, 65, 6), upper)
+            ])
+        );
+        // No room under a block.
+        assert_eq!(
+            place(
+                &world,
+                &hit(IVec3::new(3, 63, 3), Face::Top),
+                sunflower,
+                0.0
+            ),
+            None
+        );
+        // Breaking either half, or the ground, takes both.
+        set(&mut world, &halves.unwrap());
+        for at in [IVec3::new(6, 64, 6), IVec3::new(6, 65, 6)] {
+            assert_eq!(break_block(&world, blocks(), at).len(), 2, "{at}");
+        }
+        assert_eq!(break_block(&world, blocks(), IVec3::new(6, 63, 6)).len(), 3);
     }
 
     #[test]

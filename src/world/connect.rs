@@ -27,13 +27,8 @@ pub fn sturdy(state: BlockState) -> bool {
     let full = def.shape == Shape::Cube || def.is_opaque_cube_state(state);
     full && def.solid
         && !matches!(
-            state.id(),
-            blocks::OAK_LEAVES
-                | blocks::SPRUCE_LEAVES
-                | blocks::BIRCH_LEAVES
-                | blocks::CARVED_PUMPKIN
-                | blocks::JACK_O_LANTERN
-                | blocks::MELON
+            state.kind(),
+            blocks::OAK_LEAVES | blocks::CARVED_PUMPKIN | blocks::JACK_O_LANTERN | blocks::MELON
         )
 }
 
@@ -172,7 +167,7 @@ fn stairs(state: BlockState, near: &impl Fn(Face) -> BlockState) -> u8 {
 /// Whether redstone dust joins `other` beside it: more dust, or a part
 /// that gives or takes power from that side.
 fn powers(other: BlockState, toward: Face) -> bool {
-    match other.id() {
+    match other.kind() {
         blocks::REDSTONE_WIRE
         | blocks::REDSTONE_TORCH
         | blocks::REDSTONE_WALL_TORCH
@@ -245,6 +240,20 @@ mod tests {
 
     fn of(id: super::super::block::BlockId) -> BlockState {
         BlockState::of(id)
+    }
+
+    #[test]
+    fn dust_joins_any_wooden_button_and_leaves_never_hold_fences() {
+        assert!(powers(of(blocks::JUNGLE_BUTTON), Face::North));
+        assert!(powers(of(blocks::SPRUCE_PRESSURE_PLATE), Face::East));
+        for leaves in [
+            blocks::OAK_LEAVES,
+            blocks::CHERRY_LEAVES,
+            blocks::AZALEA_LEAVES,
+        ] {
+            assert!(!sturdy(of(leaves)), "{}", leaves.name());
+        }
+        assert!(sturdy(of(blocks::CHERRY_PLANKS)));
     }
 
     #[test]

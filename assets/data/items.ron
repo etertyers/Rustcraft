@@ -183,4 +183,12 @@
     (name: "salmon", texture: "salmon", food: (hunger: 2, saturation: 0.3)),
     (name: "cooked_salmon", texture: "cooked_salmon", food: (hunger: 6, saturation: 0.8)),
     (name: "phantom_membrane", texture: "phantom_membrane"),
+    // M21
+    (name: "raw_copper", texture: "raw_copper"),
+    (name: "copper_ingot", texture: "copper_ingot"),
+    (name: "emerald", texture: "emerald"),
+    (name: "amethyst_shard", texture: "amethyst_shard"),
+    (name: "glow_berries", texture: "glow_berries", food: (hunger: 2, saturation: 0.1)),
+    (name: "white_dye", texture: "white_dye"),
+    (name: "blue_dye", texture: "blue_dye"),
 ]
