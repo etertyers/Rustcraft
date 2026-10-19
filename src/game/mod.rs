@@ -3,11 +3,14 @@
 //! owns at most one.
 
 mod animals;
+mod benches;
 mod combat;
 mod containers;
 pub mod environment;
+mod experience;
 mod explosion;
 mod fluids;
+mod gear;
 mod hands;
 mod logistics;
 mod minecarts;
@@ -28,7 +31,7 @@ pub mod view;
 
 use std::{path::Path, sync::Arc};
 
-pub use containers::Container;
+pub use containers::{Bench, BenchKind, Container};
 
 use anyhow::Result;
 use glam::DVec3;
@@ -42,6 +45,7 @@ use crate::{
     config,
     entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry, particle::Particle},
     inventory::{
+        enchant::Enchantment,
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
     },
@@ -131,6 +135,8 @@ pub struct Game {
     pub message: Option<(String, u32)>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    /// Experience orbs lying around.
+    pub orbs: Vec<crate::entity::orb::XpOrb>,
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
     /// Stars of critical hits and arcs of sweeps.
@@ -246,6 +252,7 @@ impl Game {
             bed: None,
             message: None,
             entities: Vec::new(),
+            orbs: Vec::new(),
             particles: Vec::new(),
             effects: Vec::new(),
             attack_ticker: 100,
@@ -373,11 +380,18 @@ impl Game {
         // A stack held in an open inventory screen, and the crafting grid,
         // go back in the inventory rather than being lost.
         let mut inventory = self.inventory.clone();
-        let grid = match &self.container {
-            Some(Container::Crafting { grid, .. }) => grid.clone(),
-            _ => Vec::new(),
-        };
-        for held in self.cursor.into_iter().chain(grid.into_iter().flatten()) {
+        let grid = self
+            .container
+            .as_ref()
+            .and_then(Container::grid)
+            .map(<[_]>::to_vec)
+            .unwrap_or_default();
+        for held in self
+            .cursor
+            .clone()
+            .into_iter()
+            .chain(grid.into_iter().flatten())
+        {
             inventory.add(held, &self.items);
         }
         let feet = self.standing_feet();
@@ -739,6 +753,7 @@ impl Game {
         }
         self.body.can_sprint = !vulnerable || self.stats.can_sprint();
         if self.stats.is_dead() {
+            self.drop_experience();
             self.drop_everything();
         }
     }
@@ -747,15 +762,19 @@ impl Game {
     fn drop_everything(&mut self) {
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
-        if let Some(Container::Crafting { grid, .. }) = self.container.take() {
-            stacks.extend(grid.into_iter().flatten());
+        match self.container.take() {
+            Some(Container::Crafting { grid, .. }) => stacks.extend(grid.into_iter().flatten()),
+            Some(Container::Bench(bench)) => stacks.extend(bench.slots.into_iter().flatten()),
+            _ => {}
         }
         for slot in 0..crate::inventory::player::SLOTS {
-            if let Some(stack) = self.inventory.slot(slot).copied() {
+            if let Some(stack) = self.inventory.slot(slot).cloned() {
                 self.inventory.set(slot, None);
                 stacks.push(stack);
             }
         }
+        // Items with the Curse of Vanishing are gone with the player.
+        stacks.retain(|stack| stack.level_of(Enchantment::VanishingCurse) == 0);
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         for stack in stacks {
@@ -1019,7 +1038,11 @@ pub(crate) mod tests {
         assert_eq!(game.inventory.slot(0), None);
         game.break_block(IVec3::new(0, 64, -3));
         assert_eq!(block(&game, -2), Some(BlockState::AIR));
-        let drops: Vec<ItemStack> = game.entities.iter().map(|item| item.stack).collect();
+        let drops: Vec<ItemStack> = game
+            .entities
+            .iter()
+            .map(|item| item.stack.clone())
+            .collect();
         assert_eq!(drops, [ItemStack::new(items::RED_BED, 1)]);
     }
 

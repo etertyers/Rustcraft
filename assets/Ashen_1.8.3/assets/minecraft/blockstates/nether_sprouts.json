@@ -1,9 +1,0 @@
-{
-	"variants": {
-		"": [
-			{"model": "block/nether_sprouts"},
-			{"model": "block/nether_sprouts1"},
-			{"model": "block/nether_sprouts2"}
-		]
-	}
-}

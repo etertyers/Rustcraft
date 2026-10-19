@@ -10,7 +10,7 @@ use crate::{
     config::combat as c,
     entity::{effects::Effect, mob::push},
     inventory::item::{Tool, ToolKind},
-    inventory::{items, player::Hand},
+    inventory::{enchant::Enchantment, items, player::Hand},
     player::stats::DamageSource,
 };
 
@@ -113,12 +113,21 @@ pub struct Blow {
 }
 
 /// Works out a swing with `base` damage (the item's attack damage).
+#[cfg(test)]
 pub fn resolve(base: f32, stance: &Stance, sword: bool) -> Blow {
+    resolve_with(base, 0.0, stance, sword)
+}
+
+/// Like `resolve`, with `bonus` damage from enchantments: it grows with
+/// the charge but isn't multiplied by a critical hit (modern
+/// `Player.attack`).
+pub fn resolve_with(base: f32, bonus: f32, stance: &Stance, sword: bool) -> Blow {
     let mut damage = base * charge_scale(stance.charge);
     let critical = stance.is_critical();
     if critical {
         damage *= c::CRIT_MULTIPLIER;
     }
+    damage += bonus * stance.charge;
     Blow {
         damage,
         critical,
@@ -203,14 +212,36 @@ impl Game {
         let tool = self.selected_tool().cloned();
         let sword = tool.as_ref().is_some_and(|t| t.kind == ToolKind::Sword);
         let charge = self.attack_charge(0.5);
-        let blow = resolve(self.attack_damage(), &self.stance(charge), sword);
+        let kind = super::gear::kind_of(&self.mob_defs.get(self.mobs[index].kind).name);
+        let bonus = super::gear::damage_bonus(
+            self.held_level(Enchantment::Sharpness),
+            self.held_level(Enchantment::Smite),
+            self.held_level(Enchantment::BaneOfArthropods),
+            kind,
+        );
+        let blow = resolve_with(self.attack_damage(), bonus, &self.stance(charge), sword);
         self.attack_ticker = 0;
         let from = self.body.position();
         let yaw = self.camera.yaw as f64;
         let facing = DVec3::new(yaw.sin(), 0.0, -yaw.cos());
         let target = self.mobs[index].body.aabb();
         let hit = self.mobs[index].hurt(blow.damage, Some(from), DamageSource::Mob);
+        self.mobs[index].hit_by_player();
         if hit {
+            let knockback = self.held_level(Enchantment::Knockback);
+            if knockback > 0 {
+                push(
+                    &mut self.mobs[index].body,
+                    c::KNOCKBACK_PER_LEVEL * f64::from(knockback),
+                    facing,
+                );
+            }
+            let fire = self.held_level(Enchantment::FireAspect);
+            if fire > 0 {
+                let ticks = c::FIRE_ASPECT_TICKS * i32::from(fire);
+                let stats = &mut self.mobs[index].stats;
+                stats.fire = stats.fire.max(ticks);
+            }
             if blow.sprint_knockback {
                 push(&mut self.mobs[index].body, c::SPRINT_KNOCKBACK, facing);
                 self.body.velocity.x *= 0.6;
@@ -218,7 +249,10 @@ impl Game {
                 self.body.sprinting = false;
             }
             if blow.sweep {
-                self.sweep(index, target, facing);
+                // Sweeping Edge: 1 plus the swing's damage by level/(level+1).
+                let edge = f32::from(self.held_level(Enchantment::SweepingEdge));
+                let damage = c::SWEEP_DAMAGE + self.attack_damage() * edge / (edge + 1.0);
+                self.sweep(index, target, facing, damage);
             }
             if blow.critical {
                 let at = self.mobs[index].feet() + DVec3::Y * (target.max.y - target.min.y) * 0.5;
@@ -233,14 +267,20 @@ impl Game {
         if self.mode.wears_tools()
             && let Some(tool) = tool
         {
-            self.inventory.damage_selected(tool.hit_wear, &self.items);
+            self.wear_selected(tool.hit_wear);
         }
     }
 
     /// A sword's sweep: everything else living near the target that is
     /// within three blocks of the player takes a point and is pushed along
     /// the swing.
-    fn sweep(&mut self, hit: usize, target: crate::player::collision::Aabb, facing: DVec3) {
+    fn sweep(
+        &mut self,
+        hit: usize,
+        target: crate::player::collision::Aabb,
+        facing: DVec3,
+        damage: f32,
+    ) {
         let (gx, gy, gz) = c::SWEEP_GROW;
         let area = crate::player::collision::Aabb::new(
             target.min - DVec3::new(gx, gy, gz),
@@ -256,7 +296,8 @@ impl Game {
                 continue;
             }
             push(&mut mob.body, c::SWEEP_KNOCKBACK, facing);
-            mob.hurt(c::SWEEP_DAMAGE, Some(from), DamageSource::Mob);
+            mob.hurt(damage, Some(from), DamageSource::Mob);
+            mob.hit_by_player();
         }
         let yaw = self.camera.yaw as f64;
         let in_front = self.body.position()
@@ -323,7 +364,7 @@ impl Game {
                 && let Some(hand) = self.shield_hand
             {
                 let wear = 1 + strike.amount.floor() as u16;
-                if self.inventory.damage_hand(hand, wear, &self.items) {
+                if self.wear_hand(hand, wear) {
                     self.shield_hand = None;
                     self.shield_ticks = 0;
                 }
@@ -718,5 +759,73 @@ mod tests {
         swing(&mut axe);
         assert_eq!(axe.mobs[0].stats.health, 20.0 - 9.0);
         assert_eq!(axe.mobs[1].stats.health, 20.0);
+    }
+
+    fn enchanted(
+        item: crate::inventory::item::ItemId,
+        enchants: &[(Enchantment, u8)],
+    ) -> ItemStack {
+        let mut stack = ItemStack::new(item, 1);
+        for &(e, level) in enchants {
+            stack.enchant(e, level);
+        }
+        stack
+    }
+
+    #[test]
+    fn sharpness_and_smite_add_to_a_full_swing_but_bane_does_not_work_on_zombies() {
+        let swing_dealt = |enchants: &[(Enchantment, u8)]| {
+            let mut game = duel(items::IRON_SWORD);
+            game.inventory
+                .set(0, Some(enchanted(items::IRON_SWORD, enchants)));
+            swing(&mut game);
+            20.0 - game.mobs[0].stats.health
+        };
+        assert_eq!(swing_dealt(&[]), 6.0);
+        // Sharpness V: 1 + 0.5 × 4 = 3 more.
+        assert_eq!(swing_dealt(&[(Enchantment::Sharpness, 5)]), 9.0);
+        // Smite V: 2.5 × 5 more against the undead.
+        assert_eq!(swing_dealt(&[(Enchantment::Smite, 5)]), 18.5);
+        assert_eq!(swing_dealt(&[(Enchantment::BaneOfArthropods, 5)]), 6.0);
+    }
+
+    #[test]
+    fn fire_aspect_and_knockback_work_on_the_mob_hit() {
+        let mut game = duel(items::DIAMOND_SWORD);
+        game.inventory.set(
+            0,
+            Some(enchanted(
+                items::DIAMOND_SWORD,
+                &[(Enchantment::FireAspect, 2), (Enchantment::Knockback, 2)],
+            )),
+        );
+        swing(&mut game);
+        assert_eq!(game.mobs[0].stats.fire, 160 - 1, "8 seconds, one tick on");
+        assert!(
+            game.mobs[0].body.velocity.z < -0.5,
+            "pushed back: {:?}",
+            game.mobs[0].body.velocity
+        );
+        let mut plain = duel(items::DIAMOND_SWORD);
+        swing(&mut plain);
+        assert_eq!(plain.mobs[0].stats.fire, 0);
+    }
+
+    #[test]
+    fn unbreaking_spares_a_sword_some_of_its_hits() {
+        let mut game = duel(items::IRON_SWORD);
+        game.inventory.set(
+            0,
+            Some(enchanted(
+                items::IRON_SWORD,
+                &[(Enchantment::Unbreaking, 3)],
+            )),
+        );
+        let mut worn = 0;
+        for _ in 0..200 {
+            game.wear_selected(1);
+            worn = game.inventory.selected_stack().unwrap().damage;
+        }
+        assert!(worn < 100, "{worn}");
     }
 }

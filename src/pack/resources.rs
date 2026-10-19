@@ -189,8 +189,10 @@ impl Resources {
     fn slice_in(&self, layer: usize, name: &str) -> Option<Texture> {
         let (sheet, (x, y, w, h)) = self.slices.get(location(name))?;
         let sheet = self.texture_in(layer, sheet)?;
-        let scale = (sheet.image.width() / 128).max(1);
-        let (x, y, w, h) = (x * scale, y * scale, w * scale, h * scale);
+        // A sheet half as wide (the 64-pixel orbs) halves the units.
+        let scale = sheet.image.width() as f32 / 128.0;
+        let px = |units: u32| (units as f32 * scale).round() as u32;
+        let (x, y, w, h) = (px(*x), px(*y), px(*w), px(*h));
         let (iw, ih) = sheet.image.dimensions();
         if x + w > iw || y + h > ih {
             return None;

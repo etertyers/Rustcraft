@@ -89,7 +89,10 @@ impl Inventory {
         self.slots.resize(SLOTS, None);
         self.selected = self.selected.min(HOTBAR_SLOTS - 1);
         for slot in &mut self.slots {
-            if slot.is_some_and(|stack| stack.count == 0 || !items.exists(stack.id)) {
+            if slot
+                .as_ref()
+                .is_some_and(|stack| stack.count == 0 || !items.exists(stack.id))
+            {
                 *slot = None;
             }
         }
@@ -120,7 +123,7 @@ impl Inventory {
         slot.count -= taken;
         let stack = ItemStack {
             count: taken,
-            ..*slot
+            ..slot.clone()
         };
         if slot.count == 0 {
             self.slots[index] = None;
@@ -132,7 +135,7 @@ impl Inventory {
     pub fn find(&self, id: ItemId) -> Option<usize> {
         self.slots
             .iter()
-            .position(|slot| slot.is_some_and(|stack| stack.id == id))
+            .position(|slot| slot.as_ref().is_some_and(|stack| stack.id == id))
     }
 
     /// Wears the selected item by `amount`. Returns true if it broke.
@@ -313,7 +316,7 @@ pub(crate) mod tests {
 
         inventory.click(0, Click::Left, &mut cursor, &items);
         assert_eq!(
-            (inventory.slot(0), cursor),
+            (inventory.slot(0), cursor.clone()),
             (None, Some(ItemStack::new(STONE, 40)))
         );
         // Merging fills slot 1 to 64 and keeps the rest held.

@@ -407,6 +407,7 @@ impl BlockEntityV1 {
                 burn: furnace.burn,
                 burn_total: furnace.burn_total,
                 cook: furnace.cook,
+                ..Furnace::default()
             }),
         }
     }

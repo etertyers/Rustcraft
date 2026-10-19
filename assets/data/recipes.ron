@@ -167,6 +167,9 @@
         (result: (item: "cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "cobblestone")}),
         (result: (item: "mossy_cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "mossy_cobblestone")}),
         (result: (item: "anvil", count: 1), pattern: ["###", " i ", "iii"], key: {'#': (item: "iron_block"), 'i': (item: "iron_ingot")}),
+        // M22
+        (result: (item: "enchanting_table", count: 1), pattern: [" B ", "D#D", "###"], key: {'B': (item: "book"), 'D': (item: "diamond"), '#': (item: "obsidian")}),
+        (result: (item: "grindstone", count: 1), pattern: ["I-I", "# #"], key: {'I': (item: "stick"), '-': (item: "smooth_stone_slab"), '#': (tag: "planks")}),
         // M21 (modern recipes)
         (result: (item: "oak_slab", count: 6), pattern: ["###"], key: {'#': (item: "oak_planks")}),
         (result: (item: "oak_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "oak_planks")}),
@@ -382,39 +385,39 @@
         (result: (item: "blue_wool", count: 1), ingredients: [(item: "blue_dye"), (item: "white_wool")]),
     ],
     smelting: [
-        (input: (item: "iron_ore"), result: (item: "iron_ingot", count: 1)),  // iron
-        (input: (item: "gold_ore"), result: (item: "gold_ingot", count: 1)),  // gold
-        (input: (item: "diamond_ore"), result: (item: "diamond", count: 1)),  // diamond
-        (input: (item: "sand"), result: (item: "glass", count: 1)),  // glass
-        (input: (item: "porkchop"), result: (item: "cooked_porkchop", count: 1)),  // porkchop
-        (input: (item: "beef"), result: (item: "cooked_beef", count: 1)),  // beef
-        (input: (item: "chicken"), result: (item: "cooked_chicken", count: 1)),  // chicken
-        (input: (item: "cod"), result: (item: "cooked_cod", count: 1)),  // fish
-        (input: (item: "salmon"), result: (item: "cooked_salmon", count: 1)),  // salmon
-        (input: (item: "mutton"), result: (item: "cooked_mutton", count: 1)),  // mutton
-        (input: (item: "rabbit"), result: (item: "cooked_rabbit", count: 1)),  // rabbit
-        (input: (item: "cobblestone"), result: (item: "stone", count: 1)),  // stone
-        (input: (item: "clay_ball"), result: (item: "brick", count: 1)),  // brick
-        (input: (item: "cactus"), result: (item: "green_dye", count: 1)),  // cactus green
-        (input: (tag: "logs"), result: (item: "charcoal", count: 1)),  // charcoal
+        (input: (item: "iron_ore"), result: (item: "iron_ingot", count: 1), xp: 0.7),  // iron
+        (input: (item: "gold_ore"), result: (item: "gold_ingot", count: 1), xp: 1.0),  // gold
+        (input: (item: "diamond_ore"), result: (item: "diamond", count: 1), xp: 1.0),  // diamond
+        (input: (item: "sand"), result: (item: "glass", count: 1), xp: 0.1),  // glass
+        (input: (item: "porkchop"), result: (item: "cooked_porkchop", count: 1), xp: 0.35),  // porkchop
+        (input: (item: "beef"), result: (item: "cooked_beef", count: 1), xp: 0.35),  // beef
+        (input: (item: "chicken"), result: (item: "cooked_chicken", count: 1), xp: 0.35),  // chicken
+        (input: (item: "cod"), result: (item: "cooked_cod", count: 1), xp: 0.35),  // fish
+        (input: (item: "salmon"), result: (item: "cooked_salmon", count: 1), xp: 0.35),  // salmon
+        (input: (item: "mutton"), result: (item: "cooked_mutton", count: 1), xp: 0.35),  // mutton
+        (input: (item: "rabbit"), result: (item: "cooked_rabbit", count: 1), xp: 0.35),  // rabbit
+        (input: (item: "cobblestone"), result: (item: "stone", count: 1), xp: 0.1),  // stone
+        (input: (item: "clay_ball"), result: (item: "brick", count: 1), xp: 0.3),  // brick
+        (input: (item: "cactus"), result: (item: "green_dye", count: 1), xp: 1.0),  // cactus green
+        (input: (tag: "logs"), result: (item: "charcoal", count: 1), xp: 0.15),  // charcoal
         // M21 (modern recipes)
-        (input: (item: "clay"), result: (item: "terracotta", count: 1)),
-        (input: (item: "cobbled_deepslate"), result: (item: "deepslate", count: 1)),
-        (input: (item: "red_sand"), result: (item: "glass", count: 1)),
-        (input: (item: "raw_copper"), result: (item: "copper_ingot", count: 1)),
-        (input: (item: "copper_ore"), result: (item: "copper_ingot", count: 1)),
-        (input: (item: "deepslate_copper_ore"), result: (item: "copper_ingot", count: 1)),
-        (input: (item: "emerald_ore"), result: (item: "emerald", count: 1)),
-        (input: (item: "deepslate_emerald_ore"), result: (item: "emerald", count: 1)),
-        (input: (item: "deepslate_iron_ore"), result: (item: "iron_ingot", count: 1)),
-        (input: (item: "deepslate_gold_ore"), result: (item: "gold_ingot", count: 1)),
-        (input: (item: "deepslate_diamond_ore"), result: (item: "diamond", count: 1)),
-        (input: (item: "coal_ore"), result: (item: "coal", count: 1)),
-        (input: (item: "deepslate_coal_ore"), result: (item: "coal", count: 1)),
-        (input: (item: "lapis_ore"), result: (item: "lapis_lazuli", count: 1)),
-        (input: (item: "deepslate_lapis_ore"), result: (item: "lapis_lazuli", count: 1)),
-        (input: (item: "redstone_ore"), result: (item: "redstone", count: 1)),
-        (input: (item: "deepslate_redstone_ore"), result: (item: "redstone", count: 1)),
+        (input: (item: "clay"), result: (item: "terracotta", count: 1), xp: 0.35),
+        (input: (item: "cobbled_deepslate"), result: (item: "deepslate", count: 1), xp: 0.1),
+        (input: (item: "red_sand"), result: (item: "glass", count: 1), xp: 0.1),
+        (input: (item: "raw_copper"), result: (item: "copper_ingot", count: 1), xp: 0.7),
+        (input: (item: "copper_ore"), result: (item: "copper_ingot", count: 1), xp: 0.7),
+        (input: (item: "deepslate_copper_ore"), result: (item: "copper_ingot", count: 1), xp: 0.7),
+        (input: (item: "emerald_ore"), result: (item: "emerald", count: 1), xp: 1.0),
+        (input: (item: "deepslate_emerald_ore"), result: (item: "emerald", count: 1), xp: 1.0),
+        (input: (item: "deepslate_iron_ore"), result: (item: "iron_ingot", count: 1), xp: 0.7),
+        (input: (item: "deepslate_gold_ore"), result: (item: "gold_ingot", count: 1), xp: 1.0),
+        (input: (item: "deepslate_diamond_ore"), result: (item: "diamond", count: 1), xp: 1.0),
+        (input: (item: "coal_ore"), result: (item: "coal", count: 1), xp: 0.1),
+        (input: (item: "deepslate_coal_ore"), result: (item: "coal", count: 1), xp: 0.1),
+        (input: (item: "lapis_ore"), result: (item: "lapis_lazuli", count: 1), xp: 0.2),
+        (input: (item: "deepslate_lapis_ore"), result: (item: "lapis_lazuli", count: 1), xp: 0.2),
+        (input: (item: "redstone_ore"), result: (item: "redstone", count: 1), xp: 0.7),
+        (input: (item: "deepslate_redstone_ore"), result: (item: "redstone", count: 1), xp: 0.7),
     ],
     fuels: [
         (tag: "planks", ticks: 300),  // planks

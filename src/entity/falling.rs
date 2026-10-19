@@ -29,6 +29,8 @@ pub struct FallingBlock {
     pub previous: DVec3,
     pub velocity: DVec3,
     pub ticks: u32,
+    /// Height it started falling from.
+    origin: f64,
 }
 
 /// What a falling block did this tick.
@@ -51,7 +53,13 @@ impl FallingBlock {
             previous: position,
             velocity: DVec3::ZERO,
             ticks: 0,
+            origin: position.y,
         }
+    }
+
+    /// How far it has dropped since it started.
+    pub fn fallen(&self) -> f64 {
+        self.origin - self.position.y
     }
 
     pub fn aabb(&self) -> Aabb {

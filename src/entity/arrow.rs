@@ -54,13 +54,23 @@ pub struct Arrow {
     pub pickup: bool,
     /// Shot by a mob: it hits the player instead of mobs.
     pub hostile: bool,
+    /// What the bow was enchanted with.
+    pub power: u8,
+    pub punch: u8,
+    pub flame: bool,
 }
 
 /// What a flying arrow did this tick.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArrowEvent {
     /// Hit mob `index` for this much.
-    HitMob { index: usize, damage: f32 },
+    HitMob {
+        index: usize,
+        damage: f32,
+        /// Punch pushes the mob back; Flame sets it alight.
+        punch: u8,
+        flame: bool,
+    },
     /// A mob's arrow hit the player for this much.
     HitPlayer { damage: f32 },
 }
@@ -88,7 +98,18 @@ impl Arrow {
             critical: power >= 1.0,
             pickup,
             hostile: false,
+            power: 0,
+            punch: 0,
+            flame: false,
         }
+    }
+
+    /// Gives it the bow's Power, Punch and Flame.
+    pub fn enchanted(mut self, power: u8, punch: u8, flame: bool) -> Self {
+        self.power = power;
+        self.punch = punch;
+        self.flame = flame;
+        self
     }
 
     /// A small box round it, for what it presses.
@@ -156,7 +177,14 @@ impl Arrow {
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((index, _)) = target {
-            let mut damage = (speed * DAMAGE_PER_SPEED).ceil() as i32;
+            // Power adds half a point and half a point a level to the base
+            // damage (modern `baseDamage += power × 0.5 + 0.5`).
+            let bonus = if self.power > 0 {
+                f64::from(self.power) * 0.5 + 0.5
+            } else {
+                0.0
+            };
+            let mut damage = (speed * (DAMAGE_PER_SPEED + bonus)).ceil() as i32;
             if self.critical {
                 damage += (random() * (damage / 2 + 2) as f32) as i32;
             }
@@ -164,7 +192,12 @@ impl Arrow {
             // 1.0.0 removes an arrow that hits; it doesn't stick in mobs.
             self.ticks_stuck = STUCK_LIFETIME;
             self.stuck = true;
-            return Some(ArrowEvent::HitMob { index, damage });
+            return Some(ArrowEvent::HitMob {
+                index,
+                damage,
+                punch: self.punch,
+                flame: self.flame,
+            });
         }
         if let Some(t) = wall {
             self.position += dir * t;
@@ -294,7 +327,9 @@ mod tests {
             event,
             Some(ArrowEvent::HitMob {
                 index: 0,
-                damage: 6.0
+                damage: 6.0,
+                punch: 0,
+                flame: false
             })
         );
     }

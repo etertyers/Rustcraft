@@ -56,8 +56,8 @@ fn count(game: &Game, id: ItemId) -> u32 {
 fn hold(game: &mut Game, id: ItemId) {
     let slot = game.inventory.find(id).expect("the item to hold");
     if slot >= 9 {
-        let stack = game.inventory.slot(slot).copied();
-        let swapped = game.inventory.slot(0).copied();
+        let stack = game.inventory.slot(slot).cloned();
+        let swapped = game.inventory.slot(0).cloned();
         game.inventory.set(0, stack);
         game.inventory.set(slot, swapped);
         game.inventory.selected = 0;

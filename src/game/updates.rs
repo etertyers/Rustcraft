@@ -179,26 +179,29 @@ impl Game {
             match block.tick(&collider) {
                 Fall::Falling => true,
                 Fall::Landed(cell) => {
-                    landed.push((block.state, Some(cell)));
+                    landed.push((block.state, Some(cell), block.fallen()));
                     false
                 }
                 Fall::Lost => {
-                    landed.push((block.state, None));
+                    landed.push((block.state, None, block.fallen()));
                     false
                 }
             }
         });
         self.falling.extend(falling);
-        for (state, cell) in landed {
-            self.land(state, cell);
+        for (state, cell, fallen) in landed {
+            self.land(state, cell, fallen);
         }
     }
 
     /// A falling block coming to rest in `cell`: it's placed there if the
     /// cell can take it and something holds it up, otherwise it drops as
     /// its item (modern `FallingBlockEntity.tick`).
-    fn land(&mut self, state: BlockState, cell: Option<IVec3>) {
+    fn land(&mut self, mut state: BlockState, cell: Option<IVec3>, fallen: f64) {
         if let Some(at) = cell {
+            if state.def().name.ends_with("anvil") {
+                state = self.anvil_lands(state, at, fallen);
+            }
             let world = self.chunks.world();
             let here = world.block(at.x, at.y, at.z);
             let below = world.block(at.x, at.y - 1, at.z);
@@ -365,7 +368,12 @@ mod tests {
         let anvil = BlockState::of(blocks::ANVIL);
         game.set_blocks(&[(IVec3::new(6, 70, 6), anvil)]);
         game.run_ticks(60);
-        assert_eq!(game.chunks.world().block(6, 64, 6), Some(anvil));
+        // (It may have chipped on landing.)
+        let landed = game.chunks.world().block(6, 64, 6).unwrap();
+        assert!(
+            [blocks::ANVIL, blocks::CHIPPED_ANVIL, blocks::DAMAGED_ANVIL].contains(&landed.id()),
+            "{landed:?}"
+        );
     }
 
     #[test]

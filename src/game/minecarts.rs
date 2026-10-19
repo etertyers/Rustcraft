@@ -138,7 +138,7 @@ impl Game {
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         let center = cart.position + DVec3::Y * 0.35;
-        let mut dropped: Vec<ItemStack> = cart.slots.iter().flatten().copied().collect();
+        let mut dropped: Vec<ItemStack> = cart.slots.iter().flatten().cloned().collect();
         if self.mode.drops_items() {
             dropped.push(ItemStack::new(item_of(cart.kind), 1));
         }
@@ -345,11 +345,11 @@ impl Game {
                         i += 1;
                         continue;
                     }
-                    let stack = item.stack;
+                    let stack = item.stack.clone();
                     let items = self.items.clone();
                     let slots = &mut self.carts[index].slots;
                     let len = slots.len();
-                    match slots::merge(slots, 0..len, stack, &items) {
+                    match slots::merge(slots, 0..len, stack.clone(), &items) {
                         None => {
                             self.entities.remove(i);
                             moved = true;

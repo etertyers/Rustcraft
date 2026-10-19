@@ -1,9 +1,0 @@
-{
-	"variants": {
-		"": [
-			{"model": "block/acacia_planks"},
-			{"model": "block/acacia_planks1"},
-			{"model": "block/acacia_planks2"}
-		]
-	}
-}

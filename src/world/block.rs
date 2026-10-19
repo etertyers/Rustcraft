@@ -461,6 +461,8 @@ pub enum Shape {
     /// A 1/16-high sheet (carpets).
     Carpet,
     Anvil,
+    /// A wheel on two legs.
+    Grindstone,
     Door,
     Trapdoor,
     Torch,
@@ -593,6 +595,12 @@ pub enum Activate {
     Dispenser,
     /// Opens its five slots.
     Hopper,
+    /// Opens the enchanting screen.
+    Enchanting,
+    /// Opens the anvil screen.
+    Anvil,
+    /// Opens the grindstone screen.
+    Grindstone,
     /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
     Redstone,
 }
@@ -1384,6 +1392,8 @@ mod tests {
             "mangrove_roots_side",
             "mangrove_roots_top",
             "mangrove_trapdoor",
+            "grindstone_round",
+            "grindstone_side",
             "medium_amethyst_bud",
             "moss_block",
             "mud",

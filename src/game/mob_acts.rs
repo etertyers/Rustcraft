@@ -19,7 +19,7 @@ use crate::{
         mobs::Ai,
         path::Terrain,
     },
-    inventory::{items, stack::ItemStack},
+    inventory::{enchant::Enchantment, items, stack::ItemStack},
     player::stats::DamageSource,
     world::block::BlockState,
 };
@@ -256,10 +256,16 @@ impl Game {
     pub(super) fn on_mob_death(&mut self, mob: &Mob) {
         let def = self.mob_defs.get(mob.kind);
         let cell = mob.cell();
+        // Looting counts when the player made the kill.
+        let looting = if mob.player_hit > 0 {
+            self.held_level(Enchantment::Looting)
+        } else {
+            0
+        };
         let mut stacks = {
             let rng = &mut self.rng;
             let mut random = || rng.next_f64() as f32;
-            mob.drops(def, &mut random)
+            mob.drops(def, looting, &mut random)
         };
         if def.name == "sheep"
             && !mob.data.sheared
@@ -278,6 +284,8 @@ impl Game {
             self.entities
                 .push(ItemEntity::from_block(stack, cell, &mut random));
         }
+        let points = self.mob_xp(mob);
+        self.spawn_xp(points, mob.feet() + DVec3::Y * (mob.size().1 / 2.0));
         // Slimes break into smaller ones.
         if mob.data.size > 1 {
             let size = mob.data.size / 2;

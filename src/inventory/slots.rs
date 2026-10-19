@@ -45,7 +45,7 @@ pub fn click(
             };
             *slot = Some(ItemStack {
                 count: put,
-                ..*held
+                ..held.clone()
             });
             held.count -= put;
             if held.count == 0 {
@@ -79,7 +79,7 @@ pub fn click_take_only(
     cursor: &mut Option<ItemStack>,
     items: &Items,
 ) {
-    let Some(stack) = *slot else {
+    let Some(stack) = slot.clone() else {
         return;
     };
     match cursor {
@@ -122,7 +122,7 @@ fn pick_up(slot: &mut Option<ItemStack>, click: Click, cursor: &mut Option<ItemS
     };
     *cursor = Some(ItemStack {
         count: taken,
-        ..*stack
+        ..stack.clone()
     });
     stack.count -= taken;
     if stack.count == 0 {
@@ -158,7 +158,7 @@ pub fn merge(
             let moved = stack.count.min(max);
             slots[i] = Some(ItemStack {
                 count: moved,
-                ..stack
+                ..stack.clone()
             });
             stack.count -= moved;
             if stack.count == 0 {

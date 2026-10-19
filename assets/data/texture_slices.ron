@@ -8,4 +8,16 @@
     "particle/sweep_1": ("particle/particles", (32, 112, 16, 16)),
     "particle/sweep_2": ("particle/particles", (64, 112, 16, 16)),
     "particle/sweep_3": ("particle/particles", (96, 112, 16, 16)),
+    // The experience orb sheet is 64 pixels wide, 4×4 pictures, small to big.
+    "entity/xp_orb_0": ("entity/experience_orb", (0, 0, 32, 32)),
+    "entity/xp_orb_1": ("entity/experience_orb", (32, 0, 32, 32)),
+    "entity/xp_orb_2": ("entity/experience_orb", (64, 0, 32, 32)),
+    "entity/xp_orb_3": ("entity/experience_orb", (96, 0, 32, 32)),
+    "entity/xp_orb_4": ("entity/experience_orb", (0, 32, 32, 32)),
+    "entity/xp_orb_5": ("entity/experience_orb", (32, 32, 32, 32)),
+    "entity/xp_orb_6": ("entity/experience_orb", (64, 32, 32, 32)),
+    "entity/xp_orb_7": ("entity/experience_orb", (96, 32, 32, 32)),
+    "entity/xp_orb_8": ("entity/experience_orb", (0, 64, 32, 32)),
+    "entity/xp_orb_9": ("entity/experience_orb", (32, 64, 32, 32)),
+    "entity/xp_orb_10": ("entity/experience_orb", (64, 64, 32, 32)),
 }

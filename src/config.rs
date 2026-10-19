@@ -117,6 +117,22 @@ pub mod combat {
     /// Exhaustion each attack costs.
     pub const EXHAUSTION: f32 = 0.1;
 
+    /// Enchantments on the weapon (modern `getDamageBonus`): Sharpness
+    /// adds a point for the first level and half a point for each more;
+    /// Smite and Bane of Arthropods 2.5 a level against their kind.
+    pub const SHARPNESS_BASE: f32 = 1.0;
+    pub const SHARPNESS_PER_LEVEL: f32 = 0.5;
+    pub const SMITE_PER_LEVEL: f32 = 2.5;
+    pub const BANE_PER_LEVEL: f32 = 2.5;
+    /// Each Knockback level pushes as a sprinting hit does.
+    pub const KNOCKBACK_PER_LEVEL: f64 = 0.5;
+    /// Fire Aspect sets the target alight for 4 seconds a level.
+    pub const FIRE_ASPECT_TICKS: i32 = 80;
+    /// Punch pushes the target this much a level.
+    pub const PUNCH_PER_LEVEL: f64 = 0.6;
+    /// Flame sets what an arrow hits alight for 5 seconds.
+    pub const FLAME_TICKS: i32 = 100;
+
     /// A raised shield blocks once it has been up this long.
     pub const SHIELD_RAISE_TICKS: u32 = 5;
     /// An axe blow puts a raised shield out of use this long (5 s).

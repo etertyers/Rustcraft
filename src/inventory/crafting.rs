@@ -74,12 +74,16 @@ struct ShapelessDef {
 struct SmeltingDef {
     input: IngredientDef,
     result: Output,
+    /// Experience a smelted item earns.
+    #[serde(default)]
+    xp: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Smelting {
     pub input: Ingredient,
     pub result: Output,
+    pub xp: f32,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +187,7 @@ impl Recipes {
                 Ok(Smelting {
                     input: Ingredient::resolve(&def.input, tags)?,
                     result: def.result,
+                    xp: def.xp,
                 })
             })
             .collect::<Result<_>>()?;
@@ -251,6 +256,14 @@ impl Recipes {
             .iter()
             .find(|recipe| recipe.input.matches(stack))
             .map(|recipe| recipe.result.stack())
+    }
+
+    /// Experience smelting one `stack` earns.
+    pub fn smelt_xp(&self, stack: &ItemStack) -> f32 {
+        self.smelting
+            .iter()
+            .find(|recipe| recipe.input.matches(stack))
+            .map_or(0.0, |recipe| recipe.xp)
     }
 
     /// Ticks one `item` burns in a furnace (0 if it isn't a fuel).
@@ -526,6 +539,42 @@ mod tests {
             ],
         );
         assert_eq!(recipes.craft(&spoiled, 3), None);
+    }
+
+    #[test]
+    fn the_enchanting_table_and_grindstone_are_craftable() {
+        let recipes = recipes();
+        let table = grid(
+            3,
+            &[
+                (1, 0, items::BOOK),
+                (0, 1, items::DIAMOND),
+                (1, 1, items::OBSIDIAN),
+                (2, 1, items::DIAMOND),
+                (0, 2, items::OBSIDIAN),
+                (1, 2, items::OBSIDIAN),
+                (2, 2, items::OBSIDIAN),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&table, 3),
+            Some(ItemStack::new(items::ENCHANTING_TABLE, 1))
+        );
+        let stick = items::STICK;
+        let grindstone = grid(
+            3,
+            &[
+                (0, 0, stick),
+                (1, 0, items::SMOOTH_STONE_SLAB),
+                (2, 0, stick),
+                (0, 1, items::SPRUCE_PLANKS),
+                (2, 1, items::OAK_PLANKS),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&grindstone, 3),
+            Some(ItemStack::new(items::GRINDSTONE, 1))
+        );
     }
 
     #[test]

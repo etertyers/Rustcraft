@@ -126,7 +126,7 @@ impl Game {
             return false;
         }
         let name = self.mob_defs.get(mob.kind).name.clone();
-        let held = self.held().copied();
+        let held = self.held().cloned();
         let survival = self.mode.uses_up_items();
         match name.as_str() {
             "cow" => {
@@ -205,7 +205,7 @@ impl Game {
             id == treat || (matches!(def.ai, Ai::Cat) && Some(id) == items::by_name("salmon"))
         };
         let tamed = self.mobs[index].data.tamed;
-        if let Some(stack) = held
+        if let Some(stack) = &held
             && treat_ok(stack.id)
             && !tamed
         {
@@ -223,7 +223,7 @@ impl Game {
             }
             return true;
         }
-        if tamed && held.is_none_or(|s| !treat_ok(s.id)) {
+        if tamed && held.as_ref().is_none_or(|s| !treat_ok(s.id)) {
             let mob = &mut self.mobs[index];
             mob.data.sitting = !mob.data.sitting;
             return true;

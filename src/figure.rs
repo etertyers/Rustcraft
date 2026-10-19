@@ -77,7 +77,7 @@ pub fn build(
                 id.map(|id| {
                     game.inventory
                         .hand_stack(hand)
-                        .copied()
+                        .cloned()
                         .filter(|stack| stack.id == id)
                         .unwrap_or_else(|| ItemStack::new(id, 1))
                 })
@@ -93,6 +93,7 @@ pub fn build(
             let item = main.as_ref().map(|(geometry, stack, up)| HandItem {
                 geometry,
                 display: first_person_display(fig, stack, false, *up),
+                glint: stack.is_enchanted(),
             });
             let input = HandInput {
                 left: false,
@@ -126,6 +127,7 @@ pub fn build(
                     item: Some(HandItem {
                         geometry,
                         display: first_person_display(fig, stack, true, *up),
+                        glint: stack.is_enchanted(),
                     }),
                     ..input
                 };
@@ -147,7 +149,7 @@ pub fn build(
             let frame = model_matrix(&body_frame(&pose, yaw), feet);
             let rig = rig(&pose, fig.slim);
             for hand in [Hand::Main, Hand::Off] {
-                let Some(stack) = game.inventory.hand_stack(hand).copied() else {
+                let Some(stack) = game.inventory.hand_stack(hand).cloned() else {
                     continue;
                 };
                 let left = hand == Hand::Off;
@@ -156,7 +158,8 @@ pub fn build(
                 let display = third_person_display(fig, &stack, left, up);
                 let matrix =
                     frame * hand_mount(&rig, !left, fig.slim) * display_matrix(&display, left);
-                geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], body_light);
+                let light = crate::render::hand::glinted(body_light, stack.is_enchanted());
+                geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], light);
             }
         }
     }

@@ -63,6 +63,8 @@ pub enum DamageSource {
     Mob,
     Arrow,
     Explosion,
+    /// A falling anvil landed on them.
+    Anvil,
 }
 
 impl DamageSource {
@@ -78,6 +80,7 @@ impl DamageSource {
             DamageSource::Mob => "was slain",
             DamageSource::Arrow => "was shot",
             DamageSource::Explosion => "blew up",
+            DamageSource::Anvil => "was squashed by a falling anvil",
         }
     }
 
@@ -88,7 +91,8 @@ impl DamageSource {
             | DamageSource::InFire
             | DamageSource::Mob
             | DamageSource::Arrow
-            | DamageSource::Explosion => DAMAGE_EXHAUSTION,
+            | DamageSource::Explosion
+            | DamageSource::Anvil => DAMAGE_EXHAUSTION,
             DamageSource::Fall
             | DamageSource::Drowning
             | DamageSource::Fire
@@ -138,6 +142,13 @@ pub struct Stats {
     /// Ticks since the player last slept (phantoms come after three days).
     #[serde(default)]
     pub awake: u32,
+    /// Levels and the bar (added in M22).
+    #[serde(default)]
+    pub experience: super::experience::Experience,
+    /// Picks the enchanting table's offers; changes when the player
+    /// enchants something (modern `EnchantmentSeed`).
+    #[serde(default)]
+    pub enchant_seed: u32,
 }
 
 impl Default for Stats {
@@ -155,6 +166,8 @@ impl Default for Stats {
             last_damage: 0.0,
             last_source: None,
             awake: 0,
+            experience: Default::default(),
+            enchant_seed: 0,
         }
     }
 }
@@ -561,5 +574,25 @@ mod tests {
         }
         stats.damage(2.0, DamageSource::Mob);
         assert!((stats.exhaustion - DAMAGE_EXHAUSTION).abs() < 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod saved_tests {
+    use super::*;
+
+    #[test]
+    fn experience_and_the_enchantment_seed_survive_a_save_and_old_saves_load() {
+        let mut stats = Stats::default();
+        stats.experience.add(1234);
+        stats.enchant_seed = 0xABCD_1234;
+        let text = ron::to_string(&stats).unwrap();
+        let back: Stats = ron::from_str(&text).unwrap();
+        assert_eq!(back.experience, stats.experience);
+        assert_eq!(back.enchant_seed, 0xABCD_1234);
+        // A world saved before M22 has neither.
+        let old = r#"(health: 13, food: 20, saturation: 5.0, exhaustion: 0.0, food_timer: 0, air: 300, fire: 0, fall_distance: 0.0, hurt_cooldown: 0, last_damage: 0.0)"#;
+        let loaded: Stats = ron::from_str(old).unwrap();
+        assert_eq!(loaded.experience, Default::default());
     }
 }

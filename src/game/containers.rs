@@ -37,16 +37,54 @@ pub enum Container {
     Hopper(IVec3),
     /// The chest or hopper minecart with this index.
     Cart(usize),
+    /// An enchanting table, anvil or grindstone, with the stacks put in it.
+    Bench(Bench),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchKind {
+    Enchanting,
+    Anvil,
+    Grindstone,
+}
+
+/// The screen of an enchanting table, anvil or grindstone. Its input
+/// slots are `SlotRef::Grid`; the anvil's and grindstone's output is
+/// `SlotRef::Result`, worked out from the inputs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bench {
+    pub kind: BenchKind,
+    pub at: IVec3,
+    pub slots: Vec<Option<ItemStack>>,
+    /// What's typed in the anvil's name box.
+    pub name: String,
 }
 
 impl Container {
     /// The block whose slots this shows, if it shows a block's.
     pub fn block(&self) -> Option<IVec3> {
         match *self {
-            Self::Crafting { .. } | Self::Cart(_) => None,
+            Self::Crafting { .. } | Self::Cart(_) | Self::Bench(_) => None,
             Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
                 Some(at)
             }
+        }
+    }
+
+    /// The grid-like slots (`SlotRef::Grid`) of a crafting grid or bench.
+    pub(super) fn grid(&self) -> Option<&[Option<ItemStack>]> {
+        match self {
+            Self::Crafting { grid, .. } => Some(grid),
+            Self::Bench(bench) => Some(&bench.slots),
+            _ => None,
+        }
+    }
+
+    pub(super) fn grid_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
+        match self {
+            Self::Crafting { grid, .. } => Some(grid),
+            Self::Bench(bench) => Some(&mut bench.slots),
+            _ => None,
         }
     }
 
@@ -157,8 +195,17 @@ impl Game {
     /// stack held on the mouse (1.0.0's `onCraftGuiClosed`).
     pub fn close_container(&mut self) {
         let mut thrown: Vec<ItemStack> = self.cursor.take().into_iter().collect();
-        if let Some(Container::Crafting { grid, .. }) = self.container.take() {
-            thrown.extend(grid.into_iter().flatten());
+        match self.container.take() {
+            Some(Container::Crafting { grid, .. }) => thrown.extend(grid.into_iter().flatten()),
+            // A bench gives back what was put in it, into the inventory
+            // if it fits.
+            Some(Container::Bench(bench)) => {
+                for stack in bench.slots.into_iter().flatten() {
+                    let items = self.items.clone();
+                    thrown.extend(self.inventory.add(stack, &items));
+                }
+            }
+            _ => {}
         }
         for stack in thrown {
             self.throw(stack);
@@ -246,13 +293,13 @@ impl Game {
     /// The stack in a slot of the open screen.
     pub fn slot_stack(&self, slot: SlotRef) -> Option<ItemStack> {
         match slot {
-            SlotRef::Inventory(index) => self.inventory.slot(index).copied(),
+            SlotRef::Inventory(index) => self.inventory.slot(index).cloned(),
             SlotRef::Grid(index) => match &self.container {
-                Some(Container::Crafting { grid, .. }) => grid.get(index).copied().flatten(),
-                _ => None,
+                Some(container) => container.grid()?.get(index).cloned().flatten(),
+                None => None,
             },
-            SlotRef::Result => self.crafting_result(),
-            SlotRef::Block(index) => self.block_slots()?.get(index).copied().flatten(),
+            SlotRef::Result => self.crafting_result().or_else(|| self.bench_result()),
+            SlotRef::Block(index) => self.block_slots()?.get(index).cloned().flatten(),
         }
     }
 
@@ -267,7 +314,16 @@ impl Game {
                 self.inventory.click(index, click, &mut self.cursor, &items);
             }
             SlotRef::Grid(index) => {
-                let Some(Container::Crafting { grid, .. }) = &mut self.container else {
+                // The enchanting table's lapis slot takes only lapis.
+                if click != Click::Shift
+                    && self
+                        .cursor
+                        .as_ref()
+                        .is_some_and(|held| !self.slot_accepts(slot, held))
+                {
+                    return;
+                }
+                let Some(grid) = self.container.as_mut().and_then(Container::grid_mut) else {
                     return;
                 };
                 let Some(cell) = grid.get_mut(index) else {
@@ -281,16 +337,22 @@ impl Game {
                     slots::click(cell, click, &mut self.cursor, &items);
                 }
             }
+            SlotRef::Result if matches!(self.container, Some(Container::Bench(_))) => {
+                self.take_bench_result(click == Click::Shift);
+            }
             SlotRef::Result if click == Click::Shift => {
                 // Crafts as many as fit, each into the inventory hotbar end
                 // first (1.0.0 merges results in reverse), until the grid
                 // makes something else.
                 let first = self.crafting_result();
                 while let Some(result) = self.crafting_result()
-                    && Some(result) == first
+                    && Some(&result) == first.as_ref()
                 {
                     let mut trial = self.inventory.clone();
-                    if trial.merge(result, player_slots().rev(), &items).is_some() {
+                    if trial
+                        .merge(result.clone(), player_slots().rev(), &items)
+                        .is_some()
+                    {
                         break;
                     }
                     self.inventory = trial;
@@ -305,6 +367,7 @@ impl Game {
                 }
             }
             SlotRef::Block(index) if click == Click::Shift => {
+                let output_before = self.furnace_output_count();
                 let Some(stack) = self
                     .block_slots_mut()
                     .and_then(|s| s.get_mut(index)?.take())
@@ -323,10 +386,14 @@ impl Game {
                 if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
                     *cell = rest;
                 }
+                if index == furnace::OUTPUT {
+                    self.pay_furnace_xp(output_before);
+                }
             }
             SlotRef::Block(index) => {
                 let output = matches!(self.container, Some(Container::Furnace(_)))
                     && index == furnace::OUTPUT;
+                let output_before = self.furnace_output_count();
                 let mut cursor = self.cursor.take();
                 if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
                     if output {
@@ -336,8 +403,40 @@ impl Game {
                     }
                 }
                 self.cursor = cursor;
+                if output {
+                    self.pay_furnace_xp(output_before);
+                }
             }
         }
+    }
+
+    /// How many items sit in the open furnace's output.
+    fn furnace_output_count(&self) -> u8 {
+        match self.container {
+            Some(Container::Furnace(_)) => self
+                .block_slots()
+                .and_then(|slots| slots.get(furnace::OUTPUT)?.as_ref())
+                .map_or(0, |stack| stack.count),
+            _ => 0,
+        }
+    }
+
+    /// Takes something out of a furnace's output pays out the experience
+    /// it has stored, as orbs at the player's feet.
+    fn pay_furnace_xp(&mut self, output_before: u8) {
+        if self.furnace_output_count() >= output_before {
+            return;
+        }
+        let Some(Container::Furnace(at)) = self.container else {
+            return;
+        };
+        let roll = self.rng.next_f64() as f32;
+        let Some(BlockEntity::Furnace(furnace)) = self.chunks.block_entity_mut(at) else {
+            return;
+        };
+        let points = furnace.take_xp(roll);
+        let feet = self.body.position();
+        self.spawn_xp(points, feet + glam::DVec3::Y * 0.5);
     }
 
     /// Whether `slot` is on the open screen and takes items put into it
@@ -345,9 +444,11 @@ impl Game {
     fn takes_items(&self, slot: SlotRef) -> bool {
         match slot {
             SlotRef::Inventory(index) => index < SLOTS,
-            SlotRef::Grid(index) => {
-                matches!(&self.container, Some(Container::Crafting { grid, .. }) if index < grid.len())
-            }
+            SlotRef::Grid(index) => self
+                .container
+                .as_ref()
+                .and_then(Container::grid)
+                .is_some_and(|grid| index < grid.len()),
             SlotRef::Result => false,
             SlotRef::Block(index) => {
                 let output = matches!(self.container, Some(Container::Furnace(_)))
@@ -362,7 +463,7 @@ impl Game {
         match slot {
             SlotRef::Inventory(index) => self.inventory.set(index, stack),
             SlotRef::Grid(index) => {
-                if let Some(Container::Crafting { grid, .. }) = &mut self.container {
+                if let Some(grid) = self.container.as_mut().and_then(Container::grid_mut) {
                     grid[index] = stack;
                 }
             }
@@ -380,7 +481,7 @@ impl Game {
     /// holding something else, or full, are skipped, and no more slots are
     /// used than there are items; what's left stays held.
     pub fn drag_across(&mut self, slots: &[SlotRef], click: Click) {
-        let Some(held) = self.cursor else {
+        let Some(held) = self.cursor.clone() else {
             return;
         };
         let max = self.items.max_stack(held.id);
@@ -409,14 +510,14 @@ impl Game {
                 slot,
                 Some(ItemStack {
                     count: there + put,
-                    ..held
+                    ..held.clone()
                 }),
             );
             left -= put;
         }
         self.cursor = (left > 0).then_some(ItemStack {
             count: left,
-            ..held
+            ..held.clone()
         });
     }
 
@@ -424,12 +525,15 @@ impl Game {
     /// screen, part stacks first (modern Minecraft's pick-up-all). Results
     /// aren't taken from.
     pub fn collect_onto_cursor(&mut self) {
-        let Some(mut held) = self.cursor else {
+        let Some(mut held) = self.cursor.clone() else {
             return;
         };
         let max = self.items.max_stack(held.id);
         let mut slots: Vec<SlotRef> = match &self.container {
-            Some(Container::Crafting { grid, .. }) => (0..grid.len()).map(SlotRef::Grid).collect(),
+            Some(container @ (Container::Crafting { .. } | Container::Bench(_))) => {
+                let count = container.grid().map_or(0, <[_]>::len);
+                (0..count).map(SlotRef::Grid).collect()
+            }
             Some(
                 Container::Chest(_)
                 | Container::Furnace(_)
@@ -496,7 +600,7 @@ impl Game {
             | Container::Cart(_),
         ) = self.container
         {
-            let Some(stack) = self.inventory.slot(index).copied() else {
+            let Some(stack) = self.inventory.slot(index).cloned() else {
                 return;
             };
             let Some(chest) = self.block_slots_mut() else {

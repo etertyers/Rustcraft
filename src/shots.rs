@@ -182,6 +182,26 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: third_sneak,
     },
+    Shot {
+        name: "m22-glint",
+        about: "an enchanted pickaxe in hand, enchanted and plain swords lying ahead, experience orbs and the XP bar",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, -0.45)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: glint_scene,
+    },
+    Shot {
+        name: "m22-workstations",
+        about: "an enchanting table ringed by bookshelves, an anvil and a grindstone",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 5.5], 0.0, -0.35)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: workstations,
+    },
 ];
 
 /// Puts `item` in the hotbar's first slot and selects it, settling the
@@ -204,6 +224,62 @@ fn hold_block(game: &mut Game) {
 fn swing_sword(game: &mut Game) {
     hold_sword(game);
     game.swing_for_shot(3);
+}
+
+/// An enchanted pickaxe held, enchanted and plain swords on the ground,
+/// orbs falling and a half-full bar at level 12.
+fn glint_scene(game: &mut Game) {
+    use crate::{
+        entity::item::ItemEntity,
+        inventory::{enchant::Enchantment, items, stack::ItemStack},
+    };
+    let mut pickaxe = ItemStack::new(items::DIAMOND_PICKAXE, 1);
+    pickaxe.enchant(Enchantment::Efficiency, 5);
+    game.inventory.set(0, Some(pickaxe));
+    game.inventory.selected = 0;
+    let mut sword = ItemStack::new(items::DIAMOND_SWORD, 1);
+    sword.enchant(Enchantment::Sharpness, 5);
+    for (x, stack) in [
+        (-1.0, sword),
+        (0.0, ItemStack::new(items::DIAMOND_SWORD, 1)),
+        (1.0, ItemStack::new(items::DIAMOND_PICKAXE, 1)),
+    ] {
+        game.entities.push(ItemEntity::new(
+            stack,
+            glam::DVec3::new(0.5 + x, 64.2, -2.0),
+            glam::DVec3::ZERO,
+            0.0,
+        ));
+    }
+    game.stats
+        .experience
+        .add(crate::player::experience::points_to_reach(12) + 14);
+    game.spawn_xp(37, glam::DVec3::new(0.5, 64.6, -3.5));
+    game.spawn_xp(11, glam::DVec3::new(1.5, 64.6, -3.5));
+    game.run_ticks(12);
+}
+
+/// A table with its ring of bookshelves, an anvil and a grindstone.
+fn workstations(game: &mut Game) {
+    let table = at(0, 64, 0);
+    let mut edits = vec![(table, BlockState::of(ENCHANTING_TABLE))];
+    for x in -2..=2 {
+        for z in -2..=2 {
+            if i32::abs(x) == 2 || i32::abs(z) == 2 {
+                // Leave the south side open to look in from.
+                if z == 2 {
+                    continue;
+                }
+                for y in 0..2 {
+                    edits.push((table + at(x, y, z), BlockState::of(BOOKSHELF)));
+                }
+            }
+        }
+    }
+    edits.push((at(3, 64, 3), facing(ANVIL, Face::East)));
+    edits.push((at(-3, 64, 3), facing(GRINDSTONE, Face::East)));
+    game.set_blocks(&edits);
+    game.run_ticks(5);
 }
 
 fn third_back(game: &mut Game) {

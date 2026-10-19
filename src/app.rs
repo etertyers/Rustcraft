@@ -24,7 +24,7 @@ use crate::{
     config,
     entity::mobs::MobRegistry,
     figure::{self, Figure, PlayerMeshes},
-    game::{Container, Game, chunk_workers, environment::environment},
+    game::{BenchKind, Container, Game, chunk_workers, environment::environment},
     inventory::item,
     inventory::{
         crafting::Recipes,
@@ -46,7 +46,7 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_particles,
+            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_orbs, add_particles,
             add_primed_tnt, item_mesh,
         },
         held::HeldCache,
@@ -59,7 +59,7 @@ use crate::{
         gui::{SlotView, SurvivalHud},
         menu::{Menu, MenuAction},
         pause::{PauseAction, PauseMenu},
-        screens::{Screen, ScreenAction, ScreenView},
+        screens::{BenchView, Screen, ScreenAction, ScreenView},
     },
     world::{
         biome::Biome,
@@ -406,6 +406,8 @@ impl App {
             self.pause_game();
         } else if key == KeyCode::Escape && pressed {
             self.set_cursor_grab(false);
+        } else if self.screen == Some(Screen::Anvil) && key != KeyCode::F3 {
+            // The name box has the keyboard (E and the digits are letters).
         } else if key == KeyCode::KeyE
             && pressed
             && !event.repeat
@@ -585,6 +587,11 @@ impl App {
             Container::Furnace(_) => Screen::Furnace,
             Container::Dispenser(_, dropper) => Screen::Dispenser { dropper: *dropper },
             Container::Hopper(_) => Screen::Hopper,
+            Container::Bench(bench) => match bench.kind {
+                BenchKind::Enchanting => Screen::Enchanting,
+                BenchKind::Anvil => Screen::Anvil,
+                BenchKind::Grindstone => Screen::Grindstone,
+            },
             Container::Cart(index) => match self.game.as_ref().and_then(|g| g.carts.get(*index)) {
                 Some(cart) if cart.kind == crate::entity::minecart::CartKind::Hopper => {
                     Screen::Hopper
@@ -610,7 +617,10 @@ impl App {
                 };
                 let count = if all { held.count } else { 1 };
                 held.count -= count;
-                let thrown = ItemStack { count, ..*held };
+                let thrown = ItemStack {
+                    count,
+                    ..held.clone()
+                };
                 if held.count == 0 {
                     game.cursor = None;
                 }
@@ -624,6 +634,10 @@ impl App {
                 game.inventory.set(game.inventory.selected, Some(full));
             }
             ScreenAction::Discard => game.cursor = None,
+            ScreenAction::Enchant(button) => {
+                game.enchant_item(button);
+            }
+            ScreenAction::AnvilName(name) => game.set_anvil_name(name),
             ScreenAction::Respawn => {
                 game.respawn();
                 self.set_cursor_grab(true);
@@ -797,6 +811,14 @@ impl App {
                     game.tick_alpha(),
                     light_at,
                 );
+                add_orbs(
+                    &mut mesh,
+                    &game.orbs,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
             }
             // The player: the hand in first person, the model in third.
             let player = match (&self.atlas, &self.item_models) {
@@ -922,6 +944,8 @@ impl App {
                 health: game.stats.health.ceil() as i32,
                 food: game.stats.food,
                 air: (game.stats.air < MAX_AIR).then_some(game.stats.air),
+                level: game.stats.experience.level,
+                progress: game.stats.experience.progress,
             }),
             death: game.stats.is_dead().then(|| {
                 let source = game.stats.last_source.unwrap_or(DamageSource::Mob);
@@ -936,13 +960,14 @@ impl App {
         };
         let slot = |slot: SlotRef| {
             let stack = game.slot_stack(slot)?;
-            Some((view_of(&stack)?, game.items().name(&stack)))
+            Some((view_of(&stack)?, game.items().tooltip(&stack)))
         };
         let view = ScreenView {
             slot: &slot,
             furnace: game.furnace_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
+            bench: bench_view(game),
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();
@@ -1162,17 +1187,75 @@ impl ApplicationHandler for App {
 
 /// Every item, blocks first, for the creative inventory, with how it looks
 /// and its name.
+/// What the enchanting table, anvil or grindstone screen shows besides
+/// its slots.
+fn bench_view(game: &Game) -> Option<BenchView> {
+    use crate::{
+        inventory::{anvil::Refusal, enchant::roman},
+        ui::screens::{AnvilStatus, OfferView},
+    };
+    let bench = game.bench()?;
+    let free = game.mode.has_every_item();
+    let level = game.stats.experience.level;
+    let filled = bench.slots.iter().any(Option::is_some);
+    let has_result = game.slot_stack(SlotRef::Result).is_some();
+    let mut view = BenchView {
+        lapis: game.lapis_count(),
+        level,
+        free,
+        name: bench.name.clone(),
+        has_item: bench.slots.first().is_some_and(Option::is_some),
+        blocked: filled && !has_result,
+        ..Default::default()
+    };
+    match bench.kind {
+        BenchKind::Enchanting => {
+            let offers = game.enchant_offers();
+            for (shown, offer) in view.offers.iter_mut().zip(offers) {
+                *shown = offer.map(|offer| OfferView {
+                    requires: offer.requires,
+                    clue: offer
+                        .clue
+                        .map_or_else(String::new, |(e, l)| format!("{} {}", e.name(), roman(l))),
+                });
+            }
+        }
+        BenchKind::Anvil => {
+            view.anvil = match game.anvil_outcome() {
+                Some(Ok(made)) => AnvilStatus::Cost {
+                    levels: made.cost,
+                    affordable: free || level >= made.cost,
+                },
+                Some(Err(Refusal::TooExpensive)) => AnvilStatus::TooExpensive,
+                _ => AnvilStatus::Nothing,
+            };
+        }
+        BenchKind::Grindstone => {}
+    }
+    Some(view)
+}
+
 fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
+    // Every item, then an enchanted book for each enchantment at each of
+    // its levels (the plain one would be useless).
+    let books = crate::inventory::enchant::ALL
+        .iter()
+        .flat_map(|&enchantment| {
+            (1..=enchantment.max_level()).map(move |level| {
+                let mut book = ItemStack::new(crate::inventory::items::ENCHANTED_BOOK, 1);
+                book.enchant(enchantment, level);
+                book
+            })
+        });
     items
         .items
         .iter()
+        .filter(|item| item.id != crate::inventory::items::ENCHANTED_BOOK)
         .map(|item| ItemStack::with_damage(item.id, 1, 0))
+        .chain(books)
         .map(|stack| {
-            (
-                stack,
-                SlotView::of(&stack, icons, items),
-                items.name(&stack),
-            )
+            let (view, name) = (SlotView::of(&stack, icons, items), items.tooltip(&stack));
+            (stack, view, name)
         })
         .collect()
 }

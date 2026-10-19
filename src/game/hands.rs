@@ -4,7 +4,7 @@
 
 use glam::{DVec3, IVec3};
 
-use super::Game;
+use super::{BenchKind, Game};
 use crate::{
     entity::{
         arrow::{self, Arrow, ArrowEvent},
@@ -12,6 +12,7 @@ use crate::{
         particle::{MAX_PARTICLES, Particle},
     },
     inventory::{
+        enchant::Enchantment,
         item::Tool,
         items,
         player::{HOTBAR_SLOTS, Hand},
@@ -285,11 +286,12 @@ impl Game {
             1.0
         } else {
             let in_water = self.eye_in() == Some(Fluid::Water);
-            let per_tick = harvest::progress_per_tick(
+            let per_tick = harvest::progress_per_tick_with(
                 def,
                 self.selected_tool(),
                 self.body.on_ground,
                 in_water,
+                self.held_level(Enchantment::Efficiency),
             );
             let so_far = match self.mining {
                 Some((mining, progress)) if mining == cell => progress,
@@ -322,6 +324,9 @@ impl Game {
         }
         let world = self.chunks.world();
         if self.mode.drops_items() {
+            let mut mined = Vec::new();
+            let fortune = self.held_level(Enchantment::Fortune);
+            let silk = self.held_level(Enchantment::SilkTouch) > 0;
             let tool = self
                 .inventory
                 .selected_stack()
@@ -338,10 +343,18 @@ impl Game {
                     continue;
                 }
                 let kind = tool.map(|tool| tool.kind);
-                for stack in harvest::drops(block, kind, &mut random) {
+                for stack in harvest::drops_with(block, kind, fortune, silk, &mut random) {
                     self.entities
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
+                if at == cell {
+                    mined.push(block);
+                }
+            }
+            for block in mined {
+                // Silk Touch takes the ore whole and leaves its experience.
+                let points = if silk { 0 } else { self.ore_xp(block) };
+                self.spawn_xp(points, cell.as_dvec3() + DVec3::splat(0.5));
             }
         }
         // A chest or furnace spills what it held, in every game mode (1.0.0).
@@ -362,7 +375,7 @@ impl Game {
         if self.mode.wears_tools()
             && let Some(wear) = self.selected_tool().map(|tool| tool.wear)
         {
-            self.inventory.damage_selected(wear, &self.items);
+            self.wear_selected(wear);
         }
         self.edit(&edits);
     }
@@ -405,7 +418,7 @@ impl Game {
     }
 
     /// Looses an arrow at `power` (0–1) from the bow in hand.
-    fn shoot_arrow(&mut self, power: f32, ammo: crate::inventory::item::ItemId) {
+    pub(super) fn shoot_arrow(&mut self, power: f32, ammo: crate::inventory::item::ItemId) {
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let forward = self.camera.forward().as_dvec3();
         let pickup = self.mode.uses_up_items();
@@ -414,22 +427,36 @@ impl Game {
         if self.body.on_ground {
             carried.y = 0.0;
         }
+        let level = |e: Enchantment| self.held().map_or(0, |bow| bow.level_of(e));
+        let (draw, punch, flame, infinity) = (
+            level(Enchantment::Power),
+            level(Enchantment::Punch),
+            level(Enchantment::Flame) > 0,
+            level(Enchantment::Infinity) > 0,
+        );
         let rng = &mut self.rng;
         let mut random = || rng.next_f64();
-        self.arrows.push(Arrow::shoot(
-            eye,
-            forward,
-            power,
-            carried,
-            pickup,
-            &mut random,
-        ));
-        if pickup && let Some(slot) = self.find_ammo(ammo) {
+        self.arrows.push(
+            Arrow::shoot(
+                eye,
+                forward,
+                power,
+                carried,
+                pickup && !infinity,
+                &mut random,
+            )
+            .enchanted(draw, punch, flame),
+        );
+        // Infinity shoots without using up a plain arrow.
+        if pickup
+            && !infinity
+            && let Some(slot) = self.find_ammo(ammo)
+        {
             self.inventory.take(slot, 1);
         }
         if self.mode.wears_tools() {
-            let slot = self.held_slot();
-            self.inventory.damage_slot(slot, 1, &self.items);
+            let hand = self.use_hand;
+            self.wear_hand(hand, 1);
         }
     }
 
@@ -458,8 +485,27 @@ impl Game {
             let from = arrow.position;
             let at_player = (arrow.hostile && !self.stats.is_dead()).then_some(&player);
             match arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random) {
-                Some(ArrowEvent::HitMob { index, damage }) => {
+                Some(ArrowEvent::HitMob {
+                    index,
+                    damage,
+                    punch,
+                    flame,
+                }) => {
                     self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+                    if punch > 0 {
+                        crate::entity::mob::push(
+                            &mut self.mobs[index].body,
+                            crate::config::combat::PUNCH_PER_LEVEL * f64::from(punch),
+                            arrow.heading,
+                        );
+                    }
+                    if flame {
+                        let stats = &mut self.mobs[index].stats;
+                        stats.fire = stats.fire.max(crate::config::combat::FLAME_TICKS);
+                    }
+                    if !arrow.hostile {
+                        self.mobs[index].hit_by_player();
+                    }
                 }
                 Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from)),
                 None => {}
@@ -495,7 +541,7 @@ impl Game {
     /// Returns false if the selected item can't be eaten now.
     fn keep_eating(&mut self) -> bool {
         let slot = self.held_slot();
-        let Some(stack) = self.held().copied() else {
+        let Some(stack) = self.held().cloned() else {
             return false;
         };
         let Some(food) = self.items.item(stack.id).and_then(|item| item.food) else {
@@ -588,6 +634,9 @@ impl Game {
                 self.open_dispenser(cell, dropper);
             }
             Activate::Hopper => self.open_hopper(cell),
+            Activate::Enchanting => self.open_bench(BenchKind::Enchanting, cell),
+            Activate::Anvil => self.open_bench(BenchKind::Anvil, cell),
+            Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }
@@ -626,7 +675,7 @@ impl Game {
 
     /// Places the selected stack's block against the clicked face.
     fn place(&mut self, hit: &Hit) {
-        let Some(stack) = self.held().copied() else {
+        let Some(stack) = self.held().cloned() else {
             return;
         };
         let Some(block) = self.items.places(&stack) else {
@@ -765,5 +814,6 @@ impl Game {
             }
         }
         self.entities.retain(|item| !item.expired());
+        self.tick_orbs();
     }
 }

@@ -66,6 +66,6 @@ impl BlockEntity {
 
     /// Everything it holds, dropped when the block is broken.
     pub fn contents(&self) -> Vec<ItemStack> {
-        self.slots().iter().flatten().copied().collect()
+        self.slots().iter().flatten().cloned().collect()
     }
 }
