@@ -11,11 +11,33 @@ use super::{
 };
 
 pub const HOTBAR_SLOTS: usize = 9;
-pub const SLOTS: usize = 36;
+/// The hotbar and the rows above it.
+pub const MAIN_SLOTS: usize = 36;
+/// The off-hand slot, after them (modern Minecraft's slot 40).
+pub const OFFHAND: usize = 36;
+pub const SLOTS: usize = 37;
+
+/// A hand: items are used from the main hand, or the off-hand when the
+/// main hand has nothing to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Hand {
+    #[default]
+    Main,
+    Off,
+}
+
+impl Hand {
+    pub fn opposite(self) -> Self {
+        match self {
+            Hand::Main => Hand::Off,
+            Hand::Off => Hand::Main,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inventory {
-    /// `SLOTS` long: 0–8 are the hotbar, 9–35 the rest.
+    /// `SLOTS` long: 0–8 are the hotbar, 9–35 the rest, 36 the off-hand.
     slots: Vec<Option<ItemStack>>,
     /// Selected hotbar slot.
     pub selected: usize,
@@ -43,6 +65,24 @@ impl Inventory {
         self.slot(self.selected)
     }
 
+    /// The slot a hand's item is in.
+    pub fn hand_slot(&self, hand: Hand) -> usize {
+        match hand {
+            Hand::Main => self.selected,
+            Hand::Off => OFFHAND,
+        }
+    }
+
+    /// What `hand` holds.
+    pub fn hand_stack(&self, hand: Hand) -> Option<&ItemStack> {
+        self.slot(self.hand_slot(hand))
+    }
+
+    /// Swaps the main hand's item with the off-hand's (the F key).
+    pub fn swap_hands(&mut self) {
+        self.slots.swap(self.selected, OFFHAND);
+    }
+
     /// Fixes a loaded inventory: the right number of slots, a valid
     /// selection, and no stacks of items that don't exist or are empty.
     pub fn repair(&mut self, items: &Items) {
@@ -59,7 +99,7 @@ impl Inventory {
     /// both hotbar first (1.0.0's `addItemStackToInventory`). Returns what
     /// didn't fit.
     pub fn add(&mut self, stack: ItemStack, items: &Items) -> Option<ItemStack> {
-        self.merge(stack, 0..SLOTS, items)
+        self.merge(stack, 0..MAIN_SLOTS, items)
     }
 
     /// Moves `stack` into the slots at the indices in `order` (matching
@@ -97,7 +137,17 @@ impl Inventory {
 
     /// Wears the selected item by `amount`. Returns true if it broke.
     pub fn damage_selected(&mut self, amount: u16, items: &Items) -> bool {
-        let Some(stack) = self.slots[self.selected].as_mut() else {
+        self.damage_slot(self.selected, amount, items)
+    }
+
+    /// Wears the item in a hand by `amount`. Returns true if it broke.
+    pub fn damage_hand(&mut self, hand: Hand, amount: u16, items: &Items) -> bool {
+        self.damage_slot(self.hand_slot(hand), amount, items)
+    }
+
+    /// Wears the item in slot `index` by `amount`. Returns true if it broke.
+    pub fn damage_slot(&mut self, index: usize, amount: u16, items: &Items) -> bool {
+        let Some(stack) = self.slots[index].as_mut() else {
             return false;
         };
         let Some(max) = items.max_damage(stack.id) else {
@@ -106,7 +156,7 @@ impl Inventory {
         stack.damage = stack.damage.saturating_add(amount);
         // 1.0.0 breaks the item once damage exceeds its durability.
         if stack.damage > max {
-            self.slots[self.selected] = None;
+            self.slots[index] = None;
             return true;
         }
         false
@@ -134,7 +184,9 @@ impl Inventory {
             return;
         };
         let target = if index < HOTBAR_SLOTS {
-            HOTBAR_SLOTS..SLOTS
+            HOTBAR_SLOTS..MAIN_SLOTS
+        } else if index == OFFHAND {
+            0..MAIN_SLOTS
         } else {
             0..HOTBAR_SLOTS
         };
@@ -188,7 +240,7 @@ pub(crate) mod tests {
     fn a_full_inventory_returns_the_rest() {
         let items = items();
         let mut inventory = Inventory::default();
-        for i in 0..SLOTS {
+        for i in 0..MAIN_SLOTS {
             inventory.set(i, Some(ItemStack::new(DIRT, 63)));
         }
         let rest = inventory.add(ItemStack::new(DIRT, 40), &items);
@@ -197,6 +249,47 @@ pub(crate) mod tests {
             inventory.add(ItemStack::new(STONE, 1), &items),
             Some(ItemStack::new(STONE, 1))
         );
+    }
+
+    #[test]
+    fn the_off_hand_swaps_with_the_main_hand_and_isnt_filled_by_pickups() {
+        let items = items();
+        let mut inventory = Inventory::default();
+        inventory.set(2, Some(ItemStack::new(PICKAXE, 1)));
+        inventory.set(OFFHAND, Some(ItemStack::new(STONE, 5)));
+        inventory.selected = 2;
+        assert_eq!(inventory.hand_stack(Hand::Main).unwrap().id, PICKAXE);
+        assert_eq!(inventory.hand_stack(Hand::Off).unwrap().id, STONE);
+        inventory.swap_hands();
+        assert_eq!(inventory.hand_stack(Hand::Main).unwrap().id, STONE);
+        assert_eq!(inventory.hand_stack(Hand::Off).unwrap().id, PICKAXE);
+        // Swapping with an empty hand moves the item.
+        inventory.set(OFFHAND, None);
+        inventory.swap_hands();
+        assert!(inventory.hand_stack(Hand::Main).is_none());
+        assert_eq!(inventory.hand_stack(Hand::Off).unwrap().id, STONE);
+        // Picking up never lands in the off-hand, even with the rest full.
+        let mut full = Inventory::default();
+        for i in 0..MAIN_SLOTS {
+            full.set(i, Some(ItemStack::new(DIRT, 64)));
+        }
+        assert!(full.add(ItemStack::new(STONE, 1), &items).is_some());
+        assert!(full.slot(OFFHAND).is_none());
+        // Shift-clicking the off-hand sends it to the main slots.
+        inventory.click(OFFHAND, Click::Shift, &mut None, &items);
+        assert!(inventory.slot(OFFHAND).is_none());
+        assert_eq!(inventory.slot(0).unwrap().id, STONE);
+        // Wearing an off-hand item breaks it at its durability.
+        let mut worn = Inventory::default();
+        worn.set(OFFHAND, Some(ItemStack::new(PICKAXE, 1)));
+        assert!(!worn.damage_hand(Hand::Off, 30, &items));
+        assert!(worn.damage_hand(Hand::Off, 30, &items));
+        assert!(worn.slot(OFFHAND).is_none());
+        // Old 36-slot saves grow the extra slot.
+        let mut old = Inventory::default();
+        old.slots.truncate(MAIN_SLOTS);
+        old.repair(&items);
+        assert_eq!(old.slots.len(), SLOTS);
     }
 
     #[test]

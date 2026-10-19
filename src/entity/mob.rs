@@ -65,7 +65,7 @@ impl Mob {
             prev_yaw: yaw,
             head_yaw: yaw,
             pitch: 0.0,
-            stats: Stats::with_health(def.health),
+            stats: Stats::with_health(def.health as f32),
             hurt_time: 0,
             death_time: 0,
             age: 0,
@@ -109,7 +109,7 @@ impl Mob {
 
     /// Hits the mob for `amount` from `attacker` (a position, for
     /// knockback). Returns true for a fresh hit; the AI reacts to it.
-    pub fn hurt(&mut self, amount: i32, attacker: Option<DVec3>, source: DamageSource) -> bool {
+    pub fn hurt(&mut self, amount: f32, attacker: Option<DVec3>, source: DamageSource) -> bool {
         if self.is_dead() {
             return false;
         }
@@ -124,7 +124,7 @@ impl Mob {
         fresh
     }
 
-    /// 1.0.0's `knockBack`: half the speed, then pushed away and up.
+    /// Pushes the mob away from `from`.
     pub fn knock_back(&mut self, from: DVec3) {
         knock_back(&mut self.body, from);
     }
@@ -180,18 +180,27 @@ impl Mob {
     }
 }
 
-/// 1.0.0's `EntityLiving.knockBack` for any body hit from `from`.
+/// Knockback away from `from` for any body hit there (modern
+/// `LivingEntity.knockback` with the usual 0.4).
 pub fn knock_back(body: &mut Body, from: DVec3) {
     let away = body.position() - from;
-    let mut push = DVec3::new(away.x, 0.0, away.z);
-    if push.length_squared() < 1e-8 {
-        push = DVec3::new(0.01, 0.0, 0.0);
+    push(body, KNOCKBACK, DVec3::new(away.x, 0.0, away.z));
+}
+
+/// Modern `LivingEntity.knockback`: halves the horizontal speed and adds
+/// `strength` along `toward` (horizontal; a zero vector pushes a hair east),
+/// and lifts a body on the ground by `strength`, up to 0.4.
+pub fn push(body: &mut Body, strength: f64, toward: DVec3) {
+    let mut dir = DVec3::new(toward.x, 0.0, toward.z);
+    if dir.length_squared() < 1e-8 {
+        dir = DVec3::X;
     }
-    let push = push.normalize() * KNOCKBACK;
-    body.velocity /= 2.0;
-    body.velocity.x += push.x;
-    body.velocity.z += push.z;
-    body.velocity.y = (body.velocity.y + KNOCKBACK).min(KNOCKBACK);
+    let dir = dir.normalize() * strength;
+    body.velocity.x = body.velocity.x / 2.0 + dir.x;
+    body.velocity.z = body.velocity.z / 2.0 + dir.z;
+    if body.on_ground {
+        body.velocity.y = (body.velocity.y / 2.0 + strength).min(0.4);
+    }
 }
 
 /// `a − b` wrapped into −π..π.

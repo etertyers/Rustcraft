@@ -85,3 +85,46 @@ pub const SEA_LEVEL: i32 = 63;
 
 /// Chunks drawn in each direction around the player.
 pub const RENDER_DISTANCE: i32 = 9;
+
+/// Combat, after modern (1.9+) Java Edition's `Player.attack`. Damage is in
+/// health points (half hearts); speeds in swings a second.
+pub mod combat {
+    /// Damage and speed bare handed, and for any item that isn't a weapon
+    /// or tool.
+    pub const HAND_DAMAGE: f32 = 1.0;
+    pub const HAND_SPEED: f32 = 4.0;
+    /// A swing's damage is scaled by `MIN + (1 − MIN) × charge²`.
+    pub const MIN_CHARGE_DAMAGE: f32 = 0.2;
+    /// A swing must be charged past this for a critical hit, a sweep or
+    /// extra knockback from sprinting ("strong").
+    pub const STRONG_CHARGE: f32 = 0.9;
+    pub const CRIT_MULTIPLIER: f32 = 1.5;
+    /// Knockback every hit gives, and the extra of a sprinting strong hit
+    /// (vanilla's `i × 0.5` with one level).
+    pub const KNOCKBACK: f64 = 0.4;
+    pub const SPRINT_KNOCKBACK: f64 = 0.5;
+    /// A sword's sweep: damage to others near the target (no Sweeping
+    /// Edge), their knockback, how far from the target's hitbox (x, y, z)
+    /// and how far from the player they can be.
+    pub const SWEEP_DAMAGE: f32 = 1.0;
+    pub const SWEEP_KNOCKBACK: f64 = 0.4;
+    pub const SWEEP_GROW: (f64, f64, f64) = (1.0, 0.25, 1.0);
+    pub const SWEEP_RANGE: f64 = 3.0;
+    /// How far the player reaches for mobs, and how much a mob's hitbox
+    /// grows for aiming (modern `entityInteractionRange` and pick radius).
+    pub const REACH: f64 = 3.0;
+    pub const TARGET_GROW: f64 = 0.0;
+    /// Exhaustion each attack costs.
+    pub const EXHAUSTION: f32 = 0.1;
+
+    /// A raised shield blocks once it has been up this long.
+    pub const SHIELD_RAISE_TICKS: u32 = 5;
+    /// An axe blow puts a raised shield out of use this long (5 s).
+    pub const SHIELD_DISABLE_TICKS: u32 = 100;
+    /// Blocking a blow of this much or more wears the shield by one plus
+    /// the damage.
+    pub const SHIELD_WEAR_FROM: f32 = 3.0;
+    pub const SHIELD_DURABILITY: u16 = 336;
+    /// A blocked melee blow pushes the attacker back this much.
+    pub const SHIELD_KNOCKBACK: f64 = 0.5;
+}

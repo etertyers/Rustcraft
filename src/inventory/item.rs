@@ -116,16 +116,25 @@ pub struct Tool {
     /// Durability lost per block broken.
     #[serde(default = "default_wear")]
     pub wear: u16,
-    /// Damage dealt hitting a mob (1.0.0's `getDamageVsEntity`).
+    /// Damage with a full swing, bare hands included (modern
+    /// `Attributes.ATTACK_DAMAGE`: 1 plus the tool's bonus).
     #[serde(default = "default_attack")]
-    pub attack: i32,
+    pub attack: f32,
+    /// Swings a second at full strength (modern `ATTACK_SPEED`: 4 bare
+    /// handed and for items that aren't weapons).
+    #[serde(default = "default_attack_speed")]
+    pub attack_speed: f32,
     /// Durability lost per hit (1.0.0: swords 1, other tools 2).
     #[serde(default = "default_hit_wear")]
     pub hit_wear: u16,
 }
 
-fn default_attack() -> i32 {
-    1
+fn default_attack() -> f32 {
+    1.0
+}
+
+fn default_attack_speed() -> f32 {
+    4.0
 }
 
 fn default_hit_wear() -> u16 {

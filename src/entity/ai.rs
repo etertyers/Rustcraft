@@ -70,7 +70,7 @@ pub struct View<'a, T: Terrain> {
 pub struct Intent {
     pub input: MoveInput,
     /// Damage dealt to the player this tick.
-    pub hit: Option<i32>,
+    pub hit: Option<f32>,
 }
 
 /// Decides a mob's tick, turning it to face where it's going.
@@ -236,14 +236,14 @@ mod tests {
     }
 
     /// Runs `ticks` ticks of AI and movement; returns damage dealt to the player.
-    fn run(mob: &mut Mob, def: &MobDef, grid: &Grid, player: Option<Target>, ticks: u32) -> i32 {
+    fn run(mob: &mut Mob, def: &MobDef, grid: &Grid, player: Option<Target>, ticks: u32) -> f32 {
         let mut seed = 0.37f32;
         let mut random = || {
             seed = (seed * 997.0 + 0.123).fract();
             seed
         };
         let weight = |_: IVec3| 0.0;
-        let mut dealt = 0;
+        let mut dealt = 0.0;
         for _ in 0..ticks {
             let view = View {
                 terrain: grid,
@@ -251,7 +251,7 @@ mod tests {
                 weight: &weight,
             };
             let intent = think(mob, def, &view, &mut random);
-            dealt += intent.hit.unwrap_or(0);
+            dealt += intent.hit.unwrap_or(0.0);
             mob.tick(&intent.input, grid, false);
         }
         dealt
@@ -280,8 +280,8 @@ mod tests {
             zombie.feet()
         );
         // Once in reach it hits every 20 ticks.
-        assert!(dealt >= 4 * 4, "dealt {dealt}");
-        assert_eq!(dealt % 4, 0);
+        assert!(dealt >= 3.0 * 4.0, "dealt {dealt}");
+        assert_eq!(dealt % 3.0, 0.0);
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
         let kind = mobs.find("zombie").unwrap();
         let def = mobs.get(kind);
         let mut zombie = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
-        assert_eq!(run(&mut zombie, def, &Grid::floor(), None, 200), 0);
+        assert_eq!(run(&mut zombie, def, &Grid::floor(), None, 200), 0.0);
         assert!(!zombie.ai.chasing);
     }
 
@@ -303,12 +303,12 @@ mod tests {
         let start = DVec3::new(0.5, 64.0, 0.5);
         let mut pig = Mob::new(kind, def, start, 0.0);
         pig.hurt(
-            1,
+            1.0,
             Some(start + DVec3::X),
             crate::player::stats::DamageSource::Mob,
         );
         run(&mut pig, def, &grid, None, 40);
         assert!(pig.feet().distance(start) > 3.0, "ran off: {}", pig.feet());
-        assert_eq!(pig.stats.health, 9);
+        assert_eq!(pig.stats.health, 9.0);
     }
 }

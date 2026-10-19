@@ -28,16 +28,6 @@ use crate::{
 const BREAK_EXHAUSTION: f32 = 0.005;
 /// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
 const EAT_TICKS: u32 = 32;
-/// Mobs can be hit this far away (1.0.0 limits entity reach to 3).
-const ATTACK_REACH: f64 = 3.0;
-/// Mob hitboxes grow by this for aiming (1.0.0's `getCollisionBorderSize`).
-const TARGET_BORDER: f64 = 0.1;
-/// Exhaustion per attack (modern `Player.attack`).
-const ATTACK_EXHAUSTION: f32 = 0.1;
-/// Extra push and lift of a sprinting hit (1.0.0's knockback bonus).
-const SPRINT_KNOCKBACK: f64 = 0.5;
-const SPRINT_KNOCKBACK_LIFT: f64 = 0.1;
-
 impl Game {
     /// Eating or drawing a bow, which slows the player to a fifth.
     pub(super) fn using_item(&self) -> bool {
@@ -50,7 +40,7 @@ impl Game {
     }
 
     /// The tool in the selected slot, if it's a tool.
-    fn selected_tool(&self) -> Option<&Tool> {
+    pub(super) fn selected_tool(&self) -> Option<&Tool> {
         let stack = self.inventory.selected_stack()?;
         self.items.tool(stack.id)
     }
@@ -109,6 +99,10 @@ impl Game {
             return;
         }
         let Some(hit) = hit else {
+            if clicked {
+                // A swing at nothing wastes the charge.
+                self.swing_at_air();
+            }
             return;
         };
         if wants_break {
@@ -360,52 +354,16 @@ impl Game {
             .enumerate()
             .filter(|(_, mob)| !mob.is_dead())
             .filter_map(|(i, mob)| {
-                let distance =
-                    mob.body
-                        .aabb()
-                        .grow(TARGET_BORDER)
-                        .ray_hit(eye, dir, ATTACK_REACH)?;
+                let distance = mob
+                    .body
+                    .aabb()
+                    .grow(crate::config::combat::TARGET_GROW)
+                    .ray_hit(eye, dir, crate::config::combat::REACH)?;
                 Some((i, distance))
             })
             .filter(|&(_, distance)| distance < block_distance)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(i, _)| i)
-    }
-
-    /// Hits mob `index` with the selected item (1.0.0's
-    /// `attackTargetEntityWithCurrentItem`): its attack damage (or 1 bare
-    /// handed), a critical bonus while falling, knockback (more when
-    /// sprinting), weapon wear and exhaustion.
-    fn attack(&mut self, index: usize) {
-        let tool = self.selected_tool().cloned();
-        let mut damage = tool.as_ref().map_or(1, |tool| tool.attack);
-        let falling =
-            self.stats.fall_distance > 0.0 && !self.body.on_ground && self.body.liquid.is_none();
-        if falling {
-            damage += (self.rng.next_f64() * (damage / 2 + 2) as f64) as i32;
-        }
-        let from = self.body.position();
-        let sprinting = self.body.sprinting;
-        let yaw = self.camera.yaw as f64;
-        let mob = &mut self.mobs[index];
-        if mob.hurt(damage, Some(from), DamageSource::Mob) && sprinting {
-            mob.body.velocity += DVec3::new(
-                yaw.sin() * SPRINT_KNOCKBACK,
-                SPRINT_KNOCKBACK_LIFT,
-                -yaw.cos() * SPRINT_KNOCKBACK,
-            );
-            self.body.velocity.x *= 0.6;
-            self.body.velocity.z *= 0.6;
-            self.body.sprinting = false;
-        }
-        if self.mode.is_vulnerable() {
-            self.stats.add_exhaustion(ATTACK_EXHAUSTION);
-        }
-        if self.mode.wears_tools()
-            && let Some(tool) = tool
-        {
-            self.inventory.damage_selected(tool.hit_wear, &self.items);
-        }
     }
 
     /// Right-clicks the block at `cell` (1.0.0's `blockActivated`): opens a

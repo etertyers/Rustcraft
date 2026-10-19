@@ -206,7 +206,7 @@ mod tests {
         };
         let mut held = HeldCache::default();
         let mut game = flat_game(GameMode::Survival);
-        game.stats.health = 0;
+        game.stats.health = 0.0;
         let m = build(&game, &mut held, &fig, (15, 0), (15, 0));
         assert!(m.hand_arm.is_empty() && m.body.is_empty());
     }

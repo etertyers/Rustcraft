@@ -253,7 +253,7 @@ mod tests {
         let mut mob = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), yaw);
         mob.head_yaw = yaw;
         if dead {
-            mob.stats.health = 0;
+            mob.stats.health = 0.0;
             mob.death_time = DEATH_TICKS;
         }
         let mut mesh = Mesh::default();

@@ -294,6 +294,13 @@ impl ViewState {
         }
     }
 
+    /// How far the player walked in the last tick (vanilla's walk
+    /// distance, 0.6 a block) and the walking speed it is compared with
+    /// (the movement speed attribute, 0.1).
+    pub fn walk_step(&self) -> (f32, f32) {
+        (self.walk_dist - self.prev_walk_dist, 0.1)
+    }
+
     /// The swing's progress, 0–1, `alpha` of the way between ticks
     /// (vanilla's `getAttackAnim`).
     pub fn attack_anim(&self, alpha: f32) -> f32 {

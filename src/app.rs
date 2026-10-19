@@ -843,7 +843,7 @@ impl App {
                 .collect(),
             selected: game.inventory.selected,
             survival: (game.mode.is_vulnerable() && !game.stats.is_dead()).then(|| SurvivalHud {
-                health: game.stats.health,
+                health: game.stats.health.ceil() as i32,
                 food: game.stats.food,
                 air: (game.stats.air < MAX_AIR).then_some(game.stats.air),
             }),

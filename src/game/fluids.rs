@@ -278,7 +278,7 @@ mod tests {
         game.prev_feet = feet;
         let health = game.stats.health;
         game.tick();
-        assert_eq!(game.stats.health, health - 1);
+        assert_eq!(game.stats.health, health - 1.0);
         assert!(game.stats.fire >= 150);
     }
 

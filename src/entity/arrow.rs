@@ -52,7 +52,7 @@ pub struct Arrow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArrowEvent {
     /// Hit mob `index` for this much.
-    HitMob { index: usize, damage: i32 },
+    HitMob { index: usize, damage: f32 },
 }
 
 impl Arrow {
@@ -119,6 +119,7 @@ impl Arrow {
             if self.critical {
                 damage += (random() * (damage / 2 + 2) as f32) as i32;
             }
+            let damage = damage as f32;
             // 1.0.0 removes an arrow that hits; it doesn't stick in mobs.
             self.ticks_stuck = STUCK_LIFETIME;
             self.stuck = true;
@@ -205,7 +206,7 @@ mod tests {
             event,
             Some(ArrowEvent::HitMob {
                 index: 0,
-                damage: 6
+                damage: 6.0
             })
         );
     }
