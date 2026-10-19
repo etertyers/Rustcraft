@@ -6,10 +6,10 @@
 // named as in modern Minecraft; the recipes themselves are still 1.0.0's.
 // Shaped recipes fit anywhere in the grid and may be mirrored.
 //
+// Redstone, rails and minecarts (M19) use modern recipes.
+//
 // Left out, because their systems aren't in the game (see DECISIONS.md):
-// redstone torch, repeater, lever, buttons, pressure plates, piston, sticky
-// piston, dispenser, rails, powered and detector rails, minecarts, boat,
-// fishing rod, map, painting, cake (no milk), enchanting table, brewing
+// boat, fishing rod, map, painting, cake (no milk), enchanting table, brewing
 // stand, cauldron, glass bottle, blaze powder, eye of ender, magma cream,
 // fermented spider eye, glistering melon, nether brick blocks.
 #![enable(implicit_some)]
@@ -117,6 +117,25 @@
         (result: (item: "diamond_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "diamond")}),  // diamond block
         (result: (item: "lapis_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "lapis_lazuli")}),  // lapis block
         (result: (item: "gold_ingot", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "gold_nugget")}),  // gold ingot from nuggets
+        // Redstone and rails (modern recipes)
+        (result: (item: "redstone_torch", count: 1), pattern: ["X", "#"], key: {'X': (item: "redstone"), '#': (item: "stick")}),  // redstone torch
+        (result: (item: "repeater", count: 1), pattern: ["#X#", "III"], key: {'#': (item: "redstone_torch"), 'X': (item: "redstone"), 'I': (item: "stone")}),  // repeater
+        (result: (item: "lever", count: 1), pattern: ["X", "#"], key: {'X': (item: "stick"), '#': (item: "cobblestone")}),  // lever
+        (result: (item: "stone_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "stone")}),  // stone pressure plate
+        (result: (item: "oak_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "oak_planks")}),  // wooden pressure plate
+        (result: (item: "piston", count: 1), pattern: ["TTT", "#X#", "#R#"], key: {'T': (item: "oak_planks"), '#': (item: "cobblestone"), 'X': (item: "iron_ingot"), 'R': (item: "redstone")}),  // piston
+        (result: (item: "sticky_piston", count: 1), pattern: ["S", "P"], key: {'S': (item: "slime_ball"), 'P': (item: "piston")}),  // sticky piston
+        (result: (item: "dispenser", count: 1), pattern: ["###", "#B#", "#R#"], key: {'#': (item: "cobblestone"), 'B': (item: "bow"), 'R': (item: "redstone")}),  // dispenser
+        (result: (item: "dropper", count: 1), pattern: ["###", "# #", "#R#"], key: {'#': (item: "cobblestone"), 'R': (item: "redstone")}),  // dropper
+        (result: (item: "hopper", count: 1), pattern: ["I I", "ICI", " I "], key: {'I': (item: "iron_ingot"), 'C': (item: "chest")}),  // hopper
+        (result: (item: "redstone_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "redstone")}),  // redstone block
+        (result: (item: "redstone_lamp", count: 1), pattern: [" R ", "RGR", " R "], key: {'R': (item: "redstone"), 'G': (item: "glowstone")}),  // redstone lamp
+        (result: (item: "iron_trapdoor", count: 1), pattern: ["##", "##"], key: {'#': (item: "iron_ingot")}),  // iron trapdoor
+        (result: (item: "rail", count: 16), pattern: ["X X", "X#X", "X X"], key: {'X': (item: "iron_ingot"), '#': (item: "stick")}),  // rails
+        (result: (item: "powered_rail", count: 6), pattern: ["X X", "X#X", "XRX"], key: {'X': (item: "gold_ingot"), '#': (item: "stick"), 'R': (item: "redstone")}),  // powered rails
+        (result: (item: "detector_rail", count: 6), pattern: ["X X", "X#X", "XRX"], key: {'X': (item: "iron_ingot"), '#': (item: "stone_pressure_plate"), 'R': (item: "redstone")}),  // detector rails
+        (result: (item: "activator_rail", count: 6), pattern: ["XSX", "X#X", "XSX"], key: {'X': (item: "iron_ingot"), 'S': (item: "stick"), '#': (item: "redstone_torch")}),  // activator rails
+        (result: (item: "minecart", count: 1), pattern: ["I I", "III"], key: {'I': (item: "iron_ingot")}),  // minecart
         // Food and materials
         (result: (item: "bowl", count: 4), pattern: ["# #", " # "], key: {'#': (item: "oak_planks")}),  // bowls
         (result: (item: "bread", count: 1), pattern: ["###"], key: {'#': (item: "wheat")}),  // bread
@@ -146,6 +165,12 @@
         (result: (item: "anvil", count: 1), pattern: ["###", " i ", "iii"], key: {'#': (item: "iron_block"), 'i': (item: "iron_ingot")}),
     ],
     shapeless: [
+        (result: (item: "redstone", count: 9), ingredients: [(item: "redstone_block")]),  // redstone from its block
+        (result: (item: "stone_button", count: 1), ingredients: [(item: "stone")]),  // stone button
+        (result: (item: "oak_button", count: 1), ingredients: [(item: "oak_planks")]),  // wooden button
+        (result: (item: "chest_minecart", count: 1), ingredients: [(item: "chest"), (item: "minecart")]),  // minecart with chest
+        (result: (item: "hopper_minecart", count: 1), ingredients: [(item: "hopper"), (item: "minecart")]),  // minecart with hopper
+        (result: (item: "tnt_minecart", count: 1), ingredients: [(item: "tnt"), (item: "minecart")]),  // minecart with TNT
         (result: (item: "gold_ingot", count: 9), ingredients: [(item: "gold_block")]),  // gold from its block
         (result: (item: "iron_ingot", count: 9), ingredients: [(item: "iron_block")]),  // iron from its block
         (result: (item: "diamond", count: 9), ingredients: [(item: "diamond_block")]),  // diamond from its block
@@ -233,6 +258,7 @@
         (item: "oak_trapdoor", ticks: 300),  // trapdoor
         (item: "oak_fence_gate", ticks: 300),  // fence gate
         (item: "oak_pressure_plate", ticks: 300),  // wooden pressure plate
+        (item: "oak_button", ticks: 100),  // wooden button
         (item: "stick", ticks: 100),  // stick
         (item: "oak_sapling", ticks: 100),  // sapling
         (item: "coal", ticks: 1600),

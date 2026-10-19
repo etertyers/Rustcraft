@@ -208,6 +208,11 @@ impl Game {
             self.arrows.push(arrow);
             return Some(Used::Gone);
         }
+        if let Some(kind) = super::minecarts::kind_of(one.id)
+            && self.place_cart(front, kind)
+        {
+            return Some(Used::Gone);
+        }
         if self.items.places(&one).is_some_and(|b| b.is(blocks::TNT)) {
             self.prime_tnt(front);
             return Some(Used::Gone);
@@ -591,5 +596,20 @@ mod tests {
             .unwrap()
             .slots()[furnace::FUEL];
         assert_eq!(fuel.map(|s| s.id), Some(items::COAL));
+    }
+
+    #[test]
+    fn a_dispenser_puts_a_minecart_on_the_rail_in_front_of_it() {
+        let mut game = flat_game(GameMode::Creative);
+        let z = 24;
+        game.set_blocks(&[
+            (at(5, z), facing(blocks::DISPENSER, Face::East)),
+            (at(6, z), BlockState::of(blocks::RAIL)),
+        ]);
+        fill(&mut game, at(5, z), ItemStack::new(items::MINECART, 2));
+        game.set_blocks(&[(at(5, z + 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(8);
+        assert_eq!(game.carts.len(), 1);
+        assert_eq!(count_in(&game, at(5, z), items::MINECART), 1);
     }
 }

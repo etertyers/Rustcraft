@@ -590,7 +590,11 @@ mod tests {
             Some(ItemStack::new(items::OAK_PLANKS, 3))
         );
         assert_eq!(grid_of(&game)[4], None);
-        assert_eq!(game.slot_stack(SlotRef::Result), None);
+        // What planks are left over make a button, which isn't sticks.
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::OAK_BUTTON, 1))
+        );
     }
 
     #[test]

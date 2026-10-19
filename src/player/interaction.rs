@@ -293,11 +293,7 @@ pub fn place_block_looking(
         && let Some(offset) = new.support(state)
     {
         let support = state_at(world, at + offset)?;
-        let holds = match new.shape {
-            Shape::Torch | Shape::Ladder | Shape::Lever | Shape::Button => sturdy(support),
-            _ => !support.def().replaceable,
-        };
-        if !holds {
+        if !holds(new.shape, support) {
             return None;
         }
     }
@@ -324,6 +320,16 @@ pub fn place_block_looking(
             .map(|&(at, block)| (at, connect::update_shape(block, at, &get)))
             .collect(),
     )
+}
+
+/// Whether `support` can hold up a block of `shape` hanging on it: a full
+/// block for torches, ladders, levers and buttons, anything not replaceable
+/// (not air, water or plants) for the rest.
+pub fn holds(shape: Shape, support: BlockState) -> bool {
+    match shape {
+        Shape::Torch | Shape::Ladder | Shape::Lever | Shape::Button => sturdy(support),
+        _ => !support.def().replaceable,
+    }
 }
 
 /// The four sides, the one the player looks most toward first (modern
