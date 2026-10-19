@@ -265,7 +265,7 @@ fn workstations(game: &mut Game) {
     let mut edits = vec![(table, BlockState::of(ENCHANTING_TABLE))];
     for x in -2..=2 {
         for z in -2..=2 {
-            if (x as i32).abs() == 2 || (z as i32).abs() == 2 {
+            if i32::abs(x) == 2 || i32::abs(z) == 2 {
                 // Leave the south side open to look in from.
                 if z == 2 {
                     continue;

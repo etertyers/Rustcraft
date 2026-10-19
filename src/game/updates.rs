@@ -368,7 +368,12 @@ mod tests {
         let anvil = BlockState::of(blocks::ANVIL);
         game.set_blocks(&[(IVec3::new(6, 70, 6), anvil)]);
         game.run_ticks(60);
-        assert_eq!(game.chunks.world().block(6, 64, 6), Some(anvil));
+        // (It may have chipped on landing.)
+        let landed = game.chunks.world().block(6, 64, 6).unwrap();
+        assert!(
+            [blocks::ANVIL, blocks::CHIPPED_ANVIL, blocks::DAMAGED_ANVIL].contains(&landed.id()),
+            "{landed:?}"
+        );
     }
 
     #[test]

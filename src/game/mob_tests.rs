@@ -827,12 +827,18 @@ fn endermen_pick_up_blocks_they_pass_and_drop_them_when_killed() {
         .filter(|&(c, _)| c.x != 9 || c.z != 9)
         .collect();
     game.set_blocks(&sand);
-    let id = spawn(&mut game, "enderman", 9.5, 9.5);
+    // Several of them: what each does depends on its id, which depends on
+    // which tests ran before, and one can wander off or stand about.
+    let ids: Vec<u64> = (0..4)
+        .map(|i| spawn(&mut game, "enderman", 7.5 + f64::from(i) * 1.5, 9.5))
+        .collect();
     let mut carried = None;
-    for _ in 0..1200 {
+    for _ in 0..2400 {
         run(&mut game, 1);
-        if let Some(block) = mob(&game, id).carrying {
-            carried = Some(block);
+        carried = ids
+            .iter()
+            .find_map(|&id| game.mobs.iter().find(|m| m.id == id)?.carrying);
+        if carried.is_some() {
             break;
         }
     }

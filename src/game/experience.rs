@@ -242,7 +242,6 @@ mod tests {
 mod kill_tests {
     use glam::DVec3;
 
-    use super::*;
     use crate::{
         entity::mob::Mob,
         game::tests::{flat_game, mob_registry},
