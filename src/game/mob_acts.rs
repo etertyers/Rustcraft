@@ -278,6 +278,8 @@ impl Game {
             self.entities
                 .push(ItemEntity::from_block(stack, cell, &mut random));
         }
+        let points = self.mob_xp(mob);
+        self.spawn_xp(points, mob.feet() + DVec3::Y * (mob.size().1 / 2.0));
         // Slimes break into smaller ones.
         if mob.data.size > 1 {
             let size = mob.data.size / 2;

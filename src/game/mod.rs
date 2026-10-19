@@ -6,6 +6,7 @@ mod animals;
 mod combat;
 mod containers;
 pub mod environment;
+mod experience;
 mod explosion;
 mod fluids;
 mod hands;
@@ -131,6 +132,8 @@ pub struct Game {
     pub message: Option<(String, u32)>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
+    /// Experience orbs lying around.
+    pub orbs: Vec<crate::entity::orb::XpOrb>,
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
     /// Stars of critical hits and arcs of sweeps.
@@ -246,6 +249,7 @@ impl Game {
             bed: None,
             message: None,
             entities: Vec::new(),
+            orbs: Vec::new(),
             particles: Vec::new(),
             effects: Vec::new(),
             attack_ticker: 100,
@@ -744,6 +748,7 @@ impl Game {
         }
         self.body.can_sprint = !vulnerable || self.stats.can_sprint();
         if self.stats.is_dead() {
+            self.drop_experience();
             self.drop_everything();
         }
     }

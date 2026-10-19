@@ -322,6 +322,7 @@ impl Game {
         }
         let world = self.chunks.world();
         if self.mode.drops_items() {
+            let mut mined = Vec::new();
             let tool = self
                 .inventory
                 .selected_stack()
@@ -342,6 +343,13 @@ impl Game {
                     self.entities
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
+                if at == cell {
+                    mined.push(block);
+                }
+            }
+            for block in mined {
+                let points = self.ore_xp(block);
+                self.spawn_xp(points, cell.as_dvec3() + DVec3::splat(0.5));
             }
         }
         // A chest or furnace spills what it held, in every game mode (1.0.0).
@@ -460,6 +468,9 @@ impl Game {
             match arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random) {
                 Some(ArrowEvent::HitMob { index, damage }) => {
                     self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+                    if !arrow.hostile {
+                        self.mobs[index].hit_by_player();
+                    }
                 }
                 Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from)),
                 None => {}
@@ -765,5 +776,6 @@ impl Game {
             }
         }
         self.entities.retain(|item| !item.expired());
+        self.tick_orbs();
     }
 }

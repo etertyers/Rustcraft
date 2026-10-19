@@ -8,6 +8,7 @@ pub mod item;
 pub mod minecart;
 pub mod mob;
 pub mod mobs;
+pub mod orb;
 pub mod particle;
 pub mod path;
 pub mod tnt;

@@ -1,6 +1,7 @@
 //! Player control.
 
 pub mod collision;
+pub mod experience;
 #[cfg(debug_assertions)]
 pub mod fly;
 pub mod input;

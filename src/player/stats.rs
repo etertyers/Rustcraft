@@ -138,6 +138,13 @@ pub struct Stats {
     /// Ticks since the player last slept (phantoms come after three days).
     #[serde(default)]
     pub awake: u32,
+    /// Levels and the bar (added in M22).
+    #[serde(default)]
+    pub experience: super::experience::Experience,
+    /// Picks the enchanting table's offers; changes when the player
+    /// enchants something (modern `EnchantmentSeed`).
+    #[serde(default)]
+    pub enchant_seed: u32,
 }
 
 impl Default for Stats {
@@ -155,6 +162,8 @@ impl Default for Stats {
             last_damage: 0.0,
             last_source: None,
             awake: 0,
+            experience: Default::default(),
+            enchant_seed: 0,
         }
     }
 }

@@ -308,6 +308,7 @@ impl Game {
                 }
             }
             SlotRef::Block(index) if click == Click::Shift => {
+                let output_before = self.furnace_output_count();
                 let Some(stack) = self
                     .block_slots_mut()
                     .and_then(|s| s.get_mut(index)?.take())
@@ -326,10 +327,14 @@ impl Game {
                 if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
                     *cell = rest;
                 }
+                if index == furnace::OUTPUT {
+                    self.pay_furnace_xp(output_before);
+                }
             }
             SlotRef::Block(index) => {
                 let output = matches!(self.container, Some(Container::Furnace(_)))
                     && index == furnace::OUTPUT;
+                let output_before = self.furnace_output_count();
                 let mut cursor = self.cursor.take();
                 if let Some(cell) = self.block_slots_mut().and_then(|s| s.get_mut(index)) {
                     if output {
@@ -339,8 +344,40 @@ impl Game {
                     }
                 }
                 self.cursor = cursor;
+                if output {
+                    self.pay_furnace_xp(output_before);
+                }
             }
         }
+    }
+
+    /// How many items sit in the open furnace's output.
+    fn furnace_output_count(&self) -> u8 {
+        match self.container {
+            Some(Container::Furnace(_)) => self
+                .block_slots()
+                .and_then(|slots| slots.get(furnace::OUTPUT)?.as_ref())
+                .map_or(0, |stack| stack.count),
+            _ => 0,
+        }
+    }
+
+    /// Takes something out of a furnace's output pays out the experience
+    /// it has stored, as orbs at the player's feet.
+    fn pay_furnace_xp(&mut self, output_before: u8) {
+        if self.furnace_output_count() >= output_before {
+            return;
+        }
+        let Some(Container::Furnace(at)) = self.container else {
+            return;
+        };
+        let roll = self.rng.next_f64() as f32;
+        let Some(BlockEntity::Furnace(furnace)) = self.chunks.block_entity_mut(at) else {
+            return;
+        };
+        let points = furnace.take_xp(roll);
+        let feet = self.body.position();
+        self.spawn_xp(points, feet + glam::DVec3::Y * 0.5);
     }
 
     /// Whether `slot` is on the open screen and takes items put into it

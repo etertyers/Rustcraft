@@ -210,6 +210,7 @@ impl Game {
         let facing = DVec3::new(yaw.sin(), 0.0, -yaw.cos());
         let target = self.mobs[index].body.aabb();
         let hit = self.mobs[index].hurt(blow.damage, Some(from), DamageSource::Mob);
+        self.mobs[index].hit_by_player();
         if hit {
             if blow.sprint_knockback {
                 push(&mut self.mobs[index].body, c::SPRINT_KNOCKBACK, facing);
@@ -257,6 +258,7 @@ impl Game {
             }
             push(&mut mob.body, c::SWEEP_KNOCKBACK, facing);
             mob.hurt(c::SWEEP_DAMAGE, Some(from), DamageSource::Mob);
+            mob.hit_by_player();
         }
         let yaw = self.camera.yaw as f64;
         let in_front = self.body.position()

@@ -55,6 +55,10 @@ pub struct MobData {
     pub temper: u8,
 }
 
+/// A kill within this many ticks of the player's last hit drops
+/// experience (modern `lastHurtByPlayerTime`).
+const PLAYER_HIT_TICKS: u32 = 100;
+
 #[derive(Debug, Clone)]
 pub struct Mob {
     /// Tells it from the others for as long as the game runs (0 until the
@@ -92,6 +96,9 @@ pub struct Mob {
     pub aggressive: bool,
     /// The mob the player rides, if it's one.
     pub ridden: bool,
+    /// Ticks left in which a death counts as the player's kill (it
+    /// drops experience only then).
+    pub player_hit: u32,
 }
 
 impl Mob {
@@ -138,6 +145,7 @@ impl Mob {
             prev_swell: 0,
             aggressive: false,
             ridden: false,
+            player_hit: 0,
         }
     }
 
@@ -207,6 +215,11 @@ impl Mob {
 
     /// Hurts it with the world rather than an attacker (water on an
     /// enderman, air for a squid): no flinching or fleeing.
+    /// Marks a hit by the player, whose kill drops experience.
+    pub fn hit_by_player(&mut self) {
+        self.player_hit = PLAYER_HIT_TICKS;
+    }
+
     pub fn hurt_by_world(&mut self, amount: f32, source: DamageSource) {
         if !self.is_dead() && self.stats.damage(amount, source) {
             self.hurt_time = HURT_FLASH;
@@ -225,6 +238,7 @@ impl Mob {
         self.prev_yaw = self.yaw;
         self.prev_limb_amount = self.limb_amount;
         self.hurt_time = self.hurt_time.saturating_sub(1);
+        self.player_hit = self.player_hit.saturating_sub(1);
         self.prev_swell = self.swell;
         self.age += 1;
         if self.is_dead() {
