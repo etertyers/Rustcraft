@@ -80,6 +80,14 @@ impl World {
         Some(chunk.biome(x.rem_euclid(size) as usize, z.rem_euclid(size) as usize))
     }
 
+    /// The biome at a block, counting cave biomes underground.
+    pub fn biome_at_block(&self, x: i32, y: i32, z: i32) -> Option<biome::Biome> {
+        let chunk = self.get(ChunkPos::of_block(x, z))?;
+        let size = config::CHUNK_SIZE as i32;
+        let y = y.clamp(0, config::WORLD_HEIGHT as i32 - 1) as usize;
+        Some(chunk.biome_at(x.rem_euclid(size) as usize, y, z.rem_euclid(size) as usize))
+    }
+
     pub fn get(&self, pos: ChunkPos) -> Option<&Arc<Chunk>> {
         self.chunks.get(&pos)
     }
