@@ -116,7 +116,7 @@ docs/
 - **Textures (M15):** textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/`; older names are in `assets/data/texture_names.ron`. `look::Look` builds everything texture-derived and is rebuilt when the packs change. At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
 - **Timing:** Game logic runs at a fixed 20 ticks/second, like Minecraft. Rendering runs at the display refresh rate with interpolation.
 - **Threading:** Chunk generation and meshing run on worker threads. The main thread never blocks on them; it uploads finished meshes to the GPU.
-- **Physics constants (Minecraft values, per tick):** gravity 0.08 blocks/tick², vertical drag ×0.98 per tick, jump velocity 0.42, walk ≈4.317 blocks/s, sprint ≈5.612, sneak ≈1.31, player hitbox 0.6×1.8, eye height 1.62, step height 0.5, block reach 5 (survival), 20 health points (10 hearts), 20 hunger points.
+- **Physics constants (Minecraft values, per tick):** gravity 0.08 blocks/tick², vertical drag ×0.98 per tick, jump velocity 0.42, walk ≈4.317 blocks/s, sprint ≈5.612, sneak ≈1.31, player hitbox 0.6×1.8 (sneaking 1.5, swimming and crawling 0.6), eye height 1.62 (1.27, 0.4), step height 0.6, block reach 5 (survival), 20 health points (10 hearts), 20 hunger points.
 
 ## 5. Working rules for Claude Code
 
@@ -309,7 +309,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Animations: swing on mine/attack/place, equip dip on hotbar change, view bobbing (toggle in settings).
 - **Done when:** the hand and held items look and animate like modern Minecraft, and F5 shows the skinned player animating correctly while walking, sneaking and swimming.
 
-### - [ ] M17 — Modern movement
+### - [x] M17 — Modern movement
 - Sprint with double-tap W or a sprint key (Ctrl by default), sprint-jumping, FOV widening while sprinting, and sprint stopping on collision, sneaking, hunger ≤ 6 or attacking. Sprinting drains hunger at the modern rate.
 - Modern sneaking: 1.5-block-tall hitbox, slower speed, edge protection.
 - Swimming: sprint underwater to swim in a 0.6-block-tall pose; crawling into 1-block gaps.
