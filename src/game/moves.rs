@@ -118,8 +118,8 @@ fn a_ladder_cancels_a_fall_that_would_hurt() {
         game.run_ticks(60);
         game.stats.health
     };
-    assert!(fall(false) < 20, "an unbroken 26-block fall hurts");
-    assert_eq!(fall(true), 20, "vines catch the fall");
+    assert!(fall(false) < 20.0, "an unbroken 26-block fall hurts");
+    assert_eq!(fall(true), 20.0, "vines catch the fall");
 }
 
 #[test]

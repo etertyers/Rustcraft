@@ -36,7 +36,7 @@ pub enum Ai {
     /// Wanders, and runs when hurt (1.0.0's `EntityAnimal`).
     Passive,
     /// Chases and hits the player (1.0.0's `EntityMob`).
-    Hostile { attack: i32 },
+    Hostile { attack: f32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -163,7 +163,7 @@ mod tests {
         );
         assert_eq!(pig.model.parts.len(), 6);
         let zombie = mobs.get(mobs.find("zombie").unwrap());
-        assert_eq!(zombie.ai, Ai::Hostile { attack: 4 });
+        assert_eq!(zombie.ai, Ai::Hostile { attack: 3.0 });
         assert!(zombie.burns_in_daylight);
         assert_eq!(
             zombie.spawn,

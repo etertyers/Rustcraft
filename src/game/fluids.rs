@@ -159,6 +159,32 @@ impl Game {
         }
     }
 
+    /// Flint and steel on the face of the block looked at: lights a fire in
+    /// the air beside it if fire can stay there, wearing the flint by one.
+    pub(super) fn strike_flint(&mut self, hit: &crate::player::raycast::Hit) {
+        let Some(at) = hit.adjacent() else {
+            return;
+        };
+        let rng = &mut self.rng;
+        let mut random = |n: u32| rng.below(n);
+        let Some(edit) = self.fires.ignite(
+            self.chunks.world(),
+            self.items.blocks,
+            at,
+            self.time,
+            &mut random,
+        ) else {
+            return;
+        };
+        self.edit(&[edit]);
+        self.view.swing();
+        if self.mode.wears_tools() {
+            let slot = self.inventory.hand_slot(self.use_hand);
+            self.inventory.damage_slot(slot, 1, &self.items);
+        }
+        self.place_cooldown = crate::player::interaction::PLACE_REPEAT_TICKS;
+    }
+
     /// Schedules the flowing fluid and fire in chunks that just loaded.
     pub(super) fn schedule_fluids(&mut self, chunks: &[ChunkPos]) {
         for &pos in chunks {
@@ -278,7 +304,7 @@ mod tests {
         game.prev_feet = feet;
         let health = game.stats.health;
         game.tick();
-        assert_eq!(game.stats.health, health - 1);
+        assert_eq!(game.stats.health, health - 1.0);
         assert!(game.stats.fire >= 150);
     }
 

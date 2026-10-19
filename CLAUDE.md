@@ -96,6 +96,7 @@ src/
   look.rs            # everything texture-derived, rebuilt when the packs change
   figure.rs          # the player as drawn: the hand, or the model and what it holds
   game/view.rs       # swing, hand dip, bobbing, body turn, F5 views
+  game/combat.rs     # cooldowns, damage, crits, sweeps, the shield (constants in config::combat)
   render/{player,hand,held}.rs   # player model and poses, first-person hand, held item geometry
   audio/
 assets/
@@ -318,7 +319,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 
 #### Checkpoint B — The Overworld
 
-### - [ ] M18 — Modern combat and essential items
+### - [x] M18 — Modern combat and essential items
 - Modern (1.9+) combat with Java Edition values, kept as constants in `config.rs`:
   - **Attack cooldowns** from each item's attack speed: swords 1.6/s (0.625 s), axes by tier (wood and stone 0.8/s, iron 0.9/s, gold, diamond and netherite 1.0/s), pickaxes 1.2/s, shovels 1.0/s, hoes by tier (1.0–4.0/s), empty hand and other items 4.0/s. Switching items resets the cooldown. Show the cooldown indicator under the crosshair.
   - **Damage** follows the modern charge curve: damage × (0.2 + 0.8 × charge²). Axes hit harder per swing than swords but recover more slowly, using modern per-tier damage values.

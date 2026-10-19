@@ -1,0 +1,11 @@
+// Textures that older packs (and Kenzo's) keep on a shared sheet, as
+// "name": ("sheet", (x, y, width, height)) in the sheet's 128-pixel
+// units; a bigger sheet scales the rectangle. A layer that has the
+// texture as its own file uses that instead.
+{
+    "particle/critical_hit": ("particle/particles", (8, 32, 8, 8)),
+    "particle/sweep_0": ("particle/particles", (0, 112, 16, 16)),
+    "particle/sweep_1": ("particle/particles", (32, 112, 16, 16)),
+    "particle/sweep_2": ("particle/particles", (64, 112, 16, 16)),
+    "particle/sweep_3": ("particle/particles", (96, 112, 16, 16)),
+}

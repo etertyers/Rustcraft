@@ -44,7 +44,11 @@ pub struct DebugStats {
 pub struct Hud {
     /// Shown while the cursor is grabbed for play.
     pub crosshair: bool,
+    /// The swing's recharge under the crosshair.
+    pub attack: Option<gui::AttackIndicator>,
     pub hotbar: Vec<Option<SlotView>>,
+    /// What the off-hand holds.
+    pub offhand: Option<SlotView>,
     pub selected: usize,
     /// Hearts and food, in survival.
     pub survival: Option<SurvivalHud>,
@@ -146,11 +150,17 @@ impl DebugUi {
         let mut screen = screen;
         let mut pause = pause;
         let output = self.ctx.run_ui(input, |ui| {
+            let full = ui.ctx().content_rect();
             if hud.crosshair {
                 draw_crosshair(ui);
+                if let Some(indicator) = hud.attack {
+                    gui::paint_attack_indicator(ui.painter(), full, indicator, textures);
+                }
             }
-            let full = ui.ctx().content_rect();
             gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
+            if let Some(offhand) = &hud.offhand {
+                gui::paint_offhand(ui.painter(), full, offhand, textures);
+            }
             if let Some(survival) = &hud.survival {
                 gui::paint_survival(ui.painter(), full, survival, textures);
             }

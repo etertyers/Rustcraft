@@ -7,7 +7,7 @@ use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
     furnace,
-    player::{HOTBAR_SLOTS, SLOTS},
+    player::{HOTBAR_SLOTS, MAIN_SLOTS, OFFHAND},
     slots::{Click, SlotRef},
     stack::ItemStack,
 };
@@ -111,7 +111,10 @@ const CHEST_ROWS: usize = 3;
 /// An inventory slot's top-left in panel pixels, on a 166-pixel-tall
 /// screen.
 fn inventory_slot(index: usize) -> [f32; 2] {
-    if index < HOTBAR_SLOTS {
+    if index == OFFHAND {
+        // The off-hand slot beside the crafting grid, in the survival screen.
+        [77.0, 62.0]
+    } else if index < HOTBAR_SLOTS {
         [8.0 + index as f32 * 18.0, 142.0]
     } else {
         let i = index - HOTBAR_SLOTS;
@@ -149,7 +152,7 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         Screen::Chest => 103.0 + (CHEST_ROWS as f32 - 4.0) * 18.0 - 84.0,
         _ => 0.0,
     };
-    let inventory = (0..SLOTS).map(move |i| {
+    let inventory = (0..MAIN_SLOTS).map(move |i| {
         let [x, y] = inventory_slot(i);
         (SlotRef::Inventory(i), [x, y + below])
     });
@@ -157,6 +160,7 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         Screen::Inventory => crafting_slots(2, [88.0, 26.0], [144.0, 36.0])
             .into_iter()
             .chain(inventory)
+            .chain([(SlotRef::Inventory(OFFHAND), inventory_slot(OFFHAND))])
             .collect(),
         Screen::Crafting => crafting_slots(3, [30.0, 17.0], [124.0, 35.0])
             .into_iter()
@@ -515,7 +519,7 @@ mod tests {
     #[test]
     fn crafting_slots_sit_where_1_0_0_puts_them() {
         let table = layout(&Screen::Crafting);
-        assert_eq!(table.len(), 9 + 1 + SLOTS);
+        assert_eq!(table.len(), 9 + 1 + MAIN_SLOTS);
         assert!(table.contains(&(SlotRef::Grid(0), [30.0, 17.0])));
         assert!(table.contains(&(SlotRef::Grid(8), [66.0, 53.0])));
         assert!(table.contains(&(SlotRef::Result, [124.0, 35.0])));

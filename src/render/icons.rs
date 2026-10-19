@@ -34,10 +34,32 @@ pub enum ItemIcon {
     Flat(IconFace),
 }
 
+/// The textures of the bow being drawn, by how far.
+pub const BOW_PULLING: [&str; 3] = [
+    "item/bow_pulling_0",
+    "item/bow_pulling_1",
+    "item/bow_pulling_2",
+];
+
+/// Which of the bow's drawn pictures shows after `ticks` of drawing (the
+/// bow model's `pull` thresholds: 0.65 and 0.9 of a full 20-tick draw).
+pub fn bow_stage(ticks: f32) -> usize {
+    let pull = ticks / 20.0;
+    if pull >= 0.9 {
+        2
+    } else if pull >= 0.65 {
+        1
+    } else {
+        0
+    }
+}
+
 pub struct ItemIcons {
     models: Arc<BlockModels>,
     /// Each item's icon, by ID.
     icons: Vec<ItemIcon>,
+    /// The bow's pictures while it's drawn.
+    bow: [ItemIcon; 3],
     missing: [f32; 4],
 }
 
@@ -53,6 +75,12 @@ impl ItemIcons {
         let mut icons = Self {
             models,
             icons: Vec::with_capacity(registry.len()),
+            bow: BOW_PULLING.map(|name| {
+                ItemIcon::Flat(IconFace {
+                    uv: atlas.uv_or_missing(name),
+                    color: [1.0; 3],
+                })
+            }),
             missing,
         };
         for item in registry.iter() {
@@ -89,6 +117,16 @@ impl ItemIcons {
                 uv: self.missing,
                 color: [1.0; 3],
             }))
+    }
+
+    /// The icon of `stack` while the bow in it has been drawn for `ticks`
+    /// (anything else looks as usual).
+    pub fn icon_drawn(&self, stack: &ItemStack, ticks: f32) -> ItemIcon {
+        if stack.id == crate::inventory::items::BOW {
+            self.bow[bow_stage(ticks)]
+        } else {
+            self.icon(stack)
+        }
     }
 
     /// A block drawn as an icon: a small cube, or its south face flat.

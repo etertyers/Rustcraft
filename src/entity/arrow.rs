@@ -1,6 +1,8 @@
-//! Arrows, following 1.0.0's `ItemBow` and `EntityArrow`: launched faster
-//! the longer the bow was drawn, falling and slowing as they fly, hurting
-//! the first mob in their path, and sticking in blocks until picked up.
+//! Arrows, following modern `BowItem` and `AbstractArrow`: launched faster
+//! the longer the bow was drawn (3 blocks a tick at full draw, with a
+//! little scatter and the shooter's own motion), falling and slowing as
+//! they fly, hurting the first mob in their path, and sticking in blocks
+//! for a minute until picked up.
 
 use glam::DVec3;
 
@@ -11,20 +13,24 @@ use crate::player::collision::Aabb;
 const FULL_DRAW: f32 = 20.0;
 /// Weakest draw that shoots.
 const MIN_POWER: f32 = 0.1;
-/// Launch speed at full power, blocks per tick (1.0.0: power × 2 × 1.5).
+/// Launch speed at full power, blocks per tick.
 const MAX_SPEED: f64 = 3.0;
 /// Per tick in flight.
 const GRAVITY: f64 = 0.05;
 const DRAG: f64 = 0.99;
-const WATER_DRAG: f64 = 0.8;
-/// Damage per block per tick of speed (1.0.0's `damage` 2.0).
+const WATER_DRAG: f64 = 0.6;
+/// Damage per block per tick of speed (the arrow's base damage, 2.0).
 const DAMAGE_PER_SPEED: f64 = 2.0;
-/// Mobs are hit within this of their hitbox (1.0.0 grows it by 0.3).
+/// How much an arrow's direction scatters (modern `inaccuracy` 1.0 times
+/// 0.0172275, in a triangle distribution).
+const SCATTER: f64 = 0.017_227_5;
+
+/// Mobs are hit within this of their hitbox.
 const HIT_BORDER: f64 = 0.3;
-/// Ticks a stuck arrow stays before vanishing (1.0.0: a minute).
+/// Ticks a stuck arrow stays before vanishing: a minute.
 const STUCK_LIFETIME: u32 = 1200;
 
-/// Bow power for a draw held `ticks` ticks (1.0.0's curve), or `None` if
+/// Bow power for a draw held `ticks` ticks, or `None` if
 /// too weak to shoot.
 pub fn bow_power(ticks: u32) -> Option<f32> {
     let f = ticks as f32 / FULL_DRAW;
@@ -52,17 +58,27 @@ pub struct Arrow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArrowEvent {
     /// Hit mob `index` for this much.
-    HitMob { index: usize, damage: i32 },
+    HitMob { index: usize, damage: f32 },
 }
 
 impl Arrow {
-    /// Shot from `eye` along `forward` (a unit vector) with `power` 0–1.
-    pub fn shoot(eye: DVec3, forward: DVec3, power: f32, pickup: bool) -> Self {
+    /// Shot from `eye` along `forward` (a unit vector) with `power` 0–1,
+    /// carrying the shooter's `motion`. `random` gives 0–1.
+    pub fn shoot(
+        eye: DVec3,
+        forward: DVec3,
+        power: f32,
+        motion: DVec3,
+        pickup: bool,
+        random: &mut impl FnMut() -> f64,
+    ) -> Self {
+        let mut triangle = || SCATTER * (random() - random());
+        let scattered = (forward + DVec3::new(triangle(), triangle(), triangle())).normalize();
         Self {
             position: eye - DVec3::Y * 0.1,
             prev_position: eye - DVec3::Y * 0.1,
-            velocity: forward * MAX_SPEED * power as f64,
-            heading: forward,
+            velocity: scattered * MAX_SPEED * power as f64 + motion,
+            heading: scattered,
             stuck: false,
             ticks_stuck: 0,
             critical: power >= 1.0,
@@ -119,6 +135,7 @@ impl Arrow {
             if self.critical {
                 damage += (random() * (damage / 2 + 2) as f32) as i32;
             }
+            let damage = damage as f32;
             // 1.0.0 removes an arrow that hits; it doesn't stick in mobs.
             self.ticks_stuck = STUCK_LIFETIME;
             self.stuck = true;
@@ -152,8 +169,13 @@ mod tests {
         None
     }
 
+    /// A full-power shot with no scatter and a shooter standing still.
+    fn shoot(eye: DVec3, forward: DVec3, power: f32) -> Arrow {
+        Arrow::shoot(eye, forward, power, DVec3::ZERO, true, &mut || 0.5)
+    }
+
     #[test]
-    fn bow_power_follows_1_0_0() {
+    fn bow_power_follows_the_draw_curve() {
         assert_eq!(bow_power(1), None, "a tap doesn't shoot");
         assert!((bow_power(10).unwrap() - (0.25 + 1.0) / 3.0).abs() < 1e-6);
         assert_eq!(bow_power(20), Some(1.0));
@@ -162,7 +184,7 @@ mod tests {
 
     #[test]
     fn a_full_power_arrow_flies_and_falls_then_sticks_in_a_wall() {
-        let mut arrow = Arrow::shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0, true);
+        let mut arrow = shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0);
         assert!(arrow.critical);
         let mut random = || 0.0;
         arrow.tick(no_blocks, false, &[], &mut random);
@@ -194,18 +216,54 @@ mod tests {
     }
 
     #[test]
+    fn arrows_scatter_a_little_and_carry_the_shooters_motion() {
+        let eye = DVec3::new(0.0, 65.0, 0.0);
+        let mut high = || 0.0;
+        let skewed = Arrow::shoot(eye, DVec3::NEG_Z, 1.0, DVec3::ZERO, true, &mut high);
+        // Every roll at the extreme bends the aim by at most a couple of degrees.
+        assert!(skewed.heading.angle_between(DVec3::NEG_Z) < 0.04);
+        assert!((skewed.velocity.length() - 3.0).abs() < 0.01);
+        let mut sequence = [0.1, 0.9, 0.6, 0.2, 0.7, 0.3].into_iter().cycle();
+        let mut roll = || sequence.next().unwrap();
+        let mixed = Arrow::shoot(
+            eye,
+            DVec3::NEG_Z,
+            0.5,
+            DVec3::new(0.1, 0.2, -0.3),
+            false,
+            &mut roll,
+        );
+        assert!(!mixed.pickup);
+        // Half power is 1.5 a tick before the shooter's motion is added.
+        assert!(
+            (mixed.velocity.z + 1.5 + 0.3).abs() < 0.05,
+            "{}",
+            mixed.velocity
+        );
+        assert!(mixed.velocity.y > 0.15 && mixed.velocity.x > 0.05);
+    }
+
+    #[test]
+    fn arrows_slow_to_six_tenths_in_water() {
+        let mut arrow = shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0);
+        let mut random = || 0.0;
+        arrow.tick(no_blocks, true, &[], &mut random);
+        assert!((arrow.velocity.z + 3.0 * 0.6).abs() < 1e-9);
+    }
+
+    #[test]
     fn a_full_power_arrow_hurts_a_mob_for_6_or_more() {
         let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
         let kind = mobs.find("zombie").unwrap();
         let zombie = Mob::new(kind, mobs.get(kind), DVec3::new(0.0, 64.0, -2.0), 0.0);
-        let mut arrow = Arrow::shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0, true);
+        let mut arrow = shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0);
         let mut random = || 0.0;
         let event = arrow.tick(no_blocks, false, std::slice::from_ref(&zombie), &mut random);
         assert_eq!(
             event,
             Some(ArrowEvent::HitMob {
                 index: 0,
-                damage: 6
+                damage: 6.0
             })
         );
     }

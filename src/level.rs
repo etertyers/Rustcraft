@@ -62,7 +62,7 @@ pub struct SavedMob {
     pub name: String,
     pub position: [f64; 3],
     pub yaw: f32,
-    pub health: i32,
+    pub health: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -331,6 +331,22 @@ pub fn random_seed() -> u64 {
 mod tests {
     use super::*;
     use crate::world::save::TempDir;
+
+    #[test]
+    fn health_saved_as_whole_points_still_loads() {
+        // Before M18 health was whole points; RON reads them as floats.
+        let mob: SavedMob =
+            ron::from_str("(name: \"pig\", position: (1.0, 64.0, 2.0), yaw: 0.0, health: 7)")
+                .unwrap();
+        assert_eq!(mob.health, 7.0);
+        let stats: crate::player::stats::Stats =
+            ron::from_str("(health: 13, food: 20, saturation: 5.0, exhaustion: 0.0, food_timer: 0, partial_heal: 0.3, air: 300, fire: 0, fall_distance: 0.0, hurt_cooldown: 0, last_damage: 0)").unwrap();
+        assert_eq!(stats.health, 13.0);
+        // And fractions survive a save.
+        let half = SavedMob { health: 6.5, ..mob };
+        let text = ron::to_string(&half).unwrap();
+        assert_eq!(ron::from_str::<SavedMob>(&text).unwrap().health, 6.5);
+    }
 
     #[test]
     fn seeds_follow_1_0_0() {

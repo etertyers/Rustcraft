@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+mod combat;
 mod containers;
 pub mod environment;
 mod fluids;
@@ -9,6 +10,8 @@ mod hands;
 mod mobs;
 #[cfg(test)]
 mod moves;
+#[cfg(test)]
+mod offhand;
 #[cfg(test)]
 mod progression;
 mod sleep;
@@ -73,7 +76,7 @@ const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
 
 /// Falling below this hurts 4 a tick, as 1.0.0's void does.
 const VOID_Y: f64 = -64.0;
-const VOID_DAMAGE: i32 = 4;
+const VOID_DAMAGE: f32 = 4.0;
 
 /// Modern Java Edition's exhaustion for moving: per block sprinted or
 /// swum (walking and sneaking are free), and per jump.
@@ -121,6 +124,21 @@ pub struct Game {
     pub entities: Vec<ItemEntity>,
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
+    /// Stars of critical hits and arcs of sweeps.
+    pub effects: Vec<crate::entity::effects::Effect>,
+    /// Ticks since the last swing or item change, which the next swing's
+    /// charge builds from.
+    attack_ticker: u32,
+    last_main_item: Option<crate::inventory::item::ItemId>,
+    /// Ticks until a disabled shield can be raised again.
+    shield_cooldown: u32,
+    /// The hand a right-click is using the item of this tick (the main hand
+    /// unless it had nothing to do), and the hand a bow is being drawn in.
+    use_hand: crate::inventory::player::Hand,
+    drawing_hand: crate::inventory::player::Hand,
+    /// The hand holding a raised shield and for how many ticks.
+    shield_hand: Option<crate::inventory::player::Hand>,
+    shield_ticks: u32,
     pub arrows: Vec<Arrow>,
     /// Sand and gravel falling.
     pub falling: Vec<crate::entity::falling::FallingBlock>,
@@ -205,6 +223,14 @@ impl Game {
             message: None,
             entities: Vec::new(),
             particles: Vec::new(),
+            effects: Vec::new(),
+            attack_ticker: 100,
+            last_main_item: None,
+            shield_cooldown: 0,
+            use_hand: Default::default(),
+            drawing_hand: Default::default(),
+            shield_hand: None,
+            shield_ticks: 0,
             arrows: Vec::new(),
             falling: Vec::new(),
             falls_due: Vec::new(),
@@ -393,6 +419,8 @@ impl Game {
             self.inventory.selected = slot;
         } else if key == KeyCode::KeyQ && pressed && grabbed {
             self.throw_selected();
+        } else if key == KeyCode::KeyF && pressed && !repeat && grabbed {
+            self.swap_hands();
         } else if grabbed {
             self.keys.set_key(key, pressed);
         }
@@ -555,6 +583,9 @@ impl Game {
                 self.message = None;
             }
         }
+        self.tick_combat();
+        self.effects.iter_mut().for_each(|effect| effect.tick());
+        self.effects.retain(|effect| !effect.expired());
         self.tick_items();
         self.tick_particles();
         self.tick_arrows();
@@ -1166,7 +1197,7 @@ pub(crate) mod tests {
                 game.tick();
             }
             assert_eq!(game.body.position().y, 64.0);
-            assert_eq!(MAX_HEALTH - game.stats.health, hurt, "{mode:?}");
+            assert_eq!(MAX_HEALTH - game.stats.health, hurt as f32, "{mode:?}");
         }
     }
 
@@ -1315,7 +1346,7 @@ pub(crate) mod tests {
         assert!(
             saved
                 .iter()
-                .all(|mob| mob.name == "pig" && mob.health == 10)
+                .all(|mob| mob.name == "pig" && mob.health == 10.0)
         );
     }
 
@@ -1337,7 +1368,8 @@ pub(crate) mod tests {
         game.time = 18000;
         game.break_clicked = true;
         game.tick();
-        assert_eq!(game.mobs[0].stats.health, 10, "diamond sword: 10");
+        // A diamond sword swings for 7 at full charge.
+        assert_eq!(game.mobs[0].stats.health, 13.0, "diamond sword: 7");
         assert!(game.mobs[0].body.velocity.length() > 0.0, "knocked back");
         assert_eq!(
             game.inventory.slot(0).unwrap().damage,
@@ -1347,13 +1379,24 @@ pub(crate) mod tests {
         // The hurt cooldown absorbs a second hit straight away.
         game.break_clicked = true;
         game.tick();
-        assert_eq!(game.mobs[0].stats.health, 10);
-        for _ in 0..10 {
+        assert_eq!(game.mobs[0].stats.health, 13.0);
+        // The sword recharges in 12.5 ticks; wait for a full swing.
+        let front = |game: &mut Game| {
+            let feet = game.body.position() + DVec3::new(0.0, 0.0, -1.5);
+            game.mobs[0].body = crate::player::physics::Body::sized(feet, 0.6, 1.8, 1.53);
+        };
+        for _ in 0..14 {
             game.tick();
         }
         // Knocked back out of reach? Bring it back in front and hit again.
-        let feet = game.body.position() + DVec3::new(0.0, 0.0, -1.5);
-        game.mobs[0].body = crate::player::physics::Body::sized(feet, 0.6, 1.8, 1.53);
+        front(&mut game);
+        game.break_clicked = true;
+        game.tick();
+        assert_eq!(game.mobs[0].stats.health, 6.0);
+        for _ in 0..14 {
+            game.tick();
+        }
+        front(&mut game);
         game.break_clicked = true;
         game.tick();
         assert!(game.mobs[0].is_dead());
@@ -1392,7 +1435,7 @@ pub(crate) mod tests {
             game.tick();
         }
         assert!(
-            game.mobs[0].stats.health <= 20 - 6,
+            game.mobs[0].stats.health <= 20.0 - 6.0,
             "hit: {}",
             game.mobs[0].stats.health
         );

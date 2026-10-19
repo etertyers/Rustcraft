@@ -28,6 +28,7 @@
         (result: (item: "torch", count: 4), pattern: ["X", "#"], key: {'X': (item: "coal"), '#': (item: "stick")}),  // torch (coal)
         (result: (item: "torch", count: 4), pattern: ["X", "#"], key: {'X': (item: "charcoal"), '#': (item: "stick")}),  // torch (charcoal)
         // Tools and weapons
+        (result: (item: "shield", count: 1), pattern: ["#X#", "###", " # "], key: {'#': (item: "oak_planks"), 'X': (item: "iron_ingot")}),  // shield (modern)
         (result: (item: "wooden_pickaxe", count: 1), pattern: ["XXX", " # ", " # "], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood pickaxe
         (result: (item: "wooden_shovel", count: 1), pattern: ["X", "#", "#"], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood shovel
         (result: (item: "wooden_axe", count: 1), pattern: ["XX", "X#", " #"], key: {'X': (item: "oak_planks"), '#': (item: "stick")}),  // wood axe

@@ -403,6 +403,43 @@ mod tests {
     }
 
     #[test]
+    fn a_shield_takes_six_planks_and_an_iron_ingot() {
+        let recipes = recipes();
+        let planks = items::OAK_PLANKS;
+        let shield = grid(
+            3,
+            &[
+                (0, 0, planks),
+                (1, 0, items::IRON_INGOT),
+                (2, 0, planks),
+                (0, 1, planks),
+                (1, 1, planks),
+                (2, 1, planks),
+                (1, 2, planks),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&shield, 3),
+            Some(ItemStack::new(items::SHIELD, 1))
+        );
+        // The iron in the wrong place makes nothing.
+        let wrong = grid(
+            3,
+            &[
+                (0, 0, planks),
+                (1, 0, planks),
+                (2, 0, planks),
+                (0, 1, items::IRON_INGOT),
+                (1, 1, planks),
+                (2, 1, planks),
+                (1, 2, planks),
+            ],
+        );
+        assert_eq!(recipes.craft(&wrong, 3), None);
+        assert_eq!(items::SHIELD.name(), "shield");
+    }
+
+    #[test]
     fn planks_make_wooden_slabs_not_stone_ones() {
         let recipes = recipes();
         let planks = items::OAK_PLANKS;
