@@ -664,6 +664,19 @@ pub struct BlockDef {
     /// Ground friction: 0.6 for most blocks, 0.98 for ice (1.0.0 values).
     #[serde(default = "default_slipperiness")]
     pub slipperiness: f32,
+    /// Walking speed while in or on it, as a fraction (modern
+    /// `Block.speedFactor`: soul sand and honey 0.4).
+    #[serde(default = "default_factor")]
+    pub speed_factor: f32,
+    /// Jump height while on it (modern `jumpFactor`: honey 0.5).
+    #[serde(default = "default_factor")]
+    pub jump_factor: f32,
+    /// Ladders and vines: bodies in it climb.
+    #[serde(default)]
+    pub climbable: bool,
+    /// Landing on it bounces the player back up (slime).
+    #[serde(default)]
+    pub bouncy: bool,
     /// Placing a block may overwrite it, and clicking it places into its
     /// cell (air, fluids, fire, tall grass, dead bushes, snow layers, vines).
     #[serde(default)]
@@ -723,6 +736,10 @@ fn default_stack() -> u8 {
 
 fn default_slipperiness() -> f32 {
     0.6
+}
+
+fn default_factor() -> f32 {
+    1.0
 }
 
 impl BlockDef {

@@ -101,6 +101,27 @@ pub trait Collider {
     /// Slipperiness of the block at (x, y, z), 0.6 for most blocks.
     fn slipperiness(&self, x: i32, y: i32, z: i32) -> f32;
 
+    /// How the cell at (x, y, z) scales walking (soul sand 0.4), 1 for
+    /// most blocks.
+    fn speed_factor(&self, _x: i32, _y: i32, _z: i32) -> f32 {
+        1.0
+    }
+
+    /// How the cell at (x, y, z) scales jumping (honey 0.5), 1 for most.
+    fn jump_factor(&self, _x: i32, _y: i32, _z: i32) -> f32 {
+        1.0
+    }
+
+    /// Whether the cell at (x, y, z) is a ladder or vine.
+    fn climbable(&self, _x: i32, _y: i32, _z: i32) -> bool {
+        false
+    }
+
+    /// Whether landing on the block at (x, y, z) bounces (slime).
+    fn bouncy(&self, _x: i32, _y: i32, _z: i32) -> bool {
+        false
+    }
+
     /// The liquid `region` reaches into, if any (water first). A liquid
     /// counts once the region's top reaches its surface, as in 1.0.0's
     /// `handleMaterialAcceleration`.
@@ -150,6 +171,11 @@ impl WorldCollider<'_> {
 }
 
 impl WorldCollider<'_> {
+    /// The definition of the block at (x, y, z), if it is loaded.
+    fn def_at(&self, x: i32, y: i32, z: i32) -> Option<&crate::world::block::BlockDef> {
+        self.blocks.get(self.world.block(x, y, z)?.id())
+    }
+
     /// Whether any block in a cell `region` overlaps passes `test`.
     fn any_cell(&self, region: &Aabb, test: impl Fn(BlockState) -> bool) -> bool {
         let min = (region.min + 0.001).floor().as_ivec3();
@@ -215,6 +241,22 @@ impl Collider for WorldCollider<'_> {
             .block(x, y, z)
             .and_then(|block| self.blocks.get(block.id()))
             .map_or(0.6, |def| def.slipperiness)
+    }
+
+    fn speed_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+        self.def_at(x, y, z).map_or(1.0, |def| def.speed_factor)
+    }
+
+    fn jump_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+        self.def_at(x, y, z).map_or(1.0, |def| def.jump_factor)
+    }
+
+    fn climbable(&self, x: i32, y: i32, z: i32) -> bool {
+        self.def_at(x, y, z).is_some_and(|def| def.climbable)
+    }
+
+    fn bouncy(&self, x: i32, y: i32, z: i32) -> bool {
+        self.def_at(x, y, z).is_some_and(|def| def.bouncy)
     }
 
     fn liquid(&self, region: &Aabb) -> Option<Fluid> {
@@ -326,6 +368,13 @@ mod tests {
         assert_eq!(boxes, vec![Aabb::block(16, 70, 0)]);
 
         assert_eq!(collider.slipperiness(3, 63, 1), 0.98);
+        // Block movement data: soul sand slows, ladders and vines climb.
+        assert_eq!(collider.speed_factor(1, 63, 1), 1.0);
+        assert_eq!(collider.jump_factor(1, 63, 1), 1.0);
+        assert!(!collider.climbable(1, 63, 1) && !collider.bouncy(1, 63, 1));
+        let defs = |id| registry.get(id).unwrap();
+        assert_eq!(defs(blocks::SOUL_SAND).speed_factor, 0.4);
+        assert!(defs(blocks::LADDER).climbable && defs(blocks::VINE).climbable);
         assert!(collider.is_loaded(&Aabb::block(5, 64, 5)));
         assert!(!collider.is_loaded(&Aabb::block(15, 64, 5)));
         assert_eq!(collider.slipperiness(1, 63, 1), 0.6);

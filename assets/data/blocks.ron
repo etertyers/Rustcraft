@@ -25,6 +25,11 @@
 //             all. A block with a "front" puts it on south; with placement
 //             Facing it's turned the way it faces. Leave out for blocks
 //             that draw nothing.
+//   speed_factor, jump_factor  walking and jumping scaled while in or on it
+//             (default 1; soul sand and honey 0.4, honey jumps 0.5)
+//   climbable ladders and vines: the player climbs them
+//   bouncy    landing on it bounces (slime)
+//   slipperiness  ground friction, 0.6 default (ice 0.98, blue ice 0.989, slime 0.8)
 //   tint      None (default), GrassTop, Grass, Foliage or Fixed(0xRRGGBB)
 //   variants  [(condition, (textures, tint, light))]: overrides for the
 //             states meeting a condition such as "age=7" or
@@ -177,7 +182,7 @@
     (name: "oak_sign", hardness: 1.0, props: [Rotation, Waterlogged], item: false, drops: All([(item: "oak_sign")]), needs_ground: true, shape: Sign, solid: false, blocks_flow: true, textures: (all: "sign")),
     (name: "oak_door", hardness: 3.0, props: [Facing, DoubleBlockHalf, Hinge, Open, Powered], item_texture: "oak_door", stack: 1, drops: All([(item: "oak_door", when: "half=lower")]), placement: Door, activate: Door, shape: Door, layer: Cutout, textures: (all: "oak_door_bottom"),
         variants: [("half=upper", (textures: (all: "oak_door_top")))]),
-    (name: "ladder", hardness: 0.4, placement: Wall, props: [Facing, Waterlogged], shape: Ladder, layer: Cutout, textures: (all: "ladder")),
+    (name: "ladder", hardness: 0.4, climbable: true, placement: Wall, props: [Facing, Waterlogged], shape: Ladder, layer: Cutout, textures: (all: "ladder")),
     (name: "rail", hardness: 0.7, placement: Rail, props: [RailShape, Waterlogged], needs_ground: true, shape: Rail, layer: Cutout, solid: false, textures: (all: "rail"),
         variants: [("shape=south_east|south_west|north_west|north_east", (textures: (all: "rail_corner")))]),
     // 1.0.0's stone stairs, made of cobblestone.
@@ -207,7 +212,7 @@
     // 1.0.0's pumpkin, which always had a face.
     (name: "carved_pumpkin", hardness: 1.0, props: [Facing], placement: Facing, textures: (end: "pumpkin_top", side: "pumpkin_side", south: "carved_pumpkin")),
     (name: "netherrack", hardness: 0.4, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "netherrack")),
-    (name: "soul_sand", hardness: 0.5, tool: Shovel, textures: (all: "soul_sand")),
+    (name: "soul_sand", hardness: 0.5, speed_factor: 0.4, tool: Shovel, textures: (all: "soul_sand")),
     (name: "glowstone", hardness: 0.3, drops: All([(item: "glowstone_dust", min: 2, max: 4)]), light: 15, textures: (all: "glowstone")),
     (name: "nether_portal", hardness: -1.0, props: [HorizontalAxis], item: false, drops: Nothing, layer: Translucent, solid: false, light: 11, cull_same: true, textures: (all: "nether_portal")),
     (name: "jack_o_lantern", hardness: 1.0, props: [Facing], placement: Facing, light: 15, textures: (end: "pumpkin_top", side: "pumpkin_side", south: "jack_o_lantern")),
@@ -255,7 +260,7 @@
     (name: "melon", hardness: 1.0, drops: All([(item: "melon_slice", min: 3, max: 7)]), textures: (end: "melon_top", side: "melon_side")),
     (name: "pumpkin_stem", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "pumpkin_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "pumpkin_stem"), tint: Fixed(0x30C010)),
     (name: "melon_stem", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "melon_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "melon_stem"), tint: Fixed(0x30C010)),
-    (name: "vine", hardness: 0.2, placement: Vine, props: [Up, North, East, South, West], burns: (encourage: 15, catch: 100), drops: All([(item: "vine", tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, textures: (all: "vine"), tint: Foliage),
+    (name: "vine", hardness: 0.2, climbable: true, placement: Vine, props: [Up, North, East, South, West], burns: (encourage: 15, catch: 100), drops: All([(item: "vine", tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, textures: (all: "vine"), tint: Foliage),
     (name: "oak_fence_gate", hardness: 2.0, placement: Look, activate: Open, props: [Facing, InWall, Open, Powered], shape: FenceGate, textures: (all: "oak_planks")),
     (name: "brick_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (all: "bricks")),
     (name: "stone_brick_stairs", hardness: 1.5, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (all: "stone_bricks")),
