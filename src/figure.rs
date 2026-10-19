@@ -77,7 +77,7 @@ pub fn build(
                 id.map(|id| {
                     game.inventory
                         .hand_stack(hand)
-                        .copied()
+                        .cloned()
                         .filter(|stack| stack.id == id)
                         .unwrap_or_else(|| ItemStack::new(id, 1))
                 })
@@ -147,7 +147,7 @@ pub fn build(
             let frame = model_matrix(&body_frame(&pose, yaw), feet);
             let rig = rig(&pose, fig.slim);
             for hand in [Hand::Main, Hand::Off] {
-                let Some(stack) = game.inventory.hand_stack(hand).copied() else {
+                let Some(stack) = game.inventory.hand_stack(hand).cloned() else {
                     continue;
                 };
                 let left = hand == Hand::Off;

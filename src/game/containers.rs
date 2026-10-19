@@ -246,13 +246,13 @@ impl Game {
     /// The stack in a slot of the open screen.
     pub fn slot_stack(&self, slot: SlotRef) -> Option<ItemStack> {
         match slot {
-            SlotRef::Inventory(index) => self.inventory.slot(index).copied(),
+            SlotRef::Inventory(index) => self.inventory.slot(index).cloned(),
             SlotRef::Grid(index) => match &self.container {
-                Some(Container::Crafting { grid, .. }) => grid.get(index).copied().flatten(),
+                Some(Container::Crafting { grid, .. }) => grid.get(index).cloned().flatten(),
                 _ => None,
             },
             SlotRef::Result => self.crafting_result(),
-            SlotRef::Block(index) => self.block_slots()?.get(index).copied().flatten(),
+            SlotRef::Block(index) => self.block_slots()?.get(index).cloned().flatten(),
         }
     }
 
@@ -287,10 +287,13 @@ impl Game {
                 // makes something else.
                 let first = self.crafting_result();
                 while let Some(result) = self.crafting_result()
-                    && Some(result) == first
+                    && Some(&result) == first.as_ref()
                 {
                     let mut trial = self.inventory.clone();
-                    if trial.merge(result, player_slots().rev(), &items).is_some() {
+                    if trial
+                        .merge(result.clone(), player_slots().rev(), &items)
+                        .is_some()
+                    {
                         break;
                     }
                     self.inventory = trial;
@@ -380,7 +383,7 @@ impl Game {
     /// holding something else, or full, are skipped, and no more slots are
     /// used than there are items; what's left stays held.
     pub fn drag_across(&mut self, slots: &[SlotRef], click: Click) {
-        let Some(held) = self.cursor else {
+        let Some(held) = self.cursor.clone() else {
             return;
         };
         let max = self.items.max_stack(held.id);
@@ -409,14 +412,14 @@ impl Game {
                 slot,
                 Some(ItemStack {
                     count: there + put,
-                    ..held
+                    ..held.clone()
                 }),
             );
             left -= put;
         }
         self.cursor = (left > 0).then_some(ItemStack {
             count: left,
-            ..held
+            ..held.clone()
         });
     }
 
@@ -424,7 +427,7 @@ impl Game {
     /// screen, part stacks first (modern Minecraft's pick-up-all). Results
     /// aren't taken from.
     pub fn collect_onto_cursor(&mut self) {
-        let Some(mut held) = self.cursor else {
+        let Some(mut held) = self.cursor.clone() else {
             return;
         };
         let max = self.items.max_stack(held.id);
@@ -496,7 +499,7 @@ impl Game {
             | Container::Cart(_),
         ) = self.container
         {
-            let Some(stack) = self.inventory.slot(index).copied() else {
+            let Some(stack) = self.inventory.slot(index).cloned() else {
                 return;
             };
             let Some(chest) = self.block_slots_mut() else {

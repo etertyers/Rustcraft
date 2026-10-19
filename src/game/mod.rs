@@ -377,7 +377,12 @@ impl Game {
             Some(Container::Crafting { grid, .. }) => grid.clone(),
             _ => Vec::new(),
         };
-        for held in self.cursor.into_iter().chain(grid.into_iter().flatten()) {
+        for held in self
+            .cursor
+            .clone()
+            .into_iter()
+            .chain(grid.into_iter().flatten())
+        {
             inventory.add(held, &self.items);
         }
         let feet = self.standing_feet();
@@ -751,7 +756,7 @@ impl Game {
             stacks.extend(grid.into_iter().flatten());
         }
         for slot in 0..crate::inventory::player::SLOTS {
-            if let Some(stack) = self.inventory.slot(slot).copied() {
+            if let Some(stack) = self.inventory.slot(slot).cloned() {
                 self.inventory.set(slot, None);
                 stacks.push(stack);
             }
@@ -1019,7 +1024,11 @@ pub(crate) mod tests {
         assert_eq!(game.inventory.slot(0), None);
         game.break_block(IVec3::new(0, 64, -3));
         assert_eq!(block(&game, -2), Some(BlockState::AIR));
-        let drops: Vec<ItemStack> = game.entities.iter().map(|item| item.stack).collect();
+        let drops: Vec<ItemStack> = game
+            .entities
+            .iter()
+            .map(|item| item.stack.clone())
+            .collect();
         assert_eq!(drops, [ItemStack::new(items::RED_BED, 1)]);
     }
 

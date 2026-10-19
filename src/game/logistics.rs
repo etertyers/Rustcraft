@@ -115,9 +115,11 @@ impl Game {
         } else {
             0..entity.slots().len()
         };
-        range
-            .into_iter()
-            .find_map(|i| entity.slots()[i].map(|stack| (i, ItemStack { count: 1, ..stack })))
+        range.into_iter().find_map(|i| {
+            entity.slots()[i]
+                .clone()
+                .map(|stack| (i, ItemStack { count: 1, ..stack }))
+        })
     }
 
     pub(super) fn remove_one(&mut self, cell: IVec3, slot: usize) {
@@ -152,7 +154,7 @@ impl Game {
             return;
         }
         let slot = filled[self.rng.below(filled.len() as u32) as usize];
-        let Some(stack) = entity.slots()[slot] else {
+        let Some(stack) = entity.slots()[slot].clone() else {
             return;
         };
         let facing = block.face(Prop::FacingAll);
@@ -314,7 +316,7 @@ impl Game {
             .slots
             .iter()
             .enumerate()
-            .find_map(|(i, s)| s.map(|s| (i, ItemStack { count: 1, ..s })))
+            .find_map(|(i, s)| s.clone().map(|s| (i, ItemStack { count: 1, ..s })))
         else {
             return false;
         };
@@ -333,9 +335,10 @@ impl Game {
             let Some(BlockEntity::Hopper(h)) = game.chunks.block_entity(at) else {
                 return true;
             };
-            h.slots
-                .iter()
-                .all(|s| s.is_some_and(|s| s.count >= game.items.max_stack(s.id)))
+            h.slots.iter().all(|s| {
+                s.as_ref()
+                    .is_some_and(|s| s.count >= game.items.max_stack(s.id))
+            })
         };
         if full(self) {
             return false;
@@ -361,8 +364,8 @@ impl Game {
                 index += 1;
                 continue;
             }
-            let stack = item.stack;
-            match self.insert_into(at, Face::Top, stack) {
+            let stack = item.stack.clone();
+            match self.insert_into(at, Face::Top, stack.clone()) {
                 None => {
                     self.entities.remove(index);
                     moved = true;
@@ -594,7 +597,8 @@ mod tests {
             .chunks
             .block_entity(IVec3::new(9, Y, z))
             .unwrap()
-            .slots()[furnace::FUEL];
+            .slots()[furnace::FUEL]
+            .clone();
         assert_eq!(fuel.map(|s| s.id), Some(items::COAL));
     }
 

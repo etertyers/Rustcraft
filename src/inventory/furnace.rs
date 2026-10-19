@@ -34,16 +34,21 @@ impl Furnace {
     /// Whether a tick would change nothing: out, and with nothing to start
     /// on.
     pub fn is_idle(&self, items: &Items) -> bool {
-        let fuel = self.slots[FUEL].is_some_and(|fuel| items.recipes.burn_ticks(fuel.id) > 0);
+        let fuel = self.slots[FUEL]
+            .as_ref()
+            .is_some_and(|fuel| items.recipes.burn_ticks(fuel.id) > 0);
         !self.is_burning() && self.cook == 0 && !(fuel && self.can_smelt(items))
     }
 
     /// Whether the input smelts into something with room in the output.
     fn can_smelt(&self, items: &Items) -> bool {
-        let Some(result) = self.slots[INPUT].and_then(|input| items.recipes.smelt(&input)) else {
+        let Some(result) = self.slots[INPUT]
+            .as_ref()
+            .and_then(|input| items.recipes.smelt(input))
+        else {
             return false;
         };
-        match self.slots[OUTPUT] {
+        match &self.slots[OUTPUT] {
             None => true,
             Some(output) => {
                 output.stacks_with(&result)

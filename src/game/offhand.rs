@@ -62,9 +62,9 @@ fn f_swaps_the_hands_and_ends_whatever_was_in_use() {
     game.on_key(KeyCode::KeyF, true, false, true);
     assert!(!game.is_blocking() && game.shield_hand().is_none());
     // Held down, the key swaps once.
-    let before = game.inventory.hand_stack(Hand::Main).copied();
+    let before = game.inventory.hand_stack(Hand::Main).cloned();
     game.on_key(KeyCode::KeyF, true, true, true);
-    assert_eq!(game.inventory.hand_stack(Hand::Main).copied(), before);
+    assert_eq!(game.inventory.hand_stack(Hand::Main).cloned(), before);
 }
 
 #[test]

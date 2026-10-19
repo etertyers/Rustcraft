@@ -610,7 +610,10 @@ impl App {
                 };
                 let count = if all { held.count } else { 1 };
                 held.count -= count;
-                let thrown = ItemStack { count, ..*held };
+                let thrown = ItemStack {
+                    count,
+                    ..held.clone()
+                };
                 if held.count == 0 {
                     game.cursor = None;
                 }
@@ -1168,11 +1171,8 @@ fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String
         .iter()
         .map(|item| ItemStack::with_damage(item.id, 1, 0))
         .map(|stack| {
-            (
-                stack,
-                SlotView::of(&stack, icons, items),
-                items.name(&stack),
-            )
+            let (view, name) = (SlotView::of(&stack, icons, items), items.name(&stack));
+            (stack, view, name)
         })
         .collect()
 }

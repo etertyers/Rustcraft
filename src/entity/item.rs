@@ -211,7 +211,7 @@ impl ItemEntity {
         }
         let before = self.stack.count;
         self.stack.count = inventory
-            .add(self.stack, items)
+            .add(self.stack.clone(), items)
             .map_or(0, |rest| rest.count);
         self.stack.count < before
     }
@@ -262,6 +262,7 @@ mod tests {
         id: items::COBBLESTONE,
         count: 1,
         damage: 0,
+        extra: None,
     };
 
     #[test]
@@ -305,7 +306,7 @@ mod tests {
         let mut inventory = Inventory::default();
         let mut random = || 0.5;
         let stack = ItemStack::new(items::COBBLESTONE, 10);
-        let mut item = ItemEntity::from_block(stack, IVec3::new(1, 64, 0), &mut random);
+        let mut item = ItemEntity::from_block(stack.clone(), IVec3::new(1, 64, 0), &mut random);
         assert!(
             !item.pick_up(&player, &mut inventory, &scene.items),
             "too soon"

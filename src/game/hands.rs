@@ -495,7 +495,7 @@ impl Game {
     /// Returns false if the selected item can't be eaten now.
     fn keep_eating(&mut self) -> bool {
         let slot = self.held_slot();
-        let Some(stack) = self.held().copied() else {
+        let Some(stack) = self.held().cloned() else {
             return false;
         };
         let Some(food) = self.items.item(stack.id).and_then(|item| item.food) else {
@@ -626,7 +626,7 @@ impl Game {
 
     /// Places the selected stack's block against the clicked face.
     fn place(&mut self, hit: &Hit) {
-        let Some(stack) = self.held().copied() else {
+        let Some(stack) = self.held().cloned() else {
             return;
         };
         let Some(block) = self.items.places(&stack) else {

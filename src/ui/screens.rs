@@ -366,7 +366,7 @@ pub fn show(
                         actions.push(if view.cursor.is_some() {
                             ScreenAction::Discard
                         } else {
-                            ScreenAction::Take(*stack)
+                            ScreenAction::Take(stack.clone())
                         });
                     }
                 }
