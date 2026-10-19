@@ -1,7 +1,7 @@
 //! The performance gate's benchmarks (CLAUDE.md §7.2): chunk generation,
 //! lighting, meshing and fluid ticks, the work behind every frame of
 //! exploring. Run with `cargo bench`; compare against the last milestone's
-//! numbers in `docs/perf/`. Redstone ticks join these in M19.
+//! numbers in `docs/perf/`. Redstone ticks joined these in M19.
 
 use std::{hint::black_box, sync::Arc};
 
@@ -13,9 +13,12 @@ use rustcraft::world::{
     block::{self, BlockState, Fluid},
     blocks,
     chunk::{Chunk, ChunkPos},
+    fast_hash::FastSet,
     fluid::{self, Fluids},
     light::light_chunk,
     mesh::{BlockModels, ChunkArea, mesh_chunk},
+    props::Prop,
+    redstone::Redstone,
     worldgen::terrain::Terrain,
 };
 
@@ -120,9 +123,65 @@ fn fluids(c: &mut Criterion) {
     });
 }
 
+/// Eight 15-block dust lines fed by a lever flipped every ten ticks, and a
+/// ring of two repeaters pulsing as a clock, for 100 ticks.
+fn redstone(c: &mut Criterion) {
+    let mut base = World::default();
+    let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+    for z in 0..16 {
+        for x in 0..16 {
+            chunk.set(x, 63, z, BlockState::of(blocks::STONE));
+        }
+    }
+    let dust = BlockState::of(blocks::REDSTONE_WIRE)
+        .with(Prop::WireEast, rustcraft::world::props::wire_side::SIDE)
+        .with(Prop::WireWest, rustcraft::world::props::wire_side::SIDE);
+    for line in 0..8 {
+        for x in 1..16 {
+            chunk.set(x, 64, line * 2, dust);
+        }
+    }
+    base.insert(chunk);
+    let source = BlockState::of(blocks::REDSTONE_BLOCK);
+    c.bench_function("100 ticks of redstone lines", |b| {
+        b.iter(|| {
+            let mut world = World::default();
+            world.insert_shared(base.get(ChunkPos::new(0, 0)).unwrap().clone());
+            let mut redstone = Redstone::default();
+            let pressed = FastSet::default();
+            for time in 0..100u64 {
+                if time % 10 == 0 {
+                    let on = (time / 10) % 2 == 0;
+                    for line in 0..8 {
+                        let at = IVec3::new(0, 64, line * 2);
+                        let state = if on { source } else { BlockState::AIR };
+                        world.get_mut(ChunkPos::new(0, 0)).unwrap().set(
+                            0,
+                            64,
+                            (line * 2) as usize,
+                            state,
+                        );
+                        redstone.changed(at);
+                    }
+                }
+                let outcome = redstone.tick(&world, time, &pressed);
+                for (at, block) in outcome.edits {
+                    world.get_mut(ChunkPos::of_block(at.x, at.z)).unwrap().set(
+                        at.x.rem_euclid(16) as usize,
+                        at.y as usize,
+                        at.z.rem_euclid(16) as usize,
+                        block,
+                    );
+                }
+            }
+            black_box(world.len())
+        })
+    });
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(50);
-    targets = generation, lighting_and_meshing, fluids
+    targets = generation, lighting_and_meshing, fluids, redstone
 }
 criterion_main!(benches);
