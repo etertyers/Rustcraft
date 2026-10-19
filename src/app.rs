@@ -1236,12 +1236,25 @@ fn bench_view(game: &Game) -> Option<BenchView> {
 }
 
 fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
+    // Every item, then an enchanted book for each enchantment at each of
+    // its levels (the plain one would be useless).
+    let books = crate::inventory::enchant::ALL
+        .iter()
+        .flat_map(|&enchantment| {
+            (1..=enchantment.max_level()).map(move |level| {
+                let mut book = ItemStack::new(crate::inventory::items::ENCHANTED_BOOK, 1);
+                book.enchant(enchantment, level);
+                book
+            })
+        });
     items
         .items
         .iter()
+        .filter(|item| item.id != crate::inventory::items::ENCHANTED_BOOK)
         .map(|item| ItemStack::with_damage(item.id, 1, 0))
+        .chain(books)
         .map(|stack| {
-            let (view, name) = (SlotView::of(&stack, icons, items), items.name(&stack));
+            let (view, name) = (SlotView::of(&stack, icons, items), items.tooltip(&stack));
             (stack, view, name)
         })
         .collect()

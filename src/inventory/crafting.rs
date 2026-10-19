@@ -542,6 +542,42 @@ mod tests {
     }
 
     #[test]
+    fn the_enchanting_table_and_grindstone_are_craftable() {
+        let recipes = recipes();
+        let table = grid(
+            3,
+            &[
+                (1, 0, items::BOOK),
+                (0, 1, items::DIAMOND),
+                (1, 1, items::OBSIDIAN),
+                (2, 1, items::DIAMOND),
+                (0, 2, items::OBSIDIAN),
+                (1, 2, items::OBSIDIAN),
+                (2, 2, items::OBSIDIAN),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&table, 3),
+            Some(ItemStack::new(items::ENCHANTING_TABLE, 1))
+        );
+        let stick = items::STICK;
+        let grindstone = grid(
+            3,
+            &[
+                (0, 0, stick),
+                (1, 0, items::SMOOTH_STONE_SLAB),
+                (2, 0, stick),
+                (0, 1, items::SPRUCE_PLANKS),
+                (2, 1, items::OAK_PLANKS),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&grindstone, 3),
+            Some(ItemStack::new(items::GRINDSTONE, 1))
+        );
+    }
+
+    #[test]
     fn carpets_walls_concrete_powder_and_anvils_are_craftable() {
         let recipes = recipes();
         let wool = items::LIME_WOOL;

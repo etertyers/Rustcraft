@@ -1,8 +1,0 @@
-{
-	"parent": "minecraft:block/stairs",
-	"textures": {
-		"bottom": "minecraft:block/mud_bricks1",
-		"top": "minecraft:block/mud_bricks1",
-		"side": "minecraft:block/mud_bricks1"
-	}
-}

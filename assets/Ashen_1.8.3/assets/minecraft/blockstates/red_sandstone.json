@@ -1,8 +1,0 @@
-{
-	"variants": {
-		"": [
-			{"model": "block/red_sandstone"},
-			{"model": "block/red_sandstone", "y": 180}
-		]
-	}
-}

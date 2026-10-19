@@ -1,9 +1,0 @@
-{
-	"variants": {
-		"": [
-			{"model": "block/bedrock"},
-			{"model": "block/bedrock1"},
-			{"model": "block/bedrock2"}
-		]
-	}
-}

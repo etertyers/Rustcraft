@@ -237,3 +237,52 @@ mod tests {
         assert_eq!(game.orbs.iter().map(|orb| orb.value).sum::<u32>(), dropped);
     }
 }
+
+#[cfg(test)]
+mod kill_tests {
+    use glam::DVec3;
+
+    use super::*;
+    use crate::{
+        entity::mob::Mob,
+        game::tests::{flat_game, mob_registry},
+        player::mode::GameMode,
+    };
+
+    /// Kills a mob called `name` the way the player would (`by_player`) or
+    /// otherwise, and returns the experience that dropped.
+    fn killed(name: &str, by_player: bool) -> u32 {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        let kind = game.mob_defs.find(name).unwrap();
+        let mut mob = Mob::new(
+            kind,
+            game.mob_defs.get(kind),
+            DVec3::new(6.5, 64.0, 6.5),
+            0.0,
+        );
+        if by_player {
+            mob.hit_by_player();
+        }
+        mob.stats.health = 0.0;
+        game.mobs.push(mob);
+        game.tick();
+        game.orbs.iter().map(|orb| orb.value).sum()
+    }
+
+    #[test]
+    fn monsters_killed_by_the_player_drop_five_and_animals_one_to_three() {
+        assert_eq!(killed("zombie", true), 5);
+        assert_eq!(killed("skeleton", true), 5);
+        assert!((1..=3).contains(&killed("cow", true)));
+        assert!((1..=3).contains(&killed("pig", true)));
+    }
+
+    #[test]
+    fn nothing_drops_unless_the_player_made_the_kill() {
+        assert_eq!(killed("zombie", false), 0);
+        assert_eq!(killed("cow", false), 0);
+        // Villagers and golems never give experience.
+        assert_eq!(killed("villager", true), 0);
+    }
+}

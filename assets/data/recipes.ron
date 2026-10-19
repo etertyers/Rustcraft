@@ -167,6 +167,9 @@
         (result: (item: "cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "cobblestone")}),
         (result: (item: "mossy_cobblestone_wall", count: 6), pattern: ["###", "###"], key: {'#': (item: "mossy_cobblestone")}),
         (result: (item: "anvil", count: 1), pattern: ["###", " i ", "iii"], key: {'#': (item: "iron_block"), 'i': (item: "iron_ingot")}),
+        // M22
+        (result: (item: "enchanting_table", count: 1), pattern: [" B ", "D#D", "###"], key: {'B': (item: "book"), 'D': (item: "diamond"), '#': (item: "obsidian")}),
+        (result: (item: "grindstone", count: 1), pattern: ["I-I", "# #"], key: {'I': (item: "stick"), '-': (item: "smooth_stone_slab"), '#': (tag: "planks")}),
         // M21 (modern recipes)
         (result: (item: "oak_slab", count: 6), pattern: ["###"], key: {'#': (item: "oak_planks")}),
         (result: (item: "oak_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "oak_planks")}),

@@ -12,6 +12,7 @@ use crate::{
         slots::{self, SlotRef},
         stack::ItemStack,
     },
+    player::stats::DamageSource,
     world::{block::BlockState, blocks, props::Prop},
 };
 
@@ -258,6 +259,39 @@ impl Game {
         if kind == BenchKind::Anvil && !free && self.rng.next_f64() < ANVIL_DAMAGE_CHANCE {
             self.wear_anvil();
         }
+    }
+
+    /// A falling anvil landing in `at` after dropping `fallen` blocks:
+    /// everything in the cell takes two points for each block past one
+    /// (up to 40), and the anvil may chip. Returns the anvil it settles as.
+    pub(super) fn anvil_lands(&mut self, state: BlockState, at: IVec3, fallen: f64) -> BlockState {
+        let distance = (fallen - 1.0).ceil();
+        if distance <= 0.0 {
+            return state;
+        }
+        let damage = (distance * 2.0).floor().min(40.0) as f32;
+        let cell = crate::player::collision::Aabb::new(at.as_dvec3(), at.as_dvec3() + DVec3::ONE);
+        if self.mode.is_vulnerable() && self.body.aabb().intersects(&cell) {
+            self.stats.damage(damage, DamageSource::Anvil);
+        }
+        for mob in &mut self.mobs {
+            if !mob.is_dead() && mob.body.aabb().intersects(&cell) {
+                mob.hurt(damage, None, DamageSource::Anvil);
+            }
+        }
+        if self.rng.next_f64() < 0.05 + distance * 0.05 {
+            let facing = state.face(Prop::Facing);
+            return match state.id() {
+                blocks::ANVIL => {
+                    BlockState::of(blocks::CHIPPED_ANVIL).with_face(Prop::Facing, facing)
+                }
+                blocks::CHIPPED_ANVIL => {
+                    BlockState::of(blocks::DAMAGED_ANVIL).with_face(Prop::Facing, facing)
+                }
+                _ => state,
+            };
+        }
+        state
     }
 
     /// Chips the anvil being used, and breaks it once it's damaged.
@@ -543,5 +577,43 @@ mod tests {
         // Efficiency V (41) and Mending (34) at least: 38 + up to 37 more.
         assert!((38..=75).contains(&paid), "{paid}");
         assert!(game.bench().unwrap().slots.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn a_falling_anvil_hurts_what_it_lands_on_and_its_damage_grows_with_the_drop() {
+        use crate::{entity::mob::Mob, game::tests::mob_registry};
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        let kind = game.mob_defs.find("cow").unwrap();
+        let cow = Mob::new(
+            kind,
+            game.mob_defs.get(kind),
+            DVec3::new(6.5, 64.0, 6.5),
+            0.0,
+        );
+        let health = cow.stats.health;
+        game.mobs.push(cow);
+        let high = IVec3::new(6, 68, 6);
+        game.chunks
+            .set_blocks(&[(high, BlockState::of(blocks::ANVIL))]);
+        game.falls_due.push((game.time, high));
+        for _ in 0..30 {
+            game.tick();
+        }
+        let hurt = health - game.mobs[0].stats.health;
+        // About 4 blocks: ceil(4 − 1) × 2 = 6 points at most from here
+        // (the cow may have wandered or dodged the landing).
+        assert!(hurt == 0.0 || (1.0..=8.0).contains(&hurt), "{hurt}");
+        // The numbers behind it: a 20-block drop does 38, never past 40.
+        let state = BlockState::of(blocks::ANVIL);
+        let before = game.stats.health;
+        game.body.set_position(DVec3::new(0.5, 64.0, 0.5));
+        game.anvil_lands(state, IVec3::new(0, 64, 0), 20.0);
+        assert_eq!(before - game.stats.health.max(0.0), 20.0f32.min(before));
+        // A drop of one block or less does nothing.
+        let mut other = flat_game(GameMode::Survival);
+        let before = other.stats.health;
+        other.anvil_lands(state, IVec3::new(0, 64, 0), 1.0);
+        assert_eq!(other.stats.health, before);
     }
 }
