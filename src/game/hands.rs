@@ -572,9 +572,15 @@ impl Game {
         let world = self.chunks.world();
         let player = self.body.aabb();
         let yaw = self.camera.yaw;
-        let Some(edits) =
-            interaction::place_block(world, self.items.blocks, hit, block, &player, yaw)
-        else {
+        let Some(edits) = interaction::place_block_looking(
+            world,
+            self.items.blocks,
+            hit,
+            block,
+            &player,
+            yaw,
+            self.camera.pitch,
+        ) else {
             return;
         };
         self.edit(&edits);

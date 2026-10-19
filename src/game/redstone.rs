@@ -727,4 +727,184 @@ mod tests {
             "the pulse kept going round: {changes} changes"
         );
     }
+
+    fn piston(sticky: bool, facing: Face) -> BlockState {
+        let id = if sticky {
+            blocks::STICKY_PISTON
+        } else {
+            blocks::PISTON
+        };
+        BlockState::of(id).with_face(Prop::FacingAll, facing)
+    }
+
+    fn id_at(game: &Game, at: IVec3) -> crate::world::block::BlockId {
+        block_at(game, at).id()
+    }
+
+    #[test]
+    fn a_piston_pushes_a_line_of_blocks_and_pulls_back_when_unpowered() {
+        let mut game = flat_game(GameMode::Creative);
+        let z = -12;
+        put(
+            &mut game,
+            &[
+                (at(5, z), piston(false, Face::East)),
+                (at(6, z), BlockState::of(blocks::STONE)),
+                (at(7, z), BlockState::of(blocks::DIRT)),
+            ],
+        );
+        game.set_blocks(&[(at(5, z + 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(2);
+        assert!(block_at(&game, at(5, z)).bool(Prop::Extended));
+        assert_eq!(id_at(&game, at(6, z)), blocks::PISTON_HEAD);
+        assert_eq!(id_at(&game, at(7, z)), blocks::STONE);
+        assert_eq!(id_at(&game, at(8, z)), blocks::DIRT);
+        // Take the power away: a plain piston leaves what it pushed.
+        game.set_blocks(&[(at(5, z + 1), BlockState::AIR)]);
+        game.run_ticks(2);
+        assert!(!block_at(&game, at(5, z)).bool(Prop::Extended));
+        assert_eq!(id_at(&game, at(6, z)), blocks::AIR);
+        assert_eq!(id_at(&game, at(7, z)), blocks::STONE);
+    }
+
+    #[test]
+    fn a_sticky_piston_brings_its_block_back() {
+        let mut game = flat_game(GameMode::Creative);
+        let z = -9;
+        put(
+            &mut game,
+            &[
+                (at(12, z), piston(true, Face::West)),
+                (at(11, z), BlockState::of(blocks::STONE)),
+            ],
+        );
+        game.set_blocks(&[(at(12, z + 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(2);
+        assert_eq!(id_at(&game, at(10, z)), blocks::STONE, "pushed out");
+        assert_eq!(id_at(&game, at(11, z)), blocks::PISTON_HEAD);
+        game.set_blocks(&[(at(12, z + 1), BlockState::AIR)]);
+        game.run_ticks(2);
+        assert_eq!(id_at(&game, at(11, z)), blocks::STONE, "pulled back");
+        assert_eq!(id_at(&game, at(10, z)), blocks::AIR);
+    }
+
+    #[test]
+    fn a_piston_stays_put_when_blocked() {
+        let mut game = flat_game(GameMode::Creative);
+        let z = -6;
+        put(
+            &mut game,
+            &[
+                (at(5, z), piston(false, Face::East)),
+                (at(6, z), BlockState::of(blocks::OBSIDIAN)),
+            ],
+        );
+        game.set_blocks(&[(at(5, z + 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(5);
+        assert!(!block_at(&game, at(5, z)).bool(Prop::Extended));
+        assert_eq!(id_at(&game, at(6, z)), blocks::OBSIDIAN);
+        // Thirteen blocks are too many; twelve go.
+        let mut cells = vec![(at(5, z + 4), piston(false, Face::East))];
+        cells.extend((6..=18).map(|x| (at(x, z + 4), BlockState::of(blocks::STONE))));
+        put(&mut game, &cells);
+        game.set_blocks(&[(at(5, z + 5), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(3);
+        assert!(
+            !block_at(&game, at(5, z + 4)).bool(Prop::Extended),
+            "13 is too many"
+        );
+        // It doesn't try again by itself; cycling the power does.
+        game.set_blocks(&[(at(18, z + 4), BlockState::AIR)]);
+        game.set_blocks(&[(at(5, z + 5), BlockState::AIR)]);
+        game.run_ticks(2);
+        game.set_blocks(&[(at(5, z + 5), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(3);
+        assert!(
+            block_at(&game, at(5, z + 4)).bool(Prop::Extended),
+            "12 is fine"
+        );
+    }
+
+    #[test]
+    fn a_piston_is_powered_by_a_source_beside_the_cell_above_it() {
+        let mut game = flat_game(GameMode::Creative);
+        let z = -3;
+        put(
+            &mut game,
+            &[
+                (at(5, z), piston(false, Face::East)),
+                (at(6, z), BlockState::of(blocks::STONE)),
+            ],
+        );
+        // Diagonally above: it powers the cell above, not the piston.
+        game.set_blocks(&[(
+            IVec3::new(4, Y + 1, z),
+            BlockState::of(blocks::REDSTONE_BLOCK),
+        )]);
+        game.run_ticks(3);
+        assert!(
+            block_at(&game, at(5, z)).bool(Prop::Extended),
+            "quasi-connectivity"
+        );
+    }
+
+    #[test]
+    fn a_piston_shoves_the_player_out_of_the_way() {
+        let mut game = flat_game(GameMode::Creative);
+        put(&mut game, &[(at(1, 0), piston(false, Face::West))]);
+        game.set_blocks(&[(at(1, 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(3);
+        assert_eq!(id_at(&game, at(0, 0)), blocks::PISTON_HEAD);
+        let x = game.body.aabb().max.x;
+        assert!(
+            x <= 0.0 + 1e-3,
+            "the player's box was pushed clear of the head: {x}"
+        );
+    }
+
+    #[test]
+    fn pistons_break_torches_in_their_way_and_drop_them() {
+        let mut game = flat_game(GameMode::Survival);
+        game.entities.clear();
+        let z = 3;
+        put(
+            &mut game,
+            &[
+                (at(5, z), piston(false, Face::East)),
+                (at(6, z), BlockState::of(blocks::TORCH)),
+            ],
+        );
+        game.set_blocks(&[(at(5, z + 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(3);
+        assert_eq!(id_at(&game, at(6, z)), blocks::PISTON_HEAD);
+        assert_eq!(game.entities.len(), 1, "the torch dropped as an item");
+    }
+
+    #[test]
+    fn a_broken_head_or_piston_takes_the_other_with_it() {
+        let mut game = flat_game(GameMode::Creative);
+        let z = 8;
+        put(&mut game, &[(at(5, z), piston(false, Face::East))]);
+        game.set_blocks(&[(at(5, z + 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
+        game.run_ticks(2);
+        assert_eq!(id_at(&game, at(6, z)), blocks::PISTON_HEAD);
+        game.set_blocks(&[(at(5, z), BlockState::AIR)]);
+        game.run_ticks(2);
+        assert_eq!(
+            id_at(&game, at(6, z)),
+            blocks::AIR,
+            "no head without its piston"
+        );
+        // And the other way round.
+        put(&mut game, &[(at(5, z), piston(false, Face::East))]);
+        game.run_ticks(3);
+        assert!(block_at(&game, at(5, z)).bool(Prop::Extended));
+        game.set_blocks(&[(at(6, z), BlockState::AIR)]);
+        game.run_ticks(3);
+        assert_eq!(
+            id_at(&game, at(6, z)),
+            blocks::PISTON_HEAD,
+            "the piston is still powered, so it extends again"
+        );
+    }
 }

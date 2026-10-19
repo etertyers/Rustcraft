@@ -107,6 +107,20 @@ pub fn place_block(
     player: &Aabb,
     yaw: f32,
 ) -> Option<Vec<Edit>> {
+    place_block_looking(world, blocks, hit, block, player, yaw, 0.0)
+}
+
+/// As `place_block`, for a player looking along `yaw` and `pitch`, which
+/// blocks that face up or down (pistons, droppers) turn by.
+pub fn place_block_looking(
+    world: &World,
+    blocks: &BlockRegistry,
+    hit: &Hit,
+    block: BlockState,
+    player: &Aabb,
+    yaw: f32,
+    pitch: f32,
+) -> Option<Vec<Edit>> {
     let clicked = state_at(world, hit.block)?;
     // Clicking tall grass, or a slab this one completes, places into it
     // instead of building beside it.
@@ -139,13 +153,13 @@ pub fn place_block(
                 .with_bool(Prop::Lit, block.bool(Prop::Lit)),
         },
         Placement::Facing => {
-            let prop = if block.has(Prop::FacingAll) {
-                Prop::FacingAll
+            if block.has(Prop::FacingAll) {
+                block.with_face(Prop::FacingAll, facing_toward_looking(yaw, pitch))
             } else {
-                Prop::Facing
-            };
-            block.with_face(prop, facing_toward(yaw))
+                block.with_face(Prop::Facing, facing_toward(yaw))
+            }
         }
+        Placement::LookAll => block.with_face(Prop::FacingAll, facing_toward_looking(yaw, pitch)),
         // The spout points into the clicked block; from below, it points down.
         Placement::Hopper => block.with_face(
             Prop::FacingAll,
@@ -420,6 +434,21 @@ fn place_door(
 /// along `yaw` (radians, 0 north, turning east): toward the player.
 pub fn facing_toward(yaw: f32) -> Face {
     Face::from_yaw(yaw).opposite()
+}
+
+/// As `facing_toward`, but also up or down when the player looks steeply
+/// that way (modern `getNearestLookingDirection().getOpposite()`).
+pub fn facing_toward_looking(yaw: f32, pitch: f32) -> Face {
+    let (sin_yaw, cos_yaw) = yaw.sin_cos();
+    let flat = pitch.cos();
+    let (x, z) = (sin_yaw * flat, -cos_yaw * flat);
+    let y = pitch.sin();
+    let looking = if y.abs() > x.abs().max(z.abs()) {
+        if y > 0.0 { Face::Top } else { Face::Bottom }
+    } else {
+        Face::from_yaw(yaw)
+    };
+    looking.opposite()
 }
 
 #[cfg(test)]

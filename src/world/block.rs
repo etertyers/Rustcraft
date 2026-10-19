@@ -498,6 +498,8 @@ pub enum Placement {
     Facing,
     /// Faces the way the player looks (fence gates).
     Look,
+    /// Its front toward the player, up or down too (pistons).
+    LookAll,
     /// Faces a quarter turn clockwise from the way the player looks (anvils).
     LookClockwise,
     /// A log, lying along the axis of the clicked face.

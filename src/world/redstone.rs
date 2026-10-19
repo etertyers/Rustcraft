@@ -555,6 +555,17 @@ impl Step<'_> {
                 }
             }
             blocks::PISTON | blocks::STICKY_PISTON => self.update_piston(at, state),
+            blocks::PISTON_HEAD => {
+                // A head without its piston goes too.
+                let facing = state.face(Prop::FacingAll);
+                let base = self.state(at - step_of(facing));
+                let holds = matches!(base.id(), blocks::PISTON | blocks::STICKY_PISTON)
+                    && base.bool(Prop::Extended)
+                    && base.face(Prop::FacingAll) == facing;
+                if !holds {
+                    self.set(at, BlockState::AIR);
+                }
+            }
             blocks::HOPPER => {
                 let locked = self.has_neighbor_signal(at);
                 if state.bool(Prop::Powered) != locked {
@@ -802,6 +813,15 @@ impl Step<'_> {
     }
 
     fn update_piston(&mut self, at: IVec3, state: BlockState) {
+        let facing = state.face(Prop::FacingAll);
+        let head = self.state(at + step_of(facing));
+        // An extended piston whose head was broken is a plain one again.
+        if state.bool(Prop::Extended)
+            && !(head.is(blocks::PISTON_HEAD) && head.face(Prop::FacingAll) == facing)
+        {
+            self.set(at, state.with_bool(Prop::Extended, false));
+            return;
+        }
         let powered = self.piston_powered(at, state);
         let extended = state.bool(Prop::Extended);
         if powered != extended && !self.redstone.pending_pistons.contains(&at) {
