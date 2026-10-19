@@ -55,12 +55,12 @@ impl Game {
     }
 
     /// What the hand being used holds.
-    fn held(&self) -> Option<&ItemStack> {
+    pub(super) fn held(&self) -> Option<&ItemStack> {
         self.inventory.hand_stack(self.use_hand)
     }
 
     /// The slot of the hand being used.
-    fn held_slot(&self) -> usize {
+    pub(super) fn held_slot(&self) -> usize {
         self.inventory.hand_slot(self.use_hand)
     }
 
@@ -160,6 +160,16 @@ impl Game {
         }
         self.break_clicked = false;
         self.place_clicked = false;
+        // Right-clicking an animal: milk, shears, dye, a bone, a saddle, a seat.
+        if using
+            && place_pressed
+            && !wants_break
+            && let Some(mob) = self.target_mob(eye, hit.as_ref())
+            && self.use_mob(mob)
+        {
+            self.view.swing();
+            return;
+        }
         // A mob in front of the targeted block is hit instead, once per click.
         if let Some(mob) = self.target_mob(eye, hit.as_ref())
             && (wants_break || self.mining.is_none())
@@ -427,6 +437,7 @@ impl Game {
     pub(super) fn tick_arrows(&mut self) {
         let mut arrows = std::mem::take(&mut self.arrows);
         let player = self.body.aabb();
+        let mut hits = Vec::new();
         for arrow in &mut arrows {
             let world = self.chunks.world();
             let blocks = self.items.blocks;
@@ -445,10 +456,25 @@ impl Game {
             let rng = &mut self.rng;
             let mut random = || rng.next_f64() as f32;
             let from = arrow.position;
-            if let Some(ArrowEvent::HitMob { index, damage }) =
-                arrow.tick(block_hit, in_water, &self.mobs, &mut random)
-            {
-                self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+            let at_player = (arrow.hostile && !self.stats.is_dead()).then_some(&player);
+            match arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random) {
+                Some(ArrowEvent::HitMob { index, damage }) => {
+                    self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+                }
+                Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from)),
+                None => {}
+            }
+        }
+        for (damage, from) in hits {
+            if self.mode.is_vulnerable() {
+                let strike = super::combat::Strike {
+                    amount: damage,
+                    source: DamageSource::Arrow,
+                    from: Some(from),
+                    ranged: true,
+                    axe: false,
+                };
+                self.hurt_player(strike);
             }
         }
         arrows.retain(|arrow| {

@@ -52,6 +52,8 @@ pub struct Arrow {
     pub critical: bool,
     /// Whether it can be picked back up (not from creative).
     pub pickup: bool,
+    /// Shot by a mob: it hits the player instead of mobs.
+    pub hostile: bool,
 }
 
 /// What a flying arrow did this tick.
@@ -59,6 +61,8 @@ pub struct Arrow {
 pub enum ArrowEvent {
     /// Hit mob `index` for this much.
     HitMob { index: usize, damage: f32 },
+    /// A mob's arrow hit the player for this much.
+    HitPlayer { damage: f32 },
 }
 
 impl Arrow {
@@ -83,6 +87,7 @@ impl Arrow {
             ticks_stuck: 0,
             critical: power >= 1.0,
             pickup,
+            hostile: false,
         }
     }
 
@@ -108,6 +113,7 @@ impl Arrow {
         block_hit: impl Fn(DVec3, DVec3, f64) -> Option<f64>,
         in_water: bool,
         mobs: &[Mob],
+        player: Option<&Aabb>,
         random: &mut impl FnMut() -> f32,
     ) -> Option<ArrowEvent> {
         self.prev_position = self.position;
@@ -123,9 +129,22 @@ impl Arrow {
         self.heading = dir;
         let wall = block_hit(self.position, dir, speed);
         let reach = wall.unwrap_or(speed);
+        if self.hostile
+            && let Some(player) = player
+            && player
+                .grow(HIT_BORDER)
+                .ray_hit(self.position, dir, reach)
+                .is_some()
+        {
+            let damage = (speed * DAMAGE_PER_SPEED).ceil() as f32;
+            self.ticks_stuck = STUCK_LIFETIME;
+            self.stuck = true;
+            return Some(ArrowEvent::HitPlayer { damage });
+        }
         let target = mobs
             .iter()
             .enumerate()
+            .filter(|_| !self.hostile)
             .filter(|(_, mob)| !mob.is_dead())
             .filter_map(|(i, mob)| {
                 let t = mob
@@ -193,7 +212,7 @@ mod tests {
         let mut arrow = shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0);
         assert!(arrow.critical);
         let mut random = || 0.0;
-        arrow.tick(no_blocks, false, &[], &mut random);
+        arrow.tick(no_blocks, false, &[], None, &mut random);
         assert!(
             (arrow.position.z + 3.0).abs() < 1e-9,
             "3 blocks the first tick"
@@ -205,7 +224,7 @@ mod tests {
                 .ray_hit(from, dir, reach)
         };
         for _ in 0..10 {
-            arrow.tick(wall, false, &[], &mut random);
+            arrow.tick(wall, false, &[], None, &mut random);
         }
         assert!(arrow.stuck);
         assert!(
@@ -253,7 +272,7 @@ mod tests {
     fn arrows_slow_to_six_tenths_in_water() {
         let mut arrow = shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0);
         let mut random = || 0.0;
-        arrow.tick(no_blocks, true, &[], &mut random);
+        arrow.tick(no_blocks, true, &[], None, &mut random);
         assert!((arrow.velocity.z + 3.0 * 0.6).abs() < 1e-9);
     }
 
@@ -264,7 +283,13 @@ mod tests {
         let zombie = Mob::new(kind, mobs.get(kind), DVec3::new(0.0, 64.0, -2.0), 0.0);
         let mut arrow = shoot(DVec3::new(0.0, 65.0, 0.0), DVec3::NEG_Z, 1.0);
         let mut random = || 0.0;
-        let event = arrow.tick(no_blocks, false, std::slice::from_ref(&zombie), &mut random);
+        let event = arrow.tick(
+            no_blocks,
+            false,
+            std::slice::from_ref(&zombie),
+            None,
+            &mut random,
+        );
         assert_eq!(
             event,
             Some(ArrowEvent::HitMob {

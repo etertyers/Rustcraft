@@ -6,6 +6,22 @@
 // table, block/X also tries blocks/X and item/X also tries items/X, the
 // folder names before 1.13.
 {
+    "item/mutton": ["items/mutton_raw"],
+    "item/cooked_mutton": ["items/mutton_cooked"],
+    "item/rabbit": ["items/rabbit_raw"],
+    "item/cooked_rabbit": ["items/rabbit_cooked"],
+    "item/rabbit_hide": ["items/rabbit_hide"],
+    "item/rabbit_foot": ["items/rabbit_foot"],
+    "item/salmon": ["items/fish_salmon_raw"],
+    "item/cooked_salmon": ["items/fish_salmon_cooked"],
+    "item/phantom_membrane": ["items/phantom_membrane"],
+    "entity/cow/temperate_cow": ["entity/cow/cow"],
+    "entity/chicken/temperate_chicken": ["entity/chicken/chicken", "entity/chicken"],
+    "entity/sheep/sheep_wool": ["entity/sheep/sheep_fur"],
+    "entity/wolf/wolf_collar": ["entity/wolf/wolf_collar"],
+    "entity/squid/squid": ["entity/squid"],
+    "entity/iron_golem/iron_golem": ["entity/iron_golem"],
+    "entity/phantom": ["entity/phantom"],
     "block/activator_rail": ["blocks/rail_activator"],
     "block/activator_rail_on": ["blocks/rail_activator_powered"],
     "block/redstone_lamp_off": ["blocks/redstone_lamp_off"],

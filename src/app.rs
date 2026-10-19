@@ -51,7 +51,7 @@ use crate::{
         },
         held::HeldCache,
         icons::ItemIcons,
-        models::{add_arrow, add_minecart, add_mob},
+        models::{DYE_COLORS, add_arrow, add_minecart, add_mob, add_mob_model},
     },
     shots,
     ui::{
@@ -823,23 +823,52 @@ impl App {
             let near = |mob: &&crate::entity::mob::Mob| {
                 mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE
             };
-            for mob in game.mobs.iter().filter(near) {
-                let index = match meshes.iter().position(|(kind, _)| *kind == mob.kind) {
+            let defs = game.mob_defs();
+            let mesh_for = |meshes: &mut Vec<(usize, Mesh)>, slot: usize| -> usize {
+                match meshes.iter().position(|(s, _)| *s == slot) {
                     Some(index) => index,
                     None => {
-                        meshes.push((mob.kind, Mesh::default()));
+                        meshes.push((slot, Mesh::default()));
                         meshes.len() - 1
                     }
-                };
-                let def = game.mob_defs().get(mob.kind);
-                add_mob(&mut meshes[index].1, mob, def, alpha, light_at(mob.eye()));
+                }
+            };
+            for mob in game.mobs.iter().filter(near) {
+                let def = defs.get(mob.kind);
+                let light = light_at(mob.eye());
+                let slot = defs.texture_slot(mob.kind, mob.data.variant);
+                let index = mesh_for(&mut meshes, slot);
+                add_mob(&mut meshes[index].1, mob, def, alpha, light);
+                for (i, layer) in def.layers.iter().enumerate() {
+                    if (layer.wool && mob.data.sheared)
+                        || layer.only_variant.is_some_and(|v| v != mob.data.variant)
+                    {
+                        continue;
+                    }
+                    let tint = if layer.dyed {
+                        DYE_COLORS[usize::from(mob.data.color) % 16]
+                    } else {
+                        [1.0; 3]
+                    };
+                    let light = if layer.glow { (15, 15) } else { light };
+                    let index = mesh_for(&mut meshes, defs.layer_slot(mob.kind, i));
+                    add_mob_model(
+                        &mut meshes[index].1,
+                        mob,
+                        def,
+                        &layer.model,
+                        alpha,
+                        light,
+                        tint,
+                    );
+                }
             }
             // The arrow texture follows the mob textures.
             let mut arrows = Mesh::default();
             for arrow in &game.arrows {
                 add_arrow(&mut arrows, arrow, alpha, light_at(arrow.position));
             }
-            let mob_kinds = game.mob_defs().iter().count();
+            let mob_kinds = game.mob_defs().texture_count();
             meshes.push((mob_kinds, arrows));
             // The minecart texture follows the arrow's, and the skin it.
             let mut carts = Mesh::default();

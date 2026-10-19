@@ -174,4 +174,13 @@
     (name: "music_disc_strad", texture: "music_disc_strad", max_stack: 1),
     (name: "music_disc_ward", texture: "music_disc_ward", max_stack: 1),
     (name: "music_disc_11", texture: "music_disc_11", max_stack: 1),
+    (name: "mutton", texture: "mutton", food: (hunger: 2, saturation: 0.3)),
+    (name: "cooked_mutton", texture: "cooked_mutton", food: (hunger: 6, saturation: 0.8)),
+    (name: "rabbit", texture: "rabbit", food: (hunger: 3, saturation: 0.3)),
+    (name: "cooked_rabbit", texture: "cooked_rabbit", food: (hunger: 5, saturation: 0.6)),
+    (name: "rabbit_hide", texture: "rabbit_hide"),
+    (name: "rabbit_foot", texture: "rabbit_foot"),
+    (name: "salmon", texture: "salmon", food: (hunger: 2, saturation: 0.3)),
+    (name: "cooked_salmon", texture: "cooked_salmon", food: (hunger: 6, saturation: 0.8)),
+    (name: "phantom_membrane", texture: "phantom_membrane"),
 ]

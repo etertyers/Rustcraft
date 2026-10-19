@@ -90,7 +90,7 @@ impl Game {
 
     /// Whether the player is in a cart.
     pub fn is_riding(&self) -> bool {
-        self.riding.is_some()
+        self.riding.is_some() || self.mounted.is_some()
     }
 
     /// Right-click on a cart: sit in a plain one, open a chest or hopper

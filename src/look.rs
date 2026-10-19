@@ -127,8 +127,8 @@ impl Look {
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);
         let mut mob_textures: Vec<RgbaImage> = mobs
-            .iter()
-            .map(|(_, def)| def.texture.as_str())
+            .textures()
+            .into_iter()
             .chain([ARROW_TEXTURE, MINECART_TEXTURE])
             .map(|name| {
                 res.image(name).unwrap_or_else(|| {
@@ -224,7 +224,7 @@ mod tests {
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());
         // The mobs, the arrow and the skin.
-        assert_eq!(look.mob_textures.len(), mobs().iter().count() + 3);
+        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 3);
         assert!(look.atlas.has("block/grass_block_top"));
         assert!(look.atlas.has("block/destroy_stage_9"));
         // Concrete has no texture without a pack.

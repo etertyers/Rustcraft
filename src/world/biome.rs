@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use image::RgbaImage;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum Biome {
     Ocean,
     #[default]

@@ -126,6 +126,8 @@ pub struct Body {
     pub flying: bool,
     /// False when too hungry to sprint.
     pub can_sprint: bool,
+    /// Flies freely whatever the ground (flying and swimming mobs).
+    pub free_flight: bool,
     /// Whether the last tick started a jump.
     pub jumped: bool,
     /// The liquid the body was in during the last tick.
@@ -169,6 +171,7 @@ impl Body {
             may_fly: false,
             flying: false,
             can_sprint: true,
+            free_flight: false,
             jumped: false,
             liquid: None,
             bounced: false,
@@ -274,7 +277,12 @@ impl Body {
 
     /// Advances one tick. `yaw` is in radians, 0 facing north (−Z).
     pub fn tick(&mut self, input: &MoveInput, yaw: f32, world: &impl Collider) {
-        self.update_flight(input.jump);
+        if self.free_flight {
+            self.may_fly = true;
+            self.flying = true;
+        } else {
+            self.update_flight(input.jump);
+        }
         self.sneaking = input.sneak && !self.flying;
         let eyes_in_water = self.eyes_in_water(world);
         self.update_swimming(eyes_in_water);
@@ -386,7 +394,7 @@ impl Body {
         if self.flying {
             // Flight keeps 0.6 of the vertical speed and ignores gravity.
             self.velocity.y = vertical * FLY_VERTICAL_DRAG;
-            if self.on_ground {
+            if self.on_ground && !self.free_flight {
                 self.flying = false;
             }
         } else {
