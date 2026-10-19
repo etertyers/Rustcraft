@@ -3,6 +3,9 @@
 
 @group(1) @binding(0) var atlas_texture: texture_2d<f32>;
 @group(1) @binding(1) var atlas_sampler: sampler;
+// The enchantment glint's pattern, repeating.
+@group(2) @binding(0) var glint_texture: texture_2d<f32>;
+@group(2) @binding(1) var glint_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -53,6 +56,23 @@ fn lightmap(light: vec2<f32>) -> vec3<f32> {
     return min((sky + torch) * 0.96 + 0.03, vec3<f32>(1.0));
 }
 
+// Enchanted items have 64 added to their sky light (see GLINT_FLAG).
+const GLINT_FLAG: f32 = 64.0;
+
+// The glint pattern at a point of an enchanted item: stripes scrolling
+// diagonally at 10°, tinted purple. Tiled across the item's world position
+// (a block is 16 repeats).
+fn glint(world: vec3<f32>) -> vec3<f32> {
+    let seconds = globals.camera.w / 20.0;
+    let p = vec2<f32>(world.x + world.z, world.y * 1.4) * 8.0;
+    let c = 0.98480775;
+    let s = 0.17364818;
+    let rotated = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
+    let scroll = vec2<f32>(seconds / 3.0, seconds / 4.873);
+    let texel = textureSample(glint_texture, glint_sampler, rotated + scroll);
+    return texel.rgb * vec3<f32>(0.5, 0.25, 0.8);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
@@ -61,11 +81,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if texel.a < 0.5 {
         discard;
     }
+    var light = in.light;
+    var shine = vec3<f32>(0.0);
+    if light.x >= GLINT_FLAG * 0.5 {
+        light.x -= GLINT_FLAG;
+        shine = glint(in.world);
+    }
     // Minecraft multiplies the texture by its tint, shade and lightmap in
     // sRGB values, so do the same: back to sRGB, multiply, then linear again
     // for the sRGB target. Multiplying in linear space crushes the darkest
     // light levels to pure black.
-    let color = linear_to_srgb(texel.rgb) * in.color * lightmap(in.light);
+    let color = linear_to_srgb(texel.rgb) * in.color * lightmap(light) + shine;
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));
     let fogged = mix(globals.fog_color.rgb, color, visible);
     return vec4<f32>(srgb_to_linear(fogged), 1.0);

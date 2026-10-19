@@ -19,6 +19,8 @@ pub struct SlotView {
     pub count: u8,
     /// Durability left, 0–1, once a tool or armor piece has been used.
     pub durability: Option<f32>,
+    /// Enchanted: the pattern shimmers over it.
+    pub glint: bool,
 }
 
 impl SlotView {
@@ -36,6 +38,7 @@ impl SlotView {
             icon,
             count: stack.count,
             durability,
+            glint: stack.is_enchanted(),
         }
     }
 }
@@ -147,6 +150,7 @@ impl GuiTextures {
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
             icons: sheet("gui/icons", ICONS)?,
         };
+        super::glint::install(ctx, atlas, res.image(crate::render::GLINT_TEXTURE));
         log::info!("GUI sheets (px wide): {}", widths.borrow().join(", "));
         Ok(textures)
     }
@@ -288,6 +292,9 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: &ItemIcon, atlas: Texture
 pub fn paint_slot(painter: &Painter, at: Pos2, slot: &SlotView, scale: f32, atlas: TextureId) {
     let rect = Rect::from_min_size(at, vec2(16.0, 16.0) * scale);
     paint_icon(painter, rect, &slot.icon, atlas);
+    if slot.glint {
+        super::glint::paint(painter, rect, &slot.icon);
+    }
     if let Some(left) = slot.durability {
         // 1.0.0: a 13-pixel bar on black, green to red as it wears.
         let bar = |x: f32, width: f32, height: f32, color: Color32| {

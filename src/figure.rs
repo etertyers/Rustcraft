@@ -93,6 +93,7 @@ pub fn build(
             let item = main.as_ref().map(|(geometry, stack, up)| HandItem {
                 geometry,
                 display: first_person_display(fig, stack, false, *up),
+                glint: stack.is_enchanted(),
             });
             let input = HandInput {
                 left: false,
@@ -126,6 +127,7 @@ pub fn build(
                     item: Some(HandItem {
                         geometry,
                         display: first_person_display(fig, stack, true, *up),
+                        glint: stack.is_enchanted(),
                     }),
                     ..input
                 };
@@ -156,7 +158,8 @@ pub fn build(
                 let display = third_person_display(fig, &stack, left, up);
                 let matrix =
                     frame * hand_mount(&rig, !left, fig.slim) * display_matrix(&display, left);
-                geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], body_light);
+                let light = crate::render::hand::glinted(body_light, stack.is_enchanted());
+                geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], light);
             }
         }
     }

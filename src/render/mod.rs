@@ -82,7 +82,16 @@ pub struct SkyImages {
     pub sun: RgbaImage,
     pub moon: RgbaImage,
     pub clouds: RgbaImage,
+    /// The enchantment glint's pattern (`misc/enchanted_glint_item`).
+    pub glint: RgbaImage,
 }
+
+/// Name of the glint pattern.
+pub const GLINT_TEXTURE: &str = "misc/enchanted_glint_item";
+
+/// Added to the sky light of an enchanted item's vertices to make the
+/// shader shimmer them (real sky light never gets near it).
+pub const GLINT_FLAG: u8 = 64;
 
 impl SkyImages {
     pub fn load(res: &crate::pack::Resources) -> Result<Self> {
@@ -94,6 +103,10 @@ impl SkyImages {
             sun: load("environment/sun")?,
             moon: load("environment/moon_phases")?,
             clouds: load("environment/clouds")?,
+            glint: res.image(GLINT_TEXTURE).unwrap_or_else(|| {
+                log::warn!("no layer has {GLINT_TEXTURE}; enchanted items won't glint");
+                RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 0]))
+            }),
         })
     }
 }
@@ -151,6 +164,7 @@ pub struct Renderer {
     moon_bind_group: wgpu::BindGroup,
     cloud_pipeline: wgpu::RenderPipeline,
     cloud_bind_group: wgpu::BindGroup,
+    glint_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     /// The same, for the first-person hand's own projection.
@@ -265,12 +279,19 @@ impl Renderer {
             create_texture_bind_group(&device, &queue, &texture_layout, "moon", &sky.moon);
         let cloud_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "clouds", &sky.clouds);
+        let glint_bind_group =
+            create_texture_bind_group(&device, &queue, &texture_layout, "glint", &sky.glint);
         let atlas_layout = &texture_layout;
 
         let shader = world_shader!(device, "shader.wgsl");
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("blocks"),
-            bind_group_layouts: &[Some(&globals_layout), Some(atlas_layout)],
+            // The glint pattern is group 2 (the sky borrows it for the moon).
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(atlas_layout),
+                Some(atlas_layout),
+            ],
             immediate_size: 0,
         });
         let pipeline = create_block_pipeline(
@@ -338,6 +359,7 @@ impl Renderer {
             moon_bind_group,
             cloud_pipeline,
             cloud_bind_group,
+            glint_bind_group,
             globals_buffer,
             globals_bind_group,
             hand_globals_buffer,
@@ -819,6 +841,7 @@ impl Renderer {
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            pass.set_bind_group(2, &self.glint_bind_group, &[]);
             // Chunks in view, nearest first: opaque faces draw front to back,
             // translucent ones back to front.
             let mut visible: Vec<(f32, &ChunkBuffers)> = self
@@ -924,6 +947,7 @@ impl Renderer {
                 ..Default::default()
             });
             pass.set_bind_group(0, &self.hand_globals_bind_group, &[]);
+            pass.set_bind_group(2, &self.glint_bind_group, &[]);
             pass.set_pipeline(&self.mob_pipeline);
             if let Some(arm) = &self.hand_arm
                 && let Some(skin) = self.mob_bind_groups.last()

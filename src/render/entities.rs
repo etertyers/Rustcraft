@@ -51,6 +51,7 @@ pub fn item_mesh(
     for item in entities {
         let center = item.center_between_ticks(alpha);
         let (sky, block) = light_at(center);
+        let (sky, block) = super::hand::glinted((sky, block), item.stack.is_enchanted());
         let light = [sky as f32, block as f32];
         let time = item.age as f32 + alpha as f32;
         let bob = ((time / 10.0 + item.hover).sin() * 0.1 + 0.1) as f64;

@@ -25,6 +25,8 @@ pub const HAND_FOV_DEGREES: f32 = 70.0;
 pub struct HandItem<'a> {
     pub geometry: &'a HeldGeometry,
     pub display: Transform,
+    /// Enchanted: the shader makes it shimmer.
+    pub glint: bool,
 }
 
 /// Everything the hand's pose depends on.
@@ -161,6 +163,15 @@ pub fn hand_pose(input: &HandInput) -> Mat4 {
     }
 }
 
+/// `light` with the shader's flag for enchanted items added when `on`.
+pub fn glinted(light: (u8, u8), on: bool) -> (u8, u8) {
+    if on {
+        (light.0 + super::GLINT_FLAG, light.1)
+    } else {
+        light
+    }
+}
+
 /// Builds the hand for one frame.
 pub fn build(input: &HandInput) -> HandMeshes {
     let pose = hand_pose(input);
@@ -168,8 +179,12 @@ pub fn build(input: &HandInput) -> HandMeshes {
     match input.item {
         Some(item) => {
             let matrix = pose * display_matrix(&item.display, input.left);
-            item.geometry
-                .add_to(&mut meshes.item, &matrix, [1.0; 3], input.light);
+            item.geometry.add_to(
+                &mut meshes.item,
+                &matrix,
+                [1.0; 3],
+                glinted(input.light, item.glint),
+            );
         }
         None => add_arm(&mut meshes.arm, &pose, input),
     }
@@ -318,6 +333,7 @@ mod tests {
                 translation: [0.0; 3],
                 scale: [0.5; 3],
             },
+            glint: false,
         };
         for held in [None, Some(item)] {
             for swing in [0.0, 0.3, 0.7] {
@@ -353,6 +369,7 @@ mod tests {
         let item = HandItem {
             geometry: &geometry,
             display: display(),
+            glint: false,
         };
         let meshes = build(&input(Some(item)));
         assert!(meshes.arm.is_empty(), "an item replaces the bare arm");
@@ -374,6 +391,7 @@ mod tests {
         let item = HandItem {
             geometry: &geometry,
             display: display(),
+            glint: false,
         };
         let raised = bounds(&build(&input(Some(item))).item);
         let lowered = bounds(
@@ -393,6 +411,7 @@ mod tests {
         let item = HandItem {
             geometry: &geometry,
             display: display(),
+            glint: false,
         };
         for held in [Some(item), None] {
             let at = |swing: f32| {
@@ -422,6 +441,7 @@ mod tests {
         let item = HandItem {
             geometry: &geometry,
             display: display(),
+            glint: false,
         };
         let at = |remaining: f32| {
             let m = build(&HandInput {
@@ -449,6 +469,7 @@ mod tests {
         let item = HandItem {
             geometry: &geometry,
             display: display(),
+            glint: false,
         };
         let at = |drawn: f32| {
             let m = build(&HandInput {
@@ -470,6 +491,7 @@ mod tests {
         let item = HandItem {
             geometry: &geometry,
             display: display(),
+            glint: false,
         };
         let rest = bounds(&build(&input(Some(item))).item);
         // The camera has turned right: the hand trails to the left.
