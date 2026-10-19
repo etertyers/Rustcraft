@@ -30,6 +30,10 @@ pub enum Screen {
         dropper: bool,
     },
     Hopper,
+    /// An enchanting table's item and lapis slots, and its three offers.
+    Enchanting,
+    Anvil,
+    Grindstone,
 }
 
 /// What the player did on a screen this frame.
@@ -59,6 +63,49 @@ pub enum ScreenAction {
     LeaveBed,
     /// A choice in the pause menu.
     Pause(super::pause::PauseAction),
+    /// Took the enchanting table's offer 0–2.
+    Enchant(usize),
+    /// Typed in the anvil's name box.
+    AnvilName(String),
+}
+
+/// One of an enchanting table's offers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OfferView {
+    /// Levels the player needs to have.
+    pub requires: u32,
+    /// The hint shown on hover: the first enchantment.
+    pub clue: String,
+}
+
+/// What the anvil says about its result.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum AnvilStatus {
+    #[default]
+    Nothing,
+    Cost {
+        levels: u32,
+        affordable: bool,
+    },
+    TooExpensive,
+}
+
+/// Everything an enchanting table, anvil or grindstone screen shows
+/// besides its slots.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BenchView {
+    pub offers: [Option<OfferView>; 3],
+    pub lapis: u32,
+    pub level: u32,
+    /// Creative: nothing costs anything.
+    pub free: bool,
+    pub anvil: AnvilStatus,
+    /// The anvil's name box.
+    pub name: String,
+    /// Whether the anvil's first slot holds something to rename.
+    pub has_item: bool,
+    /// Something is in the slots but nothing can come out (the red X).
+    pub blocked: bool,
 }
 
 /// Everything a screen shows.
@@ -71,6 +118,8 @@ pub struct ScreenView<'a> {
     pub cursor: Option<SlotView>,
     /// Creative: every block and item, with how it looks and its name.
     pub catalog: &'a [(ItemStack, SlotView, String)],
+    /// The workstation screens' extras.
+    pub bench: Option<BenchView>,
 }
 
 /// A drag across slots in progress: the button held and the slots crossed.
@@ -130,9 +179,13 @@ fn inventory_slot(index: usize) -> [f32; 2] {
 /// Panel size in GUI pixels.
 fn panel_size(screen: &Screen) -> [f32; 2] {
     match screen {
-        Screen::Inventory | Screen::Crafting | Screen::Furnace | Screen::Dispenser { .. } => {
-            [176.0, 166.0]
-        }
+        Screen::Inventory
+        | Screen::Crafting
+        | Screen::Furnace
+        | Screen::Dispenser { .. }
+        | Screen::Enchanting
+        | Screen::Anvil
+        | Screen::Grindstone => [176.0, 166.0],
         Screen::Hopper => [176.0, 133.0],
         Screen::Creative { .. } => [195.0, 136.0],
         // 1.0.0's GuiChest: 114 plus 18 per row.
@@ -198,6 +251,29 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
             .map(|i| (SlotRef::Block(i), [44.0 + i as f32 * 18.0, 20.0]))
             .chain(inventory)
             .collect(),
+        Screen::Enchanting => [
+            (SlotRef::Grid(0), [15.0, 47.0]),
+            (SlotRef::Grid(1), [35.0, 47.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
+        Screen::Anvil => [
+            (SlotRef::Grid(0), [27.0, 47.0]),
+            (SlotRef::Grid(1), [76.0, 47.0]),
+            (SlotRef::Result, [134.0, 47.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
+        Screen::Grindstone => [
+            (SlotRef::Grid(0), [49.0, 19.0]),
+            (SlotRef::Grid(1), [49.0, 40.0]),
+            (SlotRef::Result, [129.0, 34.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
         Screen::Chest => (0..CHEST_ROWS * 9)
             .map(|i| {
                 let (column, row) = ((i % 9) as f32, (i / 9) as f32);
@@ -223,6 +299,12 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
             &[("Dropper", [60.0, 6.0]), ("Inventory", [8.0, 72.0])]
         }
         Screen::Hopper => &[("Item Hopper", [8.0, 6.0]), ("Inventory", [8.0, 39.0])],
+        Screen::Enchanting => &[("Enchant", [12.0, 5.0]), ("Inventory", [8.0, 73.0])],
+        Screen::Anvil => &[("Repair & Name", [60.0, 6.0]), ("Inventory", [8.0, 73.0])],
+        Screen::Grindstone => &[
+            ("Repair & Disenchant", [8.0, 6.0]),
+            ("Inventory", [8.0, 73.0]),
+        ],
     }
 }
 
@@ -286,6 +368,9 @@ pub fn show(
         Screen::Furnace => &textures.furnace,
         Screen::Dispenser { .. } => &textures.dispenser,
         Screen::Hopper => &textures.hopper,
+        Screen::Enchanting => &textures.enchanting,
+        Screen::Anvil => &textures.anvil,
+        Screen::Grindstone => &textures.grindstone,
     };
     if *screen == Screen::Chest {
         // The chest rows, then the inventory part from the bottom of the
@@ -390,6 +475,20 @@ pub fn show(
             painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
         }
     }
+    if let Some(bench) = &view.bench {
+        let widgets = BenchWidgets {
+            ctx,
+            painter: &painter,
+            texture: background.id(),
+            origin,
+            scale,
+            pointer,
+            pressed: left,
+        };
+        if let Some(text) = paint_bench(&widgets, *screen, bench, &mut actions) {
+            tooltip = Some(text);
+        }
+    }
     slot_input(
         &mut actions,
         &mut drag,
@@ -484,6 +583,177 @@ fn slot_input(
         Some(click) => actions.push(ScreenAction::Click(slot, click)),
         None => {}
     }
+}
+
+/// What drawing a workstation screen's extras needs.
+struct BenchWidgets<'a> {
+    ctx: &'a egui::Context,
+    painter: &'a Painter,
+    texture: egui::TextureId,
+    origin: Pos2,
+    scale: f32,
+    pointer: Option<Pos2>,
+    pressed: bool,
+}
+
+/// Text with a dark shadow, as the game draws numbers on its screens.
+fn shadowed(
+    painter: &Painter,
+    at: Pos2,
+    align: egui::Align2,
+    text: &str,
+    color: Color32,
+    scale: f32,
+) {
+    let font = egui::FontId::proportional(8.0 * scale);
+    painter.text(
+        at + vec2(scale, scale),
+        align,
+        text,
+        font.clone(),
+        Color32::from_black_alpha(160),
+    );
+    painter.text(at, align, text, font, color);
+}
+
+/// The enchanting table's three buttons, the anvil's name box and cost,
+/// and the red X on a grindstone or anvil that can't make anything.
+/// Returns the tooltip of a button under the mouse.
+fn paint_bench(
+    w: &BenchWidgets,
+    screen: Screen,
+    bench: &BenchView,
+    actions: &mut Vec<ScreenAction>,
+) -> Option<String> {
+    let at = |x: f32, y: f32| w.origin + vec2(x, y) * w.scale;
+    let sheet = |from: [f32; 2], size: [f32; 2], to: Pos2| {
+        gui::sheet_image(w.painter, w.texture, from, size, to, w.scale);
+    };
+    let mut tooltip = None;
+    match screen {
+        Screen::Enchanting => {
+            for (i, offer) in bench.offers.iter().enumerate() {
+                let (x, y) = (60.0, 14.0 + 19.0 * i as f32);
+                let price = i as u32 + 1;
+                let Some(offer) = offer else {
+                    sheet([0.0, 166.0], [108.0, 19.0], at(x, y));
+                    continue;
+                };
+                let affordable = bench.free
+                    || (bench.level >= offer.requires
+                        && bench.level >= price
+                        && bench.lapis >= price);
+                let rect = Rect::from_min_size(at(x, y), vec2(108.0, 19.0) * w.scale);
+                let hovered = w.pointer.is_some_and(|pos| rect.contains(pos));
+                let v = match (affordable, hovered) {
+                    (false, _) => 166.0,
+                    (true, true) => 204.0,
+                    (true, false) => 185.0,
+                };
+                sheet([0.0, v], [108.0, 19.0], at(x, y));
+                let icon_v = if affordable { 223.0 } else { 239.0 };
+                sheet(
+                    [16.0 * i as f32, icon_v],
+                    [16.0, 16.0],
+                    at(x + 1.0, y + 1.0),
+                );
+                let color = if affordable {
+                    Color32::from_rgb(0xC8, 0xFF, 0x8F)
+                } else {
+                    Color32::from_rgb(0x40, 0x7F, 0x10)
+                };
+                shadowed(
+                    w.painter,
+                    at(x + 106.0, y + 5.0),
+                    egui::Align2::RIGHT_TOP,
+                    &offer.requires.to_string(),
+                    color,
+                    w.scale,
+                );
+                if hovered {
+                    let good = |ok: bool| if ok { "" } else { " (not enough)" };
+                    let mut text = format!("{} . . . ?\n", offer.clue);
+                    text += &format!(
+                        "\n{} Lapis Lazuli{}",
+                        price,
+                        good(bench.free || bench.lapis >= price)
+                    );
+                    text += &format!(
+                        "\n{} Enchantment Level{}{}",
+                        price,
+                        if price > 1 { "s" } else { "" },
+                        good(bench.free || bench.level >= price)
+                    );
+                    if bench.level < offer.requires && !bench.free {
+                        text += &format!("\nRequires level {}", offer.requires);
+                    }
+                    tooltip = Some(text);
+                    if w.pressed && affordable {
+                        actions.push(ScreenAction::Enchant(i));
+                    }
+                }
+            }
+        }
+        Screen::Anvil => {
+            let strip_v = if bench.has_item { 166.0 } else { 182.0 };
+            sheet([0.0, strip_v], [110.0, 16.0], at(59.0, 20.0));
+            if bench.has_item {
+                let mut text = bench.name.clone();
+                let area = egui::Area::new(egui::Id::unique("anvil-name"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(at(62.0, 24.0))
+                    .show(w.ctx, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .frame(egui::Frame::NONE)
+                                .desired_width(103.0 * w.scale)
+                                .font(egui::FontId::proportional(8.0 * w.scale))
+                                .text_color(Color32::WHITE)
+                                .char_limit(50),
+                        )
+                    });
+                if !area.inner.has_focus() {
+                    area.inner.request_focus();
+                }
+                if text != bench.name {
+                    actions.push(ScreenAction::AnvilName(text));
+                }
+            }
+            if bench.blocked {
+                sheet([176.0, 0.0], [28.0, 21.0], at(99.0, 45.0));
+            }
+            let (text, color) = match bench.anvil {
+                AnvilStatus::Nothing => (None, Color32::WHITE),
+                AnvilStatus::TooExpensive => (
+                    Some("Too Expensive!".to_owned()),
+                    Color32::from_rgb(0xFF, 0x60, 0x60),
+                ),
+                AnvilStatus::Cost { levels, affordable } => (
+                    Some(format!("Enchantment Cost: {levels}")),
+                    if affordable {
+                        Color32::from_rgb(0x80, 0xFF, 0x20)
+                    } else {
+                        Color32::from_rgb(0xFF, 0x60, 0x60)
+                    },
+                ),
+            };
+            if let Some(text) = text {
+                shadowed(
+                    w.painter,
+                    at(168.0, 69.0),
+                    egui::Align2::RIGHT_TOP,
+                    &text,
+                    color,
+                    w.scale,
+                );
+            }
+        }
+        Screen::Grindstone if bench.blocked => {
+            sheet([176.0, 0.0], [28.0, 21.0], at(92.0, 31.0));
+        }
+        _ => {}
+    }
+    tooltip
 }
 
 /// The furnace's flame, shrinking as the fuel burns, and its arrow, growing

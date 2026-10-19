@@ -417,6 +417,21 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
         }
         Shape::DragonEgg => one(Cuboid::px(1.0, 0.0, 1.0, 15.0, 16.0, 15.0)),
         Shape::Bamboo => one(Cuboid::px(6.5, 0.0, 6.5, 9.5, 16.0, 9.5)),
+        Shape::Grindstone => {
+            // Minecraft's grindstone on the floor: a wheel between two
+            // posts on legs, turning on the facing's axis.
+            let boxes = vec![
+                Cuboid::px(2.0, 0.0, 6.0, 4.0, 7.0, 10.0),
+                Cuboid::px(12.0, 0.0, 6.0, 14.0, 7.0, 10.0),
+                Cuboid::px(2.0, 7.0, 5.0, 4.0, 13.0, 11.0),
+                Cuboid::px(12.0, 7.0, 5.0, 14.0, 13.0, 11.0),
+                Cuboid::px(4.0, 4.0, 2.0, 12.0, 16.0, 14.0),
+            ];
+            match facing() {
+                Face::North | Face::South => boxes.into_iter().map(|b| b.rotated(1)).collect(),
+                _ => boxes,
+            }
+        }
         Shape::Anvil => {
             // Minecraft's anvil, lying along x; turned for north/south.
             let boxes = vec![

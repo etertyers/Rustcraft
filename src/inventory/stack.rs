@@ -285,12 +285,31 @@ impl Items {
         Some(self.blocks.def(block).placed_state())
     }
 
-    /// Display name, e.g. "stone" or "lapis lazuli".
+    /// Display name, e.g. "stone" or "lapis lazuli", or what an anvil
+    /// renamed it to.
     pub fn name(&self, stack: &ItemStack) -> String {
+        if let Some(name) = stack.custom_name() {
+            return name.to_owned();
+        }
         match self.item(stack.id) {
             Some(item) => item.name.replace('_', " "),
             None => format!("unknown item {}", stack.id.index()),
         }
+    }
+
+    /// The name with a line for each enchantment ("Efficiency V"), as
+    /// the tooltip shows it.
+    pub fn tooltip(&self, stack: &ItemStack) -> String {
+        let mut text = self.name(stack);
+        for &(enchantment, level) in stack.enchantments() {
+            text.push('\n');
+            text.push_str(enchantment.name());
+            if enchantment.max_level() > 1 || level > 1 {
+                text.push(' ');
+                text.push_str(&super::enchant::roman(level));
+            }
+        }
+        text
     }
 }
 

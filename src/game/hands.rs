@@ -4,7 +4,7 @@
 
 use glam::{DVec3, IVec3};
 
-use super::Game;
+use super::{BenchKind, Game};
 use crate::{
     entity::{
         arrow::{self, Arrow, ArrowEvent},
@@ -599,6 +599,9 @@ impl Game {
                 self.open_dispenser(cell, dropper);
             }
             Activate::Hopper => self.open_hopper(cell),
+            Activate::Enchanting => self.open_bench(BenchKind::Enchanting, cell),
+            Activate::Anvil => self.open_bench(BenchKind::Anvil, cell),
+            Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }

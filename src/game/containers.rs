@@ -37,16 +37,54 @@ pub enum Container {
     Hopper(IVec3),
     /// The chest or hopper minecart with this index.
     Cart(usize),
+    /// An enchanting table, anvil or grindstone, with the stacks put in it.
+    Bench(Bench),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchKind {
+    Enchanting,
+    Anvil,
+    Grindstone,
+}
+
+/// The screen of an enchanting table, anvil or grindstone. Its input
+/// slots are `SlotRef::Grid`; the anvil's and grindstone's output is
+/// `SlotRef::Result`, worked out from the inputs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bench {
+    pub kind: BenchKind,
+    pub at: IVec3,
+    pub slots: Vec<Option<ItemStack>>,
+    /// What's typed in the anvil's name box.
+    pub name: String,
 }
 
 impl Container {
     /// The block whose slots this shows, if it shows a block's.
     pub fn block(&self) -> Option<IVec3> {
         match *self {
-            Self::Crafting { .. } | Self::Cart(_) => None,
+            Self::Crafting { .. } | Self::Cart(_) | Self::Bench(_) => None,
             Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
                 Some(at)
             }
+        }
+    }
+
+    /// The grid-like slots (`SlotRef::Grid`) of a crafting grid or bench.
+    pub(super) fn grid(&self) -> Option<&[Option<ItemStack>]> {
+        match self {
+            Self::Crafting { grid, .. } => Some(grid),
+            Self::Bench(bench) => Some(&bench.slots),
+            _ => None,
+        }
+    }
+
+    pub(super) fn grid_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
+        match self {
+            Self::Crafting { grid, .. } => Some(grid),
+            Self::Bench(bench) => Some(&mut bench.slots),
+            _ => None,
         }
     }
 
@@ -157,8 +195,17 @@ impl Game {
     /// stack held on the mouse (1.0.0's `onCraftGuiClosed`).
     pub fn close_container(&mut self) {
         let mut thrown: Vec<ItemStack> = self.cursor.take().into_iter().collect();
-        if let Some(Container::Crafting { grid, .. }) = self.container.take() {
-            thrown.extend(grid.into_iter().flatten());
+        match self.container.take() {
+            Some(Container::Crafting { grid, .. }) => thrown.extend(grid.into_iter().flatten()),
+            // A bench gives back what was put in it, into the inventory
+            // if it fits.
+            Some(Container::Bench(bench)) => {
+                for stack in bench.slots.into_iter().flatten() {
+                    let items = self.items.clone();
+                    thrown.extend(self.inventory.add(stack, &items));
+                }
+            }
+            _ => {}
         }
         for stack in thrown {
             self.throw(stack);
@@ -248,10 +295,10 @@ impl Game {
         match slot {
             SlotRef::Inventory(index) => self.inventory.slot(index).cloned(),
             SlotRef::Grid(index) => match &self.container {
-                Some(Container::Crafting { grid, .. }) => grid.get(index).cloned().flatten(),
-                _ => None,
+                Some(container) => container.grid()?.get(index).cloned().flatten(),
+                None => None,
             },
-            SlotRef::Result => self.crafting_result(),
+            SlotRef::Result => self.crafting_result().or_else(|| self.bench_result()),
             SlotRef::Block(index) => self.block_slots()?.get(index).cloned().flatten(),
         }
     }
@@ -267,7 +314,16 @@ impl Game {
                 self.inventory.click(index, click, &mut self.cursor, &items);
             }
             SlotRef::Grid(index) => {
-                let Some(Container::Crafting { grid, .. }) = &mut self.container else {
+                // The enchanting table's lapis slot takes only lapis.
+                if click != Click::Shift
+                    && self
+                        .cursor
+                        .as_ref()
+                        .is_some_and(|held| !self.slot_accepts(slot, held))
+                {
+                    return;
+                }
+                let Some(grid) = self.container.as_mut().and_then(Container::grid_mut) else {
                     return;
                 };
                 let Some(cell) = grid.get_mut(index) else {
@@ -280,6 +336,9 @@ impl Game {
                 } else {
                     slots::click(cell, click, &mut self.cursor, &items);
                 }
+            }
+            SlotRef::Result if matches!(self.container, Some(Container::Bench(_))) => {
+                self.take_bench_result(click == Click::Shift);
             }
             SlotRef::Result if click == Click::Shift => {
                 // Crafts as many as fit, each into the inventory hotbar end
@@ -385,9 +444,11 @@ impl Game {
     fn takes_items(&self, slot: SlotRef) -> bool {
         match slot {
             SlotRef::Inventory(index) => index < SLOTS,
-            SlotRef::Grid(index) => {
-                matches!(&self.container, Some(Container::Crafting { grid, .. }) if index < grid.len())
-            }
+            SlotRef::Grid(index) => self
+                .container
+                .as_ref()
+                .and_then(Container::grid)
+                .is_some_and(|grid| index < grid.len()),
             SlotRef::Result => false,
             SlotRef::Block(index) => {
                 let output = matches!(self.container, Some(Container::Furnace(_)))
@@ -402,7 +463,7 @@ impl Game {
         match slot {
             SlotRef::Inventory(index) => self.inventory.set(index, stack),
             SlotRef::Grid(index) => {
-                if let Some(Container::Crafting { grid, .. }) = &mut self.container {
+                if let Some(grid) = self.container.as_mut().and_then(Container::grid_mut) {
                     grid[index] = stack;
                 }
             }
@@ -469,7 +530,10 @@ impl Game {
         };
         let max = self.items.max_stack(held.id);
         let mut slots: Vec<SlotRef> = match &self.container {
-            Some(Container::Crafting { grid, .. }) => (0..grid.len()).map(SlotRef::Grid).collect(),
+            Some(container @ (Container::Crafting { .. } | Container::Bench(_))) => {
+                let count = container.grid().map_or(0, <[_]>::len);
+                (0..count).map(SlotRef::Grid).collect()
+            }
             Some(
                 Container::Chest(_)
                 | Container::Furnace(_)

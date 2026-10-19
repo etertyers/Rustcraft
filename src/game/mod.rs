@@ -3,6 +3,7 @@
 //! owns at most one.
 
 mod animals;
+mod benches;
 mod combat;
 mod containers;
 pub mod environment;
@@ -29,7 +30,7 @@ pub mod view;
 
 use std::{path::Path, sync::Arc};
 
-pub use containers::Container;
+pub use containers::{Bench, BenchKind, Container};
 
 use anyhow::Result;
 use glam::DVec3;
@@ -377,10 +378,12 @@ impl Game {
         // A stack held in an open inventory screen, and the crafting grid,
         // go back in the inventory rather than being lost.
         let mut inventory = self.inventory.clone();
-        let grid = match &self.container {
-            Some(Container::Crafting { grid, .. }) => grid.clone(),
-            _ => Vec::new(),
-        };
+        let grid = self
+            .container
+            .as_ref()
+            .and_then(Container::grid)
+            .map(<[_]>::to_vec)
+            .unwrap_or_default();
         for held in self
             .cursor
             .clone()
@@ -757,8 +760,10 @@ impl Game {
     fn drop_everything(&mut self) {
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
-        if let Some(Container::Crafting { grid, .. }) = self.container.take() {
-            stacks.extend(grid.into_iter().flatten());
+        match self.container.take() {
+            Some(Container::Crafting { grid, .. }) => stacks.extend(grid.into_iter().flatten()),
+            Some(Container::Bench(bench)) => stacks.extend(bench.slots.into_iter().flatten()),
+            _ => {}
         }
         for slot in 0..crate::inventory::player::SLOTS {
             if let Some(stack) = self.inventory.slot(slot).cloned() {

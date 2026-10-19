@@ -294,7 +294,7 @@
             ("age=1|2", (textures: (all: "nether_wart_stage1"))),
             ("age=3", (textures: (all: "nether_wart_stage2"))),
         ]),
-    (name: "enchanting_table", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: EnchantingTable, textures: (top: "enchanting_table_top", bottom: "enchanting_table_bottom", side: "enchanting_table_side")),
+    (name: "enchanting_table", hardness: 5.0, activate: Enchanting, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: EnchantingTable, textures: (top: "enchanting_table_top", bottom: "enchanting_table_bottom", side: "enchanting_table_side")),
     (name: "brewing_stand", hardness: 0.5, props: [HasBottle0, HasBottle1, HasBottle2], item_texture: "brewing_stand", tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: BrewingStand, layer: Cutout, light: 1, textures: (all: "brewing_stand")),
     (name: "cauldron", hardness: 2.0, item_texture: "cauldron", tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Cauldron, layer: Cutout, textures: (top: "cauldron_top", bottom: "cauldron_bottom", side: "cauldron_side")),
     (name: "water_cauldron", hardness: 2.0, props: [LevelCauldron], item: false, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: "cauldron")]), shape: Cauldron, layer: Cutout, textures: (top: "cauldron_top", bottom: "cauldron_bottom", side: "cauldron_side")),
@@ -356,9 +356,9 @@
     (name: "green_concrete", hardness: 1.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "green_concrete")),
     (name: "red_concrete", hardness: 1.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "red_concrete")),
     (name: "black_concrete", hardness: 1.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "black_concrete")),
-    (name: "anvil", hardness: 5.0, placement: LookClockwise, props: [Facing], falls: true, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Anvil, layer: Cutout, textures: (all: "anvil", top: "anvil_top")),
-    (name: "chipped_anvil", hardness: 5.0, placement: LookClockwise, props: [Facing], falls: true, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Anvil, layer: Cutout, textures: (all: "anvil", top: "chipped_anvil_top")),
-    (name: "damaged_anvil", hardness: 5.0, placement: LookClockwise, props: [Facing], falls: true, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Anvil, layer: Cutout, textures: (all: "anvil", top: "damaged_anvil_top")),
+    (name: "anvil", hardness: 5.0, activate: Anvil, placement: LookClockwise, props: [Facing], falls: true, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Anvil, layer: Cutout, textures: (all: "anvil", top: "anvil_top")),
+    (name: "chipped_anvil", hardness: 5.0, activate: Anvil, placement: LookClockwise, props: [Facing], falls: true, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Anvil, layer: Cutout, textures: (all: "anvil", top: "chipped_anvil_top")),
+    (name: "damaged_anvil", hardness: 5.0, activate: Anvil, placement: LookClockwise, props: [Facing], falls: true, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Anvil, layer: Cutout, textures: (all: "anvil", top: "damaged_anvil_top")),
     // Redstone (M19).
     (name: "redstone_block", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "redstone_block")),
     (name: "redstone_lamp", hardness: 0.3, props: [Lit], textures: (all: "redstone_lamp_off"),
@@ -615,4 +615,6 @@
         variants: [("berries=true", (textures: (all: "cave_vines_plant_lit"), light: 14))]),
     (name: "mangrove_roots", hardness: 0.7, props: [Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, opacity: 1, layer: Cutout, textures: (end: "mangrove_roots_top", side: "mangrove_roots_side")),
     (name: "muddy_mangrove_roots", hardness: 0.7, props: [Axis], placement: Axis, tool: Shovel, textures: (end: "muddy_mangrove_roots_top", side: "muddy_mangrove_roots_side")),
+    // M22: a wheel on two posts; its textures come from a resource pack.
+    (name: "grindstone", hardness: 2.0, props: [Facing], placement: LookClockwise, activate: Grindstone, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Grindstone, layer: Cutout, textures: (end: "grindstone_round", side: "grindstone_side")),
 ]

@@ -475,6 +475,10 @@ fn select(
         chosen.push(pick(&mut possible, random));
         level /= 2;
     }
+    // A book keeps just one of them.
+    if gear == Gear::Book && chosen.len() > 1 {
+        chosen.remove(random.next_int(chosen.len() as u32) as usize);
+    }
     chosen
 }
 
