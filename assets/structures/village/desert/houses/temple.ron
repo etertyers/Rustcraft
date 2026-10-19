@@ -1,0 +1,40 @@
+(
+    size: (5, 9, 7),
+    weight: 1,
+    key: {
+        '#': "minecraft:smooth_sandstone",
+        '.': "minecraft:air",
+        'a': "minecraft:cut_sandstone",
+        'b': "minecraft:jungle_door[facing=north,half=lower,hinge=left,open=false,powered=false]",
+        'c': "minecraft:red_bed[facing=south,part=foot,occupied=false]",
+        'd': "minecraft:red_bed[facing=south,part=head,occupied=false]",
+        'e': "minecraft:cauldron",
+        'f': "minecraft:brewing_stand[has_bottle_0=false,has_bottle_1=false,has_bottle_2=false]",
+        'g': "minecraft:chest[facing=north,type=single,waterlogged=false]",
+        'h': "minecraft:jungle_door[facing=north,half=upper,hinge=left,open=false,powered=false]",
+        'i': "minecraft:wall_torch[facing=east]",
+    },
+    layers: [
+        ["#####", "#####", "#####", "#####", "#####", "#####", "#####"],
+        ["#aba#", "a...a", "ac..a", "ad..a", "a...a", "aefga", "#aaa#"],
+        ["#aha#", "a...a", "a...a", ".....", "a...a", "ai..a", "#a.a#"],
+        ["#aaa#", "a...a", "a...a", "a...a", "a...a", "a...a", "#aaa#"],
+        ["#aaa#", "a...a", "a...a", "a...a", "a...a", "a...a", "#a.a#"],
+        ["#aaa#", "a...a", "a...a", "a...a", "a...a", "a...a", "#aaa#"],
+        ["#aaa#", "a...a", "a...a", "a...a", "a...a", "a...a", "#aaa#"],
+        ["#####", "#####", "#####", "#####", "#####", "#####", "#####"],
+        ["a a a", "     ", "a   a", "     ", "a   a", "     ", "a a a"],
+    ],
+    chests: [
+        ((3, 1, 5), "village_cleric"),
+    ],
+    spawners: [],
+    mobs: [
+        ((2.5, 1.0, 3.5), "villager", Some("cleric")),
+    ],
+    jigsaws: [
+        (at: (2, 0, 0), facing: "north", pool: "village/desert/streets"),
+    ],
+    foundation: Some("minecraft:sandstone"),
+    on_surface: false,
+)

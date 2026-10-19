@@ -1,0 +1,21 @@
+(
+    size: (5, 1, 5),
+    weight: 2,
+    key: {
+        '#': "minecraft:smooth_sandstone",
+    },
+    layers: [
+        [" ### ", "#### ", "#### ", "#### ", "     "],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [],
+    jigsaws: [
+        (at: (2, 0, 0), facing: "north", pool: "village/desert/streets"),
+        (at: (0, 0, 2), facing: "west", pool: "village/desert/streets"),
+        (at: (4, 0, 2), facing: "east", pool: "village/desert/houses"),
+        (at: (2, 0, 4), facing: "south", pool: "village/desert/houses"),
+    ],
+    foundation: None,
+    on_surface: true,
+)

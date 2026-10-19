@@ -1,0 +1,30 @@
+(
+    size: (7, 2, 9),
+    weight: 3,
+    key: {
+        '#': "minecraft:stripped_spruce_log[axis=x]",
+        '.': "minecraft:air",
+        'a': "minecraft:farmland[moisture=7]",
+        'b': "minecraft:water[level=0]",
+        'c': "minecraft:composter",
+        'd': "minecraft:wheat[age=3]",
+        'e': "minecraft:wheat[age=5]",
+        'f': "minecraft:wheat[age=4]",
+        'g': "minecraft:wheat[age=6]",
+        'h': "minecraft:wheat[age=7]",
+    },
+    layers: [
+        ["#######", "#aabaa#", "#aabaa#", "#aabaa#", "#aabaa#", "#aabaa#", "#aabaa#", "#aabaa#", "#######"],
+        [".c.....", ".de.fg.", ".gd.hf.", ".fg.eh.", ".hf.de.", ".eh.gd.", ".de.fg.", ".gd.hf.", "......."],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [
+        ((1.5, 1.0, 1.5), "villager", Some("farmer")),
+    ],
+    jigsaws: [
+        (at: (3, 0, 0), facing: "north", pool: "village/snowy/streets"),
+    ],
+    foundation: Some("minecraft:stone_bricks"),
+    on_surface: false,
+)

@@ -4,6 +4,14 @@ use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
     env_logger::init();
+    // Writes the built-in structure templates to assets/structures (for
+    // after changing their designs in code); overwrites what's there.
+    if std::env::args().any(|arg| arg == "--write-structures") {
+        let dir = rustcraft::assets::dir().join("structures");
+        let count = rustcraft::world::structure::designs::write_all(&dir)?;
+        println!("wrote {count} templates to {}", dir.display());
+        return Ok(());
+    }
     let event_loop = EventLoop::new()?;
     let (world, bench, shot, view) = parse_args(std::env::args().skip(1))?;
     let mut app = app::App::new(world).with_bench(bench).with_view(view);

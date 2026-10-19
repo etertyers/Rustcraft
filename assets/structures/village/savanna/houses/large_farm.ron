@@ -1,0 +1,30 @@
+(
+    size: (11, 2, 13),
+    weight: 2,
+    key: {
+        '#': "minecraft:acacia_log[axis=x]",
+        '.': "minecraft:air",
+        'a': "minecraft:farmland[moisture=7]",
+        'b': "minecraft:water[level=0]",
+        'c': "minecraft:composter",
+        'd': "minecraft:wheat[age=3]",
+        'e': "minecraft:wheat[age=5]",
+        'f': "minecraft:wheat[age=4]",
+        'g': "minecraft:wheat[age=6]",
+        'h': "minecraft:wheat[age=7]",
+    },
+    layers: [
+        ["###########", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "#aabaaabaa#", "###########"],
+        [".c.........", ".de.fgd.hf.", ".gd.hfg.eh.", ".fg.ehf.de.", ".hf.deh.gd.", ".eh.gde.fg.", ".de.fgd.hf.", ".gd.hfg.eh.", ".fg.ehf.de.", ".hf.deh.gd.", ".eh.gde.fg.", ".de.fgd.hf.", "..........."],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [
+        ((1.5, 1.0, 1.5), "villager", Some("farmer")),
+    ],
+    jigsaws: [
+        (at: (5, 0, 0), facing: "north", pool: "village/savanna/streets"),
+    ],
+    foundation: Some("minecraft:orange_terracotta"),
+    on_surface: false,
+)

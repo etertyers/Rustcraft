@@ -14,6 +14,7 @@
 //! dungeons, mineshafts and strongholds are laid out in code.
 
 pub mod build;
+pub mod designs;
 pub mod dungeon;
 pub mod jigsaw;
 pub mod loot;
@@ -499,6 +500,11 @@ impl<'a> Writer<'a> {
             self.chunk.set(x as usize, y as usize, z as usize, block);
             // A block entity left from the terrain isn't this block's.
             self.chunk.set_block_entity([x, y, z], None);
+            // Fences, panes, walls and stairs join their neighbors once
+            // the chunks around are loaded.
+            if block.def().shaped_by_neighbors() {
+                self.chunk.post_process.push([x, y, z]);
+            }
         }
     }
 

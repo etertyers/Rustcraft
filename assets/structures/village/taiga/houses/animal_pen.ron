@@ -1,0 +1,26 @@
+(
+    size: (7, 2, 7),
+    weight: 2,
+    key: {
+        '#': "minecraft:grass_block[snowy=false]",
+        '.': "minecraft:air",
+        'a': "minecraft:spruce_fence[north=false,east=false,south=false,west=false,waterlogged=false]",
+        'b': "minecraft:spruce_fence_gate[facing=north,in_wall=false,open=false,powered=false]",
+        'c': "minecraft:hay_block[axis=y]",
+    },
+    layers: [
+        ["#######", "#######", "#######", "#######", "#######", "#######", "#######"],
+        ["aaabaaa", "a.....a", "a.....a", "a.....a", "a.....a", "a....ca", "aaaaaaa"],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [
+        ((2.5, 1.0, 3.5), "sheep", None),
+        ((4.5, 1.0, 3.5), "pig", None),
+    ],
+    jigsaws: [
+        (at: (3, 0, 0), facing: "north", pool: "village/taiga/streets"),
+    ],
+    foundation: None,
+    on_surface: false,
+)
