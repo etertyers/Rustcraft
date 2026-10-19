@@ -21,7 +21,7 @@ pub const HEIGHT: f64 = 100.0;
 /// The window's size: a 1080p screen.
 pub const WINDOW_SIZE: (u32, u32) = (1920, 1080);
 /// The milestone `--perf-test` writes up (`docs/perf/m<N>.md`).
-pub const PERF_MILESTONE: u32 = 19;
+pub const PERF_MILESTONE: u32 = 20;
 /// `--perf-test`'s flight length and render distance.
 pub const PERF_SECONDS: f32 = 60.0;
 pub const PERF_DISTANCE: i32 = 9;

@@ -101,6 +101,8 @@ src/
   world/{redstone,piston,rails,explosion}.rs   # signals and ticks, what pistons move, rail joining, blast rays
   game/{redstone,logistics,minecarts,explosion}.rs   # carrying out redstone events, hoppers and droppers, carts, TNT
   entity/{minecart,tnt}.rs   # rail physics, primed TNT
+  entity/{mobs,mob,ai}.rs   # mob definitions (mobs.ron), a living mob, what each kind decides
+  game/{mobs,mob_acts,animals}.rs   # mob ticks and spawning, what mobs do to the world, the player and animals
   audio/
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
@@ -344,7 +346,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Updates run on the tick system in a deterministic order, with unit tests for wire power, repeaters and pistons.
 - **Done when:** a piston door, a repeater clock and a powered rail line with a detector all work, and the redstone tests pass.
 
-### - [ ] M20 — More Overworld mobs
+### - [x] M20 — More Overworld mobs
 - Hostile: skeleton, creeper (explosions that break blocks), spider, cave spider, enderman (picks up blocks, teleports, drops ender pearls), slime, witch, drowned, husk, stray, phantom.
 - Passive/neutral: cow, sheep (shearing, dyeable wool), chicken (eggs), wolf (tameable), cat, horse (rideable with saddle), rabbit, squid, cod/salmon, bee, fox, villager and iron golem (used in M23).
 - Hand-built box models that match vanilla shapes, textured from `entity/` in the active pack. Modern spawn rules (light level 0 for hostiles, biome-specific spawns).
