@@ -191,4 +191,6 @@
     (name: "glow_berries", texture: "glow_berries", food: (hunger: 2, saturation: 0.1)),
     (name: "white_dye", texture: "white_dye"),
     (name: "blue_dye", texture: "blue_dye"),
+    // M22: holds enchantments on its stack, to be applied at an anvil.
+    (name: "enchanted_book", texture: "enchanted_book", max_stack: 1),
 ]
