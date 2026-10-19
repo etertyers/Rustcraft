@@ -72,6 +72,18 @@ const ICONS: &[Sprite] = &[
     ("gui/sprites/hud/food_empty", [16, 27, 9, 9]),
     ("gui/sprites/hud/food_full", [52, 27, 9, 9]),
     ("gui/sprites/hud/food_half", [61, 27, 9, 9]),
+    (
+        "gui/sprites/hud/crosshair_attack_indicator_background",
+        [36, 94, 16, 4],
+    ),
+    (
+        "gui/sprites/hud/crosshair_attack_indicator_progress",
+        [52, 94, 16, 4],
+    ),
+    (
+        "gui/sprites/hud/crosshair_attack_indicator_full",
+        [68, 94, 16, 16],
+    ),
 ];
 const FURNACE: &[Sprite] = &[
     (
@@ -343,6 +355,41 @@ pub fn paint_survival(painter: &Painter, screen: Rect, hud: &SurvivalHud, textur
             let x = right - (i as f32 * 8.0 + 9.0) * scale;
             let from = if i < full { [16.0, 18.0] } else { [25.0, 18.0] };
             icon(from, x, row - 10.0 * scale);
+        }
+    }
+}
+
+/// The attack indicator under the crosshair (modern `renderCrosshair`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttackIndicator {
+    /// How charged the next swing is, 0–1.
+    pub charge: f32,
+    /// Fully charged with a mob under the crosshair and a weapon that
+    /// recharges slowly: the sword icon shows.
+    pub ready: bool,
+}
+
+/// Draws the attack indicator: a bar filling as the swing recharges, or the
+/// sword once it is ready on a target; nothing when recharged without one.
+pub fn paint_attack_indicator(
+    painter: &Painter,
+    screen: Rect,
+    indicator: AttackIndicator,
+    textures: &GuiTextures,
+) {
+    let scale = gui_scale(screen);
+    let at = pos2(
+        screen.center().x - 8.0 * scale,
+        screen.center().y + 9.0 * scale,
+    );
+    let icons = textures.icons.id();
+    if indicator.ready {
+        sheet_image(painter, icons, [68.0, 94.0], [16.0, 16.0], at, scale);
+    } else if indicator.charge < 1.0 {
+        sheet_image(painter, icons, [36.0, 94.0], [16.0, 4.0], at, scale);
+        let filled = (indicator.charge * 17.0).floor().min(16.0);
+        if filled > 0.0 {
+            sheet_image(painter, icons, [52.0, 94.0], [filled, 4.0], at, scale);
         }
     }
 }

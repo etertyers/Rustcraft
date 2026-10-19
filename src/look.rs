@@ -9,7 +9,7 @@ use image::RgbaImage;
 use log::{info, warn};
 
 use crate::{
-    entity::mobs::MobRegistry,
+    entity::{effects::SWEEP_FRAMES, mobs::MobRegistry},
     inventory::item,
     pack::{
         self, Pack, Resources,
@@ -19,6 +19,7 @@ use crate::{
         SkyImages,
         atlas::{Atlas, MISSING_TILE},
         crack,
+        entities::{self, EffectUvs},
         icons::ItemIcons,
         player::prepare_skin,
     },
@@ -47,6 +48,8 @@ pub struct Look {
     pub skin_slim: bool,
     /// Atlas rects of the mining crack's stages.
     pub crack_uvs: Vec<[f32; 4]>,
+    /// Where the combat effects are in the atlas.
+    pub effect_uvs: EffectUvs,
 }
 
 /// Opens the packs named in `ids` (highest priority first) from `dir`;
@@ -95,6 +98,8 @@ impl Look {
                 .map(str::to_owned),
         );
         textures.extend((0..crack::STAGES).map(crack::texture));
+        textures.insert(entities::CRIT_TEXTURE.to_owned());
+        textures.extend((0..SWEEP_FRAMES).map(entities::sweep_texture));
         let atlas = Atlas::build(&res, textures);
 
         let colors = BiomeColors::load(&res).unwrap_or_else(|err| {
@@ -112,6 +117,10 @@ impl Look {
         let crack_uvs = (0..crack::STAGES)
             .map(|i| atlas.uv_or_missing(&crack::texture(i)))
             .collect();
+        let effect_uvs = EffectUvs {
+            crit: atlas.uv_or_missing(entities::CRIT_TEXTURE),
+            sweep: std::array::from_fn(|i| atlas.uv_or_missing(&entities::sweep_texture(i))),
+        };
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);
         let mut mob_textures: Vec<RgbaImage> = mobs
@@ -146,6 +155,7 @@ impl Look {
             mob_textures,
             skin_slim,
             crack_uvs,
+            effect_uvs,
         })
     }
 
@@ -323,6 +333,26 @@ mod tests {
         assert_eq!(skin.get_pixel(8, 8).0, [7, 8, 9, 255]);
         // The legacy left leg was made from the right one.
         assert_eq!(skin.get_pixel(20, 48).0, [7, 8, 9, 255]);
+    }
+
+    #[test]
+    fn combat_effects_have_pictures_in_every_look() {
+        let assets = crate::assets::dir();
+        let mut looks = vec![Look::build(&assets, Vec::new(), &mobs()).unwrap()];
+        for name in [ASHEN, PRIME] {
+            if let Some(pack) = kenzos_pack(name) {
+                looks.push(Look::build(&assets, vec![pack], &mobs()).unwrap());
+            }
+        }
+        for look in looks {
+            let uvs = look.effect_uvs;
+            assert_ne!(uvs.crit, look.atlas.uv_rect(MISSING_TILE));
+            assert!(
+                uvs.sweep
+                    .iter()
+                    .all(|&uv| uv != look.atlas.uv_rect(MISSING_TILE))
+            );
+        }
     }
 
     #[test]

@@ -132,6 +132,19 @@ impl Game {
         self.shield_cooldown = self.shield_cooldown.saturating_sub(1);
     }
 
+    /// What the attack indicator shows now: the bar while recharging, the
+    /// sword when charged on a mob under the crosshair (and the weapon
+    /// takes over a quarter second to recharge).
+    pub fn attack_indicator(&self) -> crate::ui::gui::AttackIndicator {
+        let charge = self.attack_charge(self.tick_alpha() as f32);
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let on_mob = self.target_mob(eye, self.target.as_ref()).is_some();
+        crate::ui::gui::AttackIndicator {
+            charge,
+            ready: charge >= 1.0 && on_mob && 20.0 / self.attack_speed() > 5.0,
+        }
+    }
+
     /// Swinging at nothing wastes the swing.
     pub(super) fn swing_at_air(&mut self) {
         self.attack_ticker = 0;
@@ -488,6 +501,28 @@ mod tests {
             "{dealt}"
         );
         assert!(dealt < 2.0, "{dealt}");
+    }
+
+    #[test]
+    fn the_indicator_shows_a_bar_while_recharging_and_a_sword_when_ready_on_a_mob() {
+        let mut game = duel(items::IRON_SWORD);
+        game.advance(0.0);
+        let ready = game.attack_indicator();
+        assert!(ready.ready && ready.charge == 1.0, "{ready:?}");
+        swing(&mut game);
+        let after = game.attack_indicator();
+        assert!(!after.ready && after.charge < 0.3, "{after:?}");
+        // Charged but nobody there: nothing to show.
+        game.mobs.clear();
+        game.run_ticks(20);
+        let alone = game.attack_indicator();
+        assert!(!alone.ready && alone.charge == 1.0, "{alone:?}");
+        // Bare hands recharge in a quarter second, too fast for the sword icon.
+        let mut hands = duel(items::STICK);
+        hands.inventory.set(0, None);
+        hands.advance(0.0);
+        hands.attack_ticker = 100;
+        assert!(!hands.attack_indicator().ready);
     }
 
     #[test]

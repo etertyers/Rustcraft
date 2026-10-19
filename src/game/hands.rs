@@ -344,7 +344,7 @@ impl Game {
 
     /// The living mob under the crosshair within reach, if it's nearer
     /// than the targeted block.
-    fn target_mob(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
+    pub(super) fn target_mob(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
         let dir = self.camera.forward().as_dvec3();
         let block_distance = block.map_or(f64::MAX, |hit| {
             (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5

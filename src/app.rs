@@ -45,7 +45,7 @@ use crate::{
         atlas::Atlas,
         camera::Camera,
         crack,
-        entities::{add_falling_blocks, add_particles, item_mesh},
+        entities::{EffectUvs, add_effects, add_falling_blocks, add_particles, item_mesh},
         held::HeldCache,
         icons::ItemIcons,
         models::{add_arrow, add_mob},
@@ -116,6 +116,7 @@ pub struct App {
     pause: Option<PauseMenu>,
     /// Atlas rects of the mining crack's stages.
     crack_uvs: Vec<[f32; 4]>,
+    effect_uvs: EffectUvs,
     /// The block and item atlas, for playing its animations.
     atlas: Option<Atlas>,
     /// Display transforms and sprites of the item models.
@@ -177,6 +178,7 @@ impl App {
             options: Options::load(&Options::path()),
             pause: None,
             crack_uvs: Vec::new(),
+            effect_uvs: EffectUvs::default(),
             atlas: None,
             item_models: None,
             held: HeldCache::default(),
@@ -469,6 +471,7 @@ impl App {
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
         self.crack_uvs = look.crack_uvs;
+        self.effect_uvs = look.effect_uvs;
         self.atlas = Some(look.atlas);
         self.item_models = Some(look.item_models);
         self.skin_slim = look.skin_slim;
@@ -773,6 +776,14 @@ impl App {
                     game.tick_alpha(),
                     light_at,
                 );
+                add_effects(
+                    &mut mesh,
+                    &game.effects,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
             }
             // The player: the hand in first person, the model in third.
             let player = match (&self.atlas, &self.item_models) {
@@ -834,6 +845,7 @@ impl App {
         };
         let hud = Hud {
             crosshair: self.cursor_grabbed,
+            attack: self.cursor_grabbed.then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
                 .map(|i| {
                     let stack = game.inventory.slot(i)?;

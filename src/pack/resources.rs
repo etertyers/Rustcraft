@@ -33,11 +33,17 @@ impl Texture {
     }
 }
 
+/// Where on a sheet a texture is: the sheet, and x, y, width and height
+/// in 128-pixel sheet units.
+type Slice = (String, (u32, u32, u32, u32));
+
 pub struct Resources {
     /// Bottom (the base) first.
     layers: Vec<Pack>,
     /// Older names to try for a texture after its modern one.
     aliases: HashMap<String, Vec<String>>,
+    /// Textures that older layouts keep on a shared sheet.
+    slices: HashMap<String, Slice>,
 }
 
 /// `minecraft:block/stone` → `block/stone`.
@@ -54,13 +60,30 @@ impl Resources {
             .with_context(|| format!("reading {}", path.display()))?;
         let aliases =
             ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        Ok(Self::new(Pack::base(assets), packs, aliases))
+        let path = assets.join("data/texture_slices.ron");
+        let slices = match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+            }
+            Err(_) => HashMap::new(),
+        };
+        Ok(Self::new(Pack::base(assets), packs, aliases).with_slices(slices))
+    }
+
+    /// Adds the sheets textures can be cut from.
+    pub fn with_slices(mut self, slices: HashMap<String, Slice>) -> Self {
+        self.slices = slices;
+        self
     }
 
     pub fn new(base: Pack, packs: Vec<Pack>, aliases: HashMap<String, Vec<String>>) -> Self {
         let mut layers = vec![base];
         layers.extend(packs.into_iter().rev());
-        Self { layers, aliases }
+        Self {
+            layers,
+            aliases,
+            slices: HashMap::new(),
+        }
     }
 
     /// Bottom (the base) first.
@@ -131,7 +154,24 @@ impl Resources {
                 layer,
             });
         }
-        None
+        self.slice_in(layer, name)
+    }
+
+    /// A texture cut from a sheet in one layer, if the name is on a sheet.
+    fn slice_in(&self, layer: usize, name: &str) -> Option<Texture> {
+        let (sheet, (x, y, w, h)) = self.slices.get(location(name))?;
+        let sheet = self.texture_in(layer, sheet)?;
+        let scale = (sheet.image.width() / 128).max(1);
+        let (x, y, w, h) = (x * scale, y * scale, w * scale, h * scale);
+        let (iw, ih) = sheet.image.dimensions();
+        if x + w > iw || y + h > ih {
+            return None;
+        }
+        Some(Texture {
+            image: image::imageops::crop_imm(&sheet.image, x, y, w, h).to_image(),
+            animation: None,
+            layer,
+        })
     }
 
     /// A texture's first frame, from the highest layer that has it.
@@ -254,6 +294,58 @@ mod tests {
         assert!(res.texture("block/nothing").is_none());
         assert_eq!(red(res.texture_in(1, "block/stone")), Some((20, 1)));
         assert!(res.texture_in(1, "block/oak_planks").is_none());
+    }
+
+    #[test]
+    fn textures_on_sheets_are_cut_out_unless_a_layer_has_them_whole() {
+        let dir = TempDir::new("slices");
+        let base = dir.path().join("base");
+        std::fs::create_dir_all(base.join("textures/particle")).unwrap();
+        // A 128-pixel sheet that is red at (8, 32) and blue elsewhere.
+        let mut sheet = RgbaImage::from_pixel(128, 128, image::Rgba([0, 0, 255, 255]));
+        for y in 32..40 {
+            for x in 8..16 {
+                sheet.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+            }
+        }
+        let mut bytes = Vec::new();
+        sheet
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(base.join("textures/particle/particles.png"), &bytes).unwrap();
+        let slices = HashMap::from([(
+            "particle/critical_hit".to_owned(),
+            ("particle/particles".to_owned(), (8, 32, 8, 8)),
+        )]);
+        let pack = dir.path().join("whole.zip");
+        write_zip(
+            &pack,
+            &[
+                ("pack.mcmeta", MCMETA),
+                (
+                    "assets/minecraft/textures/particle/critical_hit.png",
+                    &png([0, 255, 0, 255], 8, 8),
+                ),
+            ],
+        );
+        let bare = Resources::new(Pack::base(&base), Vec::new(), HashMap::new())
+            .with_slices(slices.clone());
+        let cut = bare.texture("minecraft:particle/critical_hit").unwrap();
+        assert_eq!(cut.image.dimensions(), (8, 8));
+        assert_eq!(cut.image.get_pixel(3, 3).0, [255, 0, 0, 255]);
+        // A pack with its own file wins; one with a bigger sheet scales the cut.
+        let over = Resources::new(
+            Pack::base(&base),
+            vec![Pack::open(&pack).unwrap()],
+            HashMap::new(),
+        )
+        .with_slices(slices);
+        let whole = over.texture("particle/critical_hit").unwrap();
+        assert_eq!(
+            (whole.layer, whole.image.get_pixel(0, 0).0),
+            (1, [0, 255, 0, 255])
+        );
+        assert!(bare.texture("particle/nothing").is_none());
     }
 
     #[test]

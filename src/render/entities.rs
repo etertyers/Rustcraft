@@ -9,7 +9,12 @@ use super::{
     icons::{IconFace, ItemIcon, ItemIcons},
 };
 use crate::{
-    entity::{falling::FallingBlock, item::ItemEntity, particle::Particle},
+    entity::{
+        effects::{Effect, EffectKind, SWEEP_FRAMES},
+        falling::FallingBlock,
+        item::ItemEntity,
+        particle::Particle,
+    },
     world::{
         Face,
         mesh::{BlockModels, Mesh, face_corners},
@@ -118,6 +123,49 @@ pub fn add_particles(
             uv,
             [color; 4],
             [[sky as f32, block as f32]; 4],
+        );
+    }
+}
+
+/// Where the combat effects' pictures are in the atlas.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct EffectUvs {
+    pub crit: [f32; 4],
+    pub sweep: [[f32; 4]; SWEEP_FRAMES],
+}
+
+/// The textures the effects use, as atlas names.
+pub const CRIT_TEXTURE: &str = "particle/critical_hit";
+pub fn sweep_texture(frame: usize) -> String {
+    format!("particle/sweep_{frame}")
+}
+
+/// Adds critical-hit stars and sweep arcs: squares facing the camera.
+pub fn add_effects(
+    mesh: &mut Mesh,
+    effects: &[Effect],
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+    let up = right.cross(camera.forward()).normalize();
+    for effect in effects {
+        let center = effect.position_between_ticks(alpha);
+        let (sky, block) = light_at(center);
+        // Stars glow; the arc is lit by the world.
+        let (uv, light) = match effect.kind {
+            EffectKind::Crit => (uvs.crit, [15.0, 15.0]),
+            EffectKind::Sweep { .. } => (uvs.sweep[effect.frame()], [sky as f32, block as f32]),
+        };
+        let (r, u) = (right * effect.half_width, up * effect.half_width);
+        let c = center.as_vec3();
+        mesh.quad(
+            [c - r - u, c + r - u, c + r + u, c - r + u].map(|p| p.to_array()),
+            uv,
+            [[1.0; 3]; 4],
+            [light; 4],
         );
     }
 }
