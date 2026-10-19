@@ -14,9 +14,12 @@ use crate::{
         falling::FallingBlock,
         item::ItemEntity,
         particle::Particle,
+        tnt::PrimedTnt,
     },
     world::{
         Face,
+        block::BlockState,
+        blocks,
         mesh::{BlockModels, Mesh, face_corners},
     },
 };
@@ -80,6 +83,34 @@ pub fn add_falling_blocks(
             let texture = model.faces[face.index()];
             let color = models.icon_color(texture.tint).map(|c| c * face.shade());
             let corners = face_corners(face).map(|c| (corner + Vec3::from(c)).to_array());
+            mesh.quad(corners, texture.uv, [color; 4], [light; 4]);
+        }
+    }
+}
+
+/// Adds lit TNT: the block, swelling and flashing white as it burns down.
+pub fn add_primed_tnt(
+    mesh: &mut Mesh,
+    primed: &[PrimedTnt],
+    models: &BlockModels,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    let model = models.get(BlockState::of(blocks::TNT));
+    for tnt in primed {
+        let bottom = tnt.between_ticks(alpha);
+        let (sky, lit) = light_at(bottom + DVec3::Y * 0.5);
+        let light = [sky as f32, lit as f32];
+        let scale = tnt.scale(alpha as f32);
+        let middle = (bottom + DVec3::Y * 0.5).as_vec3();
+        let flash = if tnt.flashing() { 2.5 } else { 1.0 };
+        for face in Face::ALL {
+            let texture = model.faces[face.index()];
+            let color = models
+                .icon_color(texture.tint)
+                .map(|c| c * face.shade() * flash);
+            let corners = face_corners(face)
+                .map(|c| (middle + (Vec3::from(c) - Vec3::splat(0.5)) * scale).to_array());
             mesh.quad(corners, texture.uv, [color; 4], [light; 4]);
         }
     }

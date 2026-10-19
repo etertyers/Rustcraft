@@ -125,6 +125,11 @@ impl ItemEntity {
         item
     }
 
+    /// Hurts it (an explosion), burning it up at 0.
+    pub fn hurt(&mut self, amount: i32) {
+        self.health -= amount;
+    }
+
     /// The box it fills.
     pub fn bounds(&self) -> Aabb {
         self.bb

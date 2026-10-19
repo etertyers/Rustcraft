@@ -8,6 +8,7 @@ pub mod chunk;
 pub mod connect;
 pub mod daytime;
 pub mod dimension;
+pub mod explosion;
 pub mod fast_hash;
 pub mod fire;
 pub mod fluid;

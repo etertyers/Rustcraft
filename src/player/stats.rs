@@ -62,6 +62,7 @@ pub enum DamageSource {
     Starving,
     Mob,
     Arrow,
+    Explosion,
 }
 
 impl DamageSource {
@@ -76,15 +77,18 @@ impl DamageSource {
             DamageSource::Starving => "starved to death",
             DamageSource::Mob => "was slain",
             DamageSource::Arrow => "was shot",
+            DamageSource::Explosion => "blew up",
         }
     }
 
     /// Exhaustion a hit from this adds.
     fn exhaustion(self) -> f32 {
         match self {
-            DamageSource::Lava | DamageSource::InFire | DamageSource::Mob | DamageSource::Arrow => {
-                DAMAGE_EXHAUSTION
-            }
+            DamageSource::Lava
+            | DamageSource::InFire
+            | DamageSource::Mob
+            | DamageSource::Arrow
+            | DamageSource::Explosion => DAMAGE_EXHAUSTION,
             DamageSource::Fall
             | DamageSource::Drowning
             | DamageSource::Fire

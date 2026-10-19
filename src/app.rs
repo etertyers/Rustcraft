@@ -45,7 +45,9 @@ use crate::{
         atlas::Atlas,
         camera::Camera,
         crack,
-        entities::{EffectUvs, add_effects, add_falling_blocks, add_particles, item_mesh},
+        entities::{
+            EffectUvs, add_effects, add_falling_blocks, add_particles, add_primed_tnt, item_mesh,
+        },
         held::HeldCache,
         icons::ItemIcons,
         models::{add_arrow, add_mob},
@@ -768,6 +770,7 @@ impl App {
                     game.tick_alpha(),
                     light_at,
                 );
+                add_primed_tnt(&mut mesh, &game.primed, models, game.tick_alpha(), light_at);
                 add_particles(
                     &mut mesh,
                     &game.particles,

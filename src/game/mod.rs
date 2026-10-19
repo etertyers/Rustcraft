@@ -5,6 +5,7 @@
 mod combat;
 mod containers;
 pub mod environment;
+mod explosion;
 mod fluids;
 mod hands;
 mod mobs;
@@ -164,6 +165,8 @@ pub struct Game {
     fluids: Fluids,
     fires: Fires,
     redstone: Redstone,
+    /// TNT with its fuse lit.
+    pub primed: Vec<crate::entity::tnt::PrimedTnt>,
     /// The last notes note blocks played: (block, instrument, note).
     pub played_notes: Vec<(glam::IVec3, u8, u8)>,
     /// For drops and throws.
@@ -250,6 +253,7 @@ impl Game {
             fluids: Fluids::default(),
             fires: Fires::default(),
             redstone: Redstone::default(),
+            primed: Vec::new(),
             played_notes: Vec::new(),
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
@@ -600,6 +604,7 @@ impl Game {
         self.tick_fluids();
         self.tick_fires();
         self.tick_redstone();
+        self.tick_tnt();
         self.tick_falling();
         self.post_process();
         self.tick_furnaces();
