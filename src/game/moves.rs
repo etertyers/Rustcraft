@@ -121,3 +121,50 @@ fn a_ladder_cancels_a_fall_that_would_hurt() {
     assert!(fall(false) < 20, "an unbroken 26-block fall hurts");
     assert_eq!(fall(true), 20, "vines catch the fall");
 }
+
+#[test]
+fn a_ladder_placed_in_the_game_can_be_climbed() {
+    use crate::inventory::{items, stack::ItemStack};
+    let mut game = flat_game(GameMode::Survival);
+    // A wall two blocks north, six high.
+    let wall: Vec<_> = (64..70)
+        .map(|y| (IVec3::new(0, y, -2), BlockState::of(blocks::STONE)))
+        .collect();
+    game.set_blocks(&wall);
+    game.inventory
+        .set(0, Some(ItemStack::new(items::LADDER, 8)));
+    game.inventory.selected = 0;
+    let place = |game: &mut super::Game, pitch: f32| {
+        game.camera.pitch = pitch;
+        game.advance(0.0);
+        game.on_mouse_button(winit::event::MouseButton::Right, true);
+        game.on_mouse_button(winit::event::MouseButton::Right, false);
+        game.run_ticks(5);
+    };
+    // Looking at the wall at eye height, then at the floor in front of it.
+    place(&mut game, -0.15);
+    place(&mut game, -0.9);
+    for y in [64, 65] {
+        let block = game.chunks.world().block(0, y, -1).unwrap();
+        assert_eq!(block.id(), blocks::LADDER, "y {y}");
+    }
+    // Two more above, then climb: walk into the ladder.
+    game.set_blocks(&[
+        (
+            IVec3::new(0, 66, -1),
+            game.chunks.world().block(0, 65, -1).unwrap(),
+        ),
+        (
+            IVec3::new(0, 67, -1),
+            game.chunks.world().block(0, 65, -1).unwrap(),
+        ),
+    ]);
+    game.camera.pitch = 0.0;
+    press(&mut game, KeyCode::KeyW);
+    game.run_ticks(40);
+    assert!(
+        game.body.position().y > 66.0,
+        "climbed: {:?}",
+        game.body.position()
+    );
+}

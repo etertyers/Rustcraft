@@ -190,10 +190,17 @@ pub fn place_block(
             }
         }
         Placement::Wall => {
-            if !face.is_horizontal() {
-                return None;
+            // On the wall clicked, or failing that the nearest wall the
+            // player faces (modern `LadderBlock`), facing away from it.
+            let mut toward = Vec::with_capacity(4);
+            if face.is_horizontal() {
+                toward.push(face.opposite());
             }
-            block.with_face(Prop::Facing, face)
+            toward.extend(horizontal_by_look(yaw));
+            let wall = toward.into_iter().find(|&d| {
+                state_at(world, at + IVec3::from_array(d.normal())).is_some_and(sturdy)
+            })?;
+            block.with_face(Prop::Facing, wall.opposite())
         }
         Placement::Attached => match face {
             Face::Top => block
@@ -207,17 +214,25 @@ pub fn place_block(
                 .with_face(Prop::Facing, side),
         },
         Placement::Vine => {
-            if face == Face::Top {
-                return None;
-            }
-            // On the clicked block's side or underside.
-            let toward = face.opposite();
+            // On the clicked block's side or underside, or failing that the
+            // nearest side the player faces, or the block above (modern
+            // `VineBlock`); never on the ground.
             let base = if there.id() == block.id() {
                 there
             } else {
                 block
             };
-            base.with_bool(Prop::side(toward), true)
+            let mut toward = Vec::with_capacity(6);
+            if face != Face::Top {
+                toward.push(face.opposite());
+            }
+            toward.extend(horizontal_by_look(yaw));
+            toward.push(Face::Top);
+            let side = toward.into_iter().find(|&d| {
+                !base.bool(Prop::side(d))
+                    && state_at(world, at + IVec3::from_array(d.normal())).is_some_and(sturdy)
+            })?;
+            base.with_bool(Prop::side(side), true)
         }
         Placement::Layers => {
             if there.id() == block.id() {
@@ -263,9 +278,6 @@ pub fn place_block(
             return None;
         }
     }
-    if new.placement == Placement::Vine && !sturdy(state_at(world, hit.block)?) {
-        return None;
-    }
     if collides(state, at, player) {
         return None;
     }
@@ -288,6 +300,19 @@ pub fn place_block(
             .map(|&(at, block)| (at, connect::update_shape(block, at, &get)))
             .collect(),
     )
+}
+
+/// The four sides, the one the player looks most toward first (modern
+/// `Direction.orderedByNearest`, horizontally).
+fn horizontal_by_look(yaw: f32) -> [Face; 4] {
+    let look = (yaw.sin(), -yaw.cos());
+    let toward = |face: &Face| {
+        let [x, _, z] = face.normal();
+        x as f32 * look.0 + z as f32 * look.1
+    };
+    let mut faces = [Face::North, Face::East, Face::South, Face::West];
+    faces.sort_by(|a, b| toward(b).total_cmp(&toward(a)));
+    faces
 }
 
 /// Whether `state` at `at` would collide with `player`.
@@ -668,6 +693,71 @@ mod tests {
         let (_, high) = place_one(&world, &hit_at(stone, Face::North, 0.8), trapdoor).unwrap();
         assert_eq!(high.get(Prop::Half), half::TOP);
         assert_eq!(high.face(Prop::Facing), Face::North);
+    }
+
+    #[test]
+    fn ladders_and_vines_find_the_wall_you_face_when_you_click_the_floor() {
+        use std::f32::consts::PI;
+        let wall = IVec3::new(4, 64, 4);
+        let floor = IVec3::new(4, 63, 5);
+        let world = world_with(&[(wall, STONE), (floor, STONE)]);
+        let ladder = BlockState::of(blocks::LADDER);
+        let vine = BlockState::of(blocks::VINE);
+        // Clicking the floor in front of a wall hangs it on the wall,
+        // whichever way the player looks.
+        for yaw in [0.0, PI / 2.0, PI] {
+            let edits = place(&world, &hit(floor, Face::Top), ladder, yaw).unwrap();
+            assert_eq!(edits[0].0, IVec3::new(4, 64, 5));
+            assert_eq!(edits[0].1.face(Prop::Facing), Face::South, "yaw {yaw}");
+            let edits = place(&world, &hit(floor, Face::Top), vine, yaw).unwrap();
+            assert!(edits[0].1.bool(Prop::North), "yaw {yaw}");
+        }
+        // Out in the open there's nothing to hang on.
+        let open = world_with(&[(floor, STONE)]);
+        assert_eq!(place(&open, &hit(floor, Face::Top), ladder, 0.0), None);
+        assert_eq!(place(&open, &hit(floor, Face::Top), vine, 0.0), None);
+        // A vine clicked onto a block's underside hangs from it.
+        let overhang = IVec3::new(8, 66, 8);
+        let ceiling = world_with(&[(overhang, STONE)]);
+        let (at, hanging) = place_one(&ceiling, &hit(overhang, Face::Bottom), vine).unwrap();
+        assert_eq!(at, IVec3::new(8, 65, 8));
+        assert!(hanging.bool(Prop::Up));
+        // A ladder clicked onto a side still goes on that side first.
+        let (_, hung) = place_one(&world, &hit(wall, Face::East), ladder).unwrap();
+        assert_eq!(hung.face(Prop::Facing), Face::East);
+    }
+
+    #[test]
+    fn a_ladder_wont_go_where_the_player_stands() {
+        let wall = IVec3::new(4, 64, 4);
+        let world = world_with(&[(wall, STONE)]);
+        // Pressed against the wall, the ladder's plate would be inside you.
+        let hugging = hitbox(DVec3::new(4.5, 64.0, 5.3));
+        let ladder = BlockState::of(blocks::LADDER);
+        assert_eq!(
+            place_block(
+                &world,
+                blocks(),
+                &hit(wall, Face::South),
+                ladder,
+                &hugging,
+                0.0
+            ),
+            None
+        );
+        // A step back, it fits.
+        let back = hitbox(DVec3::new(4.5, 64.0, 5.6));
+        assert!(
+            place_block(
+                &world,
+                blocks(),
+                &hit(wall, Face::South),
+                ladder,
+                &back,
+                0.0
+            )
+            .is_some()
+        );
     }
 
     #[test]
