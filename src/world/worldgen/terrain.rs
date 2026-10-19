@@ -666,7 +666,8 @@ impl Terrain {
         self.carve_caves(&mut chunk, &area);
         super::ores::populate(self, &area, &mut chunk);
         super::underground::populate(self, &area, &mut chunk);
-        super::features::populate(self, &area, &mut chunk);
+        let keep_out = crate::world::structure::place(self, &mut chunk);
+        super::features::populate(self, &area, &mut chunk, &keep_out);
         chunk
     }
 }
@@ -1199,7 +1200,7 @@ mod timing {
             super::super::underground::populate(&terrain, &area, &mut chunk);
             t[4] += s.elapsed().as_secs_f64();
             let s = Instant::now();
-            super::super::features::populate(&terrain, &area, &mut chunk);
+            super::super::features::populate(&terrain, &area, &mut chunk, &[]);
             t[5] += s.elapsed().as_secs_f64();
         }
         for (name, v) in ["area", "fill", "caves", "ores", "underground", "features"]

@@ -171,6 +171,64 @@ impl BlockState {
         }
     }
 
+    /// This state turned `turns` quarter turns clockwise seen from above,
+    /// as a structure piece is: facings, axes, rail shapes and the sides a
+    /// fence or wall joins turn with it.
+    pub fn rotated(self, turns: u8) -> Self {
+        let turns = turns % 4;
+        if turns == 0 {
+            return self;
+        }
+        let mut state = self;
+        for &prop in &registry().layout(self.id).props {
+            state = match prop {
+                Prop::Facing | Prop::FacingAll => {
+                    let mut face = self.face(prop);
+                    for _ in 0..turns {
+                        face = face.rotate_cw();
+                    }
+                    state.with_face(prop, face)
+                }
+                Prop::Axis | Prop::HorizontalAxis if turns % 2 == 1 => {
+                    let swapped = match prop.values()[self.get(prop) as usize] {
+                        "x" => "z",
+                        "z" => "x",
+                        other => other,
+                    };
+                    state.with(prop, prop.index_of(swapped).unwrap_or(self.get(prop)))
+                }
+                Prop::RailShape | Prop::StraightRailShape => {
+                    let mut name = prop.values()[self.get(prop) as usize];
+                    for _ in 0..turns {
+                        name = rail_turned(name);
+                    }
+                    state.with(prop, prop.index_of(name).unwrap_or(self.get(prop)))
+                }
+                _ => state,
+            };
+        }
+        // Sides that join: the value on each side moves to the next side
+        // clockwise.
+        for sides in [
+            [Prop::North, Prop::East, Prop::South, Prop::West],
+            [
+                Prop::WallNorth,
+                Prop::WallEast,
+                Prop::WallSouth,
+                Prop::WallWest,
+            ],
+        ] {
+            if !self.has(sides[0]) {
+                continue;
+            }
+            for (i, &side) in sides.iter().enumerate() {
+                let to = sides[(i + turns as usize) % 4];
+                state = state.with(to, self.get(side));
+            }
+        }
+        state
+    }
+
     /// Whether this state meets `condition`.
     pub fn matches(self, condition: &Condition) -> bool {
         let layout = registry().layout(self.id);
@@ -246,6 +304,23 @@ impl<'de> Deserialize<'de> for BlockState {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
         Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// A rail shape a quarter turn clockwise.
+fn rail_turned(shape: &'static str) -> &'static str {
+    match shape {
+        "north_south" => "east_west",
+        "east_west" => "north_south",
+        "ascending_north" => "ascending_east",
+        "ascending_east" => "ascending_south",
+        "ascending_south" => "ascending_west",
+        "ascending_west" => "ascending_north",
+        "north_east" => "south_east",
+        "south_east" => "south_west",
+        "south_west" => "north_west",
+        "north_west" => "north_east",
+        other => other,
     }
 }
 
@@ -1468,5 +1543,34 @@ mod tests {
             expected.push(format!("block/{name}"));
         }
         assert_eq!(missing, expected.into_iter().collect());
+    }
+
+    #[test]
+    fn states_turn_with_a_structure() {
+        let parse = |text| BlockState::parse(text).unwrap();
+        assert_eq!(
+            parse("oak_stairs[facing=north,half=top]").rotated(1),
+            parse("oak_stairs[facing=east,half=top]")
+        );
+        assert_eq!(
+            parse("oak_log[axis=x]").rotated(1),
+            parse("oak_log[axis=z]")
+        );
+        assert_eq!(
+            parse("oak_log[axis=y]").rotated(3),
+            parse("oak_log[axis=y]")
+        );
+        assert_eq!(
+            parse("rail[shape=north_east]").rotated(2),
+            parse("rail[shape=south_west]")
+        );
+        assert_eq!(
+            parse("oak_fence[north=true,east=false]").rotated(1),
+            parse("oak_fence[east=true,north=false]")
+        );
+        assert_eq!(parse("stone").rotated(1), parse("stone"));
+        // Four turns come back around.
+        let door = parse("oak_door[facing=west,half=upper,hinge=right]");
+        assert_eq!(door.rotated(1).rotated(1).rotated(1).rotated(1), door);
     }
 }

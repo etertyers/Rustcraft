@@ -23,6 +23,7 @@ pub mod rails;
 pub mod redstone;
 pub mod save;
 pub mod shape;
+pub mod structure;
 pub mod worldgen;
 
 use std::sync::Arc;

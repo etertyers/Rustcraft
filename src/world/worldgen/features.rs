@@ -19,6 +19,7 @@ use crate::{
         blocks,
         chunk::{Chunk, ChunkPos},
         props::{Prop, axis, door_half},
+        structure::Bounds,
     },
 };
 
@@ -47,14 +48,16 @@ const MELON: BlockState = of(blocks::MELON);
 const TREE_SALT: u64 = 0x7EE;
 const PLANT_SALT: u64 = 0x91A;
 
-pub fn populate(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
+/// Grows trees and plants, keeping out of `keep_out` (structures on the
+/// surface).
+pub fn populate(terrain: &Terrain, area: &Area, chunk: &mut Chunk, keep_out: &[Bounds]) {
     let center = chunk.pos;
     for dz in -1..=1 {
         for dx in -1..=1 {
-            large(terrain, area, center.offset(dx, dz), chunk);
+            large(terrain, area, center.offset(dx, dz), chunk, keep_out);
         }
     }
-    plants(terrain, area, chunk);
+    plants(terrain, area, chunk, keep_out);
     freeze(area, chunk);
 }
 
@@ -63,16 +66,26 @@ struct ChunkWriter<'a> {
     chunk: &'a mut Chunk,
     min_x: i32,
     min_z: i32,
+    /// Columns nothing grows in (structures).
+    keep_out: &'a [Bounds],
 }
 
 impl<'a> ChunkWriter<'a> {
-    fn new(chunk: &'a mut Chunk) -> Self {
+    fn new(chunk: &'a mut Chunk, keep_out: &'a [Bounds]) -> Self {
         let (min_x, min_z) = chunk.pos.min_block();
         Self {
             chunk,
             min_x,
             min_z,
+            keep_out,
         }
+    }
+
+    /// Whether (x, z) is in or beside a structure.
+    fn kept_out(&self, x: i32, z: i32) -> bool {
+        self.keep_out
+            .iter()
+            .any(|b| b.grow(1).contains_column(x, z))
     }
 
     fn local(&self, x: i32, y: i32, z: i32) -> Option<(usize, usize, usize)> {
@@ -100,6 +113,7 @@ impl<'a> ChunkWriter<'a> {
     ) {
         if let Some((lx, ly, lz)) = self.local(x, y, z)
             && replace(self.chunk.get(lx, ly, lz))
+            && !self.kept_out(x, z)
         {
             self.chunk.set(lx, ly, lz, block);
         }
@@ -236,10 +250,10 @@ const MAX_ATTEMPTS: u32 = 30;
 /// whether it grows and what: attempt `i` grows only if the biome makes
 /// more than `i` attempts. One more attempt grows an azalea if lush caves
 /// lie below.
-fn large(terrain: &Terrain, area: &Area, source: ChunkPos, chunk: &mut Chunk) {
+fn large(terrain: &Terrain, area: &Area, source: ChunkPos, chunk: &mut Chunk, keep_out: &[Bounds]) {
     let mut rng = Rng::for_chunk(terrain.seed(), source.x, source.z, TREE_SALT);
     let (min_x, min_z) = source.min_block();
-    let mut writer = ChunkWriter::new(chunk);
+    let mut writer = ChunkWriter::new(chunk, keep_out);
     for attempt in 0..=MAX_ATTEMPTS {
         // One draw per attempt keeps every later attempt's numbers the same
         // whether or not this one grows.
@@ -263,6 +277,10 @@ fn large(terrain: &Terrain, area: &Area, source: ChunkPos, chunk: &mut Chunk) {
             }
             choose(tree_rng.next_f64())
         };
+        // A tree next to a building would grow through it.
+        if keep_out.iter().any(|b| b.grow(4).contains_column(x, z)) {
+            continue;
+        }
         grow(&mut writer, &mut tree_rng, kind, x, z, &column);
     }
 }
@@ -1041,13 +1059,13 @@ fn plant(writer: &mut ChunkWriter, x: i32, y: i32, z: i32, plant: BlockState) {
 }
 
 /// Plants stay inside their own chunk, so only this chunk's are placed.
-fn plants(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
+fn plants(terrain: &Terrain, area: &Area, chunk: &mut Chunk, keep_out: &[Bounds]) {
     let pos = chunk.pos;
     let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, PLANT_SALT);
     let (min_x, min_z) = pos.min_block();
     let biome = area.get(min_x + 8, min_z + 8).biome;
     let kinds = plants_for(biome);
-    let mut writer = ChunkWriter::new(chunk);
+    let mut writer = ChunkWriter::new(chunk, keep_out);
     let pick = |rng: &mut Rng| {
         (
             min_x + rng.below(CHUNK_SIZE as u32) as i32,
