@@ -112,6 +112,8 @@
     (name: "book", texture: "book"),
     (name: "slime_ball", texture: "slime_ball"),
     (name: "chest_minecart", texture: "chest_minecart", max_stack: 1),
+    (name: "hopper_minecart", texture: "hopper_minecart", max_stack: 1),
+    (name: "tnt_minecart", texture: "tnt_minecart", max_stack: 1),
     (name: "furnace_minecart", texture: "furnace_minecart", max_stack: 1),
     (name: "egg", texture: "egg", max_stack: 16),
     (name: "compass", texture: "compass"),

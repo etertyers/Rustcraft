@@ -146,6 +146,15 @@ pub fn place_block(
             };
             block.with_face(prop, facing_toward(yaw))
         }
+        // The spout points into the clicked block; from below, it points down.
+        Placement::Hopper => block.with_face(
+            Prop::FacingAll,
+            match face {
+                Face::Bottom => Face::Top,
+                side => side,
+            }
+            .opposite(),
+        ),
         Placement::Look | Placement::Bed | Placement::Door => {
             block.with_face(Prop::Facing, looking)
         }

@@ -479,6 +479,7 @@ pub enum Shape {
     BrewingStand,
     Cauldron,
     EnchantingTable,
+    Hopper,
     EndPortal,
     EndPortalFrame,
     DragonEgg,
@@ -524,6 +525,8 @@ pub enum Placement {
     Layers,
     /// Rails, along the way the player looks.
     Rail,
+    /// Hoppers, spout toward the clicked block (down if clicked from below).
+    Hopper,
 }
 
 /// The way from a bed's foot to its head.

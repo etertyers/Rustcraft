@@ -6,6 +6,12 @@
 // table, block/X also tries blocks/X and item/X also tries items/X, the
 // folder names before 1.13.
 {
+    "block/activator_rail": ["blocks/rail_activator"],
+    "block/activator_rail_on": ["blocks/rail_activator_powered"],
+    "block/redstone_lamp_off": ["blocks/redstone_lamp_off"],
+    "item/hopper_minecart": ["items/minecart_hopper"],
+    "item/tnt_minecart": ["items/minecart_tnt"],
+    "block/dropper_front_horizontal": ["blocks/dropper_front_horizontal"],
     "entity/player/slim/alex": ["entity/alex"],
     "entity/player/wide/steve": ["entity/steve"],
     "block/acacia_leaves": ["blocks/leaves_acacia"],

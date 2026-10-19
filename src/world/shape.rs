@@ -386,6 +386,7 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
             Cuboid::px(7.0, 0.0, 7.0, 9.0, 14.0, 9.0),
         ],
         Shape::Cauldron => one(Cuboid::FULL),
+        Shape::Hopper => one(Cuboid::FULL),
         Shape::EnchantingTable => one(Cuboid::px(0.0, 0.0, 0.0, 16.0, 12.0, 16.0)),
         Shape::EndPortal => one(Cuboid::px(0.0, 6.0, 0.0, 16.0, 12.0, 16.0)),
         Shape::EndPortalFrame => {
@@ -489,7 +490,7 @@ pub fn render_boxes(state: BlockState) -> Option<Vec<Cuboid>> {
             }
             boxes
         }
-        Shape::Cauldron => collision_of(state, &[]),
+        Shape::Cauldron | Shape::Hopper => collision_of(state, &[]),
         _ => outline_of(state),
     })
 }
@@ -571,6 +572,16 @@ fn collision_of(state: BlockState, outline: &[Cuboid]) -> Vec<Cuboid> {
             }
         }
         Shape::Cactus => vec![Cuboid::px(1.0, 0.0, 1.0, 15.0, 15.0, 15.0)],
+        // A funnel: a bowl of walls over a narrow neck.
+        Shape::Hopper => vec![
+            Cuboid::px(0.0, 10.0, 0.0, 16.0, 11.0, 16.0),
+            Cuboid::px(0.0, 11.0, 0.0, 16.0, 16.0, 2.0),
+            Cuboid::px(0.0, 11.0, 14.0, 16.0, 16.0, 16.0),
+            Cuboid::px(0.0, 11.0, 2.0, 2.0, 16.0, 14.0),
+            Cuboid::px(14.0, 11.0, 2.0, 16.0, 16.0, 14.0),
+            Cuboid::px(4.0, 4.0, 4.0, 12.0, 10.0, 12.0),
+            Cuboid::px(6.0, 0.0, 6.0, 10.0, 4.0, 10.0),
+        ],
         // Hollow: walls round a floor, so things can sit inside.
         Shape::Cauldron => vec![
             Cuboid::px(0.0, 0.0, 0.0, 16.0, 4.0, 16.0),
