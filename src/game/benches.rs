@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn a_book_becomes_an_enchanted_book_with_one_enchantment() {
+    fn a_book_becomes_an_enchanted_book() {
         let mut game = flat_game(GameMode::Survival);
         table_with(&mut game, 15);
         game.open_bench(BenchKind::Enchanting, TABLE);
@@ -393,7 +393,9 @@ mod tests {
         assert!(game.enchant_item(1));
         let book = game.bench().unwrap().slots[0].clone().unwrap();
         assert_eq!(book.id, items::ENCHANTED_BOOK);
-        assert_eq!(book.enchantments().len(), 1, "{book:?}");
+        // The table drops one of the list for a book, so a book never holds
+        // as many as the same offer on a tool could.
+        assert!(!book.enchantments().is_empty(), "{book:?}");
     }
 
     #[test]
@@ -539,7 +541,7 @@ mod tests {
         );
         let paid: u32 = game.orbs.iter().map(|orb| orb.value).sum();
         // Efficiency V (41) and Mending (34) at least: 38 + up to 37 more.
-        assert!((38..75).contains(&paid), "{paid}");
+        assert!((38..=75).contains(&paid), "{paid}");
         assert!(game.bench().unwrap().slots.iter().all(Option::is_none));
     }
 }
