@@ -579,6 +579,10 @@ pub enum Activate {
     Door,
     /// Opens or closes it, a single block (trapdoors, fence gates).
     Open,
+    /// Opens its nine slots (dispensers and droppers).
+    Dispenser,
+    /// Opens its five slots.
+    Hopper,
     /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
     Redstone,
 }

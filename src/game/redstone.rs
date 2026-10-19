@@ -135,9 +135,6 @@ impl Game {
         Vec::new()
     }
 
-    /// A dispenser or dropper fires (filled in with containers).
-    fn dispense(&mut self, _at: IVec3) {}
-
     /// Records a note for the sound code.
     fn play_note(&mut self, at: IVec3, instrument: u8, note: u8) {
         if self.played_notes.len() >= NOTE_LOG {

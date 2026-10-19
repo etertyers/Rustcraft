@@ -8,6 +8,7 @@ pub mod environment;
 mod explosion;
 mod fluids;
 mod hands;
+mod logistics;
 mod mobs;
 #[cfg(test)]
 mod moves;
@@ -605,6 +606,7 @@ impl Game {
         self.tick_fires();
         self.tick_redstone();
         self.tick_tnt();
+        self.tick_hoppers();
         self.tick_falling();
         self.post_process();
         self.tick_furnaces();

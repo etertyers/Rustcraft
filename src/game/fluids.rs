@@ -34,6 +34,7 @@ impl Game {
     }
 
     fn wake_around(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.equip_placed(edits);
         for &(at, _) in edits {
             self.fluids.changed(at);
             self.fires.changed(at);

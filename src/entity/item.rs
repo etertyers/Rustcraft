@@ -125,6 +125,11 @@ impl ItemEntity {
         item
     }
 
+    /// Whether it can't be picked up yet.
+    pub fn pickup_delayed(&self) -> bool {
+        self.pickup_delay > 0
+    }
+
     /// Hurts it (an explosion), burning it up at 0.
     pub fn hurt(&mut self, amount: i32) {
         self.health -= amount;

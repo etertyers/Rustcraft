@@ -525,6 +525,15 @@ impl Game {
             Activate::Furnace => self.open_furnace(cell),
             Activate::Bed => self.use_bed(cell),
             Activate::Door => self.toggle_door(cell),
+            Activate::Dispenser => {
+                let dropper = self
+                    .chunks
+                    .world()
+                    .block(cell.x, cell.y, cell.z)
+                    .is_some_and(|block| block.is(crate::world::blocks::DROPPER));
+                self.open_dispenser(cell, dropper);
+            }
+            Activate::Hopper => self.open_hopper(cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }

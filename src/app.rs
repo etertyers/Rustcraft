@@ -582,6 +582,8 @@ impl App {
             Container::Crafting { .. } => Screen::Crafting,
             Container::Chest(_) => Screen::Chest,
             Container::Furnace(_) => Screen::Furnace,
+            Container::Dispenser(_, dropper) => Screen::Dispenser { dropper: *dropper },
+            Container::Hopper(_) => Screen::Hopper,
         });
         self.set_cursor_grab(false);
     }

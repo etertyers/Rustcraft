@@ -31,9 +31,23 @@ pub enum Container {
     Chest(IVec3),
     /// The furnace at this block.
     Furnace(IVec3),
+    /// The dispenser or dropper at this block (`true` for a dropper).
+    Dispenser(IVec3, bool),
+    /// The hopper at this block.
+    Hopper(IVec3),
 }
 
 impl Container {
+    /// The block whose slots this shows, if it shows a block's.
+    pub fn block(&self) -> Option<IVec3> {
+        match *self {
+            Self::Crafting { .. } => None,
+            Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
+                Some(at)
+            }
+        }
+    }
+
     fn crafting(size: usize) -> Self {
         Self::Crafting {
             size,
@@ -97,7 +111,7 @@ impl Game {
         };
         match self.chunks.block_entity(at)? {
             BlockEntity::Furnace(furnace) => Some((furnace.fuel_left(), furnace.progress())),
-            BlockEntity::Chest(_) => None,
+            _ => None,
         }
     }
 
@@ -157,11 +171,39 @@ impl Game {
         self.items.recipes.craft(grid, *size)
     }
 
-    /// The block whose slots are open (a chest or furnace).
+    /// The block whose slots are open (a chest, furnace, dispenser or
+    /// hopper).
     fn open_block(&self) -> Option<IVec3> {
-        match self.container {
-            Some(Container::Chest(at) | Container::Furnace(at)) => Some(at),
-            _ => None,
+        self.container.as_ref().and_then(Container::block)
+    }
+
+    /// Opens the dispenser or dropper at `at`.
+    pub(super) fn open_dispenser(&mut self, at: IVec3, dropper: bool) {
+        self.ensure_entity(at);
+        self.container = Some(Container::Dispenser(at, dropper));
+        self.release_input();
+    }
+
+    /// Opens the hopper at `at`.
+    pub(super) fn open_hopper(&mut self, at: IVec3) {
+        self.ensure_entity(at);
+        self.container = Some(Container::Hopper(at));
+        self.release_input();
+    }
+
+    /// Gives the dispenser, dropper or hopper at `at` its slots if it has
+    /// none yet.
+    pub(super) fn ensure_entity(&mut self, at: IVec3) {
+        let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
+            return;
+        };
+        let wanted = match block.id() {
+            blocks::DISPENSER | blocks::DROPPER => BlockEntity::dispenser(),
+            blocks::HOPPER => BlockEntity::Hopper(Default::default()),
+            _ => return,
+        };
+        if self.chunks.block_entity(at).is_none() {
+            self.chunks.set_block_entity(at, Some(wanted));
         }
     }
 
@@ -362,7 +404,12 @@ impl Game {
         let max = self.items.max_stack(held.id);
         let mut slots: Vec<SlotRef> = match &self.container {
             Some(Container::Crafting { grid, .. }) => (0..grid.len()).map(SlotRef::Grid).collect(),
-            Some(Container::Chest(_) | Container::Furnace(_)) => {
+            Some(
+                Container::Chest(_)
+                | Container::Furnace(_)
+                | Container::Dispenser(..)
+                | Container::Hopper(_),
+            ) => {
                 let count = self.block_slots().map_or(0, <[_]>::len);
                 (0..count).map(SlotRef::Block).collect()
             }
@@ -415,7 +462,9 @@ impl Game {
     /// into its slots).
     fn transfer_from_inventory(&mut self, index: usize) {
         let items = self.items.clone();
-        if let Some(Container::Chest(_)) = self.container {
+        if let Some(Container::Chest(_) | Container::Dispenser(..) | Container::Hopper(_)) =
+            self.container
+        {
             let Some(stack) = self.inventory.slot(index).copied() else {
                 return;
             };
