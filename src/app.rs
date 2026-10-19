@@ -850,9 +850,21 @@ impl App {
                 .map(|i| {
                     let stack = game.inventory.slot(i)?;
                     let icons = self.icons.as_ref()?;
-                    Some(SlotView::of(stack, icons, game.items()))
+                    let drawn = (i == game.inventory.selected)
+                        .then(|| game.bow_ticks())
+                        .flatten();
+                    Some(match drawn {
+                        Some(ticks) => {
+                            SlotView::with_icon(stack, icons.icon_drawn(stack, ticks), game.items())
+                        }
+                        None => SlotView::of(stack, icons, game.items()),
+                    })
                 })
                 .collect(),
+            offhand: game
+                .inventory
+                .slot(crate::inventory::player::OFFHAND)
+                .and_then(|stack| Some(SlotView::of(stack, self.icons.as_ref()?, game.items()))),
             selected: game.inventory.selected,
             survival: (game.mode.is_vulnerable() && !game.stats.is_dead()).then(|| SurvivalHud {
                 health: game.stats.health.ceil() as i32,

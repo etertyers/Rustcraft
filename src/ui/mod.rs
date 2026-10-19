@@ -47,6 +47,8 @@ pub struct Hud {
     /// The swing's recharge under the crosshair.
     pub attack: Option<gui::AttackIndicator>,
     pub hotbar: Vec<Option<SlotView>>,
+    /// What the off-hand holds.
+    pub offhand: Option<SlotView>,
     pub selected: usize,
     /// Hearts and food, in survival.
     pub survival: Option<SurvivalHud>,
@@ -156,6 +158,9 @@ impl DebugUi {
                 }
             }
             gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
+            if let Some(offhand) = &hud.offhand {
+                gui::paint_offhand(ui.painter(), full, offhand, textures);
+            }
             if let Some(survival) = &hud.survival {
                 gui::paint_survival(ui.painter(), full, survival, textures);
             }

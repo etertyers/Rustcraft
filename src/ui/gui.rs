@@ -23,12 +23,17 @@ pub struct SlotView {
 
 impl SlotView {
     pub fn of(stack: &ItemStack, icons: &ItemIcons, items: &Items) -> Self {
+        Self::with_icon(stack, icons.icon(stack), items)
+    }
+
+    /// A slot showing `stack` as `icon` (a bow being drawn looks different).
+    pub fn with_icon(stack: &ItemStack, icon: ItemIcon, items: &Items) -> Self {
         let durability = items
             .max_damage(stack.id)
             .filter(|_| stack.damage > 0)
             .map(|max| 1.0 - stack.damage as f32 / max as f32);
         Self {
-            icon: icons.icon(stack),
+            icon,
             count: stack.count,
             durability,
         }
@@ -62,6 +67,7 @@ type Sprite = (&'static str, [u32; 4]);
 const WIDGETS: &[Sprite] = &[
     ("gui/sprites/hud/hotbar", [0, 0, 182, 22]),
     ("gui/sprites/hud/hotbar_selection", [0, 22, 24, 24]),
+    ("gui/sprites/hud/hotbar_offhand_left", [24, 22, 29, 24]),
 ];
 const ICONS: &[Sprite] = &[
     ("gui/sprites/hud/heart/container", [16, 0, 9, 9]),
@@ -357,6 +363,29 @@ pub fn paint_survival(painter: &Painter, screen: Rect, hud: &SurvivalHud, textur
             icon(from, x, row - 10.0 * scale);
         }
     }
+}
+
+/// The off-hand's item in its own little slot left of the hotbar (shown
+/// only when it holds something).
+pub fn paint_offhand(painter: &Painter, screen: Rect, slot: &SlotView, textures: &GuiTextures) {
+    let scale = gui_scale(screen);
+    let at = pos2(
+        screen.center().x - 120.0 * scale,
+        screen.bottom() - 23.0 * scale,
+    );
+    sheet_image(
+        painter,
+        textures.widgets.id(),
+        [24.0, 22.0],
+        [29.0, 24.0],
+        at,
+        scale,
+    );
+    let item_at = pos2(
+        screen.center().x - 117.0 * scale,
+        screen.bottom() - 19.0 * scale,
+    );
+    paint_slot(painter, item_at, slot, scale, textures.atlas.id());
 }
 
 /// The attack indicator under the crosshair (modern `renderCrosshair`).

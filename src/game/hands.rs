@@ -34,6 +34,12 @@ const BREAK_EXHAUSTION: f32 = 0.005;
 /// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
 const EAT_TICKS: u32 = 32;
 impl Game {
+    /// Ticks a bow has been drawn, with the part of a tick.
+    pub fn bow_ticks(&self) -> Option<f32> {
+        self.drawing
+            .map(|ticks| ticks as f32 + self.tick_alpha() as f32)
+    }
+
     /// Eating or drawing a bow, which slows the player to a fifth.
     pub(super) fn using_item(&self) -> bool {
         self.eating.is_some() || self.drawing.is_some() || self.shield_hand.is_some()
@@ -115,11 +121,11 @@ impl Game {
         let using = self.placing || self.place_clicked;
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let hit = self.find_target(eye);
-        let hand = (using && !wants_break)
-            .then(|| self.pick_use_hand(hit.as_ref()))
-            .flatten();
-        // A shield stays up while its hand holds right-click.
-        self.keep_blocking(hand);
+        let candidate = using.then(|| self.pick_use_hand(hit.as_ref())).flatten();
+        // A shield stays up while its hand holds right-click, even while
+        // the other hand attacks.
+        self.keep_blocking(candidate);
+        let hand = candidate.filter(|_| !wants_break);
         let bow_hand = hand.filter(|&h| self.is_bow(h));
         self.use_hand = match (bow_hand, self.drawing) {
             (Some(h), _) => h,
@@ -164,9 +170,16 @@ impl Game {
             }
             return;
         }
-        if !wants_break || hit.is_none() {
-            // Letting go or looking away starts the block over (1.0.0).
+        if !wants_break || hit.is_none() || self.shield_hand.is_some() {
+            // Letting go or looking away starts the block over (1.0.0); a
+            // raised shield keeps both hands busy.
             self.mining = None;
+        }
+        if self.shield_hand.is_some() && wants_break {
+            if clicked && hit.is_none() {
+                self.swing_at_air();
+            }
+            return;
         }
         if using && !wants_break && self.use_hand == Hand::Main && self.holding_bucket() {
             // A bucket works on a fresh click, unless it's on a chest or

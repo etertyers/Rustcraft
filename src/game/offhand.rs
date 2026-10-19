@@ -203,6 +203,42 @@ fn an_axe_blow_puts_the_shield_out_of_use_for_five_seconds() {
 }
 
 #[test]
+fn you_can_attack_with_the_sword_while_the_shield_stays_up() {
+    let mut game = blocking_game();
+    zombie_at(&mut game, DVec3::new(0.5, 64.0, -1.5));
+    game.run_ticks(8);
+    assert!(game.is_blocking());
+    game.attack_ticker = 100;
+    game.mobs[0].body.set_position(DVec3::new(0.5, 64.0, -1.5));
+    game.on_mouse_button(MouseButton::Left, true);
+    game.run_ticks(1);
+    game.on_mouse_button(MouseButton::Left, false);
+    assert!(game.mobs[0].stats.health < 20.0, "the sword hit");
+    assert!(game.is_blocking(), "and the shield is still up");
+}
+
+#[test]
+fn you_cant_mine_with_the_shield_up() {
+    let mut game = blocking_game();
+    game.camera.pitch = -0.8;
+    game.advance(0.0);
+    let target = game.target.unwrap().block;
+    game.run_ticks(8);
+    game.on_mouse_button(MouseButton::Left, true);
+    game.run_ticks(40);
+    assert!(game.mining_progress().is_none());
+    assert!(
+        !game
+            .chunks
+            .world()
+            .block(target.x, target.y, target.z)
+            .unwrap()
+            .is_air(),
+        "the block is still there"
+    );
+}
+
+#[test]
 fn a_zombie_swinging_at_a_shield_is_pushed_back_and_does_no_harm() {
     let mut game = blocking_game();
     game.run_ticks(6);

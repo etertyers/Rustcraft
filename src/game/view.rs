@@ -12,7 +12,7 @@ use winit::keyboard::KeyCode;
 
 use super::Game;
 use crate::{
-    inventory::item::ItemId,
+    inventory::{item::ItemId, player::Hand},
     player::raycast,
     render::{
         camera::{Camera, ViewBob},
@@ -74,8 +74,9 @@ pub struct TickInfo {
     pub pitch: f32,
     /// Swimming (sprinting in water) or crawling.
     pub swimming: bool,
-    /// The item type in the selected slot.
+    /// The item type in the selected slot, and in the off-hand.
     pub item: Option<ItemId>,
+    pub offhand: Option<ItemId>,
     /// Sprinting, and flying in creative: both widen the view.
     pub sprinting: bool,
     pub flying: bool,
@@ -97,6 +98,9 @@ pub struct ViewState {
     prev_hand_height: f32,
     hand_height: f32,
     hand_item: Option<ItemId>,
+    prev_off_height: f32,
+    off_height: f32,
+    off_item: Option<ItemId>,
     prev_x_bob: f32,
     x_bob: f32,
     prev_y_bob: f32,
@@ -140,6 +144,9 @@ impl ViewState {
             prev_hand_height: 1.0,
             hand_height: 1.0,
             hand_item: item,
+            prev_off_height: 1.0,
+            off_height: 1.0,
+            off_item: None,
             prev_x_bob: pitch.to_degrees(),
             x_bob: pitch.to_degrees(),
             prev_y_bob: yaw.to_degrees(),
@@ -199,6 +206,14 @@ impl ViewState {
         self.hand_height += (wanted - self.hand_height).clamp(-0.4, 0.4);
         if self.hand_height < 0.1 {
             self.hand_item = t.item;
+        }
+
+        // The off-hand dips and rises the same way.
+        self.prev_off_height = self.off_height;
+        let wanted = if self.off_item == t.offhand { 1.0 } else { 0.0 };
+        self.off_height += (wanted - self.off_height).clamp(-0.4, 0.4);
+        if self.off_height < 0.1 {
+            self.off_item = t.offhand;
         }
 
         // The hand lags behind where the mouse points.
@@ -316,6 +331,16 @@ impl ViewState {
         1.0 - lerp(alpha, self.prev_hand_height, self.hand_height)
     }
 
+    /// How far the off-hand is lowered, 0 when raised.
+    pub fn offhand_equip_progress(&self, alpha: f32) -> f32 {
+        1.0 - lerp(alpha, self.prev_off_height, self.off_height)
+    }
+
+    /// The item the off-hand shows, which lags while it dips.
+    pub fn offhand_item(&self) -> Option<ItemId> {
+        self.off_item
+    }
+
     /// The item the hand shows, which lags the selection while the hand dips.
     pub fn hand_item(&self) -> Option<ItemId> {
         self.hand_item
@@ -405,6 +430,10 @@ impl Game {
             pitch: self.camera.pitch,
             swimming: self.body.pose() == crate::player::physics::Pose::Swimming,
             item: self.inventory.selected_stack().map(|stack| stack.id),
+            offhand: self
+                .inventory
+                .slot(crate::inventory::player::OFFHAND)
+                .map(|stack| stack.id),
             sprinting: self.body.sprinting,
             flying: self.body.flying,
             bow_ticks: self.drawing,
@@ -492,16 +521,22 @@ impl Game {
         let (limb_swing, limb_amount) = view.limbs(alpha);
         let eating = self.eating.map(|(_, ticks)| ticks as f32);
         let drawing = self.drawing.is_some();
-        let holding = self.inventory.selected_stack().is_some();
-        let main = if drawing {
-            ArmPose::Bow
-        } else if eating.is_some() {
-            ArmPose::Eat
-        } else if holding {
-            ArmPose::Item
-        } else {
-            ArmPose::Empty
+        let blocking = self.is_blocking();
+        let arm = |hand: Hand| {
+            let holding = self.inventory.hand_stack(hand).is_some();
+            if drawing && self.drawing_hand == hand {
+                ArmPose::Bow
+            } else if blocking && self.shield_hand == Some(hand) {
+                ArmPose::Block
+            } else if eating.is_some() && self.use_hand == hand {
+                ArmPose::Eat
+            } else if holding {
+                ArmPose::Item
+            } else {
+                ArmPose::Empty
+            }
         };
+        let (main, off) = (arm(Hand::Main), arm(Hand::Off));
         PlayerPose {
             limb_swing,
             limb_amount,
@@ -515,11 +550,7 @@ impl Game {
             attack: view.attack_anim(alpha),
             swing_left: false,
             right: main,
-            left: if drawing {
-                ArmPose::Bow
-            } else {
-                ArmPose::Empty
-            },
+            left: if drawing { ArmPose::Bow } else { off },
             use_time: eating.map_or(0.0, |t| t + alpha),
         }
     }
@@ -580,6 +611,7 @@ mod tests {
             pitch: 0.0,
             swimming: false,
             item: None,
+            offhand: None,
             sprinting: false,
             flying: false,
             bow_ticks: None,
