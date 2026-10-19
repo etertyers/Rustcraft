@@ -46,7 +46,7 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_particles,
+            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_orbs, add_particles,
             add_primed_tnt, item_mesh,
         },
         held::HeldCache,
@@ -800,6 +800,14 @@ impl App {
                     game.tick_alpha(),
                     light_at,
                 );
+                add_orbs(
+                    &mut mesh,
+                    &game.orbs,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
             }
             // The player: the hand in first person, the model in third.
             let player = match (&self.atlas, &self.item_models) {
@@ -925,6 +933,8 @@ impl App {
                 health: game.stats.health.ceil() as i32,
                 food: game.stats.food,
                 air: (game.stats.air < MAX_AIR).then_some(game.stats.air),
+                level: game.stats.experience.level,
+                progress: game.stats.experience.progress,
             }),
             death: game.stats.is_dead().then(|| {
                 let source = game.stats.last_source.unwrap_or(DamageSource::Mob);

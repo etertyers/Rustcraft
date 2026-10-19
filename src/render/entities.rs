@@ -14,6 +14,7 @@ use crate::{
         falling::FallingBlock,
         item::ItemEntity,
         minecart::{CartKind, Minecart},
+        orb::XpOrb,
         particle::Particle,
         tnt::PrimedTnt,
     },
@@ -203,6 +204,14 @@ pub fn add_particles(
 pub struct EffectUvs {
     pub crit: [f32; 4],
     pub sweep: [[f32; 4]; SWEEP_FRAMES],
+    /// The experience orb's 11 pictures, small to big.
+    pub orb: [[f32; 4]; ORB_ICONS],
+}
+
+pub const ORB_ICONS: usize = 11;
+
+pub fn orb_texture(icon: usize) -> String {
+    format!("entity/xp_orb_{icon}")
 }
 
 /// The textures the effects use, as atlas names.
@@ -240,6 +249,43 @@ pub fn add_effects(
         );
     }
 }
+
+/// Adds experience orbs: pictures facing the camera, pulsing from yellow
+/// to green as modern `ExperienceOrbRenderer` does.
+pub fn add_orbs(
+    mesh: &mut Mesh,
+    orbs: &[XpOrb],
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+    let up = right.cross(camera.forward()).normalize();
+    for orb in orbs {
+        let center = orb.center_between_ticks(alpha);
+        let (sky, block) = light_at(center);
+        let pulse = (orb.age as f32 + alpha as f32 + orb.phase * 10.0) / 4.0;
+        let tint = [
+            (pulse.sin() + 1.0) * 0.5,
+            1.0,
+            ((pulse + 4.0 * std::f32::consts::FRAC_PI_3).sin() + 1.0) * 0.1,
+        ];
+        let half = ORB_SIZE / 2.0;
+        let (r, u) = (right * half, up * half);
+        let c = (center + DVec3::Y * 0.1).as_vec3();
+        mesh.quad(
+            [c - r - u, c + r - u, c + r + u, c - r + u].map(|p| p.to_array()),
+            uvs.orb[orb.icon()],
+            [tint; 4],
+            // Orbs glow a little: seven more block light, as vanilla does.
+            [[sky as f32, (block + 7).min(15) as f32]; 4],
+        );
+    }
+}
+
+/// An orb is this wide, in blocks.
+const ORB_SIZE: f32 = 0.4;
 
 fn add_cube(
     mesh: &mut Mesh,

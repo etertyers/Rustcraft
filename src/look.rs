@@ -103,6 +103,7 @@ impl Look {
         textures.extend((0..crack::STAGES).map(crack::texture));
         textures.insert(entities::CRIT_TEXTURE.to_owned());
         textures.extend((0..SWEEP_FRAMES).map(entities::sweep_texture));
+        textures.extend((0..entities::ORB_ICONS).map(entities::orb_texture));
         let atlas = Atlas::build(&res, textures);
 
         let colors = BiomeColors::load(&res).unwrap_or_else(|err| {
@@ -123,6 +124,7 @@ impl Look {
         let effect_uvs = EffectUvs {
             crit: atlas.uv_or_missing(entities::CRIT_TEXTURE),
             sweep: std::array::from_fn(|i| atlas.uv_or_missing(&entities::sweep_texture(i))),
+            orb: std::array::from_fn(|i| atlas.uv_or_missing(&entities::orb_texture(i))),
         };
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);

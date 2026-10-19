@@ -80,6 +80,8 @@ const ICONS: &[Sprite] = &[
     ("gui/sprites/hud/food_empty", [16, 27, 9, 9]),
     ("gui/sprites/hud/food_full", [52, 27, 9, 9]),
     ("gui/sprites/hud/food_half", [61, 27, 9, 9]),
+    ("gui/sprites/hud/experience_bar_background", [0, 64, 182, 5]),
+    ("gui/sprites/hud/experience_bar_progress", [0, 69, 182, 5]),
     (
         "gui/sprites/hud/crosshair_attack_indicator_background",
         [36, 94, 16, 4],
@@ -327,6 +329,9 @@ pub struct SurvivalHud {
     pub food: i32,
     /// Air while the eyes are under water.
     pub air: Option<i32>,
+    /// The experience level and how far to the next, 0–1.
+    pub level: u32,
+    pub progress: f32,
 }
 
 /// Hearts, drumsticks and air bubbles above the hotbar, from icons.png,
@@ -357,6 +362,34 @@ pub fn paint_survival(painter: &Painter, screen: Rect, hud: &SurvivalHud, textur
         } else if hud.food == points + 1 {
             icon([61.0, 27.0], food_x, row);
         }
+    }
+    // The experience bar sits just above the hotbar, its level over it.
+    let bar = pos2(left, screen.bottom() - 29.0 * scale);
+    sheet_image(painter, icons, [0.0, 64.0], [182.0, 5.0], bar, scale);
+    let filled = (hud.progress.clamp(0.0, 1.0) * 183.0).floor().min(182.0);
+    if filled > 0.0 {
+        sheet_image(painter, icons, [0.0, 69.0], [filled, 5.0], bar, scale);
+    }
+    if hud.level > 0 {
+        let font = egui::FontId::monospace(8.0 * scale);
+        let at = pos2(screen.center().x, screen.bottom() - 30.0 * scale);
+        let text = hud.level.to_string();
+        for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            painter.text(
+                at + vec2(dx, dy) * scale,
+                egui::Align2::CENTER_BOTTOM,
+                &text,
+                font.clone(),
+                Color32::BLACK,
+            );
+        }
+        painter.text(
+            at,
+            egui::Align2::CENTER_BOTTOM,
+            &text,
+            font,
+            Color32::from_rgb(128, 255, 32),
+        );
     }
     if let Some(air) = hud.air {
         let full = ((air - 2) as f32 * 10.0 / 300.0).ceil().max(0.0) as i32;
