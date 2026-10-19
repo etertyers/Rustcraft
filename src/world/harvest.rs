@@ -129,6 +129,19 @@ pub fn progress_per_tick(
     on_ground: bool,
     in_water: bool,
 ) -> f32 {
+    progress_per_tick_with(block, tool, on_ground, in_water, 0)
+}
+
+/// `progress_per_tick` for a tool with Efficiency `efficiency`, which
+/// adds its level squared plus one to a speed above 1 (modern
+/// `getDestroySpeed`).
+pub fn progress_per_tick_with(
+    block: &BlockDef,
+    tool: Option<&Tool>,
+    on_ground: bool,
+    in_water: bool,
+    efficiency: u8,
+) -> f32 {
     if block.hardness < 0.0 {
         return 0.0;
     }
@@ -136,6 +149,9 @@ pub fn progress_per_tick(
         return 1.0 / block.hardness / 100.0;
     }
     let mut speed = tool_speed(block, tool);
+    if speed > 1.0 && efficiency > 0 {
+        speed += f32::from(efficiency) * f32::from(efficiency) + 1.0;
+    }
     if in_water {
         speed /= 5.0;
     }
@@ -173,6 +189,88 @@ pub fn drops(
             .into_iter()
             .collect(),
     }
+}
+
+/// Whether Silk Touch takes `block` as itself rather than what it drops.
+fn silk_touchable(block: &BlockDef) -> bool {
+    let name = block.name.as_str();
+    name.ends_with("_ore")
+        || name.ends_with("_leaves")
+        || name.ends_with("glass")
+        || name.ends_with("glass_pane")
+        || name.ends_with("_amethyst_bud")
+        || matches!(
+            name,
+            "stone"
+                | "deepslate"
+                | "grass_block"
+                | "mycelium"
+                | "podzol"
+                | "ice"
+                | "packed_ice"
+                | "blue_ice"
+                | "bookshelf"
+                | "clay"
+                | "glowstone"
+                | "sea_lantern"
+                | "snow_block"
+                | "melon"
+                | "cobweb"
+                | "amethyst_cluster"
+                | "ender_chest"
+        )
+}
+
+/// What Fortune does to a block's drops.
+enum Bonus {
+    /// Copies of the whole drop: one, plus a chance of one more per level
+    /// (coal, diamonds, emeralds).
+    Multiply,
+    /// Up to `level` more items (lapis and redstone).
+    Extra,
+}
+
+fn fortune_bonus(block: &BlockDef) -> Option<Bonus> {
+    let name = block.name.strip_prefix("deepslate_").unwrap_or(&block.name);
+    match name {
+        "coal_ore" | "diamond_ore" | "emerald_ore" | "copper_ore" | "nether_quartz_ore"
+        | "nether_gold_ore" => Some(Bonus::Multiply),
+        "lapis_ore" | "redstone_ore" => Some(Bonus::Extra),
+        _ => None,
+    }
+}
+
+/// `drops` for a tool with Fortune `fortune` or Silk Touch `silk`.
+pub fn drops_with(
+    state: BlockState,
+    tool: Option<ToolKind>,
+    fortune: u8,
+    silk: bool,
+    random: &mut impl FnMut() -> f32,
+) -> Vec<ItemStack> {
+    let block = state.def();
+    if silk
+        && silk_touchable(block)
+        && let Some(item) = item::registry().of_block(block.id)
+    {
+        return vec![ItemStack::new(item, 1)];
+    }
+    let mut stacks = drops(state, tool, random);
+    if fortune > 0
+        && let Some(bonus) = fortune_bonus(block)
+    {
+        for stack in &mut stacks {
+            let more = match bonus {
+                Bonus::Multiply => {
+                    let roll = (random() * f32::from(fortune + 2)) as u8;
+                    stack.count.saturating_mul(roll.saturating_sub(1) + 1)
+                }
+                Bonus::Extra => stack.count + (random() * f32::from(fortune + 1)) as u8,
+            };
+            stack.count = more.min(64);
+        }
+    }
+    stacks
 }
 
 impl Drops {

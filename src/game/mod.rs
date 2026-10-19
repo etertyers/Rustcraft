@@ -10,6 +10,7 @@ pub mod environment;
 mod experience;
 mod explosion;
 mod fluids;
+mod gear;
 mod hands;
 mod logistics;
 mod minecarts;
@@ -44,6 +45,7 @@ use crate::{
     config,
     entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry, particle::Particle},
     inventory::{
+        enchant::Enchantment,
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
     },
@@ -771,6 +773,8 @@ impl Game {
                 stacks.push(stack);
             }
         }
+        // Items with the Curse of Vanishing are gone with the player.
+        stacks.retain(|stack| stack.level_of(Enchantment::VanishingCurse) == 0);
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         for stack in stacks {

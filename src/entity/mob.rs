@@ -268,18 +268,30 @@ impl Mob {
 
     /// What it drops on death: each drop 0–2 (or its range), cooked if it
     /// died burning.
-    pub fn drops(&self, def: &MobDef, random: &mut impl FnMut() -> f32) -> Vec<ItemStack> {
+    pub fn drops(
+        &self,
+        def: &MobDef,
+        looting: u8,
+        random: &mut impl FnMut() -> f32,
+    ) -> Vec<ItemStack> {
         // Only the smallest slimes drop slimeballs.
         if self.data.size > 1 {
             return Vec::new();
         }
         let mut stacks = Vec::new();
         for drop in &def.drops {
-            if drop.chance < 1.0 && random() >= drop.chance {
+            // Looting makes the rarer drops likelier, by a point a level.
+            let chance = drop.chance + 0.01 * f32::from(looting);
+            if drop.chance < 1.0 && random() >= chance {
                 continue;
             }
             let range = (drop.max - drop.min + 1) as f32;
-            let count = drop.min + ((random() * range) as u8).min(drop.max - drop.min);
+            let mut count = drop.min + ((random() * range) as u8).min(drop.max - drop.min);
+            // And the common ones come in bigger numbers: up to `looting`
+            // more.
+            if looting > 0 && drop.chance >= 1.0 && drop.min != drop.max {
+                count += (random() * f32::from(looting + 1)) as u8;
+            }
             let item = match drop.cooked {
                 Some(cooked) if self.stats.fire > 0 => cooked,
                 _ => drop.item,
