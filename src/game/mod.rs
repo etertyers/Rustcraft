@@ -4,6 +4,7 @@
 
 mod animals;
 mod benches;
+mod capture;
 mod combat;
 mod containers;
 pub mod environment;
@@ -26,6 +27,7 @@ mod offhand;
 mod progression;
 mod redstone;
 mod sleep;
+mod spawners;
 mod updates;
 pub mod view;
 mod villagers;
@@ -134,6 +136,8 @@ pub struct Game {
     bed: Option<glam::IVec3>,
     /// A notice on screen and the ticks it has left (1.0.0's chat lines).
     pub message: Option<(String, u32)>,
+    /// The capture tool's two corners (creative).
+    capture: [Option<glam::IVec3>; 2],
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     /// Experience orbs lying around.
@@ -252,6 +256,7 @@ impl Game {
             sleep: None,
             bed: None,
             message: None,
+            capture: [None, None],
             entities: Vec::new(),
             orbs: Vec::new(),
             particles: Vec::new(),
@@ -454,6 +459,12 @@ impl Game {
         }
         if key == KeyCode::F5 && pressed && !repeat {
             self.cycle_view();
+        } else if key == KeyCode::F8 && pressed && !repeat {
+            self.mark_corner(0);
+        } else if key == KeyCode::F9 && pressed && !repeat {
+            self.mark_corner(1);
+        } else if key == KeyCode::F10 && pressed && !repeat {
+            self.save_capture();
         } else if key == KeyCode::F4 && pressed && !repeat {
             #[cfg(debug_assertions)]
             {
@@ -645,6 +656,7 @@ impl Game {
         self.tick_particles();
         self.tick_arrows();
         self.tick_mobs();
+        self.tick_spawners();
         self.tick_fluids();
         self.tick_fires();
         self.tick_redstone();
