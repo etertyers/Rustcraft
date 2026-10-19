@@ -617,4 +617,26 @@
     (name: "muddy_mangrove_roots", hardness: 0.7, props: [Axis], placement: Axis, tool: Shovel, textures: (end: "muddy_mangrove_roots_top", side: "muddy_mangrove_roots_side")),
     // M22: a wheel on two posts; its textures come from a resource pack.
     (name: "grindstone", hardness: 2.0, props: [Facing], placement: LookClockwise, activate: Grindstone, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Grindstone, layer: Cutout, textures: (end: "grindstone_round", side: "grindstone_side")),
+    // M23: villagers' job sites, village and structure blocks. Kenzo's
+    // 1.12 textures have hay, the dirt path and the sandstone variants;
+    // the rest come from a resource pack.
+    (name: "composter", hardness: 0.6, burns: (encourage: 5, catch: 20), tool: Axe, textures: (top: "composter_top", bottom: "composter_bottom", side: "composter_side")),
+    (name: "lectern", hardness: 2.5, props: [Facing], placement: Facing, burns: (encourage: 30, catch: 20), tool: Axe, shape: Lectern, layer: Cutout, textures: (top: "lectern_top", bottom: "oak_planks", side: "lectern_sides", south: "lectern_front")),
+    (name: "blast_furnace", hardness: 3.5, props: [Facing, Lit], placement: Facing, activate: Furnace, acts_as: "furnace", tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "blast_furnace_top", side: "blast_furnace_side", south: "blast_furnace_front"),
+        variants: [("lit=true", (textures: (south: "blast_furnace_front_on"), light: 13))]),
+    (name: "smoker", hardness: 3.5, props: [Facing, Lit], placement: Facing, activate: Furnace, acts_as: "furnace", tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (top: "smoker_top", bottom: "smoker_bottom", side: "smoker_side", south: "smoker_front"),
+        variants: [("lit=true", (textures: (south: "smoker_front_on"), light: 13))]),
+    (name: "smithing_table", hardness: 2.5, tool: Axe, textures: (top: "smithing_table_top", bottom: "smithing_table_bottom", side: "smithing_table_side", south: "smithing_table_front", north: "smithing_table_front")),
+    (name: "barrel", hardness: 2.5, props: [Facing], placement: Facing, activate: Chest, burns: (encourage: 5, catch: 20), tool: Axe, textures: (side: "barrel_side", end: "barrel_bottom", top: "barrel_top")),
+    (name: "bell", hardness: 5.0, props: [Facing], placement: Facing, tool: Pickaxe, shape: Bell, layer: Cutout, textures: (all: "gold_block")),
+    (name: "hay_block", hardness: 0.5, props: [Axis], placement: Axis, burns: (encourage: 60, catch: 20), textures: (end: "hay_block_top", side: "hay_block_side")),
+    (name: "dirt_path", hardness: 0.65, tool: Shovel, drops: All([(item: "dirt")]), opacity: 15, shape: Farmland, textures: (top: "dirt_path_top", bottom: "dirt", side: "dirt_path_side")),
+    (name: "chiseled_sandstone", hardness: 0.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "sandstone_top", side: "chiseled_sandstone")),
+    (name: "cut_sandstone", hardness: 0.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "sandstone_top", side: "cut_sandstone")),
+    (name: "smooth_sandstone", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "sandstone_top")),
+    (name: "sandstone_stairs", hardness: 0.8, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone")),
+    (name: "crying_obsidian", hardness: 50.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Diamond), light: 10, textures: (all: "crying_obsidian")),
+    (name: "lantern", hardness: 3.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: Lantern, layer: Cutout, light: 15, solid: true, textures: (all: "lantern")),
+    (name: "smooth_stone", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "smooth_stone")),
+    (name: "chiseled_stone_bricks", hardness: 1.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "chiseled_stone_bricks")),
 ]

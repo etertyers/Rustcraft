@@ -118,13 +118,21 @@ impl Game {
     /// Opens the chest at `at`, giving it its slots the first time. A solid
     /// block on top keeps it shut (1.0.0).
     pub(super) fn open_chest(&mut self, at: IVec3) {
+        // A solid block on top keeps a chest shut, not a barrel.
         let above = self.chunks.world().block(at.x, at.y + 1, at.z);
-        if above.is_some_and(|block| {
-            self.items
-                .blocks
-                .get(block.id())
-                .is_some_and(|def| def.is_opaque_cube())
-        }) {
+        let barrel = self
+            .chunks
+            .world()
+            .block(at.x, at.y, at.z)
+            .is_some_and(|block| block.is(blocks::BARREL));
+        if !barrel
+            && above.is_some_and(|block| {
+                self.items
+                    .blocks
+                    .get(block.id())
+                    .is_some_and(|def| def.is_opaque_cube())
+            })
+        {
             return;
         }
         if !matches!(self.chunks.block_entity(at), Some(BlockEntity::Chest(_))) {
@@ -174,17 +182,44 @@ impl Game {
             }
         }
         for at in active {
-            let Some(BlockEntity::Furnace(furnace)) = self.chunks.block_entity_mut(at) else {
-                continue;
-            };
-            if !furnace.tick(&self.items) {
-                continue;
-            }
-            let lit = furnace.is_burning();
             let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
                 continue;
             };
-            if block.is(blocks::FURNACE) && block.bool(Prop::Lit) != lit {
+            // Blast furnaces (ores) and smokers (food) work twice as fast,
+            // burning fuel twice as fast, and won't take anything else.
+            let ticks = match block.id() {
+                blocks::BLAST_FURNACE | blocks::SMOKER => 2,
+                _ => 1,
+            };
+            let Some(BlockEntity::Furnace(furnace)) = self.chunks.block_entity_mut(at) else {
+                continue;
+            };
+            let accepts = furnace.slots[furnace::INPUT].as_ref().is_none_or(|input| {
+                let name = input.id.name();
+                let food = self
+                    .items
+                    .recipes
+                    .smelt(input)
+                    .and_then(|out| self.items.item(out.id))
+                    .is_some_and(|item| item.food.is_some());
+                match block.id() {
+                    blocks::BLAST_FURNACE => name.ends_with("_ore") || name.starts_with("raw_"),
+                    blocks::SMOKER => food,
+                    _ => true,
+                }
+            });
+            if !accepts {
+                continue;
+            }
+            let mut changed = false;
+            for _ in 0..ticks {
+                changed |= furnace.tick(&self.items);
+            }
+            if !changed {
+                continue;
+            }
+            let lit = furnace.is_burning();
+            if block.kind() == blocks::FURNACE && block.bool(Prop::Lit) != lit {
                 self.chunks
                     .set_blocks(&[(at, block.with_bool(Prop::Lit, lit))]);
             }

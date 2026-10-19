@@ -47,6 +47,9 @@ impl Game {
                     state.id(),
                     blocks::CHEST
                         | blocks::FURNACE
+                        | blocks::BLAST_FURNACE
+                        | blocks::SMOKER
+                        | blocks::BARREL
                         | blocks::DISPENSER
                         | blocks::DROPPER
                         | blocks::HOPPER
@@ -73,7 +76,9 @@ impl Game {
             let made = match block.id() {
                 blocks::DISPENSER | blocks::DROPPER => BlockEntity::dispenser(),
                 blocks::HOPPER => BlockEntity::Hopper(Default::default()),
-                blocks::FURNACE => BlockEntity::Furnace(Default::default()),
+                blocks::FURNACE | blocks::BLAST_FURNACE | blocks::SMOKER => {
+                    BlockEntity::Furnace(Default::default())
+                }
                 _ => BlockEntity::chest(),
             };
             self.chunks.set_block_entity(cell, Some(made));
