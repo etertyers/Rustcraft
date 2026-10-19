@@ -37,6 +37,7 @@ impl Game {
         for &(at, _) in edits {
             self.fluids.changed(at);
             self.fires.changed(at);
+            self.redstone.changed(at);
         }
         let cells: Vec<IVec3> = edits.iter().map(|&(at, _)| at).collect();
         self.update_neighbors(&cells);
@@ -130,6 +131,7 @@ impl Game {
         self.chunks.set_blocks_later(&outcome.edits);
         for &(at, _) in &outcome.edits {
             self.fires.changed(at);
+            self.redstone.changed(at);
         }
         // Fluid flowing past wakes sand and reshapes what it touches.
         let cells: Vec<IVec3> = outcome.edits.iter().map(|&(at, _)| at).collect();
@@ -191,6 +193,7 @@ impl Game {
             if let Some(chunk) = self.chunks.world().get(pos) {
                 self.fluids.chunk_loaded(chunk, self.time);
                 self.fires.chunk_loaded(chunk, self.time);
+                self.redstone.chunk_loaded(chunk, self.time);
             }
         }
     }

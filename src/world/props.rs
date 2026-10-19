@@ -418,6 +418,14 @@ pub mod wire_side {
 pub mod rail_shape {
     pub const NORTH_SOUTH: u8 = 0;
     pub const EAST_WEST: u8 = 1;
+    pub const ASCENDING_EAST: u8 = 2;
+    pub const ASCENDING_WEST: u8 = 3;
+    pub const ASCENDING_NORTH: u8 = 4;
+    pub const ASCENDING_SOUTH: u8 = 5;
+    pub const SOUTH_EAST: u8 = 6;
+    pub const SOUTH_WEST: u8 = 7;
+    pub const NORTH_WEST: u8 = 8;
+    pub const NORTH_EAST: u8 = 9;
 }
 
 #[cfg(test)]

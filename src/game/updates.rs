@@ -60,6 +60,7 @@ impl Game {
                 let shaped = connect::update_shape(state, next, &|p| world.block(p.x, p.y, p.z));
                 if shaped != state {
                     self.chunks.set_blocks(&[(next, shaped)]);
+                    self.redstone.changed(next);
                     queue.push_back(next);
                 }
             }

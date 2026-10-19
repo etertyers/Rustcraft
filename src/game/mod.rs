@@ -14,6 +14,7 @@ mod moves;
 mod offhand;
 #[cfg(test)]
 mod progression;
+mod redstone;
 mod sleep;
 mod updates;
 pub mod view;
@@ -56,6 +57,7 @@ use crate::{
         fluid::{self, Fluids},
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
+        redstone::Redstone,
         worldgen::{rng::Rng, terrain::Terrain},
     },
 };
@@ -161,6 +163,9 @@ pub struct Game {
     /// Scheduled water and lava updates.
     fluids: Fluids,
     fires: Fires,
+    redstone: Redstone,
+    /// The last notes note blocks played: (block, instrument, note).
+    pub played_notes: Vec<(glam::IVec3, u8, u8)>,
     /// For drops and throws.
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
@@ -244,6 +249,8 @@ impl Game {
             eating: None,
             fluids: Fluids::default(),
             fires: Fires::default(),
+            redstone: Redstone::default(),
+            played_notes: Vec::new(),
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
@@ -592,6 +599,7 @@ impl Game {
         self.tick_mobs();
         self.tick_fluids();
         self.tick_fires();
+        self.tick_redstone();
         self.tick_falling();
         self.post_process();
         self.tick_furnaces();

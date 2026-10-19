@@ -97,7 +97,7 @@
             ("facing=down", (textures: (bottom: "dispenser_front_vertical", south: "furnace_side"))),
         ]),
     (name: "sandstone", hardness: 0.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone")),
-    (name: "note_block", hardness: 0.8, props: [Instrument, Note, Powered], textures: (all: "note_block")),
+    (name: "note_block", activate: Redstone, hardness: 0.8, props: [Instrument, Note, Powered], textures: (all: "note_block")),
     // `facing` points from the foot to the head.
     (name: "red_bed", hardness: 0.2, props: [Facing, BedPart, Occupied], item_texture: "bed", stack: 1, drops: All([(item: "red_bed", when: "part=foot")]), placement: Bed, activate: Bed, shape: Bed, layer: Cutout, textures: (top: "bed_feet_top", bottom: "oak_planks", side: "bed_feet_side", south: "bed_feet_end"),
         variants: [("part=head", (textures: (top: "bed_head_top", side: "bed_head_side", north: "bed_head_end", south: "bed_head_side")))]),
@@ -188,7 +188,7 @@
     // 1.0.0's stone stairs, made of cobblestone.
     (name: "cobblestone_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (all: "cobblestone")),
     (name: "oak_wall_sign", hardness: 1.0, props: [Facing, Waterlogged], item: false, drops: All([(item: "oak_sign")]), shape: Sign, solid: false, blocks_flow: true, textures: (all: "sign")),
-    (name: "lever", hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], shape: Lever, layer: Cutout, solid: false, textures: (all: "lever")),
+    (name: "lever", activate: Redstone, hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], shape: Lever, layer: Cutout, solid: false, textures: (all: "lever")),
     (name: "stone_pressure_plate", hardness: 0.5, props: [Powered], tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: PressurePlate, solid: false, blocks_flow: true, textures: (all: "stone")),
     (name: "iron_door", hardness: 5.0, props: [Facing, DoubleBlockHalf, Hinge, Open, Powered], item_texture: "iron_door", stack: 1, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: "iron_door", when: "half=lower")]), placement: Door, shape: Door, layer: Cutout, textures: (all: "iron_door_bottom"),
         variants: [("half=upper", (textures: (all: "iron_door_top")))]),
@@ -199,7 +199,7 @@
         variants: [("lit=false", (textures: (all: "redstone_torch_off"), light: 0))]),
     (name: "redstone_wall_torch", hardness: 0.0, props: [Facing, Lit], defaults: "lit=true", item: false, drops: All([(item: "redstone_torch")]), shape: Torch, layer: Cutout, solid: false, light: 7, textures: (all: "redstone_torch"),
         variants: [("lit=false", (textures: (all: "redstone_torch_off"), light: 0))]),
-    (name: "stone_button", hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], shape: Button, solid: false, textures: (all: "stone")),
+    (name: "stone_button", activate: Redstone, hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], shape: Button, solid: false, textures: (all: "stone")),
     // A snow layer, 1-8 high.
     (name: "snow", hardness: 0.1, placement: Layers, props: [Layers], tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: "snowball")]), replaceable: true, needs_ground: true, shape: SnowLayer, textures: (all: "snow")),
     (name: "ice", hardness: 0.5, tool: Pickaxe, drops: Nothing, opacity: 3, layer: Translucent, cull_same: true, slipperiness: 0.98, textures: (all: "ice")),
@@ -217,7 +217,7 @@
     (name: "nether_portal", hardness: -1.0, props: [HorizontalAxis], item: false, drops: Nothing, layer: Translucent, solid: false, light: 11, cull_same: true, textures: (all: "nether_portal")),
     (name: "jack_o_lantern", hardness: 1.0, props: [Facing], placement: Facing, light: 15, textures: (end: "pumpkin_top", side: "pumpkin_side", south: "jack_o_lantern")),
     (name: "cake", hardness: 0.5, props: [Bites], item_texture: "cake", stack: 1, drops: Nothing, shape: Cake, textures: (top: "cake_top", bottom: "cake_bottom", side: "cake_side")),
-    (name: "repeater", hardness: 0.0, placement: Facing, props: [Facing, Delay, Locked, Powered], item_texture: "repeater", needs_ground: true, shape: Repeater, textures: (all: "repeater"),
+    (name: "repeater", activate: Redstone, hardness: 0.0, placement: Facing, props: [Facing, Delay, Locked, Powered], item_texture: "repeater", needs_ground: true, shape: Repeater, textures: (all: "repeater"),
         variants: [("powered=true", (textures: (all: "repeater_on"), light: 9))]),
     (name: "oak_trapdoor", hardness: 3.0, placement: Trapdoor, activate: Open, props: [Facing, Half, Open, Powered, Waterlogged], shape: Trapdoor, layer: Cutout, textures: (all: "oak_trapdoor")),
     // Silverfish hide in these.
@@ -352,6 +352,6 @@
     (name: "hopper", hardness: 3.0, props: [FacingAll, Powered], placement: Hopper, item_texture: "hopper", tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Hopper, layer: Cutout, textures: (all: "hopper_outside", top: "hopper_top")),
     (name: "activator_rail", hardness: 0.7, placement: Rail, props: [StraightRailShape, Powered, Waterlogged], needs_ground: true, shape: Rail, layer: Cutout, solid: false, textures: (all: "activator_rail"),
         variants: [("powered=true", (textures: (all: "activator_rail_on")))]),
-    (name: "oak_button", hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], shape: Button, solid: false, textures: (all: "oak_planks")),
+    (name: "oak_button", activate: Redstone, hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], shape: Button, solid: false, textures: (all: "oak_planks")),
     (name: "iron_trapdoor", hardness: 5.0, placement: Trapdoor, props: [Facing, Half, Open, Powered, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Trapdoor, layer: Cutout, textures: (all: "iron_trapdoor")),
 ]

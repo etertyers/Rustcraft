@@ -525,6 +525,9 @@ impl Game {
             Activate::Furnace => self.open_furnace(cell),
             Activate::Bed => self.use_bed(cell),
             Activate::Door => self.toggle_door(cell),
+            Activate::Redstone => {
+                self.use_redstone_block(cell);
+            }
             Activate::Open => {
                 if let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z) {
                     let open = !block.bool(Prop::Open);

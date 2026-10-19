@@ -125,6 +125,17 @@ impl ItemEntity {
         item
     }
 
+    /// The box it fills.
+    pub fn bounds(&self) -> Aabb {
+        self.bb
+    }
+
+    /// Moves it by `by`, as a piston does.
+    pub fn shift(&mut self, by: DVec3) {
+        self.bb = self.bb.offset(by);
+        self.prev_center += by;
+    }
+
     pub fn center(&self) -> DVec3 {
         (self.bb.min + self.bb.max) / 2.0
     }

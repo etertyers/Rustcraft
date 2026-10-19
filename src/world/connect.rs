@@ -178,6 +178,8 @@ fn powers(other: BlockState, toward: Face) -> bool {
         | blocks::REDSTONE_WALL_TORCH
         | blocks::LEVER
         | blocks::STONE_BUTTON
+        | blocks::OAK_BUTTON
+        | blocks::REDSTONE_BLOCK
         | blocks::STONE_PRESSURE_PLATE
         | blocks::OAK_PRESSURE_PLATE
         | blocks::DETECTOR_RAIL => true,

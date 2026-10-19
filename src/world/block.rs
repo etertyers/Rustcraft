@@ -577,6 +577,8 @@ pub enum Activate {
     Door,
     /// Opens or closes it, a single block (trapdoors, fence gates).
     Open,
+    /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
+    Redstone,
 }
 
 /// How a block burns (modern `FireBlock.setFlammable`).
