@@ -34,9 +34,11 @@ impl Game {
     }
 
     fn wake_around(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.equip_placed(edits);
         for &(at, _) in edits {
             self.fluids.changed(at);
             self.fires.changed(at);
+            self.redstone.changed(at);
         }
         let cells: Vec<IVec3> = edits.iter().map(|&(at, _)| at).collect();
         self.update_neighbors(&cells);
@@ -130,6 +132,7 @@ impl Game {
         self.chunks.set_blocks_later(&outcome.edits);
         for &(at, _) in &outcome.edits {
             self.fires.changed(at);
+            self.redstone.changed(at);
         }
         // Fluid flowing past wakes sand and reshapes what it touches.
         let cells: Vec<IVec3> = outcome.edits.iter().map(|&(at, _)| at).collect();
@@ -155,13 +158,40 @@ impl Game {
             &mut random,
         );
         if !edits.is_empty() {
+            // TNT that burns is lit instead.
+            let burnt: Vec<IVec3> = edits
+                .iter()
+                .filter(|&&(at, new)| {
+                    !new.is(crate::world::blocks::TNT)
+                        && self
+                            .chunks
+                            .world()
+                            .block(at.x, at.y, at.z)
+                            .is_some_and(|old| old.is(crate::world::blocks::TNT))
+                })
+                .map(|&(at, _)| at)
+                .collect();
             self.edit_later(&edits);
+            for at in burnt {
+                self.prime_tnt(at);
+            }
         }
     }
 
     /// Flint and steel on the face of the block looked at: lights a fire in
     /// the air beside it if fire can stay there, wearing the flint by one.
     pub(super) fn strike_flint(&mut self, hit: &crate::player::raycast::Hit) {
+        let clicked = self
+            .chunks
+            .world()
+            .block(hit.block.x, hit.block.y, hit.block.z);
+        if clicked.is_some_and(|block| block.is(crate::world::blocks::TNT)) {
+            // Lighting TNT primes it instead of making fire.
+            self.edit(&[(hit.block, BlockState::AIR)]);
+            self.prime_tnt(hit.block);
+            self.finish_flint();
+            return;
+        }
         let Some(at) = hit.adjacent() else {
             return;
         };
@@ -177,6 +207,11 @@ impl Game {
             return;
         };
         self.edit(&[edit]);
+        self.finish_flint();
+    }
+
+    /// Swings and wears the flint after it lit something.
+    fn finish_flint(&mut self) {
         self.view.swing();
         if self.mode.wears_tools() {
             let slot = self.inventory.hand_slot(self.use_hand);
@@ -191,6 +226,7 @@ impl Game {
             if let Some(chunk) = self.chunks.world().get(pos) {
                 self.fluids.chunk_loaded(chunk, self.time);
                 self.fires.chunk_loaded(chunk, self.time);
+                self.redstone.chunk_loaded(chunk, self.time);
             }
         }
     }

@@ -98,6 +98,9 @@ src/
   game/view.rs       # swing, hand dip, bobbing, body turn, F5 views
   game/combat.rs     # cooldowns, damage, crits, sweeps, the shield (constants in config::combat)
   render/{player,hand,held}.rs   # player model and poses, first-person hand, held item geometry
+  world/{redstone,piston,rails,explosion}.rs   # signals and ticks, what pistons move, rail joining, blast rays
+  game/{redstone,logistics,minecarts,explosion}.rs   # carrying out redstone events, hoppers and droppers, carts, TNT
+  entity/{minecart,tnt}.rs   # rail physics, primed TNT
   audio/
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
@@ -334,7 +337,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - **Flint and steel:** lights fire; fire spreads and burns flammable blocks with modern rules.
 - **Done when:** sword and axe cooldowns match modern timing, jump-attacks land crits with particles, you can block a zombie with a shield, kill a mob with a charged bow, and light a fire that spreads.
 
-### - [ ] M19 — Core redstone and rails
+### - [x] M19 — Core redstone and rails
 - Redstone dust (signal strength 15 with falloff), redstone torch, lever, buttons, pressure plates, redstone block, repeater (delay and locking), piston and sticky piston, iron and wooden doors and trapdoors, fence gates, note block, hopper, dropper, dispenser, TNT, redstone lamp.
 - Comparators and observers are out of v1.1.
 - **Rails and minecarts:** rail, powered rail, detector rail, activator rail; rideable minecart, chest minecart, hopper minecart.

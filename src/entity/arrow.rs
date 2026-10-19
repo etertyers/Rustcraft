@@ -86,6 +86,12 @@ impl Arrow {
         }
     }
 
+    /// A small box round it, for what it presses.
+    pub fn bounds(&self) -> Aabb {
+        let half = DVec3::splat(0.25);
+        Aabb::new(self.position - half, self.position + half)
+    }
+
     pub fn position_between_ticks(&self, alpha: f64) -> DVec3 {
         self.prev_position.lerp(self.position, alpha)
     }

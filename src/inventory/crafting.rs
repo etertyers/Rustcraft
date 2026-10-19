@@ -357,7 +357,11 @@ mod tests {
         );
         // Sticks need to be stacked vertically, not side by side.
         let sideways = grid(2, &[(0, 0, planks), (1, 0, planks)]);
-        assert_eq!(recipes.craft(&sideways, 2), None);
+        assert_eq!(
+            recipes.craft(&sideways, 2),
+            Some(ItemStack::new(items::OAK_PRESSURE_PLATE, 1)),
+            "side by side they are a pressure plate"
+        );
         let table = grid(
             2,
             &[
@@ -538,5 +542,71 @@ mod tests {
         assert_eq!(recipes.burn_ticks(items::STICK), 100);
         assert_eq!(recipes.burn_ticks(items::STONE), 0);
         assert!(recipes.shaped.len() > 90);
+    }
+
+    #[test]
+    fn redstone_rails_and_minecarts_have_their_modern_recipes() {
+        let recipes = recipes();
+        let (iron, stick, cobble) = (items::IRON_INGOT, items::STICK, items::COBBLESTONE);
+        let redstone = items::REDSTONE;
+        let piston = grid(
+            3,
+            &[
+                (0, 0, items::OAK_PLANKS),
+                (1, 0, items::OAK_PLANKS),
+                (2, 0, items::OAK_PLANKS),
+                (0, 1, cobble),
+                (1, 1, iron),
+                (2, 1, cobble),
+                (0, 2, cobble),
+                (1, 2, redstone),
+                (2, 2, cobble),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&piston, 3),
+            Some(ItemStack::new(items::PISTON, 1))
+        );
+        let rails = grid(
+            3,
+            &[
+                (0, 0, iron),
+                (2, 0, iron),
+                (0, 1, iron),
+                (1, 1, stick),
+                (2, 1, iron),
+                (0, 2, iron),
+                (2, 2, iron),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&rails, 3),
+            Some(ItemStack::new(items::RAIL, 16))
+        );
+        let cart = grid(
+            3,
+            &[
+                (0, 1, iron),
+                (2, 1, iron),
+                (0, 2, iron),
+                (1, 2, iron),
+                (2, 2, iron),
+            ],
+        );
+        assert_eq!(
+            recipes.craft(&cart, 3),
+            Some(ItemStack::new(items::MINECART, 1))
+        );
+        // Shapeless: a chest and a minecart anywhere.
+        let chest_cart = grid(2, &[(1, 0, items::MINECART), (0, 1, items::CHEST)]);
+        assert_eq!(
+            recipes.craft(&chest_cart, 2),
+            Some(ItemStack::new(items::CHEST_MINECART, 1))
+        );
+        let nine = grid(2, &[(0, 0, items::REDSTONE_BLOCK)]);
+        assert_eq!(
+            recipes.craft(&nine, 2),
+            Some(ItemStack::new(items::REDSTONE, 9))
+        );
     }
 }

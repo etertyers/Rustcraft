@@ -16,8 +16,13 @@ use crate::{
         item::ItemEntity,
     },
     inventory::stack::ItemStack,
-    player::collision::WorldCollider,
-    world::{Face, block::BlockState, chunk::ChunkPos, connect},
+    player::{collision::WorldCollider, interaction},
+    world::{
+        Face,
+        block::{BlockState, Placement},
+        chunk::ChunkPos,
+        connect, harvest,
+    },
 };
 
 /// Ticks between a block update and a block starting to fall (modern
@@ -47,6 +52,7 @@ impl Game {
             self.schedule_fall(at);
             for face in Face::ALL {
                 let next = at + IVec3::from_array(face.normal());
+                self.pop_unsupported(next, at);
                 self.harden(next);
                 self.schedule_fall(next);
                 let world = self.chunks.world();
@@ -60,10 +66,44 @@ impl Game {
                 let shaped = connect::update_shape(state, next, &|p| world.block(p.x, p.y, p.z));
                 if shaped != state {
                     self.chunks.set_blocks(&[(next, shaped)]);
+                    self.redstone.changed(next);
                     queue.push_back(next);
                 }
             }
         }
+    }
+
+    /// A torch, lever, rail, dust or the like at `cell` whose support at
+    /// `changed` is gone comes off and drops (modern `canSurvive` on a
+    /// neighbor update).
+    fn pop_unsupported(&mut self, cell: IVec3, changed: IVec3) {
+        let world = self.chunks.world();
+        let Some(state) = world.block(cell.x, cell.y, cell.z) else {
+            return;
+        };
+        let def = state.def();
+        if matches!(def.placement, Placement::Bed | Placement::Door) {
+            return;
+        }
+        let Some(offset) = def.support(state) else {
+            return;
+        };
+        if cell + offset != changed {
+            return;
+        }
+        let Some(support) = world.block(changed.x, changed.y, changed.z) else {
+            return;
+        };
+        if interaction::holds(def.shape, support) {
+            return;
+        }
+        let rng = &mut self.rng;
+        let mut random = || rng.next_f64() as f32;
+        for stack in harvest::drops(state, None, &mut random) {
+            self.entities
+                .push(ItemEntity::from_block(stack, cell, &mut random));
+        }
+        self.edit(&[(cell, BlockState::AIR)]);
     }
 
     /// Concrete powder at `at` touching water turns to concrete (modern
@@ -342,5 +382,38 @@ mod tests {
                 .unwrap()
                 .bool(Prop::East)
         );
+    }
+
+    #[test]
+    fn torches_levers_dust_and_rails_come_off_when_what_holds_them_goes() {
+        let mut game = flat_game(GameMode::Survival);
+        game.entities.clear();
+        let stone = BlockState::of(blocks::STONE);
+        game.set_blocks(&[
+            (IVec3::new(2, 64, 2), stone),
+            (IVec3::new(2, 65, 2), BlockState::of(blocks::TORCH)),
+            (IVec3::new(4, 64, 2), stone),
+            (IVec3::new(4, 65, 2), BlockState::of(blocks::REDSTONE_WIRE)),
+            (IVec3::new(6, 64, 2), stone),
+            (IVec3::new(6, 65, 2), BlockState::of(blocks::RAIL)),
+        ]);
+        game.run_ticks(2);
+        assert_eq!(
+            game.chunks.world().block(2, 65, 2),
+            Some(BlockState::of(blocks::TORCH))
+        );
+        game.set_blocks(&[
+            (IVec3::new(2, 64, 2), BlockState::AIR),
+            (IVec3::new(4, 64, 2), BlockState::AIR),
+            (IVec3::new(6, 64, 2), BlockState::AIR),
+        ]);
+        game.run_ticks(2);
+        for x in [2, 4, 6] {
+            assert!(
+                game.chunks.world().block(x, 65, 2).unwrap().is_air(),
+                "the part at {x} fell off"
+            );
+        }
+        assert_eq!(game.entities.len(), 3, "and dropped");
     }
 }

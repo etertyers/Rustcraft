@@ -31,9 +31,25 @@ pub enum Container {
     Chest(IVec3),
     /// The furnace at this block.
     Furnace(IVec3),
+    /// The dispenser or dropper at this block (`true` for a dropper).
+    Dispenser(IVec3, bool),
+    /// The hopper at this block.
+    Hopper(IVec3),
+    /// The chest or hopper minecart with this index.
+    Cart(usize),
 }
 
 impl Container {
+    /// The block whose slots this shows, if it shows a block's.
+    pub fn block(&self) -> Option<IVec3> {
+        match *self {
+            Self::Crafting { .. } | Self::Cart(_) => None,
+            Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
+                Some(at)
+            }
+        }
+    }
+
     fn crafting(size: usize) -> Self {
         Self::Crafting {
             size,
@@ -97,7 +113,7 @@ impl Game {
         };
         match self.chunks.block_entity(at)? {
             BlockEntity::Furnace(furnace) => Some((furnace.fuel_left(), furnace.progress())),
-            BlockEntity::Chest(_) => None,
+            _ => None,
         }
     }
 
@@ -157,20 +173,72 @@ impl Game {
         self.items.recipes.craft(grid, *size)
     }
 
-    /// The block whose slots are open (a chest or furnace).
+    /// The block whose slots are open (a chest, furnace, dispenser or
+    /// hopper).
     fn open_block(&self) -> Option<IVec3> {
-        match self.container {
-            Some(Container::Chest(at) | Container::Furnace(at)) => Some(at),
-            _ => None,
+        self.container.as_ref().and_then(Container::block)
+    }
+
+    /// Opens the dispenser or dropper at `at`.
+    pub(super) fn open_dispenser(&mut self, at: IVec3, dropper: bool) {
+        self.ensure_entity(at);
+        self.container = Some(Container::Dispenser(at, dropper));
+        self.release_input();
+    }
+
+    /// Opens the hopper at `at`.
+    pub(super) fn open_hopper(&mut self, at: IVec3) {
+        self.ensure_entity(at);
+        self.container = Some(Container::Hopper(at));
+        self.release_input();
+    }
+
+    /// Gives the dispenser, dropper or hopper at `at` its slots if it has
+    /// none yet.
+    pub(super) fn ensure_entity(&mut self, at: IVec3) {
+        let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
+            return;
+        };
+        let wanted = match block.id() {
+            blocks::DISPENSER | blocks::DROPPER => BlockEntity::dispenser(),
+            blocks::HOPPER => BlockEntity::Hopper(Default::default()),
+            _ => return,
+        };
+        if self.chunks.block_entity(at).is_none() {
+            self.chunks.set_block_entity(at, Some(wanted));
+        }
+    }
+
+    /// Opens the chest or hopper minecart `index`.
+    pub(super) fn open_cart(&mut self, index: usize) {
+        self.container = Some(Container::Cart(index));
+        self.release_input();
+    }
+
+    /// Closes a cart's screen when the cart is gone.
+    pub(super) fn close_if_cart_gone(&mut self) {
+        if let Some(Container::Cart(index)) = self.container
+            && index >= self.carts.len()
+        {
+            self.close_container();
         }
     }
 
     fn block_slots(&self) -> Option<&[Option<ItemStack>]> {
+        if let Some(Container::Cart(index)) = self.container {
+            return self.carts.get(index).map(|cart| cart.slots.as_slice());
+        }
         let at = self.open_block()?;
         self.chunks.block_entity(at).map(BlockEntity::slots)
     }
 
     fn block_slots_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
+        if let Some(Container::Cart(index)) = self.container {
+            return self
+                .carts
+                .get_mut(index)
+                .map(|cart| cart.slots.as_mut_slice());
+        }
         let at = self.open_block()?;
         self.chunks.block_entity_mut(at).map(BlockEntity::slots_mut)
     }
@@ -362,7 +430,13 @@ impl Game {
         let max = self.items.max_stack(held.id);
         let mut slots: Vec<SlotRef> = match &self.container {
             Some(Container::Crafting { grid, .. }) => (0..grid.len()).map(SlotRef::Grid).collect(),
-            Some(Container::Chest(_) | Container::Furnace(_)) => {
+            Some(
+                Container::Chest(_)
+                | Container::Furnace(_)
+                | Container::Dispenser(..)
+                | Container::Hopper(_)
+                | Container::Cart(_),
+            ) => {
                 let count = self.block_slots().map_or(0, <[_]>::len);
                 (0..count).map(SlotRef::Block).collect()
             }
@@ -415,7 +489,13 @@ impl Game {
     /// into its slots).
     fn transfer_from_inventory(&mut self, index: usize) {
         let items = self.items.clone();
-        if let Some(Container::Chest(_)) = self.container {
+        if let Some(
+            Container::Chest(_)
+            | Container::Dispenser(..)
+            | Container::Hopper(_)
+            | Container::Cart(_),
+        ) = self.container
+        {
             let Some(stack) = self.inventory.slot(index).copied() else {
                 return;
             };
@@ -510,7 +590,11 @@ mod tests {
             Some(ItemStack::new(items::OAK_PLANKS, 3))
         );
         assert_eq!(grid_of(&game)[4], None);
-        assert_eq!(game.slot_stack(SlotRef::Result), None);
+        // What planks are left over make a button, which isn't sticks.
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::OAK_BUTTON, 1))
+        );
     }
 
     #[test]

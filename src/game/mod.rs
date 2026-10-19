@@ -5,8 +5,11 @@
 mod combat;
 mod containers;
 pub mod environment;
+mod explosion;
 mod fluids;
 mod hands;
+mod logistics;
+mod minecarts;
 mod mobs;
 #[cfg(test)]
 mod moves;
@@ -14,6 +17,7 @@ mod moves;
 mod offhand;
 #[cfg(test)]
 mod progression;
+mod redstone;
 mod sleep;
 mod updates;
 pub mod view;
@@ -56,6 +60,7 @@ use crate::{
         fluid::{self, Fluids},
         manager::{ChunkManager, ChunkSource},
         mesh::BlockModels,
+        redstone::Redstone,
         worldgen::{rng::Rng, terrain::Terrain},
     },
 };
@@ -161,6 +166,14 @@ pub struct Game {
     /// Scheduled water and lava updates.
     fluids: Fluids,
     fires: Fires,
+    redstone: Redstone,
+    /// Minecarts, and which one the player sits in.
+    pub carts: Vec<crate::entity::minecart::Minecart>,
+    pub riding: Option<usize>,
+    /// TNT with its fuse lit.
+    pub primed: Vec<crate::entity::tnt::PrimedTnt>,
+    /// The last notes note blocks played: (block, instrument, note).
+    pub played_notes: Vec<(glam::IVec3, u8, u8)>,
     /// For drops and throws.
     rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
@@ -244,6 +257,11 @@ impl Game {
             eating: None,
             fluids: Fluids::default(),
             fires: Fires::default(),
+            redstone: Redstone::default(),
+            primed: Vec::new(),
+            carts: Vec::new(),
+            riding: None,
+            played_notes: Vec::new(),
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
@@ -563,6 +581,8 @@ impl Game {
         if !self.stats.is_dead() {
             if self.is_sleeping() {
                 self.tick_sleep();
+            } else if self.is_riding() {
+                self.ride_cart();
             } else {
                 self.move_player();
             }
@@ -592,6 +612,10 @@ impl Game {
         self.tick_mobs();
         self.tick_fluids();
         self.tick_fires();
+        self.tick_redstone();
+        self.tick_tnt();
+        self.tick_carts();
+        self.tick_hoppers();
         self.tick_falling();
         self.post_process();
         self.tick_furnaces();

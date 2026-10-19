@@ -9,6 +9,7 @@ use glam::{Mat3, Vec3};
 use crate::{
     entity::{
         arrow::Arrow,
+        minecart::Minecart,
         mob::{DEATH_TICKS, Mob, angle_difference},
         mobs::{MobDef, Part, PartBox, Role},
     },
@@ -134,6 +135,94 @@ pub fn add_arrow(mesh: &mut Mesh, arrow: &Arrow, alpha: f32, light: (u8, u8)) {
         [color; 4],
         [light; 4],
     );
+}
+
+/// The minecart's parts (modern `MinecartModel`): the floor and four
+/// walls as (box origin, size, texture offset, pivot, turn about x, turn
+/// about y), in model pixels with y pointing down.
+/// One of the cart's boxes.
+struct CartPart {
+    from: [f32; 3],
+    size: [f32; 3],
+    uv: (f32, f32),
+    pivot: [f32; 3],
+    pitch: f32,
+    yaw: f32,
+}
+
+const CART_PARTS: [CartPart; 5] = {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    const fn wall(pivot: [f32; 3], yaw: f32) -> CartPart {
+        CartPart {
+            from: [-8.0, -9.0, -1.0],
+            size: [16.0, 8.0, 2.0],
+            uv: (0.0, 0.0),
+            pivot,
+            pitch: 0.0,
+            yaw,
+        }
+    }
+    [
+        CartPart {
+            from: [-10.0, -8.0, -1.0],
+            size: [20.0, 16.0, 2.0],
+            uv: (0.0, 10.0),
+            pivot: [0.0, 4.0, 0.0],
+            pitch: FRAC_PI_2,
+            yaw: 0.0,
+        },
+        wall([-9.0, 4.0, 0.0], 3.0 * FRAC_PI_2),
+        wall([9.0, 4.0, 0.0], FRAC_PI_2),
+        wall([0.0, 4.0, -7.0], PI),
+        wall([0.0, 4.0, 7.0], 0.0),
+    ]
+};
+
+/// Adds a minecart's shell (modern `MinecartRenderer`), turned to face
+/// along its rail and drawn from minecart.png.
+pub fn add_minecart(mesh: &mut Mesh, cart: &Minecart, alpha: f32, light: (u8, u8)) {
+    let at = cart.between_ticks(alpha as f64).as_vec3();
+    let turn = Mat3::from_rotation_y(std::f32::consts::PI - cart.yaw);
+    // The shaking after a hit tilts it a little.
+    let shake = if cart.wobble > 0 {
+        (cart.wobble as f32 - alpha).max(0.0).sin() * 0.1
+    } else {
+        0.0
+    };
+    let tilt = Mat3::from_rotation_x(shake);
+    let light = [light.0 as f32, light.1 as f32];
+    for CartPart {
+        from,
+        size,
+        uv,
+        pivot,
+        pitch,
+        yaw,
+    } in CART_PARTS
+    {
+        let part = PartBox {
+            uv,
+            from: (from[0], from[1], from[2]),
+            size: (size[0], size[1], size[2]),
+        };
+        let rotation = Mat3::from_rotation_y(yaw) * Mat3::from_rotation_x(pitch);
+        add_box(
+            mesh,
+            (64.0, 32.0),
+            &part,
+            BoxStyle {
+                mirror: false,
+                grow: 0.0,
+            },
+            |corner| {
+                let model = Vec3::from(pivot) + rotation * corner;
+                let local = Vec3::new(-model.x, -model.y, model.z) / PIXELS + Vec3::Y * 0.375;
+                (at + tilt * (turn * local)).to_array()
+            },
+            [1.0; 3],
+            light,
+        );
+    }
 }
 
 /// A part's rotation this frame about x and y (1.0.0's
@@ -288,5 +377,24 @@ mod tests {
         assert!(east.1.x > 0.5 + 0.5, "snout to the east: {:?}", east);
         let (_, top) = bounds(&mesh_of("zombie", 0.0, true));
         assert!(top.y < 64.0 + 0.7, "lying down: {top}");
+    }
+
+    #[test]
+    fn a_minecart_is_a_floor_and_four_walls_long_along_its_rail() {
+        use crate::entity::minecart::{CartKind, Minecart};
+        let mut cart = Minecart::new(CartKind::Rideable, DVec3::new(0.5, 64.0, 0.5));
+        let mut mesh = Mesh::default();
+        add_minecart(&mut mesh, &cart, 1.0, (15, 0));
+        assert_eq!(mesh.indices.len() / 6, 5 * 6);
+        let (min, max) = bounds(&mesh);
+        assert!(min.y >= 64.0 && max.y < 64.8, "{min} {max}");
+        // Heading east (yaw 0) it is 20 pixels long along x, 16 across.
+        assert!((max.x - min.x - 1.25).abs() < 1e-3, "{}", max.x - min.x);
+        assert!((max.z - min.z - 1.0).abs() < 1e-3, "{}", max.z - min.z);
+        cart.yaw = std::f32::consts::FRAC_PI_2;
+        let mut turned = Mesh::default();
+        add_minecart(&mut turned, &cart, 1.0, (15, 0));
+        let (min, max) = bounds(&turned);
+        assert!((max.z - min.z - 1.25).abs() < 1e-3, "now along z");
     }
 }

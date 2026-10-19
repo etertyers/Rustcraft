@@ -479,6 +479,7 @@ pub enum Shape {
     BrewingStand,
     Cauldron,
     EnchantingTable,
+    Hopper,
     EndPortal,
     EndPortalFrame,
     DragonEgg,
@@ -497,6 +498,8 @@ pub enum Placement {
     Facing,
     /// Faces the way the player looks (fence gates).
     Look,
+    /// Its front toward the player, up or down too (pistons).
+    LookAll,
     /// Faces a quarter turn clockwise from the way the player looks (anvils).
     LookClockwise,
     /// A log, lying along the axis of the clicked face.
@@ -524,6 +527,8 @@ pub enum Placement {
     Layers,
     /// Rails, along the way the player looks.
     Rail,
+    /// Hoppers, spout toward the clicked block (down if clicked from below).
+    Hopper,
 }
 
 /// The way from a bed's foot to its head.
@@ -574,6 +579,12 @@ pub enum Activate {
     Door,
     /// Opens or closes it, a single block (trapdoors, fence gates).
     Open,
+    /// Opens its nine slots (dispensers and droppers).
+    Dispenser,
+    /// Opens its five slots.
+    Hopper,
+    /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
+    Redstone,
 }
 
 /// How a block burns (modern `FireBlock.setFlammable`).

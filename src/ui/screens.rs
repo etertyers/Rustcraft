@@ -25,6 +25,11 @@ pub enum Screen {
     Crafting,
     Chest,
     Furnace,
+    /// A dispenser's 3×3 slots, or a dropper's.
+    Dispenser {
+        dropper: bool,
+    },
+    Hopper,
 }
 
 /// What the player did on a screen this frame.
@@ -125,7 +130,10 @@ fn inventory_slot(index: usize) -> [f32; 2] {
 /// Panel size in GUI pixels.
 fn panel_size(screen: &Screen) -> [f32; 2] {
     match screen {
-        Screen::Inventory | Screen::Crafting | Screen::Furnace => [176.0, 166.0],
+        Screen::Inventory | Screen::Crafting | Screen::Furnace | Screen::Dispenser { .. } => {
+            [176.0, 166.0]
+        }
+        Screen::Hopper => [176.0, 133.0],
         Screen::Creative { .. } => [195.0, 136.0],
         // 1.0.0's GuiChest: 114 plus 18 per row.
         Screen::Chest => [176.0, 114.0 + CHEST_ROWS as f32 * 18.0],
@@ -150,6 +158,8 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
     // 1.0.0's chest puts the player's rows at 103 + (rows − 4) × 18.
     let below = match screen {
         Screen::Chest => 103.0 + (CHEST_ROWS as f32 - 4.0) * 18.0 - 84.0,
+        // The hopper's player rows start at 51.
+        Screen::Hopper => 51.0 - 84.0,
         _ => 0.0,
     };
     let inventory = (0..MAIN_SLOTS).map(move |i| {
@@ -177,6 +187,17 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         .into_iter()
         .chain(inventory)
         .collect(),
+        Screen::Dispenser { .. } => (0..9)
+            .map(|i| {
+                let (column, row) = ((i % 3) as f32, (i / 3) as f32);
+                (SlotRef::Block(i), [62.0 + column * 18.0, 17.0 + row * 18.0])
+            })
+            .chain(inventory)
+            .collect(),
+        Screen::Hopper => (0..5)
+            .map(|i| (SlotRef::Block(i), [44.0 + i as f32 * 18.0, 20.0]))
+            .chain(inventory)
+            .collect(),
         Screen::Chest => (0..CHEST_ROWS * 9)
             .map(|i| {
                 let (column, row) = ((i % 9) as f32, (i / 9) as f32);
@@ -195,6 +216,13 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
         Screen::Creative { .. } => &[],
         Screen::Chest => &[("Chest", [8.0, 6.0]), ("Inventory", [8.0, 74.0])],
         Screen::Furnace => &[("Furnace", [60.0, 6.0]), ("Inventory", [8.0, 72.0])],
+        Screen::Dispenser { dropper: false } => {
+            &[("Dispenser", [60.0, 6.0]), ("Inventory", [8.0, 72.0])]
+        }
+        Screen::Dispenser { dropper: true } => {
+            &[("Dropper", [60.0, 6.0]), ("Inventory", [8.0, 72.0])]
+        }
+        Screen::Hopper => &[("Item Hopper", [8.0, 6.0]), ("Inventory", [8.0, 39.0])],
     }
 }
 
@@ -256,6 +284,8 @@ pub fn show(
         Screen::Creative { .. } => &textures.creative,
         Screen::Chest => &textures.chest,
         Screen::Furnace => &textures.furnace,
+        Screen::Dispenser { .. } => &textures.dispenser,
+        Screen::Hopper => &textures.hopper,
     };
     if *screen == Screen::Chest {
         // The chest rows, then the inventory part from the bottom of the

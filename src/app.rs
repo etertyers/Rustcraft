@@ -45,10 +45,13 @@ use crate::{
         atlas::Atlas,
         camera::Camera,
         crack,
-        entities::{EffectUvs, add_effects, add_falling_blocks, add_particles, item_mesh},
+        entities::{
+            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_particles,
+            add_primed_tnt, item_mesh,
+        },
         held::HeldCache,
         icons::ItemIcons,
-        models::{add_arrow, add_mob},
+        models::{add_arrow, add_minecart, add_mob},
     },
     shots,
     ui::{
@@ -580,6 +583,14 @@ impl App {
             Container::Crafting { .. } => Screen::Crafting,
             Container::Chest(_) => Screen::Chest,
             Container::Furnace(_) => Screen::Furnace,
+            Container::Dispenser(_, dropper) => Screen::Dispenser { dropper: *dropper },
+            Container::Hopper(_) => Screen::Hopper,
+            Container::Cart(index) => match self.game.as_ref().and_then(|g| g.carts.get(*index)) {
+                Some(cart) if cart.kind == crate::entity::minecart::CartKind::Hopper => {
+                    Screen::Hopper
+                }
+                _ => Screen::Chest,
+            },
         });
         self.set_cursor_grab(false);
     }
@@ -768,6 +779,8 @@ impl App {
                     game.tick_alpha(),
                     light_at,
                 );
+                add_cart_blocks(&mut mesh, &game.carts, models, game.tick_alpha(), light_at);
+                add_primed_tnt(&mut mesh, &game.primed, models, game.tick_alpha(), light_at);
                 add_particles(
                     &mut mesh,
                     &game.particles,
@@ -828,8 +841,18 @@ impl App {
             }
             let mob_kinds = game.mob_defs().iter().count();
             meshes.push((mob_kinds, arrows));
-            // The skin is the texture after the arrow's.
-            meshes.push((mob_kinds + 1, player.body));
+            // The minecart texture follows the arrow's, and the skin it.
+            let mut carts = Mesh::default();
+            for cart in &game.carts {
+                add_minecart(
+                    &mut carts,
+                    cart,
+                    alpha,
+                    light_at(cart.position + DVec3::Y * 0.5),
+                );
+            }
+            meshes.push((mob_kinds + 1, carts));
+            meshes.push((mob_kinds + 2, player.body));
             renderer.set_mobs(&meshes);
         }
 
