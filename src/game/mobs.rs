@@ -46,9 +46,14 @@ const DESPAWN_CHANCE: f32 = 1.0 / 800.0;
 const PUSH_REACH: f64 = 0.2;
 /// Strength of that push.
 const PUSH: f64 = 0.05;
+/// A mob looks for the player only this close.
+const SIGHT_RANGE: f64 = 40.0;
 /// Mobs farther than this from the player aren't drawn or thought about
 /// for others' sake (the list of nearby mobs each one considers).
 const NEIGHBOR_RANGE: f64 = 20.0;
+/// A player must have gone this long (three days) without sleeping for
+/// phantoms to come.
+const PHANTOM_AFTER: u32 = 72_000;
 /// Ticks of fire daylight gives undead (1.0.0's `setFire(8)`).
 const DAYLIGHT_FIRE: i32 = 160;
 /// Sheep colors by chance, as in vanilla (wool color numbers).
@@ -183,6 +188,7 @@ impl Game {
         let player_eye = player_feet + DVec3::Y * self.body.eye_height();
         let attackable = self.mode.is_vulnerable() && !self.stats.is_dead();
         let daytime = daytime::is_daytime(self.celestial_angle());
+        let ridden_input = self.ridden_input();
         let mut mobs = std::mem::take(&mut self.mobs);
         let defs = self.mob_defs.clone();
         let mut thinking = Rng::new(self.rng.next_u64());
@@ -215,37 +221,59 @@ impl Game {
                 self.steer_ridden(mob);
             }
             let eye = mob.eye();
-            let visible = attackable && self.sees(eye, player_eye);
+            // Only mobs that go after the player look for them, and only
+            // when they're near enough to notice.
+            let hunts = !matches!(
+                def.ai,
+                Ai::Passive
+                    | Ai::Villager
+                    | Ai::Horse
+                    | Ai::Rabbit
+                    | Ai::Swimmer
+                    | Ai::Cat
+                    | Ai::Fox { .. }
+            );
+            let near_player = eye.distance(player_eye) < SIGHT_RANGE;
+            let visible = attackable && hunts && near_player && self.sees(eye, player_eye);
             let stares = matches!(def.ai, Ai::Enderman { .. }) && {
                 let to = eye - player_eye;
                 let d = to.length();
                 d < 64.0 && d > 0.0 && look.dot(to / d) > 1.0 - 0.025 / d && visible
             };
-            let target = attackable.then(|| Target {
+            let target = (attackable && hunts && near_player).then(|| Target {
                 feet: player_feet,
                 eye: player_eye,
                 aabb: self.body.aabb(),
                 visible,
                 stares,
             });
-            let others: Vec<Other> = snaps
-                .iter()
-                .enumerate()
-                .filter(|&(i, s)| {
-                    i != index && !s.dead && s.feet.distance(mob.feet()) < NEIGHBOR_RANGE
-                })
-                .map(|(i, s)| Other {
-                    index: i,
-                    feet: s.feet,
-                    eye: s.eye,
-                    monster: s.monster,
-                    creeper: s.creeper,
-                    prey: s.prey,
-                    cat: s.cat,
-                    visible: self.sees(eye, s.eye),
-                    width: s.width,
-                })
-                .collect();
+            // Only these look at their neighbors.
+            let social = matches!(
+                def.ai,
+                Ai::Neutral { .. } | Ai::Wolf { .. } | Ai::Fox { .. } | Ai::Creeper { .. }
+            );
+            let others: Vec<Other> = if social {
+                snaps
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, s)| {
+                        i != index && !s.dead && s.feet.distance(mob.feet()) < NEIGHBOR_RANGE
+                    })
+                    .map(|(i, s)| Other {
+                        index: i,
+                        feet: s.feet,
+                        eye: s.eye,
+                        monster: s.monster,
+                        creeper: s.creeper,
+                        prey: s.prey,
+                        cat: s.cat,
+                        visible: self.sees(eye, s.eye),
+                        width: s.width,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let terrain = WorldTerrain {
                 world: self.chunks.world(),
                 blocks: self.items.blocks,
@@ -275,7 +303,7 @@ impl Game {
                 ai::think(mob, def, &view, &mut random)
             };
             if mob.ridden {
-                intent.input = self.ridden_input();
+                intent.input = ridden_input;
             }
             let collider = WorldCollider {
                 world: self.chunks.world(),
@@ -283,6 +311,9 @@ impl Game {
             };
             let eyes = self.fluid_at(mob.eye()) == Some(Fluid::Water);
             mob.body.free_flight = def.flies || (def.swims && in_water);
+            if !mob.body.free_flight {
+                mob.body.may_fly = false;
+            }
             mob.tick(&intent.input, &collider, eyes);
             if def.climbs && mob.body.collided_horizontally() && intent.input.forward > 0.0 {
                 mob.body.velocity.y = 0.2;
@@ -298,7 +329,7 @@ impl Game {
             if (def.hurt_by_water && in_water)
                 || (def.swims && !in_water && mob.age.is_multiple_of(20))
             {
-                mob.hurt(1.0, None, DamageSource::Drowning);
+                mob.hurt_by_world(1.0, DamageSource::Drowning);
             }
             pending.push((index, intent));
             if mob.is_dead() && !mob.looted {
@@ -340,6 +371,57 @@ impl Game {
         self.tick_animals();
         self.spawn_monsters();
         self.spawn_water_mobs();
+        self.spawn_phantoms();
+    }
+
+    /// Phantoms come out of the night sky above a player who hasn't slept
+    /// in three days (modern `PhantomSpawner`): every three seconds, with
+    /// a chance that grows with the time awake, one to three of them 20
+    /// to 34 blocks up.
+    pub(super) fn spawn_phantoms(&mut self) {
+        if !self.time.is_multiple_of(60)
+            || self.stats.is_dead()
+            || !self.mode.is_vulnerable()
+            || daytime::is_daytime(self.celestial_angle())
+        {
+            return;
+        }
+        let Some(kind) = self
+            .mob_defs
+            .iter()
+            .find_map(|(kind, def)| matches!(def.spawn, Spawn::Phantom).then_some(kind))
+        else {
+            return;
+        };
+        let feet = self.body.position();
+        let head = (feet + DVec3::Y * 1.0).floor().as_ivec3();
+        let open_sky = self
+            .chunks
+            .light_at(head.x, head.y, head.z)
+            .is_some_and(|(sky, _)| sky == 15);
+        if !open_sky || self.rng.below(self.stats.awake.max(1)) < PHANTOM_AFTER {
+            return;
+        }
+        let count = 1 + self.rng.below(3);
+        for _ in 0..count {
+            let spot = feet
+                + DVec3::new(
+                    f64::from(self.rng.below(21)) - 10.0,
+                    20.0 + f64::from(self.rng.below(15)),
+                    f64::from(self.rng.below(21)) - 10.0,
+                );
+            let cell = spot.floor().as_ivec3();
+            let free = self
+                .chunks
+                .world()
+                .block(cell.x, cell.y, cell.z)
+                .is_some_and(|b| b.is_air());
+            if free {
+                let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
+                let mob = self.new_mob(kind, spot, yaw);
+                self.add_mob(mob);
+            }
+        }
     }
 
     /// 1.0.0's `applyEntityCollision`: overlapping living bodies (mobs and
@@ -533,7 +615,7 @@ impl Game {
     }
 
     /// A kind that can spawn here by weight: (kind, max light, group size).
-    fn pick_dark_kind(
+    pub(super) fn pick_dark_kind(
         &mut self,
         biome: Biome,
         cell: IVec3,

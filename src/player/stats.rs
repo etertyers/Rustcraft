@@ -135,6 +135,9 @@ pub struct Stats {
     /// What last hurt the player.
     #[serde(skip)]
     pub last_source: Option<DamageSource>,
+    /// Ticks since the player last slept (phantoms come after three days).
+    #[serde(default)]
+    pub awake: u32,
 }
 
 impl Default for Stats {
@@ -151,6 +154,7 @@ impl Default for Stats {
             hurt_cooldown: 0,
             last_damage: 0.0,
             last_source: None,
+            awake: 0,
         }
     }
 }

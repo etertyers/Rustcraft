@@ -205,6 +205,14 @@ impl Mob {
         fresh
     }
 
+    /// Hurts it with the world rather than an attacker (water on an
+    /// enderman, air for a squid): no flinching or fleeing.
+    pub fn hurt_by_world(&mut self, amount: f32, source: DamageSource) {
+        if !self.is_dead() && self.stats.damage(amount, source) {
+            self.hurt_time = HURT_FLASH;
+        }
+    }
+
     /// Pushes the mob away from `from`.
     pub fn knock_back(&mut self, from: DVec3) {
         knock_back(&mut self.body, from);

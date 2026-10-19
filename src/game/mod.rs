@@ -12,6 +12,8 @@ mod hands;
 mod logistics;
 mod minecarts;
 mod mob_acts;
+#[cfg(test)]
+mod mob_tests;
 mod mobs;
 #[cfg(test)]
 mod moves;
@@ -612,6 +614,9 @@ impl Game {
             }
         }
         self.tick_view();
+        if !self.is_sleeping() {
+            self.stats.awake = self.stats.awake.saturating_add(1);
+        }
         if let Some((_, ticks)) = &mut self.message {
             *ticks = ticks.saturating_sub(1);
             if *ticks == 0 {
@@ -1328,7 +1333,7 @@ pub(crate) mod tests {
     }
 
     /// A flat world 5×5 chunks around the origin with light computed.
-    fn lit_flat_game(mode: GameMode) -> Game {
+    pub(crate) fn lit_flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
         let chunks = ChunkManager::new(ChunkSource::Flat, models, 2, 4);
         let feet = DVec3::new(0.5, 64.0, 0.5);
