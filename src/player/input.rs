@@ -45,6 +45,7 @@ impl MoveKeys {
             jump: self.jump,
             sneak: self.sneak,
             sprint: self.sprint,
+            ..MoveInput::default()
         }
     }
 }

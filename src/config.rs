@@ -56,8 +56,13 @@ pub const PLAYER_WIDTH: f64 = 0.6;
 pub const PLAYER_HEIGHT: f64 = 1.8;
 pub const EYE_HEIGHT: f64 = 1.62;
 /// The camera drops this much while sneaking.
-pub const SNEAK_EYE_DROP: f64 = 0.08;
-pub const STEP_HEIGHT: f64 = 0.5;
+/// Hitbox and eye heights when sneaking, and when swimming or crawling
+/// (modern `Pose` dimensions).
+pub const CROUCH_HEIGHT: f64 = 1.5;
+pub const CROUCH_EYE_HEIGHT: f64 = 1.27;
+pub const SWIM_HEIGHT: f64 = 0.6;
+pub const SWIM_EYE_HEIGHT: f64 = 0.4;
+pub const STEP_HEIGHT: f64 = 0.6;
 /// Block reach in survival, from the eye.
 pub const REACH: f64 = 5.0;
 

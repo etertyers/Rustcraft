@@ -101,16 +101,48 @@ pub trait Collider {
     /// Slipperiness of the block at (x, y, z), 0.6 for most blocks.
     fn slipperiness(&self, x: i32, y: i32, z: i32) -> f32;
 
-    /// The liquid `region` reaches into, if any (water first). A liquid
-    /// counts once the region's top reaches its surface, as in 1.0.0's
-    /// `handleMaterialAcceleration`.
+    /// How the cell at (x, y, z) scales walking (soul sand 0.4), 1 for
+    /// most blocks.
+    fn speed_factor(&self, _x: i32, _y: i32, _z: i32) -> f32 {
+        1.0
+    }
+
+    /// How the cell at (x, y, z) scales jumping (honey 0.5), 1 for most.
+    fn jump_factor(&self, _x: i32, _y: i32, _z: i32) -> f32 {
+        1.0
+    }
+
+    /// Whether the cell at (x, y, z) is a ladder or vine.
+    fn climbable(&self, _x: i32, _y: i32, _z: i32) -> bool {
+        false
+    }
+
+    /// Whether landing on the block at (x, y, z) bounces (slime).
+    fn bouncy(&self, _x: i32, _y: i32, _z: i32) -> bool {
+        false
+    }
+
+    /// The liquid `region` touches, if any (water first): one whose
+    /// surface is above the bottom of `region` (modern
+    /// `updateFluidHeightAndDoFluidPushing`, which the player's hitbox
+    /// feels through, shrunk a hair).
     fn liquid(&self, _region: &Aabb) -> Option<Fluid> {
         None
     }
 
-    /// Which way the water `region` reaches into runs, normalized, or zero
-    /// (1.0.0's `handleMaterialAcceleration`: the flow of every water cell
-    /// it reaches, added up).
+    /// How far above the bottom of `region` the highest surface of
+    /// `fluid` it touches reaches, or zero.
+    fn fluid_depth(&self, _region: &Aabb, _fluid: Fluid) -> f64 {
+        0.0
+    }
+
+    /// The fluid at `point` if it is below the fluid's surface there.
+    fn fluid_at(&self, _point: DVec3) -> Option<Fluid> {
+        None
+    }
+
+    /// Which way the water `region` touches runs, normalized, or zero
+    /// (the flow of every water cell it touches, added up).
     fn current(&self, _region: &Aabb) -> DVec3 {
         DVec3::ZERO
     }
@@ -150,6 +182,11 @@ impl WorldCollider<'_> {
 }
 
 impl WorldCollider<'_> {
+    /// The definition of the block at (x, y, z), if it is loaded.
+    fn def_at(&self, x: i32, y: i32, z: i32) -> Option<&crate::world::block::BlockDef> {
+        self.blocks.get(self.world.block(x, y, z)?.id())
+    }
+
     /// Whether any block in a cell `region` overlaps passes `test`.
     fn any_cell(&self, region: &Aabb, test: impl Fn(BlockState) -> bool) -> bool {
         let min = (region.min + 0.001).floor().as_ivec3();
@@ -160,9 +197,12 @@ impl WorldCollider<'_> {
         })
     }
 
-    /// The liquid cells `region` reaches into: those whose surface (1.0.0's
-    /// `getFluidHeightPercent` below the top) its top is level with.
-    fn liquid_cells<'b>(&'b self, region: &'b Aabb) -> impl Iterator<Item = (IVec3, Fluid)> + 'b {
+    /// The liquid cells `region` touches whose surface is above its
+    /// bottom, with the surface height.
+    fn liquid_cells<'b>(
+        &'b self,
+        region: &'b Aabb,
+    ) -> impl Iterator<Item = (IVec3, Fluid, f64)> + 'b {
         let min = region.min.floor().as_ivec3();
         let max = region.max.floor().as_ivec3();
         (min.y..=max.y).flat_map(move |y| {
@@ -172,7 +212,7 @@ impl WorldCollider<'_> {
                     let fluid = self.blocks.get(block.id())?.fluid?;
                     let surface =
                         (y + 1) as f64 - fluid::height_percent(fluid::level(block)) as f64;
-                    (region.max.y >= surface).then_some((IVec3::new(x, y, z), fluid))
+                    (surface >= region.min.y).then_some((IVec3::new(x, y, z), fluid, surface))
                 })
             })
         })
@@ -217,15 +257,55 @@ impl Collider for WorldCollider<'_> {
             .map_or(0.6, |def| def.slipperiness)
     }
 
+    fn speed_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+        self.def_at(x, y, z).map_or(1.0, |def| def.speed_factor)
+    }
+
+    fn jump_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+        self.def_at(x, y, z).map_or(1.0, |def| def.jump_factor)
+    }
+
+    fn climbable(&self, x: i32, y: i32, z: i32) -> bool {
+        self.def_at(x, y, z).is_some_and(|def| def.climbable)
+    }
+
+    fn bouncy(&self, x: i32, y: i32, z: i32) -> bool {
+        self.def_at(x, y, z).is_some_and(|def| def.bouncy)
+    }
+
     fn liquid(&self, region: &Aabb) -> Option<Fluid> {
         let mut found = None;
-        for (_, fluid) in self.liquid_cells(region) {
+        for (_, fluid, _) in self.liquid_cells(region) {
             if fluid == Fluid::Water {
                 return Some(fluid);
             }
             found = Some(fluid);
         }
         found
+    }
+
+    fn fluid_depth(&self, region: &Aabb, fluid: Fluid) -> f64 {
+        self.liquid_cells(region)
+            .filter(|&(_, found, _)| found == fluid)
+            .map(|(_, _, surface)| surface - region.min.y)
+            .fold(0.0, f64::max)
+    }
+
+    fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
+        let cell = point.floor().as_ivec3();
+        let fluid_of = |at: IVec3| {
+            let block = self.world.block(at.x, at.y, at.z)?;
+            Some((self.blocks.get(block.id())?.fluid?, block))
+        };
+        let (fluid, block) = fluid_of(cell)?;
+        // A cell with the same fluid above it is full to the top.
+        let full = fluid_of(cell + IVec3::Y).is_some_and(|(above, _)| above == fluid);
+        let surface = if full {
+            (cell.y + 1) as f64
+        } else {
+            (cell.y + 1) as f64 - fluid::height_percent(fluid::level(block)) as f64
+        };
+        (point.y < surface).then_some(fluid)
     }
 
     fn in_fire(&self, region: &Aabb) -> bool {
@@ -247,8 +327,8 @@ impl Collider for WorldCollider<'_> {
         };
         let flow: DVec3 = self
             .liquid_cells(region)
-            .filter(|&(_, fluid)| fluid == Fluid::Water)
-            .map(|(at, fluid)| fluid::flow_vector(fluid, at, &cell))
+            .filter(|&(_, fluid, _)| fluid == Fluid::Water)
+            .map(|(at, fluid, _)| fluid::flow_vector(fluid, at, &cell))
             .sum();
         flow.normalize_or_zero()
     }
@@ -326,6 +406,13 @@ mod tests {
         assert_eq!(boxes, vec![Aabb::block(16, 70, 0)]);
 
         assert_eq!(collider.slipperiness(3, 63, 1), 0.98);
+        // Block movement data: soul sand slows, ladders and vines climb.
+        assert_eq!(collider.speed_factor(1, 63, 1), 1.0);
+        assert_eq!(collider.jump_factor(1, 63, 1), 1.0);
+        assert!(!collider.climbable(1, 63, 1) && !collider.bouncy(1, 63, 1));
+        let defs = |id| registry.get(id).unwrap();
+        assert_eq!(defs(blocks::SOUL_SAND).speed_factor, 0.4);
+        assert!(defs(blocks::LADDER).climbable && defs(blocks::VINE).climbable);
         assert!(collider.is_loaded(&Aabb::block(5, 64, 5)));
         assert!(!collider.is_loaded(&Aabb::block(15, 64, 5)));
         assert_eq!(collider.slipperiness(1, 63, 1), 0.6);

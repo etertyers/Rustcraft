@@ -123,10 +123,7 @@ impl Scene {
 
 const FORWARD: MoveInput = MoveInput {
     forward: 1.0,
-    strafe: 0.0,
-    jump: false,
-    sneak: false,
-    sprint: false,
+    ..MoveInput::IDLE
 };
 
 #[test]

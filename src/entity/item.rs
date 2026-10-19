@@ -141,10 +141,9 @@ impl ItemEntity {
     /// One tick of 1.0.0's `EntityItem.onUpdate`, burning in lava and fire.
     pub fn tick(&mut self, world: &impl Collider) {
         self.prev_center = self.center();
-        // Water carries items along (around their middle, as 1.0.0's box
-        // shrunk 0.4 top and bottom comes to for something this small).
-        let center = self.center();
-        self.velocity += world.current(&Aabb::new(center, center)) * CURRENT_PUSH;
+        // Water carries items along while their box touches it.
+        let region = self.bb.grow(-0.001);
+        self.velocity += world.current(&region) * CURRENT_PUSH;
         self.velocity.y -= GRAVITY;
         let wanted = self.velocity;
         let (moved, bb) = sweep(self.bb, wanted, world, &mut Vec::new());

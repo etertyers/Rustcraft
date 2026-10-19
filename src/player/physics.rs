@@ -1,14 +1,17 @@
-//! Player movement, following Minecraft 1.0.0's `EntityLiving.moveEntityWithHeading`
-//! and `Entity.moveEntity`: per-tick acceleration and friction, gravity and
-//! drag, axis-by-axis collision, step-up and sneaking at edges.
+//! Player movement, after modern Minecraft's `LivingEntity.travel`,
+//! `Player` and `Entity.move`: per-tick acceleration and friction, gravity
+//! and drag, axis-by-axis collision, step-up, standing, sneaking and
+//! crawling poses with their own hitboxes, swimming, climbing, and blocks
+//! that slow, slide or bounce. Values are per tick (20 ticks a second).
 
 use glam::DVec3;
 
 use super::collision::{Aabb, Collider};
 use crate::config::{
-    AIR_ACCELERATION, AIR_FRICTION, EYE_HEIGHT, FLY_ACCELERATION, FLY_VERTICAL_DRAG,
-    FLY_VERTICAL_SPEED, GRAVITY, JUMP_VELOCITY, PLAYER_HEIGHT, PLAYER_WIDTH, SNEAK_EYE_DROP,
-    SNEAK_FACTOR, SPRINT_FACTOR, SPRINT_JUMP_BOOST, STEP_HEIGHT, VERTICAL_DRAG, WALK_ACCELERATION,
+    AIR_ACCELERATION, AIR_FRICTION, CROUCH_EYE_HEIGHT, CROUCH_HEIGHT, EYE_HEIGHT, FLY_ACCELERATION,
+    FLY_VERTICAL_DRAG, FLY_VERTICAL_SPEED, GRAVITY, JUMP_VELOCITY, PLAYER_HEIGHT, PLAYER_WIDTH,
+    SNEAK_FACTOR, SPRINT_FACTOR, SPRINT_JUMP_BOOST, STEP_HEIGHT, SWIM_EYE_HEIGHT, SWIM_HEIGHT,
+    VERTICAL_DRAG, WALK_ACCELERATION,
 };
 use crate::world::block::Fluid;
 
@@ -21,48 +24,103 @@ pub struct MoveInput {
     pub strafe: f64,
     pub jump: bool,
     pub sneak: bool,
-    /// The sprint key; double-tapping forward also sprints, as in 1.0.0.
+    /// The sprint key; double-tapping forward also sprints.
     pub sprint: bool,
+    /// Where the player looks vertically: the sine of the pitch, +1 straight
+    /// up. Swimming goes where the player looks.
+    pub look_y: f64,
+    /// Eating, drinking or drawing a bow slows the player to a fifth.
+    pub using_item: bool,
+}
+
+impl MoveInput {
+    /// No keys held, looking level.
+    pub const IDLE: Self = Self {
+        forward: 0.0,
+        strafe: 0.0,
+        jump: false,
+        sneak: false,
+        sprint: false,
+        look_y: 0.0,
+        using_item: false,
+    };
+}
+
+/// How the body is held: it decides the hitbox and the eyes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Pose {
+    #[default]
+    Standing,
+    /// Sneaking: shorter, slower, and kept from walking off edges.
+    Crouching,
+    /// Swimming or crawling: a 0.6-block-tall body lying along the facing.
+    Swimming,
 }
 
 /// A second forward press within this many ticks starts sprinting.
 const SPRINT_DOUBLE_TAP_TICKS: u8 = 7;
-/// Acceleration at full input in water or lava (1.0.0's `moveFlying` 0.02).
+/// Acceleration at full input in water or lava (modern `moveRelative`
+/// speed for fluids).
 const SWIM_ACCELERATION: f64 = 0.02;
-/// Velocity kept per tick in water and in lava.
+/// Velocity kept per tick in water (sprint-swimming keeps more) and in lava.
 const WATER_DRAG: f64 = 0.8;
+const WATER_SPRINT_DRAG: f64 = 0.9;
+const WATER_VERTICAL_DRAG: f64 = 0.8;
 const LAVA_DRAG: f64 = 0.5;
-/// Sinking per tick in a liquid, and rising per tick holding jump.
-const SWIM_SINK: f64 = 0.02;
+/// Sinking per tick in water (a sixteenth of gravity, unless sprinting)
+/// and in lava (a quarter).
+const WATER_SINK: f64 = GRAVITY / 16.0;
+const LAVA_SINK: f64 = GRAVITY / 4.0;
+/// Upward speed added each tick holding jump in a fluid.
 const SWIM_UP: f64 = 0.04;
-/// Speed added each tick along the water's flow (1.0.0's
-/// `handleMaterialAcceleration`).
+/// Fluid this deep (in blocks, over the feet) swims on jumping; shallower
+/// and standing, jumping is an ordinary jump.
+const FLUID_JUMP_THRESHOLD: f64 = 0.4;
+/// Speed added each tick along the water's flow (modern
+/// `updateFluidHeightAndDoFluidPushing`).
 pub const CURRENT_PUSH: f64 = 0.014;
 /// Upward speed when swimming into a ledge with room above it.
 const LEDGE_HOP: f64 = 0.3;
 /// A second jump press within this many ticks toggles creative flight.
 const FLY_DOUBLE_TAP_TICKS: u8 = 7;
-/// Forward input needed to start or keep sprinting.
+/// Forward input needed to start or keep sprinting on land.
 const SPRINT_MIN_FORWARD: f64 = 0.8;
-/// Every movement input is scaled by this (1.0.0 `moveForward *= 0.98`).
+/// Any forward input at all, which is all sprinting under water needs.
+const FORWARD_IMPULSE: f64 = 1.0e-5;
+/// Every movement input is scaled by this (`moveForward *= 0.98`).
 const INPUT_SCALE: f64 = 0.98;
-/// Makes ground acceleration independent of friction at normal slipperiness
-/// (1.0.0's `0.16277136 / f³`).
-const GROUND_ACCELERATION_SCALE: f64 = 0.16277136;
+/// Using an item scales the input by this.
+const USING_ITEM_SCALE: f64 = 0.2;
 /// Sneaking backs a move off an edge in steps this long.
 const SNEAK_EDGE_STEP: f64 = 0.05;
+/// Most a climbing body moves sideways or falls, per tick, and the upward
+/// speed that sets when it pushes against the ladder or jumps.
+const CLIMB_SIDEWAYS: f64 = 0.15;
+const CLIMB_FALL: f64 = 0.15;
+const CLIMB_UP: f64 = 0.2;
+/// Walking on a bouncy block slows by 0.4 plus a fifth of the fall speed.
+const BOUNCY_SLOWDOWN: f64 = 0.4;
+const BOUNCY_SLOWDOWN_PER_SPEED: f64 = 0.2;
+/// How far under the feet the block that affects movement is.
+const BELOW_FEET: f64 = 0.500_001;
+/// Water and lava are felt through a hitbox shrunk by this.
+const FLUID_MARGIN: f64 = 0.001;
 
 /// The player's physical body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Body {
-    /// The hitbox is the stored state, as in 1.0.0: deriving it from the
-    /// feet position every tick would let rounding push it into a wall.
+    /// The hitbox is the stored state: deriving it from the feet position
+    /// every tick would let rounding push it into a wall.
     bb: Aabb,
     /// Blocks per tick.
     pub velocity: DVec3,
     pub on_ground: bool,
+    /// Whether sneak is held (and the body isn't flying).
     pub sneaking: bool,
     pub sprinting: bool,
+    /// Sprinting in water with the head under (or having been): the body
+    /// lies flat and goes where it looks.
+    pub swimming: bool,
     /// Double-tapping jump toggles `flying` (creative).
     pub may_fly: bool,
     pub flying: bool,
@@ -72,35 +130,51 @@ pub struct Body {
     pub jumped: bool,
     /// The liquid the body was in during the last tick.
     pub liquid: Option<Fluid>,
+    /// Whether the last tick landed on a bouncy block and bounced.
+    pub bounced: bool,
+    /// Whether the body is in a ladder or vine.
+    pub on_climbable: bool,
+    pose: Pose,
+    /// Whether this is the player, who has poses (mobs stay standing).
+    has_poses: bool,
     collided_horizontally: bool,
     was_moving_forward: bool,
     sprint_tap_timer: u8,
     was_jumping: bool,
     fly_tap_timer: u8,
-    /// Eye height above the feet when not sneaking.
+    /// Height of the hitbox and of the eyes when standing.
+    height: f64,
     eye: f64,
 }
 
 impl Body {
     /// The player's body, with its feet at `position`.
     pub fn new(position: DVec3) -> Self {
-        Self::sized(position, PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT)
+        let mut body = Self::sized(position, PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT);
+        body.has_poses = true;
+        body
     }
 
     /// A body of any size (mobs), with its feet at `position`.
     pub fn sized(position: DVec3, width: f64, height: f64, eye_height: f64) -> Self {
         Self {
             bb: sized_hitbox(position, width, height),
+            height,
             eye: eye_height,
             velocity: DVec3::ZERO,
             on_ground: false,
             sneaking: false,
             sprinting: false,
+            swimming: false,
             may_fly: false,
             flying: false,
             can_sprint: true,
             jumped: false,
             liquid: None,
+            bounced: false,
+            on_climbable: false,
+            pose: Pose::Standing,
+            has_poses: false,
             collided_horizontally: false,
             was_moving_forward: false,
             sprint_tap_timer: 0,
@@ -111,6 +185,10 @@ impl Body {
 
     pub fn aabb(&self) -> Aabb {
         self.bb
+    }
+
+    pub fn pose(&self) -> Pose {
+        self.pose
     }
 
     /// Whether the last move ran into a wall.
@@ -134,36 +212,99 @@ impl Body {
         self.bb = sized_hitbox(feet, size.x, size.y);
     }
 
-    /// Camera height above the feet.
+    /// Camera height above the feet in the current pose.
     pub fn eye_height(&self) -> f64 {
-        if self.sneaking {
-            self.eye - SNEAK_EYE_DROP
-        } else {
-            self.eye
+        match self.pose {
+            Pose::Standing => self.eye,
+            Pose::Crouching => CROUCH_EYE_HEIGHT,
+            Pose::Swimming => SWIM_EYE_HEIGHT,
         }
+    }
+
+    /// Hitbox height in `pose`.
+    fn height_in(&self, pose: Pose) -> f64 {
+        match pose {
+            Pose::Standing => self.height,
+            Pose::Crouching => CROUCH_HEIGHT,
+            Pose::Swimming => SWIM_HEIGHT,
+        }
+    }
+
+    /// Whether the body moves at a crouch's pace: crouching, or crawling
+    /// out of the water.
+    pub fn moving_slowly(&self) -> bool {
+        self.pose == Pose::Crouching || (self.pose == Pose::Swimming && !self.swimming)
+    }
+
+    /// The hitbox the body would have in `pose`, feet staying put.
+    fn box_in(&self, pose: Pose) -> Aabb {
+        let mut bb = self.bb;
+        bb.max.y = bb.min.y + self.height_in(pose);
+        bb
+    }
+
+    /// The cell whose block the body stands on, for friction, bouncing and
+    /// the second look at speed and jump factors.
+    fn cell_below(&self) -> (i32, i32, i32) {
+        let p = self.position();
+        (
+            p.x.floor() as i32,
+            (self.bb.min.y - BELOW_FEET).floor() as i32,
+            p.z.floor() as i32,
+        )
+    }
+
+    /// The cell the feet are in.
+    fn feet_cell(&self) -> (i32, i32, i32) {
+        let p = self.position();
+        (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32)
+    }
+
+    /// `factor` of the block at the feet, or of the block below if that is
+    /// plain (modern `getBlockSpeedFactor` and `getBlockJumpFactor`).
+    fn block_factor(&self, factor: impl Fn(i32, i32, i32) -> f32) -> f64 {
+        let (x, y, z) = self.feet_cell();
+        let here = factor(x, y, z) as f64;
+        if here != 1.0 {
+            return here;
+        }
+        let (x, y, z) = self.cell_below();
+        factor(x, y, z) as f64
     }
 
     /// Advances one tick. `yaw` is in radians, 0 facing north (−Z).
     pub fn tick(&mut self, input: &MoveInput, yaw: f32, world: &impl Collider) {
+        self.update_flight(input.jump);
+        self.sneaking = input.sneak && !self.flying;
+        let eyes_in_water = self.eyes_in_water(world);
+        self.update_swimming(eyes_in_water);
+        self.update_pose(world);
+
         let mut forward = input.forward.clamp(-1.0, 1.0);
         let mut strafe = input.strafe.clamp(-1.0, 1.0);
-        self.sneaking = input.sneak;
-        if self.sneaking {
+        if self.moving_slowly() {
             forward *= SNEAK_FACTOR;
             strafe *= SNEAK_FACTOR;
         }
-        self.update_sprint(forward, input.sprint);
-        self.update_flight(input.jump);
+        if input.using_item {
+            forward *= USING_ITEM_SCALE;
+            strafe *= USING_ITEM_SCALE;
+        }
+        self.update_sprint(forward, input, eyes_in_water);
+
         let liquid = if self.flying {
             None
         } else {
             self.find_liquid(world)
         };
         self.liquid = liquid;
+        let region = self.bb.grow(-FLUID_MARGIN);
+        let depth = liquid.map_or(0.0, |fluid| world.fluid_depth(&region, fluid));
         if liquid == Some(Fluid::Water) {
-            self.velocity += world.current(&self.water_box()) * CURRENT_PUSH;
+            self.velocity += world.current(&region) * CURRENT_PUSH;
         }
         self.jumped = false;
+        self.bounced = false;
 
         let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
         let facing = DVec3::new(sin_yaw, 0.0, -cos_yaw);
@@ -175,13 +316,17 @@ impl Body {
             if input.jump {
                 self.velocity.y += FLY_VERTICAL_SPEED;
             }
-        } else if input.jump && liquid.is_some() {
-            self.velocity.y += SWIM_UP;
-        } else if input.jump && self.on_ground {
-            self.jumped = true;
-            self.velocity.y = JUMP_VELOCITY;
-            if self.sprinting {
-                self.velocity += facing * SPRINT_JUMP_BOOST;
+        } else if input.jump {
+            let swims_up = liquid.is_some() && (!self.on_ground || depth > FLUID_JUMP_THRESHOLD);
+            if swims_up {
+                self.velocity.y += SWIM_UP;
+            } else if self.on_ground {
+                self.jumped = true;
+                let power = JUMP_VELOCITY * self.block_factor(|x, y, z| world.jump_factor(x, y, z));
+                self.velocity.y = self.velocity.y.max(power);
+                if self.sprinting {
+                    self.velocity += facing * SPRINT_JUMP_BOOST;
+                }
             }
         }
 
@@ -192,7 +337,9 @@ impl Body {
         } else if liquid.is_some() {
             SWIM_ACCELERATION
         } else if self.on_ground {
-            WALK_ACCELERATION * sprint * GROUND_ACCELERATION_SCALE / friction.powi(3)
+            // Independent of friction at normal slipperiness: the speed
+            // attribute times 0.216 over the block's friction cubed.
+            WALK_ACCELERATION * sprint * 0.216 / block_friction(friction).powi(3)
         } else {
             AIR_ACCELERATION * sprint
         };
@@ -204,13 +351,40 @@ impl Body {
         }
 
         if let Some(fluid) = liquid {
-            self.swim(fluid, world);
+            self.swim(fluid, input, world);
             return;
+        }
+        self.walk_or_fly(input, friction, world);
+    }
+
+    /// Ground, air, ladders and flight: one tick of the rest of
+    /// `travel`.
+    fn walk_or_fly(&mut self, input: &MoveInput, friction: f64, world: &impl Collider) {
+        self.on_climbable = !self.flying && self.in_climbable(world);
+        if self.on_climbable {
+            // A ladder holds a body to a crawl: slow sideways, slow falling,
+            // and not at all while sneaking.
+            self.velocity.x = self.velocity.x.clamp(-CLIMB_SIDEWAYS, CLIMB_SIDEWAYS);
+            self.velocity.z = self.velocity.z.clamp(-CLIMB_SIDEWAYS, CLIMB_SIDEWAYS);
+            self.velocity.y = self.velocity.y.max(-CLIMB_FALL);
+            if self.velocity.y < 0.0 && self.sneaking {
+                self.velocity.y = 0.0;
+            }
         }
         let vertical = self.velocity.y;
         self.move_by(self.velocity, world);
+        if self.on_ground && !self.flying {
+            self.land(vertical, world);
+        }
+        if self.in_climbable(world) && !self.flying && (self.collided_horizontally || input.jump) {
+            self.velocity.y = CLIMB_UP;
+        }
+        // The block underfoot or around the feet slows the walker.
+        let factor = self.block_factor(|x, y, z| world.speed_factor(x, y, z));
+        self.velocity.x *= factor;
+        self.velocity.z *= factor;
         if self.flying {
-            // 1.0.0 keeps 0.6 of the vertical speed and ignores gravity.
+            // Flight keeps 0.6 of the vertical speed and ignores gravity.
             self.velocity.y = vertical * FLY_VERTICAL_DRAG;
             if self.on_ground {
                 self.flying = false;
@@ -222,41 +396,120 @@ impl Body {
         self.velocity.z *= friction;
     }
 
-    /// The liquid the body is in: water reaching the hitbox shrunk by 0.4
-    /// top and bottom, or lava reaching it also shrunk 0.1 sideways
-    /// (1.0.0's `isInWater` and `handleLavaMovement`).
-    fn find_liquid(&self, world: &impl Collider) -> Option<Fluid> {
-        match world.liquid(&self.water_box()) {
-            Some(Fluid::Water) => Some(Fluid::Water),
-            _ => world
-                .liquid(&self.shrunk(0.1))
-                .filter(|&fluid| fluid == Fluid::Lava),
+    /// What touching down does: a bouncy block throws a body back up
+    /// (unless sneaking) and slows walking across it.
+    fn land(&mut self, fall_speed: f64, world: &impl Collider) {
+        let (x, y, z) = self.cell_below();
+        if !world.bouncy(x, y, z) || self.sneaking {
+            return;
+        }
+        if fall_speed < 0.0 {
+            self.velocity.y = -fall_speed;
+            self.bounced = true;
+        } else if fall_speed.abs() < 0.1 {
+            // Walking over it drags.
+            let slow = BOUNCY_SLOWDOWN + fall_speed.abs() * BOUNCY_SLOWDOWN_PER_SPEED;
+            self.velocity.x *= slow;
+            self.velocity.z *= slow;
         }
     }
 
-    /// The hitbox shrunk by 0.4 top and bottom and `side` sideways.
-    fn shrunk(&self, side: f64) -> Aabb {
-        let by = DVec3::new(side, 0.4, side);
-        Aabb::new(self.bb.min + by, self.bb.max - by)
+    /// Whether the body is inside a ladder or vine.
+    fn in_climbable(&self, world: &impl Collider) -> bool {
+        let (x, y, z) = self.feet_cell();
+        world.climbable(x, y, z)
     }
 
-    /// The part of the body water has to reach to count.
-    fn water_box(&self) -> Aabb {
-        self.shrunk(0.001)
+    /// Whether the eyes are under water.
+    fn eyes_in_water(&self, world: &impl Collider) -> bool {
+        // Modern `updateFluidOnEyes` looks a ninth of a block below the eyes.
+        let eyes = self.position() + DVec3::Y * (self.eye_height() - 1.0 / 9.0);
+        world.fluid_at(eyes) == Some(Fluid::Water)
     }
 
-    /// Moves through water or lava: thick drag, slow sinking, and a hop out
-    /// onto a ledge when swimming into it (1.0.0's
-    /// `moveEntityWithHeading` liquid branch).
-    fn swim(&mut self, fluid: Fluid, world: &impl Collider) {
+    /// Sprinting in water starts swimming once the head is under, and
+    /// keeps going while in water (modern `updateSwimming`).
+    fn update_swimming(&mut self, eyes_in_water: bool) {
+        if self.flying || !self.has_poses {
+            self.swimming = false;
+            return;
+        }
+        let in_water = self.liquid == Some(Fluid::Water);
+        self.swimming = if self.swimming {
+            self.sprinting && in_water
+        } else {
+            self.sprinting && eyes_in_water && in_water
+        };
+    }
+
+    /// Chooses the pose the body can fit in (modern `updatePlayerPose`):
+    /// swimming if swimming, crouching if sneaking, else standing; if that
+    /// doesn't fit, crouching, and failing that, crawling.
+    fn update_pose(&mut self, world: &impl Collider) {
+        if !self.has_poses {
+            return;
+        }
+        let fits = |pose: Pose| !collides(&self.box_in(pose), world);
+        if !fits(Pose::Swimming) {
+            return;
+        }
+        let wanted = if self.swimming {
+            Pose::Swimming
+        } else if self.sneaking {
+            Pose::Crouching
+        } else {
+            Pose::Standing
+        };
+        let pose = if fits(wanted) {
+            wanted
+        } else if fits(Pose::Crouching) {
+            Pose::Crouching
+        } else {
+            Pose::Swimming
+        };
+        self.bb = self.box_in(pose);
+        self.pose = pose;
+    }
+
+    /// The liquid the body is in: any the hitbox, shrunk a hair, touches
+    /// (water first). Standing in a puddle counts.
+    fn find_liquid(&self, world: &impl Collider) -> Option<Fluid> {
+        world.liquid(&self.bb.grow(-FLUID_MARGIN))
+    }
+
+    /// Moves through water or lava: thick drag, slow sinking, swimming where
+    /// the player looks, and a hop out onto a ledge when swimming into it.
+    fn swim(&mut self, fluid: Fluid, input: &MoveInput, world: &impl Collider) {
+        if self.swimming && fluid == Fluid::Water {
+            // A swimmer's vertical speed eases toward where they look.
+            let look = input.look_y;
+            let rate = if look < -0.2 { 0.085 } else { 0.06 };
+            let head = self.position() + DVec3::Y * (self.height_in(self.pose) - 0.1);
+            let surfacing = world.fluid_at(head).is_some();
+            if look <= 0.0 || input.jump || surfacing {
+                self.velocity.y += (look - self.velocity.y) * rate;
+            }
+        }
         let start_y = self.bb.min.y;
         self.move_by(self.velocity, world);
-        let drag = match fluid {
-            Fluid::Water => WATER_DRAG,
-            Fluid::Lava => LAVA_DRAG,
+        self.on_climbable = self.in_climbable(world);
+        if self.collided_horizontally && self.on_climbable {
+            self.velocity.y = CLIMB_UP;
+        }
+        let (drag, vertical_drag) = match fluid {
+            Fluid::Water if self.sprinting => (WATER_SPRINT_DRAG, WATER_VERTICAL_DRAG),
+            Fluid::Water => (WATER_DRAG, WATER_VERTICAL_DRAG),
+            Fluid::Lava => (LAVA_DRAG, LAVA_DRAG),
         };
-        self.velocity *= drag;
-        self.velocity.y -= SWIM_SINK;
+        self.velocity.x *= drag;
+        self.velocity.z *= drag;
+        self.velocity.y *= vertical_drag;
+        match fluid {
+            // A sprinting swimmer doesn't sink.
+            Fluid::Water if !self.sprinting => self.velocity.y -= WATER_SINK,
+            Fluid::Water => {}
+            Fluid::Lava => self.velocity.y -= LAVA_SINK,
+        }
         let climbed = self.bb.min.y - start_y;
         let ledge = DVec3::new(
             self.velocity.x,
@@ -264,18 +517,29 @@ impl Body {
             self.velocity.z,
         );
         let above = self.bb.offset(ledge);
-        if self.collided_horizontally && !collides(&above, world) && world.liquid(&above).is_none()
+        if self.collided_horizontally
+            && !collides(&above, world)
+            && world.liquid(&above.grow(-FLUID_MARGIN)).is_none()
         {
             self.velocity.y = LEDGE_HOP;
         }
     }
 
-    /// Double-tap forward to sprint (1.0.0), or hold the sprint key. Sprinting
-    /// stops when forward is released, while sneaking, or on hitting a wall.
-    fn update_sprint(&mut self, forward: f64, sprint_key: bool) {
+    /// Double-tap forward to sprint, or hold the sprint key. Sprinting stops
+    /// when forward is released, while sneaking or crawling, on hitting a
+    /// wall, when too hungry, and in water unless the head is under.
+    fn update_sprint(&mut self, forward: f64, input: &MoveInput, eyes_in_water: bool) {
         self.sprint_tap_timer = self.sprint_tap_timer.saturating_sub(1);
-        let moving_forward = forward >= SPRINT_MIN_FORWARD;
-        let can_start = self.on_ground && moving_forward && self.can_sprint;
+        let enough = if eyes_in_water {
+            forward > FORWARD_IMPULSE
+        } else {
+            forward >= SPRINT_MIN_FORWARD
+        };
+        let can_start = (self.on_ground || eyes_in_water)
+            && enough
+            && self.can_sprint
+            && !self.moving_slowly()
+            && !input.using_item;
         if can_start && !self.was_moving_forward && !self.sprinting {
             if self.sprint_tap_timer == 0 {
                 self.sprint_tap_timer = SPRINT_DOUBLE_TAP_TICKS;
@@ -284,17 +548,23 @@ impl Body {
                 self.sprint_tap_timer = 0;
             }
         }
-        if sprint_key && moving_forward && self.can_sprint {
+        if input.sprint && can_start {
             self.sprinting = true;
         }
-        if self.sprinting && (!moving_forward || self.collided_horizontally || !self.can_sprint) {
+        let in_water_not_under = self.liquid == Some(Fluid::Water) && !eyes_in_water;
+        if self.sprinting
+            && (forward <= FORWARD_IMPULSE
+                || self.moving_slowly()
+                || self.collided_horizontally
+                || !self.can_sprint
+                || in_water_not_under)
+        {
             self.sprinting = false;
         }
-        self.was_moving_forward = moving_forward;
+        self.was_moving_forward = enough;
     }
 
-    /// Double-tapping jump toggles flight when allowed (1.0.0's
-    /// `flyToggleTimer`).
+    /// Double-tapping jump toggles flight when allowed (`flyToggleTimer`).
     fn update_flight(&mut self, jump: bool) {
         self.fly_tap_timer = self.fly_tap_timer.saturating_sub(1);
         if !self.may_fly {
@@ -316,16 +586,15 @@ impl Body {
         if !self.on_ground {
             return AIR_FRICTION;
         }
-        let p = self.position().floor().as_ivec3();
-        let below = self.bb.min.y.floor() as i32 - 1;
-        world.slipperiness(p.x, below, p.z) as f64 * AIR_FRICTION
+        let (x, y, z) = self.cell_below();
+        world.slipperiness(x, y, z) as f64 * AIR_FRICTION
     }
 
     /// Moves by `wanted`, stopping at solid blocks and stepping up ledges.
     fn move_by(&mut self, wanted: DVec3, world: &impl Collider) {
         let start = self.aabb();
         let mut wanted = wanted;
-        if self.on_ground && self.sneaking {
+        if self.on_ground && self.sneaking && wanted.y <= 0.0 {
             (wanted.x, wanted.z) = back_off_edges(&start, wanted.x, wanted.z, world);
         }
         let mut boxes = Vec::new();
@@ -354,6 +623,12 @@ impl Body {
             }
         }
     }
+}
+
+/// The block's own friction (slipperiness) from the friction a tick keeps,
+/// which includes the air's 0.91.
+fn block_friction(kept: f64) -> f64 {
+    kept / AIR_FRICTION
 }
 
 /// The player hitbox with its feet at `feet`.
@@ -392,10 +667,11 @@ pub fn sweep(bb: Aabb, d: DVec3, world: &impl Collider, boxes: &mut Vec<Aabb>) -
 }
 
 /// Shortens a sneaking move so the player keeps something under their
-/// feet: 1.0.0 backs off in 0.05-block steps while nothing solid is within a
-/// block below the moved hitbox.
+/// feet: backs off in 0.05-block steps while nothing solid is within a step
+/// height (0.6) below the moved hitbox (modern `maybeBackOffFromEdge`).
 fn back_off_edges(bb: &Aabb, mut dx: f64, mut dz: f64, world: &impl Collider) -> (f64, f64) {
-    let unsupported = |dx: f64, dz: f64| !collides(&bb.offset(DVec3::new(dx, -1.0, dz)), world);
+    let unsupported =
+        |dx: f64, dz: f64| !collides(&bb.offset(DVec3::new(dx, -STEP_HEIGHT, dz)), world);
     let shrink = |v: f64| {
         if v.abs() < SNEAK_EDGE_STEP {
             0.0
@@ -439,8 +715,20 @@ mod tests {
     enum Kind {
         Full,
         Half,
+        /// 0.6 high, the tallest step the player takes.
+        Step,
+        /// The top half of a block, a low ceiling.
+        TopHalf,
         Ice,
         Water,
+        /// Not solid; climbable.
+        Ladder,
+        /// Soul sand: walking speed ×0.4.
+        Soul,
+        /// Honey: walking ×0.4, jumping ×0.5.
+        Honey,
+        /// Slime: bounces, sticky to walk on, slippery 0.8.
+        Slime,
     }
 
     impl TestWorld {
@@ -464,10 +752,14 @@ mod tests {
         fn boxes(&self, region: &Aabb, out: &mut Vec<Aabb>) {
             let (min, max) = (region.min.floor().as_ivec3(), region.max.floor().as_ivec3());
             for (pos, &kind) in &self.blocks {
-                if kind != Kind::Water && pos.cmpge(min).all() && pos.cmple(max).all() {
+                let solid = !matches!(kind, Kind::Water | Kind::Ladder);
+                if solid && pos.cmpge(min).all() && pos.cmple(max).all() {
                     let mut bb = Aabb::block(pos.x, pos.y, pos.z);
-                    if kind == Kind::Half {
-                        bb.max.y -= 0.5;
+                    match kind {
+                        Kind::Half => bb.max.y -= 0.5,
+                        Kind::Step => bb.max.y -= 0.4,
+                        Kind::TopHalf => bb.min.y += 0.5,
+                        _ => {}
                     }
                     out.push(bb);
                 }
@@ -477,21 +769,67 @@ mod tests {
         fn slipperiness(&self, x: i32, y: i32, z: i32) -> f32 {
             match self.blocks.get(&IVec3::new(x, y, z)) {
                 Some(Kind::Ice) => 0.98,
+                Some(Kind::Slime) => 0.8,
                 _ => 0.6,
             }
         }
 
+        fn speed_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+            match self.blocks.get(&IVec3::new(x, y, z)) {
+                Some(Kind::Soul | Kind::Honey) => 0.4,
+                _ => 1.0,
+            }
+        }
+
+        fn jump_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+            match self.blocks.get(&IVec3::new(x, y, z)) {
+                Some(Kind::Honey) => 0.5,
+                _ => 1.0,
+            }
+        }
+
+        fn climbable(&self, x: i32, y: i32, z: i32) -> bool {
+            self.blocks.get(&IVec3::new(x, y, z)) == Some(&Kind::Ladder)
+        }
+
+        fn bouncy(&self, x: i32, y: i32, z: i32) -> bool {
+            self.blocks.get(&IVec3::new(x, y, z)) == Some(&Kind::Slime)
+        }
+
         fn liquid(&self, region: &Aabb) -> Option<Fluid> {
+            (self.water_depth(region) > 0.0).then_some(Fluid::Water)
+        }
+
+        fn fluid_depth(&self, region: &Aabb, fluid: Fluid) -> f64 {
+            if fluid == Fluid::Water {
+                self.water_depth(region)
+            } else {
+                0.0
+            }
+        }
+
+        fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
+            let cell = point.floor().as_ivec3();
+            let full = self.blocks.get(&(cell + IVec3::Y)) == Some(&Kind::Water);
+            let surface = cell.y as f64 + if full { 1.0 } else { 8.0 / 9.0 };
+            (self.blocks.get(&cell) == Some(&Kind::Water) && point.y < surface)
+                .then_some(Fluid::Water)
+        }
+    }
+
+    impl TestWorld {
+        /// How far above the bottom of `region` the highest water it
+        /// touches reaches.
+        fn water_depth(&self, region: &Aabb) -> f64 {
             let (min, max) = (region.min.floor().as_ivec3(), region.max.floor().as_ivec3());
             self.blocks
                 .iter()
-                .any(|(pos, &kind)| {
-                    kind == Kind::Water
-                        && pos.cmpge(min).all()
-                        && pos.cmple(max).all()
-                        && region.max.y >= pos.y as f64 + 8.0 / 9.0
+                .filter(|&(pos, &kind)| {
+                    kind == Kind::Water && pos.cmpge(min).all() && pos.cmple(max).all()
                 })
-                .then_some(Fluid::Water)
+                .map(|(pos, _)| pos.y as f64 + 8.0 / 9.0 - region.min.y)
+                .filter(|&depth| depth >= 0.0)
+                .fold(0.0, f64::max)
         }
     }
 
@@ -503,10 +841,7 @@ mod tests {
 
     const FORWARD: MoveInput = MoveInput {
         forward: 1.0,
-        strafe: 0.0,
-        jump: false,
-        sneak: false,
-        sprint: false,
+        ..MoveInput::IDLE
     };
 
     /// Steady horizontal speed in blocks per second after `ticks` of `input`.
@@ -738,7 +1073,7 @@ mod tests {
             &world,
         );
         assert!(!body.sprinting);
-        assert_eq!(body.eye_height(), EYE_HEIGHT - SNEAK_EYE_DROP);
+        assert_eq!(body.eye_height(), CROUCH_EYE_HEIGHT);
     }
 
     #[test]
@@ -778,11 +1113,8 @@ mod tests {
     }
 
     const JUMP: MoveInput = MoveInput {
-        forward: 0.0,
-        strafe: 0.0,
         jump: true,
-        sneak: false,
-        sprint: false,
+        ..MoveInput::IDLE
     };
 
     /// Taps jump twice, a tick apart, as a player double-tapping Space.
@@ -883,18 +1215,18 @@ mod tests {
     }
 
     #[test]
-    fn sinking_and_swimming_up_match_1_0_0() {
+    fn sinking_and_swimming_up_match_modern_minecraft() {
         let world = pool();
-        // 1.0.0: ×0.8 then −0.02 per tick settles at −0.1; holding jump
-        // adds 0.04 first and settles at +0.06.
+        // ×0.8 then −0.005 (gravity/16) per tick settles at −0.025; holding
+        // jump adds 0.04 first and settles at 0.8 × (v + 0.04) − 0.005 = +0.135.
         let sinking = vertical_speed_after(&world, MoveInput::default(), 30);
-        assert!((sinking + 0.1).abs() < 1e-3, "{sinking}");
+        assert!((sinking + 0.025).abs() < 1e-3, "{sinking}");
         let rising = vertical_speed_after(&world, JUMP, 30);
-        assert!((rising - 0.06).abs() < 1e-3, "{rising}");
+        assert!((rising - 0.135).abs() < 1e-3, "{rising}");
     }
 
     #[test]
-    fn swimming_speed_matches_1_0_0() {
+    fn swimming_speed_matches_modern_minecraft() {
         let world = pool();
         let mut body = Body::new(DVec3::new(0.5, 58.0, 0.5));
         let mut start = body.position();
@@ -936,5 +1268,471 @@ mod tests {
             "onto the bank: {}",
             body.position()
         );
+    }
+
+    /// Steady horizontal speed in blocks per second, over a tick after `ticks`.
+    fn steady(world: &TestWorld, input: MoveInput, ticks: u32, start: Body) -> f64 {
+        let mut body = start;
+        for _ in 0..ticks {
+            body.tick(&input, 0.0, world);
+        }
+        let before = body.position();
+        body.tick(&input, 0.0, world);
+        let moved = body.position() - before;
+        moved.x.hypot(moved.z) * TICKS_PER_SECOND as f64
+    }
+
+    #[test]
+    fn modern_poses_have_their_own_hitboxes_and_eyes() {
+        let world = TestWorld::floor(Kind::Full);
+        let mut body = standing_at(0.5, 0.5);
+        let height = |body: &Body| body.aabb().max.y - body.aabb().min.y;
+        body.tick(&MoveInput::IDLE, 0.0, &world);
+        assert!((height(&body) - 1.8).abs() < 1e-9 && body.eye_height() == 1.62);
+        let sneak = MoveInput {
+            sneak: true,
+            ..MoveInput::IDLE
+        };
+        body.tick(&sneak, 0.0, &world);
+        assert_eq!(body.pose(), Pose::Crouching);
+        assert!((height(&body) - 1.5).abs() < 1e-9 && body.eye_height() == 1.27);
+        // The feet and the width stay put.
+        assert_eq!(body.position(), DVec3::new(0.5, 64.0, 0.5));
+        assert!((body.aabb().max.x - body.aabb().min.x - 0.6).abs() < 1e-12);
+        body.tick(&MoveInput::IDLE, 0.0, &world);
+        assert_eq!(body.pose(), Pose::Standing);
+        assert!((height(&body) - 1.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_low_ceiling_keeps_you_crouched_and_a_gap_makes_you_crawl() {
+        let sneak = MoveInput {
+            sneak: true,
+            ..MoveInput::IDLE
+        };
+        // A ceiling 1.5 above the floor fits a crouch but not a stand.
+        let mut world = TestWorld::floor(Kind::Full);
+        world.set(0, 65, 0, Kind::TopHalf);
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(&sneak, 0.0, &world);
+        assert_eq!(body.pose(), Pose::Crouching);
+        body.tick(&MoveInput::IDLE, 0.0, &world);
+        assert_eq!(body.pose(), Pose::Crouching, "no room to stand");
+
+        // A full block over one gap: 1 block high, only crawling fits.
+        let mut world = TestWorld::floor(Kind::Full);
+        world.set(0, 65, 0, Kind::Full);
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(&MoveInput::IDLE, 0.0, &world);
+        assert_eq!(body.pose(), Pose::Swimming);
+        assert!((body.aabb().max.y - body.aabb().min.y - 0.6).abs() < 1e-12);
+        assert_eq!(body.eye_height(), 0.4);
+        assert!(!body.swimming, "crawling is not swimming");
+        assert!(body.moving_slowly());
+        // Crawling is as slow as sneaking, and you stand up once clear.
+        let mut crawl_world = TestWorld::floor(Kind::Full);
+        for z in -3..=0 {
+            crawl_world.set(0, 65, z, Kind::Full);
+        }
+        let speed = steady(&crawl_world, FORWARD, 60, standing_at(0.5, 0.5));
+        assert!((speed - 1.31).abs() < 0.03, "crawl {speed}");
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..80 {
+            body.tick(&FORWARD, 0.0, &crawl_world);
+        }
+        assert_eq!(
+            body.pose(),
+            Pose::Standing,
+            "out of the tunnel at z {}",
+            body.position().z
+        );
+    }
+
+    #[test]
+    fn sneaking_slows_to_a_third_and_walks_down_a_step_but_not_off_a_cliff() {
+        let world = TestWorld::floor(Kind::Full);
+        let sneak = MoveInput {
+            sneak: true,
+            ..FORWARD
+        };
+        let speed = steady(&world, sneak, 60, standing_at(0.5, 0.5));
+        assert!((speed - 1.31).abs() < 0.03, "{speed}");
+
+        // The floor drops by 0.5 ahead (a half slab): within a step, so it's fine.
+        let mut world = TestWorld::floor(Kind::Full);
+        for z in -50..-3 {
+            world.set(0, 63, z, Kind::Half);
+        }
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..80 {
+            body.tick(&sneak, 0.0, &world);
+        }
+        assert!(
+            body.position().z < -4.0,
+            "walked down the step: {}",
+            body.position()
+        );
+        assert!(body.position().y <= 63.5 + 1e-9);
+
+        // A one-block drop stops a sneaking player at the edge.
+        let mut world = TestWorld::floor(Kind::Full);
+        for z in -50..-3 {
+            world.blocks.remove(&IVec3::new(0, 63, z));
+        }
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..80 {
+            body.tick(&sneak, 0.0, &world);
+        }
+        assert!(
+            body.position().z > -3.5 && body.on_ground,
+            "{}",
+            body.position()
+        );
+    }
+
+    #[test]
+    fn steps_are_six_tenths_of_a_block() {
+        assert_eq!(STEP_HEIGHT, 0.6);
+        let mut world = TestWorld::floor(Kind::Full);
+        world.set(0, 64, -3, Kind::Step);
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..30 {
+            body.tick(&FORWARD, 0.0, &world);
+            if body.position().z < -2.5 {
+                break;
+            }
+        }
+        assert!(body.position().z < -2.5, "{}", body.position());
+        assert!(
+            (body.position().y - 64.6).abs() < 1e-9,
+            "stepped up 0.6: {}",
+            body.position()
+        );
+    }
+
+    #[test]
+    fn sprinting_starts_and_stops_by_modern_rules() {
+        let world = TestWorld::floor(Kind::Full);
+        let key = MoveInput {
+            sprint: true,
+            ..FORWARD
+        };
+        // The sprint key starts it; letting go of forward stops it.
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(&key, 0.0, &world);
+        assert!(body.sprinting);
+        body.tick(&MoveInput::IDLE, 0.0, &world);
+        assert!(!body.sprinting);
+        // Too hungry (food 6 or less) can't start or keep it.
+        let mut hungry = standing_at(0.5, 0.5);
+        hungry.can_sprint = false;
+        hungry.tick(&key, 0.0, &world);
+        assert!(!hungry.sprinting);
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(&key, 0.0, &world);
+        body.can_sprint = false;
+        body.tick(&key, 0.0, &world);
+        assert!(!body.sprinting);
+        // Sneaking stops it, and eating won't let it start.
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(&key, 0.0, &world);
+        body.tick(&MoveInput { sneak: true, ..key }, 0.0, &world);
+        assert!(!body.sprinting);
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(
+            &MoveInput {
+                using_item: true,
+                ..key
+            },
+            0.0,
+            &world,
+        );
+        assert!(!body.sprinting);
+        // Strafing alone doesn't count.
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(
+            &MoveInput {
+                strafe: 1.0,
+                sprint: true,
+                ..MoveInput::IDLE
+            },
+            0.0,
+            &world,
+        );
+        assert!(!body.sprinting);
+    }
+
+    #[test]
+    fn eating_slows_you_to_a_fifth() {
+        let world = TestWorld::floor(Kind::Full);
+        let using = MoveInput {
+            using_item: true,
+            ..FORWARD
+        };
+        let slow = steady(&world, using, 120, standing_at(0.5, 0.5));
+        assert!((slow - 4.317 * 0.2).abs() < 0.02, "{slow}");
+    }
+
+    #[test]
+    fn sprint_jumping_carries_further_than_walking_jumps() {
+        let world = TestWorld::floor(Kind::Full);
+        let jump_distance = |sprint: bool| {
+            let mut body = standing_at(0.5, 0.5);
+            let input = MoveInput {
+                sprint,
+                jump: true,
+                ..FORWARD
+            };
+            for _ in 0..30 {
+                body.tick(&input, 0.0, &world);
+            }
+            // Run the first jump's whole arc, then see how far it went.
+            0.5 - body.position().z
+        };
+        assert!(jump_distance(true) > jump_distance(false) * 1.2);
+    }
+
+    /// A pool of water over a stone floor, 10 deep, and a body in it.
+    fn deep_water() -> TestWorld {
+        let mut world = TestWorld::default();
+        for z in -50..50 {
+            for x in -50..50 {
+                world.set(x, 53, z, Kind::Full);
+                for y in 54..64 {
+                    world.set(x, y, z, Kind::Water);
+                }
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn sprinting_with_your_head_under_water_swims_flat_and_fast() {
+        let world = deep_water();
+        let mut body = Body::new(DVec3::new(0.5, 58.0, 0.5));
+        body.can_sprint = true;
+        let dive = MoveInput {
+            sprint: true,
+            ..FORWARD
+        };
+        for _ in 0..40 {
+            body.tick(&dive, 0.0, &world);
+        }
+        assert!(body.swimming && body.sprinting);
+        assert_eq!(body.pose(), Pose::Swimming);
+        assert!((body.aabb().max.y - body.aabb().min.y - 0.6).abs() < 1e-12);
+        // 0.02 × 0.98 / (1 − 0.9) blocks a tick, against 1.96 b/s walking.
+        let speed = steady(&world, dive, 40, body.clone());
+        assert!((speed - 3.92).abs() < 0.05, "{speed}");
+        let wading = steady(&world, FORWARD, 60, Body::new(DVec3::new(0.5, 58.0, 0.5)));
+        assert!((wading - 1.96).abs() < 0.03, "{wading}");
+    }
+
+    #[test]
+    fn a_swimmer_goes_where_they_look() {
+        let world = deep_water();
+        let swim = |look: f64| {
+            let mut body = Body::new(DVec3::new(0.5, 58.0, 0.5));
+            let input = MoveInput {
+                sprint: true,
+                look_y: look,
+                ..FORWARD
+            };
+            for _ in 0..30 {
+                body.tick(&input, 0.0, &world);
+            }
+            (body.position().y - 58.0, body.swimming)
+        };
+        let (up, swimming) = swim(0.7);
+        assert!(swimming && up > 3.0, "{up}");
+        let (down, _) = swim(-0.7);
+        assert!(down < -2.0, "{down}");
+        let (level, _) = swim(0.0);
+        assert!(level.abs() < 1.0, "{level}");
+    }
+
+    #[test]
+    fn sprinting_at_the_surface_ends_in_a_wade() {
+        let world = deep_water();
+        // Head out of the water: a sprint can't start in it, and an ongoing
+        // one stops.
+        let mut body = Body::new(DVec3::new(0.5, 62.5, 0.5));
+        body.sprinting = true;
+        body.tick(&FORWARD, 0.0, &world);
+        body.tick(&FORWARD, 0.0, &world);
+        assert!(!body.sprinting && !body.swimming);
+    }
+
+    #[test]
+    fn jumping_in_shallow_water_hops_but_in_deep_water_swims_up() {
+        // Water one cell deep over the floor: 0.89 high, past the 0.4 threshold,
+        // so jumping swims. A thin layer (a flowing edge) is an ordinary jump.
+        let mut world = TestWorld::floor(Kind::Full);
+        world.set(0, 64, 0, Kind::Water);
+        let mut body = standing_at(0.5, 0.5);
+        body.tick(&JUMP, 0.0, &world);
+        assert!(!body.jumped, "deep enough to swim");
+        assert!(body.velocity.y > 0.0 && body.velocity.y < 0.1);
+    }
+
+    #[test]
+    fn ladders_climb_at_2_35_blocks_a_second_and_slide_at_3() {
+        let mut world = TestWorld::floor(Kind::Full);
+        // A wall with a ladder on its face, 20 high.
+        for y in 64..84 {
+            world.set(0, y, -1, Kind::Full);
+            world.set(0, y, 0, Kind::Ladder);
+        }
+        let mut body = standing_at(0.5, 0.5);
+        let climb = MoveInput {
+            forward: 1.0,
+            ..MoveInput::IDLE
+        };
+        for _ in 0..20 {
+            body.tick(&climb, 0.0, &world);
+        }
+        let before = body.position().y;
+        for _ in 0..20 {
+            body.tick(&climb, 0.0, &world);
+        }
+        let speed = (body.position().y - before) / 20.0 * TICKS_PER_SECOND as f64;
+        // 0.1176 blocks a tick once the push of 0.2 meets gravity.
+        assert!((speed - 2.352).abs() < 0.05, "climbing {speed}");
+        assert!(body.on_climbable);
+
+        // Letting go slides down at no more than 0.15 a tick (3 b/s).
+        for _ in 0..10 {
+            body.tick(&MoveInput::IDLE, 0.0, &world);
+        }
+        let before = body.position().y;
+        for _ in 0..10 {
+            body.tick(&MoveInput::IDLE, 0.0, &world);
+        }
+        let slide = (before - body.position().y) / 10.0 * TICKS_PER_SECOND as f64;
+        assert!((slide - 3.0).abs() < 0.1, "sliding {slide}");
+
+        // Sneaking holds you on the ladder.
+        let held = body.position().y;
+        let sneak = MoveInput {
+            sneak: true,
+            ..MoveInput::IDLE
+        };
+        for _ in 0..20 {
+            body.tick(&sneak, 0.0, &world);
+        }
+        assert!(
+            (body.position().y - held).abs() < 0.2,
+            "{} {held}",
+            body.position().y
+        );
+        // Jumping climbs too, even without pushing into the wall.
+        let jump = MoveInput {
+            jump: true,
+            ..MoveInput::IDLE
+        };
+        let before = body.position().y;
+        for _ in 0..20 {
+            body.tick(&jump, 0.0, &world);
+        }
+        assert!(body.position().y > before + 1.5);
+    }
+
+    #[test]
+    fn soul_sand_and_honey_slow_walking_and_honey_halves_jumps() {
+        let normal = steady(
+            &TestWorld::floor(Kind::Full),
+            FORWARD,
+            80,
+            standing_at(0.5, 0.5),
+        );
+        let soul = steady(
+            &TestWorld::floor(Kind::Soul),
+            FORWARD,
+            80,
+            standing_at(0.5, 0.5),
+        );
+        // 0.4 of the velocity is kept each tick: 0.098 / (1 − 0.4 × 0.546) − 0.098 ... = 2.51 b/s.
+        assert!((soul - 2.51).abs() < 0.05, "soul sand {soul}");
+        assert!(soul < normal * 0.6);
+        let honey = steady(
+            &TestWorld::floor(Kind::Honey),
+            FORWARD,
+            80,
+            standing_at(0.5, 0.5),
+        );
+        assert!((honey - soul).abs() < 1e-6);
+
+        let jump_speed = |kind| {
+            let world = TestWorld::floor(kind);
+            let mut body = standing_at(0.5, 0.5);
+            body.tick(&JUMP, 0.0, &world);
+            body.velocity.y
+        };
+        // The first tick's velocity after gravity and drag.
+        let plain = jump_speed(Kind::Full);
+        let sticky = jump_speed(Kind::Honey);
+        assert!(
+            (plain - (0.42 - GRAVITY) * VERTICAL_DRAG).abs() < 1e-9,
+            "{plain}"
+        );
+        assert!(
+            (sticky - (0.21 - GRAVITY) * VERTICAL_DRAG).abs() < 1e-9,
+            "{sticky}"
+        );
+    }
+
+    #[test]
+    fn slime_bounces_unless_you_sneak() {
+        let world = TestWorld::floor(Kind::Slime);
+        let mut body = Body::new(DVec3::new(0.5, 70.0, 0.5));
+        let mut fall = 0.0;
+        for _ in 0..60 {
+            fall = body.velocity.y;
+            body.tick(&MoveInput::IDLE, 0.0, &world);
+            if body.bounced {
+                break;
+            }
+        }
+        assert!(body.bounced, "never bounced");
+        // Thrown back up as fast as it came down (then a tick of gravity).
+        assert!(fall < -0.5);
+        assert!(
+            (body.velocity.y - (-fall - GRAVITY) * VERTICAL_DRAG).abs() < 1e-9,
+            "{} {fall}",
+            body.velocity.y
+        );
+
+        let mut sneaker = Body::new(DVec3::new(0.5, 70.0, 0.5));
+        let sneak = MoveInput {
+            sneak: true,
+            ..MoveInput::IDLE
+        };
+        for _ in 0..60 {
+            sneaker.tick(&sneak, 0.0, &world);
+        }
+        assert!(!sneaker.bounced && sneaker.on_ground);
+        assert!(sneaker.velocity.y.abs() < 0.1);
+    }
+
+    #[test]
+    fn ice_and_slime_slip_by_their_slipperiness() {
+        let stop_distance = |kind| {
+            let world = TestWorld::floor(kind);
+            let mut body = standing_at(0.5, 0.5);
+            for _ in 0..40 {
+                body.tick(&FORWARD, 0.0, &world);
+            }
+            let released = body.position();
+            for _ in 0..300 {
+                body.tick(&MoveInput::IDLE, 0.0, &world);
+            }
+            (body.position() - released).length()
+        };
+        let (stone, slime, ice) = (
+            stop_distance(Kind::Full),
+            stop_distance(Kind::Slime),
+            stop_distance(Kind::Ice),
+        );
+        assert!(stone < slime && slime < ice, "{stone} {slime} {ice}");
     }
 }
