@@ -40,7 +40,7 @@
         speed: 0.7,
         ai: Passive,
         drops: [(item: "porkchop", min: 1, max: 3, cooked: "cooked_porkchop")],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest]),
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest, BirchForest, DarkForest, Taiga, Savanna, WindsweptHills, Jungle, BambooJungle, CherryGrove]),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -66,7 +66,7 @@
             (item: "leather", min: 0, max: 2),
             (item: "beef", min: 1, max: 3, cooked: "cooked_beef"),
         ],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest]),
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest, BirchForest, DarkForest, Taiga, Savanna, WindsweptHills, Swamp]),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -93,7 +93,7 @@
         speed: 0.55,
         ai: Passive,
         drops: [(item: "mutton", min: 1, max: 2, cooked: "cooked_mutton")],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest]),
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest, BirchForest, DarkForest, Taiga, Savanna, WindsweptHills, Meadow]),
         layers: [
             (
                 texture: "entity/sheep/sheep_wool",
@@ -137,7 +137,7 @@
             (item: "feather", min: 0, max: 2),
             (item: "chicken", min: 1, max: 1, cooked: "cooked_chicken"),
         ],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest]),
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.1, group: 4, biomes: [Plains, Forest, BirchForest, DarkForest, Taiga, Savanna, WindsweptHills, Jungle, BambooJungle]),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -171,7 +171,7 @@
         speed: 0.9,
         ai: Horse,
         drops: [(item: "leather", min: 0, max: 2)],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.05, group: 3, biomes: [Plains]),
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.05, group: 3, biomes: [Plains, Savanna]),
         model: (
             texture_size: (128, 128),
             parts: [
@@ -212,7 +212,7 @@
             (item: "rabbit", min: 0, max: 1, cooked: "cooked_rabbit"),
             (item: "rabbit_foot", min: 1, max: 1, chance: 0.1),
         ],
-        spawn: Ground(blocks: ["grass_block", "sand"], min_light: 9, chance: 0.05, group: 3, biomes: [Plains, Desert]),
+        spawn: Ground(blocks: ["grass_block", "sand", "snow_block"], min_light: 9, chance: 0.05, group: 3, biomes: [Desert, SnowyPlains, IceSpikes, SnowyTaiga, Grove, SnowySlopes, Meadow, CherryGrove]),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -243,7 +243,7 @@
         speed: 0.75,
         ai: Wolf(attack: 4.0),
         drops: [],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.04, group: 4, biomes: [Forest]),
+        spawn: Ground(blocks: ["grass_block", "podzol", "snow_block"], min_light: 9, chance: 0.04, group: 4, biomes: [Forest, Taiga, SnowyTaiga, Grove]),
         layers: [
             (
                 texture: "entity/wolf/wolf_collar",
@@ -340,7 +340,7 @@
         no_fall: true,
         eye: 0.5,
         drops: [(item: "ink_sac", min: 1, max: 3)],
-        spawn: Water(chance: 0.4, group: 3, biomes: [Ocean], min_depth: 2),
+        spawn: Water(chance: 0.4, group: 3, biomes: [Ocean, DeepOcean, ColdOcean, DeepColdOcean, LukewarmOcean, DeepLukewarmOcean, River], min_depth: 2),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -371,7 +371,7 @@
             (item: "cod", min: 1, max: 1, cooked: "cooked_cod"),
             (item: "bone_meal", min: 1, max: 1, chance: 0.05),
         ],
-        spawn: Water(chance: 0.4, group: 5, biomes: [Ocean], min_depth: 1),
+        spawn: Water(chance: 0.4, group: 5, biomes: [Ocean, DeepOcean, ColdOcean, DeepColdOcean, LukewarmOcean, DeepLukewarmOcean], min_depth: 1),
         model: (
             texture_size: (32, 32),
             parts: [
@@ -397,7 +397,7 @@
             (item: "salmon", min: 1, max: 1, cooked: "cooked_salmon"),
             (item: "bone_meal", min: 1, max: 1, chance: 0.05),
         ],
-        spawn: Never,
+        spawn: Water(chance: 0.4, group: 5, biomes: [River, ColdOcean, DeepColdOcean, FrozenOcean, DeepFrozenOcean], min_depth: 1),
         model: (
             texture_size: (32, 32),
             parts: [
@@ -419,7 +419,7 @@
         no_fall: true,
         eye: 0.5,
         drops: [],
-        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.03, group: 2, biomes: [Plains, Forest]),
+        spawn: Ground(blocks: ["grass_block"], min_light: 9, chance: 0.03, group: 2, biomes: [Plains, Meadow, CherryGrove]),
         model: (
             texture_size: (32, 32),
             parts: [
@@ -444,7 +444,7 @@
         ai: Fox(attack: 2.0),
         eye: 0.6,
         drops: [],
-        spawn: Never,
+        spawn: Ground(blocks: ["grass_block", "podzol", "snow_block"], min_light: 9, chance: 0.04, group: 2, biomes: [Taiga, SnowyTaiga, Grove]),
         model: (
             texture_size: (48, 32),
             parts: [
@@ -576,7 +576,7 @@
         speed: 0.5,
         ai: Hostile(attack: 3.0),
         drops: [(item: "rotten_flesh", min: 0, max: 2)],
-        spawn: Water(chance: 0.05, group: 1, biomes: [Ocean], min_depth: 1),
+        spawn: Water(chance: 0.05, group: 1, biomes: [Ocean, DeepOcean, ColdOcean, DeepColdOcean, LukewarmOcean, DeepLukewarmOcean, WarmOcean, FrozenOcean, DeepFrozenOcean, River], min_depth: 1),
         model: (
             texture_size: (64, 64),
             parts: [
@@ -628,7 +628,7 @@
             (item: "bone", min: 0, max: 2),
             (item: "arrow", min: 0, max: 2),
         ],
-        spawn: Never,
+        spawn: Dark(max_light: 7, group: 4, biomes: [SnowyPlains, IceSpikes], weight: 80),
         layers: [
             (
                 texture: "entity/skeleton/stray_overlay",
@@ -791,7 +791,7 @@
         ai: Slime,
         eye: 0.5,
         drops: [(item: "slime_ball", min: 0, max: 2)],
-        spawn: SlimeChunk(below: 40),
+        spawn: SlimeChunk(below: 52),
         model: (
             texture_size: (64, 32),
             parts: [

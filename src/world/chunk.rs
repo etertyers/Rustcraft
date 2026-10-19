@@ -193,6 +193,15 @@ impl Chunk {
     }
 
     /// Whether section `index` (0 = bottom) holds no blocks at all.
+    /// One above the top of the highest section holding any block: no
+    /// block in the chunk is at or above this height.
+    pub fn height_bound(&self) -> usize {
+        (0..SECTION_COUNT)
+            .rev()
+            .find(|&index| !self.section_is_empty(index))
+            .map_or(0, |index| (index + 1) * SECTION_SIZE)
+    }
+
     pub fn section_is_empty(&self, index: usize) -> bool {
         self.sections[index].is_none()
     }

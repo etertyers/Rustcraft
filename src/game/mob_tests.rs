@@ -5,7 +5,7 @@ use glam::{DVec3, IVec3};
 
 use super::{Game, tests::lit_flat_game};
 use crate::{
-    entity::mob::Mob,
+    entity::{mob::Mob, mobs::Spawn},
     inventory::{items, stack::ItemStack},
     player::mode::GameMode,
     world::{biome::Biome, block::BlockState, blocks, worldgen::rng::Rng},
@@ -729,6 +729,61 @@ fn natural_spawning_follows_the_biome_and_the_chunk() {
         plains.contains("enderman") || plains.contains("witch"),
         "rarer kinds come now and then: {plains:?}"
     );
+}
+
+#[test]
+fn new_biomes_bring_their_own_monsters_and_mushroom_fields_none() {
+    let mut game = night_game(GameMode::Survival);
+    let cell = IVec3::new(100, 64, 100);
+    let chunk = crate::world::chunk::ChunkPos::new(6, 6);
+    let mut kinds_in = |biome: Biome, cell: IVec3| {
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..600 {
+            if let Some((kind, _, _)) = game.pick_dark_kind(biome, cell, chunk) {
+                seen.insert(game.mob_defs.get(kind).name.clone());
+            }
+        }
+        seen
+    };
+    assert!(kinds_in(Biome::SnowyPlains, cell).contains("stray"));
+    assert!(!kinds_in(Biome::Plains, cell).contains("stray"));
+    assert!(kinds_in(Biome::MushroomFields, cell).is_empty());
+    assert!(kinds_in(Biome::Swamp, IVec3::new(100, 60, 100)).contains("slime"));
+    assert!(!kinds_in(Biome::Forest, IVec3::new(100, 60, 100)).contains("slime"));
+}
+
+#[test]
+fn animals_and_fish_spawn_in_their_modern_biomes() {
+    let game = lit_flat_game(GameMode::Creative);
+    let spawns_in = |name: &str, biome: Biome| {
+        let kind = game.mob_defs.find(name).unwrap();
+        match &game.mob_defs.get(kind).spawn {
+            Spawn::Ground { biomes, .. }
+            | Spawn::Water { biomes, .. }
+            | Spawn::Dark { biomes, .. } => biomes.contains(&biome),
+            _ => false,
+        }
+    };
+    assert!(spawns_in("fox", Biome::Taiga) && spawns_in("fox", Biome::SnowyTaiga));
+    assert!(spawns_in("salmon", Biome::River) && !spawns_in("salmon", Biome::WarmOcean));
+    assert!(spawns_in("cod", Biome::LukewarmOcean));
+    assert!(spawns_in("wolf", Biome::Grove));
+    assert!(spawns_in("rabbit", Biome::SnowyPlains) && spawns_in("rabbit", Biome::Desert));
+    assert!(spawns_in("horse", Biome::Savanna));
+    assert!(!spawns_in("cow", Biome::MushroomFields));
+}
+
+#[test]
+fn animals_stand_in_a_snow_layer_on_snowy_grass() {
+    let mut game = lit_flat_game(GameMode::Creative);
+    let grass =
+        BlockState::of(blocks::GRASS_BLOCK).with_bool(crate::world::props::Prop::Snowy, true);
+    game.set_blocks(&[
+        (IVec3::new(5, 63, 5), grass),
+        (IVec3::new(5, 64, 5), BlockState::of(blocks::SNOW)),
+    ]);
+    let spot = game.ground_spot(5, 5, &[blocks::GRASS_BLOCK]);
+    assert_eq!(spot, Some(DVec3::new(5.5, 64.0, 5.5)));
 }
 
 #[test]
