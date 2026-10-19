@@ -239,6 +239,9 @@
         (input: (item: "beef"), result: (item: "cooked_beef", count: 1)),  // beef
         (input: (item: "chicken"), result: (item: "cooked_chicken", count: 1)),  // chicken
         (input: (item: "cod"), result: (item: "cooked_cod", count: 1)),  // fish
+        (input: (item: "salmon"), result: (item: "cooked_salmon", count: 1)),  // salmon
+        (input: (item: "mutton"), result: (item: "cooked_mutton", count: 1)),  // mutton
+        (input: (item: "rabbit"), result: (item: "cooked_rabbit", count: 1)),  // rabbit
         (input: (item: "cobblestone"), result: (item: "stone", count: 1)),  // stone
         (input: (item: "clay_ball"), result: (item: "brick", count: 1)),  // brick
         (input: (item: "cactus"), result: (item: "green_dye", count: 1)),  // cactus green

@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+mod animals;
 mod combat;
 mod containers;
 pub mod environment;
@@ -10,6 +11,9 @@ mod fluids;
 mod hands;
 mod logistics;
 mod minecarts;
+mod mob_acts;
+#[cfg(test)]
+mod mob_tests;
 mod mobs;
 #[cfg(test)]
 mod moves;
@@ -155,6 +159,13 @@ pub struct Game {
     drawing: Option<u32>,
     mob_defs: Arc<MobRegistry>,
     pub mobs: Vec<Mob>,
+    /// The id the next mob gets, the mob that last hurt the player (tame
+    /// wolves attack it) and for how many more ticks, and the mob the
+    /// player sits on.
+    next_mob_id: u64,
+    threat_id: u64,
+    threat_ticks: u32,
+    mounted: Option<u64>,
     /// Animals in unloaded chunks, waiting for their chunk to come back.
     stashed_mobs: FastMap<ChunkPos, Vec<Mob>>,
     /// Chunks that have had their animals placed (once per chunk).
@@ -251,6 +262,10 @@ impl Game {
             drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
             mobs: Vec::new(),
+            next_mob_id: 0,
+            threat_id: 0,
+            threat_ticks: 0,
+            mounted: None,
             stashed_mobs: FastMap::default(),
             populated: FastSet::default(),
             mining: None,
@@ -581,6 +596,8 @@ impl Game {
         if !self.stats.is_dead() {
             if self.is_sleeping() {
                 self.tick_sleep();
+            } else if self.mounted.is_some() {
+                self.ride_mob();
             } else if self.is_riding() {
                 self.ride_cart();
             } else {
@@ -597,6 +614,9 @@ impl Game {
             }
         }
         self.tick_view();
+        if !self.is_sleeping() {
+            self.stats.awake = self.stats.awake.saturating_add(1);
+        }
         if let Some((_, ticks)) = &mut self.message {
             *ticks = ticks.saturating_sub(1);
             if *ticks == 0 {
@@ -1313,7 +1333,7 @@ pub(crate) mod tests {
     }
 
     /// A flat world 5×5 chunks around the origin with light computed.
-    fn lit_flat_game(mode: GameMode) -> Game {
+    pub(crate) fn lit_flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
         let chunks = ChunkManager::new(ChunkSource::Flat, models, 2, 4);
         let feet = DVec3::new(0.5, 64.0, 0.5);
@@ -1342,12 +1362,18 @@ pub(crate) mod tests {
         for _ in 0..200 {
             game.spawn_monsters();
         }
-        assert!(!game.mobs.is_empty(), "zombies at midnight");
-        for zombie in &game.mobs {
-            assert_eq!(game.mob_defs.get(zombie.kind).name, "zombie");
-            assert_eq!(zombie.feet().y, 64.0, "on the ground");
-            assert!(zombie.feet().distance(game.body.position()) >= 24.0);
+        assert!(!game.mobs.is_empty(), "monsters at midnight");
+        for monster in &game.mobs {
+            assert!(game.mob_defs.get(monster.kind).ai.is_monster());
+            assert_eq!(monster.feet().y, 64.0, "on the ground");
+            assert!(monster.feet().distance(game.body.position()) >= 24.0);
         }
+        let kinds: std::collections::BTreeSet<_> = game
+            .mobs
+            .iter()
+            .map(|m| game.mob_defs.get(m.kind).name.as_str())
+            .collect();
+        assert!(kinds.contains("zombie"), "zombies among them: {kinds:?}");
     }
 
     #[test]
@@ -1360,18 +1386,29 @@ pub(crate) mod tests {
             game.populated.clear();
             game.on_chunks_loaded(&chunks);
         }
-        assert!(!game.mobs.is_empty(), "some pigs");
-        assert!(game.mobs.iter().all(|pig| pig.feet().y == 64.0));
-        let pigs = game.mobs.len();
-        game.on_chunks_loaded(&chunks);
-        assert_eq!(game.mobs.len(), pigs, "a chunk gets its animals once");
-        let saved = game.saved_mobs();
-        assert_eq!(saved.len(), pigs);
+        assert!(!game.mobs.is_empty(), "some animals");
+        assert!(game.mobs.iter().all(|animal| animal.feet().y == 64.0));
+        let names: std::collections::BTreeSet<_> = game
+            .mobs
+            .iter()
+            .map(|mob| game.mob_defs.get(mob.kind).name.clone())
+            .collect();
         assert!(
-            saved
-                .iter()
-                .all(|mob| mob.name == "pig" && mob.health == 10.0)
+            names.len() >= 3,
+            "a mix of animals on the plains: {names:?}"
         );
+        for name in ["pig", "cow", "sheep", "chicken"] {
+            assert!(names.contains(name), "{name} on the plains");
+        }
+        let animals = game.mobs.len();
+        game.on_chunks_loaded(&chunks);
+        assert_eq!(game.mobs.len(), animals, "a chunk gets its animals once");
+        let saved = game.saved_mobs();
+        assert_eq!(saved.len(), animals);
+        assert!(saved.iter().all(|mob| {
+            let def = game.mob_defs.get(game.mob_defs.find(&mob.name).unwrap());
+            mob.health == def.health as f32
+        }));
     }
 
     #[test]

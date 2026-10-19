@@ -1,19 +1,18 @@
-//! Mobs in the game: running their AI and movement, spawning them (pigs
-//! when a chunk is first generated, zombies in the dark near the player,
-//! after 1.0.0's `SpawnerAnimals`), burning zombies in daylight,
-//! despawning, and keeping pigs while their chunk is unloaded.
+//! Mobs in the game: running their AI and movement, spawning them (animals
+//! when a chunk is first generated, monsters in the dark near the player
+//! and sea creatures in the water, after 1.0.0's `SpawnerAnimals` with
+//! modern kinds and biomes), burning undead in daylight, despawning, and
+//! keeping animals while their chunk is unloaded. What mobs do beyond
+//! walking (shooting, exploding, teleporting) is in `mob_acts.rs`, and what
+//! the player can do to animals in `animals.rs`.
 
 use glam::{DVec3, IVec3};
 
-use super::{
-    Game,
-    combat::{Outcome, Strike},
-};
+use super::Game;
 use crate::{
     entity::{
-        ai::{self, Target, View},
-        item::ItemEntity,
-        mob::{Mob, knock_back, push},
+        ai::{self, Env, Other, Target, View},
+        mob::{Mob, MobData},
         mobs::{Ai, MobKind, Spawn},
         path::Terrain,
     },
@@ -21,9 +20,10 @@ use crate::{
     player::{collision::WorldCollider, raycast, stats::DamageSource},
     world::{
         World,
+        biome::Biome,
         block::{BlockId, BlockRegistry, Fluid},
         chunk::ChunkPos,
-        daytime,
+        daytime, shape,
         worldgen::rng::Rng,
     },
 };
@@ -34,6 +34,8 @@ const MIN_SPAWN_DISTANCE: f64 = 24.0;
 const SPAWN_CHUNK_RADIUS: i32 = 8;
 /// 1.0.0's monster cap: this many per 256 eligible chunks.
 const MONSTERS_PER_256_CHUNKS: usize = 70;
+/// The cap on sea creatures (modern: 5 squid, 20 fish; one cap here).
+const WATER_MOBS_PER_256_CHUNKS: usize = 20;
 /// Despawning (1.0.0's `despawnEntity`): instantly this far away, at
 /// random after this many ticks when farther than `NEAR`.
 const DESPAWN_FAR: f64 = 128.0;
@@ -44,6 +46,22 @@ const DESPAWN_CHANCE: f32 = 1.0 / 800.0;
 const PUSH_REACH: f64 = 0.2;
 /// Strength of that push.
 const PUSH: f64 = 0.05;
+/// A mob looks for the player only this close.
+const SIGHT_RANGE: f64 = 40.0;
+/// Mobs farther than this from the player aren't drawn or thought about
+/// for others' sake (the list of nearby mobs each one considers).
+const NEIGHBOR_RANGE: f64 = 20.0;
+/// A player must have gone this long (three days) without sleeping for
+/// phantoms to come.
+const PHANTOM_AFTER: u32 = 72_000;
+/// Ticks of fire daylight gives undead (1.0.0's `setFire(8)`).
+const DAYLIGHT_FIRE: i32 = 160;
+/// Sheep colors by chance, as in vanilla (wool color numbers).
+const SHEEP_GRAY: u8 = 7;
+const SHEEP_LIGHT_GRAY: u8 = 8;
+const SHEEP_BLACK: u8 = 15;
+const SHEEP_BROWN: u8 = 12;
+const SHEEP_PINK: u8 = 6;
 
 /// The push `a` gets away from `b` (and `b` gets the opposite), after
 /// 1.0.0's `applyEntityCollision`.
@@ -60,13 +78,10 @@ fn push_between(a: DVec3, b: DVec3) -> DVec3 {
     DVec3::new(dx * f * PUSH, 0.0, dz * f * PUSH)
 }
 
-/// Ticks of fire daylight gives a zombie (1.0.0's `setFire(8)`).
-const DAYLIGHT_FIRE: i32 = 160;
-
 /// The loaded world as mobs' path finding sees it.
-struct WorldTerrain<'a> {
-    world: &'a World,
-    blocks: &'a BlockRegistry,
+pub(super) struct WorldTerrain<'a> {
+    pub world: &'a World,
+    pub blocks: &'a BlockRegistry,
 }
 
 impl WorldTerrain<'_> {
@@ -90,94 +105,239 @@ impl Terrain for WorldTerrain<'_> {
     }
 }
 
+/// What the other mobs need to know about one.
+struct Snap {
+    feet: DVec3,
+    eye: DVec3,
+    width: f64,
+    monster: bool,
+    creeper: bool,
+    prey: bool,
+    cat: bool,
+    dead: bool,
+}
+
 impl Game {
     /// Light at `cell` as mobs feel it: the brighter of block light and
     /// sky light dimmed by the time of day. `None` if unknown.
-    fn light_level(&self, cell: IVec3) -> Option<u8> {
+    pub(super) fn light_level(&self, cell: IVec3) -> Option<u8> {
         let (sky, block) = self.chunks.light_at(cell.x, cell.y, cell.z)?;
         let subtracted = daytime::sky_light_subtracted(self.celestial_angle());
         Some(sky.saturating_sub(subtracted).max(block))
     }
 
-    fn celestial_angle(&self) -> f32 {
+    pub(super) fn celestial_angle(&self) -> f32 {
         daytime::celestial_angle(self.time, 0.0)
     }
 
-    /// Whether nothing opaque lies between `from` and `to`.
-    fn clear_line(&self, from: DVec3, to: DVec3) -> bool {
+    /// Whether nothing solid lies between `from` and `to`: slabs, stairs
+    /// and fences block a line of sight as they block movement (modern
+    /// `hasLineOfSight`, which clips against collision shapes).
+    pub(super) fn sees(&self, from: DVec3, to: DVec3) -> bool {
         let world = self.chunks.world();
-        let blocks = self.items.blocks;
         let distance = from.distance(to);
-        let hit = raycast::raycast(from, to - from, distance, |cell| {
-            world
-                .block(cell.x, cell.y, cell.z)
-                .and_then(|block| blocks.get(block.id()))
-                .is_none_or(|def| def.is_opaque_cube())
+        let hit = raycast::raycast_boxes(from, to - from, distance, |cell| {
+            match world.block(cell.x, cell.y, cell.z) {
+                Some(state) => shape::shapes().collision(state),
+                None => &[crate::world::shape::Cuboid::FULL],
+            }
         });
         hit.is_none()
     }
 
-    /// One tick of every mob: AI, movement, daylight, hits on the player,
-    /// drops, despawning and stashing mobs whose chunk unloaded.
+    /// Gives a new mob its id and adds it to the world.
+    pub(super) fn add_mob(&mut self, mut mob: Mob) -> u64 {
+        self.next_mob_id += 1;
+        mob.id = self.next_mob_id;
+        self.mobs.push(mob);
+        self.next_mob_id
+    }
+
+    /// A mob of `kind` with the random traits its kind has: a sheep's
+    /// color, a cat's or horse's coat, a slime's size, the time to the
+    /// next egg.
+    pub(super) fn new_mob(&mut self, kind: MobKind, feet: DVec3, yaw: f32) -> Mob {
+        let def = self.mob_defs.get(kind);
+        let mut data = MobData::default();
+        let roll = self.rng.next_f64();
+        match def.name.as_str() {
+            "sheep" => {
+                data.color = match roll {
+                    r if r < 0.81836 => 0,
+                    r if r < 0.86836 => SHEEP_BLACK,
+                    r if r < 0.91836 => SHEEP_GRAY,
+                    r if r < 0.96836 => SHEEP_LIGHT_GRAY,
+                    r if r < 0.99836 => SHEEP_BROWN,
+                    _ => SHEEP_PINK,
+                };
+            }
+            "slime" | "magma_cube" => data.size = 1 << self.rng.below(3),
+            "chicken" => data.timer = 6000 + self.rng.below(6000),
+            _ => {}
+        }
+        if !matches!(def.name.as_str(), "wolf") && !def.variants.is_empty() {
+            data.variant = self.rng.below(def.variants.len() as u32 + 1) as u8;
+        }
+        Mob::with_data(kind, def, feet, yaw, data)
+    }
+
+    /// One tick of every mob: AI, movement, daylight, hits and shots, drops,
+    /// despawning and stashing mobs whose chunk unloaded.
     pub(super) fn tick_mobs(&mut self) {
         let player_feet = self.body.position();
         let player_eye = player_feet + DVec3::Y * self.body.eye_height();
         let attackable = self.mode.is_vulnerable() && !self.stats.is_dead();
         let daytime = daytime::is_daytime(self.celestial_angle());
+        let ridden_input = self.ridden_input();
         let mut mobs = std::mem::take(&mut self.mobs);
         let defs = self.mob_defs.clone();
         let mut thinking = Rng::new(self.rng.next_u64());
-        for mob in &mut mobs {
+        self.threat_ticks = self.threat_ticks.saturating_sub(1);
+        let snaps: Vec<Snap> = mobs
+            .iter()
+            .map(|mob| {
+                let def = defs.get(mob.kind);
+                Snap {
+                    feet: mob.feet(),
+                    eye: mob.eye(),
+                    width: mob.size().0,
+                    monster: def.ai.is_monster(),
+                    creeper: matches!(def.ai, Ai::Creeper { .. }),
+                    prey: matches!(def.name.as_str(), "chicken" | "rabbit"),
+                    cat: matches!(def.ai, Ai::Cat),
+                    dead: mob.is_dead(),
+                }
+            })
+            .collect();
+        let look = self.camera.forward().as_dvec3();
+        let threat = (self.threat_ticks > 0)
+            .then(|| mobs.iter().position(|m| m.id == self.threat_id))
+            .flatten();
+        let mut pending = Vec::new();
+        for (index, mob) in mobs.iter_mut().enumerate() {
             let def = defs.get(mob.kind);
-            let target = attackable.then(|| Target {
+            if mob.ridden {
+                // A ridden horse is steered by the player.
+                self.steer_ridden(mob);
+            }
+            let eye = mob.eye();
+            // Only mobs that go after the player look for them, and only
+            // when they're near enough to notice.
+            let hunts = !matches!(
+                def.ai,
+                Ai::Passive
+                    | Ai::Villager
+                    | Ai::Horse
+                    | Ai::Rabbit
+                    | Ai::Swimmer
+                    | Ai::Cat
+                    | Ai::Fox { .. }
+            );
+            let near_player = eye.distance(player_eye) < SIGHT_RANGE;
+            let visible = attackable && hunts && near_player && self.sees(eye, player_eye);
+            let stares = matches!(def.ai, Ai::Enderman { .. }) && {
+                let to = eye - player_eye;
+                let d = to.length();
+                d < 64.0 && d > 0.0 && look.dot(to / d) > 1.0 - 0.025 / d && visible
+            };
+            let target = (attackable && hunts && near_player).then(|| Target {
                 feet: player_feet,
+                eye: player_eye,
                 aabb: self.body.aabb(),
-                visible: self.clear_line(mob.eye(), player_eye),
+                visible,
+                stares,
             });
+            // Only these look at their neighbors.
+            let social = matches!(
+                def.ai,
+                Ai::Neutral { .. } | Ai::Wolf { .. } | Ai::Fox { .. } | Ai::Creeper { .. }
+            );
+            let others: Vec<Other> = if social {
+                snaps
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, s)| {
+                        i != index && !s.dead && s.feet.distance(mob.feet()) < NEIGHBOR_RANGE
+                    })
+                    .map(|(i, s)| Other {
+                        index: i,
+                        feet: s.feet,
+                        eye: s.eye,
+                        monster: s.monster,
+                        creeper: s.creeper,
+                        prey: s.prey,
+                        cat: s.cat,
+                        visible: self.sees(eye, s.eye),
+                        width: s.width,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let terrain = WorldTerrain {
                 world: self.chunks.world(),
                 blocks: self.items.blocks,
             };
-            let weight = |cell: IVec3| self.spot_weight(&def.spawn, def.ai, cell);
+            let weight = |cell: IVec3| self.spot_weight(def, cell);
+            let in_water = self.fluid_at(mob.feet() + DVec3::Y * 0.2) == Some(Fluid::Water);
+            let env = Env {
+                brightness: self
+                    .light_level(mob.cell())
+                    .map_or(0.0, daytime::brightness),
+                day: daytime,
+                in_water,
+            };
             let view = View {
                 terrain: &terrain,
                 player: target,
                 weight: &weight,
+                env,
+                others: &others,
+                owner: Some(player_feet),
+                threat,
             };
             let mut random = || thinking.next_f64() as f32;
-            let intent = ai::think(mob, def, &view, &mut random);
+            let mut intent = if mob.ridden {
+                Default::default()
+            } else {
+                ai::think(mob, def, &view, &mut random)
+            };
+            if mob.ridden {
+                intent.input = ridden_input;
+            }
             let collider = WorldCollider {
                 world: self.chunks.world(),
                 blocks: self.items.blocks,
             };
             let eyes = self.fluid_at(mob.eye()) == Some(Fluid::Water);
+            mob.body.free_flight = def.flies || (def.swims && in_water);
+            if !mob.body.free_flight {
+                mob.body.may_fly = false;
+            }
             mob.tick(&intent.input, &collider, eyes);
+            if def.climbs && mob.body.collided_horizontally() && intent.input.forward > 0.0 {
+                mob.body.velocity.y = 0.2;
+                mob.stats.fall_distance = 0.0;
+            }
+            if def.no_fall {
+                mob.stats.fall_distance = 0.0;
+            }
             if def.burns_in_daylight && daytime && mob.body.liquid.is_none() {
                 self.maybe_ignite(mob);
             }
-            if let Some(damage) = intent.hit {
-                let strike = Strike {
-                    amount: damage,
-                    source: DamageSource::Mob,
-                    from: Some(mob.feet()),
-                    ranged: false,
-                    axe: false,
-                };
-                match self.hurt_player(strike) {
-                    Outcome::Hurt { fresh: true } => knock_back(&mut self.body, mob.feet()),
-                    // A shield shoves the attacker back.
-                    Outcome::Blocked => {
-                        let away = mob.feet() - player_feet;
-                        push(&mut mob.body, crate::config::combat::SHIELD_KNOCKBACK, away);
-                    }
-                    _ => {}
-                }
+            // Water hurts endermen; sea creatures out of it suffocate.
+            if (def.hurt_by_water && in_water)
+                || (def.swims && !in_water && mob.age.is_multiple_of(20))
+            {
+                mob.hurt_by_world(1.0, DamageSource::Drowning);
             }
+            pending.push((index, intent));
             if mob.is_dead() && !mob.looted {
                 mob.looted = true;
-                self.drop_loot(mob);
+                self.on_mob_death(mob);
             }
         }
+        self.apply_intents(&mut mobs, pending, player_feet);
         self.push_apart(&mut mobs);
         // Despawn far monsters; stash animals whose chunk unloaded.
         mobs.retain_mut(|mob| {
@@ -188,12 +348,12 @@ impl Game {
             }
             let pos = ChunkPos::of_block(mob.feet().x.floor() as i32, mob.feet().z.floor() as i32);
             if self.chunks.world().get(pos).is_none() {
-                if def.ai == Ai::Passive {
+                if def.ai.is_creature() {
                     self.stashed_mobs.entry(pos).or_default().push(mob.clone());
                 }
                 return false;
             }
-            if def.ai != Ai::Passive {
+            if def.ai.is_monster() && !mob.ridden {
                 if distance > DESPAWN_FAR {
                     return false;
                 }
@@ -205,8 +365,63 @@ impl Game {
             }
             true
         });
+        // Mobs spawned while thinking (split slimes, chain reactions).
+        mobs.append(&mut self.mobs);
         self.mobs = mobs;
+        self.tick_animals();
         self.spawn_monsters();
+        self.spawn_water_mobs();
+        self.spawn_phantoms();
+    }
+
+    /// Phantoms come out of the night sky above a player who hasn't slept
+    /// in three days (modern `PhantomSpawner`): every three seconds, with
+    /// a chance that grows with the time awake, one to three of them 20
+    /// to 34 blocks up.
+    pub(super) fn spawn_phantoms(&mut self) {
+        if !self.time.is_multiple_of(60)
+            || self.stats.is_dead()
+            || !self.mode.is_vulnerable()
+            || daytime::is_daytime(self.celestial_angle())
+        {
+            return;
+        }
+        let Some(kind) = self
+            .mob_defs
+            .iter()
+            .find_map(|(kind, def)| matches!(def.spawn, Spawn::Phantom).then_some(kind))
+        else {
+            return;
+        };
+        let feet = self.body.position();
+        let head = (feet + DVec3::Y * 1.0).floor().as_ivec3();
+        let open_sky = self
+            .chunks
+            .light_at(head.x, head.y, head.z)
+            .is_some_and(|(sky, _)| sky == 15);
+        if !open_sky || self.rng.below(self.stats.awake.max(1)) < PHANTOM_AFTER {
+            return;
+        }
+        let count = 1 + self.rng.below(3);
+        for _ in 0..count {
+            let spot = feet
+                + DVec3::new(
+                    f64::from(self.rng.below(21)) - 10.0,
+                    20.0 + f64::from(self.rng.below(15)),
+                    f64::from(self.rng.below(21)) - 10.0,
+                );
+            let cell = spot.floor().as_ivec3();
+            let free = self
+                .chunks
+                .world()
+                .block(cell.x, cell.y, cell.z)
+                .is_some_and(|b| b.is_air());
+            if free {
+                let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
+                let mob = self.new_mob(kind, spot, yaw);
+                self.add_mob(mob);
+            }
+        }
     }
 
     /// 1.0.0's `applyEntityCollision`: overlapping living bodies (mobs and
@@ -220,7 +435,10 @@ impl Game {
             let near = |bb: crate::player::collision::Aabb| {
                 crate::player::collision::Aabb::new(bb.min - reach, bb.max + reach)
             };
-            if !self.body.flying && near(mobs[i].body.aabb()).intersects(&self.body.aabb()) {
+            if !self.body.flying
+                && !mobs[i].ridden
+                && near(mobs[i].body.aabb()).intersects(&self.body.aabb())
+            {
                 let push = push_between(mobs[i].feet(), self.body.position());
                 mobs[i].body.velocity += push;
                 self.body.velocity -= push;
@@ -239,19 +457,17 @@ impl Game {
     /// How much a mob likes `cell` to wander to: animals like the ground
     /// they spawn on (grass) and light, monsters like the dark (1.0.0's
     /// `getBlockPathWeight`).
-    fn spot_weight(&self, spawn: &Spawn, ai: Ai, cell: IVec3) -> f32 {
+    fn spot_weight(&self, def: &crate::entity::mobs::MobDef, cell: IVec3) -> f32 {
         let brightness = self.light_level(cell).map_or(0.0, daytime::brightness);
-        match ai {
-            Ai::Passive => {
-                let below = self.chunks.world().block(cell.x, cell.y - 1, cell.z);
-                let liked = match spawn {
-                    Spawn::Ground { blocks, .. } => below.is_some_and(|b| blocks.contains(&b.id())),
-                    Spawn::Dark { .. } => false,
-                };
-                if liked { 10.0 } else { brightness - 0.5 }
-            }
-            Ai::Hostile { .. } => 0.5 - brightness,
+        if def.ai.is_monster() {
+            return 0.5 - brightness;
         }
+        let below = self.chunks.world().block(cell.x, cell.y - 1, cell.z);
+        let liked = match &def.spawn {
+            Spawn::Ground { blocks, .. } => below.is_some_and(|b| blocks.contains(&b.id())),
+            _ => false,
+        };
+        if liked { 10.0 } else { brightness - 0.5 }
     }
 
     /// 1.0.0's `EntityZombie`: in bright daylight under open sky, a chance
@@ -268,17 +484,6 @@ impl Game {
         }
     }
 
-    fn drop_loot(&mut self, mob: &Mob) {
-        let def = self.mob_defs.get(mob.kind);
-        let rng = &mut self.rng;
-        let mut random = || rng.next_f64() as f32;
-        let cell = mob.cell();
-        for stack in mob.drops(def, &mut random) {
-            self.entities
-                .push(ItemEntity::from_block(stack, cell, &mut random));
-        }
-    }
-
     /// Chunks entering the world: schedule their flowing fluids, bring
     /// back their stashed animals, and place animals in chunks seen for
     /// the first time.
@@ -287,12 +492,19 @@ impl Game {
         self.queue_post_process(chunks);
         for &pos in chunks {
             if let Some(mobs) = self.stashed_mobs.remove(&pos) {
-                self.mobs.extend(mobs);
+                for mob in mobs {
+                    self.add_mob(mob);
+                }
             }
             if self.populated.insert(pos) {
                 self.populate(pos);
             }
         }
+    }
+
+    /// The biome at a block column.
+    fn biome_at(&self, x: i32, z: i32) -> Biome {
+        self.chunks.world().biome_at(x, z).unwrap_or_default()
     }
 
     /// 1.0.0's `performWorldGenSpawning`: maybe a group of animals on
@@ -304,23 +516,27 @@ impl Game {
                 ref blocks,
                 chance,
                 group,
+                ref biomes,
                 ..
             } = self.mob_defs.get(kind).spawn
             else {
                 continue;
             };
-            let blocks = blocks.clone();
+            let (blocks, biomes) = (blocks.clone(), biomes.clone());
             if self.rng.next_f64() as f32 >= chance {
                 continue;
             }
             let (min_x, min_z) = pos.min_block();
             let mut x = min_x + (self.rng.next_f64() * 16.0) as i32;
             let mut z = min_z + (self.rng.next_f64() * 16.0) as i32;
+            if !biomes.is_empty() && !biomes.contains(&self.biome_at(x, z)) {
+                continue;
+            }
             for _ in 0..group {
                 if let Some(feet) = self.ground_spot(x, z, &blocks) {
                     let yaw = (self.rng.next_f64() as f32) * std::f32::consts::TAU;
-                    let mob = Mob::new(kind, self.mob_defs.get(kind), feet, yaw);
-                    self.mobs.push(mob);
+                    let mob = self.new_mob(kind, feet, yaw);
+                    self.add_mob(mob);
                 }
                 x += (self.rng.next_f64() * 5.0) as i32 - (self.rng.next_f64() * 5.0) as i32;
                 z += (self.rng.next_f64() * 5.0) as i32 - (self.rng.next_f64() * 5.0) as i32;
@@ -345,58 +561,97 @@ impl Game {
             .then(|| DVec3::new(x as f64 + 0.5, (top + 1) as f64, z as f64 + 0.5))
     }
 
+    /// The monsters near the player, and how many may be (the cap grows with
+    /// the chunks in range).
+    fn monster_count(&self) -> usize {
+        self.mobs
+            .iter()
+            .filter(|mob| self.mob_defs.get(mob.kind).ai.is_monster() && !mob.is_dead())
+            .count()
+    }
+
     /// 1.0.0's `findChunksForSpawning` for monsters: in each chunk near the
     /// player, a random spot that's dark, free and on solid ground, at
-    /// least 24 blocks away, up to the cap.
+    /// least 24 blocks away, up to the cap. The kind is picked among those
+    /// that spawn in the spot's biome by weight, and arrives with a pack.
     pub(super) fn spawn_monsters(&mut self) {
         let player = self.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
-        let kinds: Vec<(MobKind, u8, u8)> = self
-            .mob_defs
-            .iter()
-            .filter_map(|(kind, def)| match def.spawn {
-                Spawn::Dark { max_light, group } => Some((kind, max_light, group)),
-                _ => None,
-            })
-            .collect();
         let side = SPAWN_CHUNK_RADIUS * 2 + 1;
         let cap = MONSTERS_PER_256_CHUNKS * (side * side) as usize / 256;
-        for (kind, max_light, group) in kinds {
-            for dz in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
-                for dx in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
-                    let monsters = self
-                        .mobs
-                        .iter()
-                        .filter(|mob| self.mob_defs.get(mob.kind).ai != Ai::Passive)
-                        .count();
-                    if monsters >= cap {
-                        return;
-                    }
-                    let pos = center.offset(dx, dz);
-                    if self.chunks.world().get(pos).is_none() {
-                        continue;
-                    }
-                    let (min_x, min_z) = pos.min_block();
-                    let mut cell = IVec3::new(
-                        min_x + (self.rng.next_f64() * 16.0) as i32,
-                        (self.rng.next_f64() * 128.0) as i32,
-                        min_z + (self.rng.next_f64() * 16.0) as i32,
-                    );
-                    for _ in 0..group {
-                        cell.x +=
-                            (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
-                        cell.z +=
-                            (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
-                        if self.can_monster_spawn(cell, max_light) {
-                            let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
-                            let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
-                            self.mobs
-                                .push(Mob::new(kind, self.mob_defs.get(kind), feet, yaw));
-                        }
+        for dz in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
+            for dx in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
+                if self.monster_count() >= cap {
+                    return;
+                }
+                let pos = center.offset(dx, dz);
+                if self.chunks.world().get(pos).is_none() {
+                    continue;
+                }
+                let (min_x, min_z) = pos.min_block();
+                let mut cell = IVec3::new(
+                    min_x + (self.rng.next_f64() * 16.0) as i32,
+                    (self.rng.next_f64() * 128.0) as i32,
+                    min_z + (self.rng.next_f64() * 16.0) as i32,
+                );
+                let biome = self.biome_at(cell.x, cell.z);
+                let Some((kind, max_light, group)) = self.pick_dark_kind(biome, cell, pos) else {
+                    continue;
+                };
+                for _ in 0..group {
+                    cell.x +=
+                        (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
+                    cell.z +=
+                        (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
+                    if self.can_monster_spawn(cell, max_light) {
+                        let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+                        let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
+                        let mob = self.new_mob(kind, feet, yaw);
+                        self.add_mob(mob);
                     }
                 }
             }
         }
+    }
+
+    /// A kind that can spawn here by weight: (kind, max light, group size).
+    pub(super) fn pick_dark_kind(
+        &mut self,
+        biome: Biome,
+        cell: IVec3,
+        chunk: ChunkPos,
+    ) -> Option<(MobKind, u8, u8)> {
+        let seed = self.chunks.seed().unwrap_or(0);
+        let mut options: Vec<(MobKind, u8, u8, u32)> = Vec::new();
+        for (kind, def) in self.mob_defs.iter() {
+            match def.spawn {
+                Spawn::Dark {
+                    max_light,
+                    group,
+                    ref biomes,
+                    weight,
+                } if biomes.is_empty() || biomes.contains(&biome) => {
+                    options.push((kind, max_light, group, weight));
+                }
+                // Slimes come out of the ground in slime chunks, deep down.
+                Spawn::SlimeChunk { below } if cell.y < below && is_slime_chunk(seed, chunk) => {
+                    options.push((kind, 15, 1, 100));
+                }
+                _ => {}
+            }
+        }
+        let total: u32 = options.iter().map(|o| o.3).sum();
+        if total == 0 {
+            return None;
+        }
+        let mut roll = self.rng.below(total);
+        for (kind, max_light, group, weight) in options {
+            if roll < weight {
+                return Some((kind, max_light, group));
+            }
+            roll -= weight;
+        }
+        None
     }
 
     /// Solid ground below, two free cells (no liquid), far enough from the
@@ -430,18 +685,99 @@ impl Game {
         level <= max_light && (level as f64) <= self.rng.next_f64() * 8.0
     }
 
+    /// Squid and fish: in each chunk near the player, a random spot in deep
+    /// water, now and then, up to a cap.
+    fn spawn_water_mobs(&mut self) {
+        if !self.time.is_multiple_of(20) {
+            return;
+        }
+        let player = self.body.position();
+        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        let side = SPAWN_CHUNK_RADIUS * 2 + 1;
+        let cap = WATER_MOBS_PER_256_CHUNKS * (side * side) as usize / 256;
+        let count = |game: &Game| {
+            game.mobs
+                .iter()
+                .filter(|m| game.mob_defs.get(m.kind).swims && !m.is_dead())
+                .count()
+        };
+        for dz in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
+            for dx in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
+                if count(self) >= cap {
+                    return;
+                }
+                let pos = center.offset(dx, dz);
+                if self.chunks.world().get(pos).is_none() {
+                    continue;
+                }
+                let (min_x, min_z) = pos.min_block();
+                let cell = IVec3::new(
+                    min_x + (self.rng.next_f64() * 16.0) as i32,
+                    45 + (self.rng.next_f64() * 18.0) as i32,
+                    min_z + (self.rng.next_f64() * 16.0) as i32,
+                );
+                let biome = self.biome_at(cell.x, cell.z);
+                let kinds: Vec<(MobKind, f32, u8, u8)> = self
+                    .mob_defs
+                    .iter()
+                    .filter_map(|(kind, def)| match def.spawn {
+                        Spawn::Water {
+                            chance,
+                            group,
+                            ref biomes,
+                            min_depth,
+                        } if biomes.is_empty() || biomes.contains(&biome) => {
+                            Some((kind, chance, group, min_depth))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if kinds.is_empty() {
+                    continue;
+                }
+                let (kind, chance, group, min_depth) =
+                    kinds[self.rng.below(kinds.len() as u32) as usize];
+                if (self.rng.next_f64() as f32) >= chance {
+                    continue;
+                }
+                let terrain = WorldTerrain {
+                    world: self.chunks.world(),
+                    blocks: self.items.blocks,
+                };
+                let deep = (0..=min_depth as i32).all(|dy| terrain.water(cell + IVec3::Y * dy));
+                if !deep || cell.as_dvec3().distance(player) < 16.0 {
+                    continue;
+                }
+                for i in 0..group {
+                    let at = cell + IVec3::new(i as i32 % 2, 0, i as i32 / 2);
+                    let terrain = WorldTerrain {
+                        world: self.chunks.world(),
+                        blocks: self.items.blocks,
+                    };
+                    if terrain.water(at) && terrain.water(at + IVec3::Y) {
+                        let feet = at.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+                        let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
+                        let mob = self.new_mob(kind, feet, yaw);
+                        self.add_mob(mob);
+                    }
+                }
+            }
+        }
+    }
+
     /// Every mob worth keeping (animals, loaded or stashed), for saving.
     pub(super) fn saved_mobs(&self) -> Vec<SavedMob> {
         let stashed = self.stashed_mobs.values().flatten();
         self.mobs
             .iter()
             .chain(stashed)
-            .filter(|mob| !mob.is_dead() && self.mob_defs.get(mob.kind).ai == Ai::Passive)
+            .filter(|mob| !mob.is_dead() && self.mob_defs.get(mob.kind).ai.is_creature())
             .map(|mob| SavedMob {
                 name: self.mob_defs.get(mob.kind).name.clone(),
                 position: mob.feet().to_array(),
                 yaw: mob.yaw,
                 health: mob.stats.health,
+                data: mob.data.clone(),
             })
             .collect()
     }
@@ -453,10 +789,26 @@ impl Game {
                 continue;
             };
             let feet = DVec3::from_array(entry.position);
-            let mut mob = Mob::new(kind, self.mob_defs.get(kind), feet, entry.yaw);
+            let mut mob = Mob::with_data(
+                kind,
+                self.mob_defs.get(kind),
+                feet,
+                entry.yaw,
+                entry.data.clone(),
+            );
             mob.stats.health = entry.health;
             let pos = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
             self.stashed_mobs.entry(pos).or_default().push(mob);
         }
     }
+}
+
+/// Whether `chunk` is one of the tenth of chunks where slimes spawn
+/// underground, picked by the seed as 1.0.0's `isSlimeChunk` does.
+pub fn is_slime_chunk(seed: u64, chunk: ChunkPos) -> bool {
+    let (x, z) = (i64::from(chunk.x), i64::from(chunk.z));
+    let mixed =
+        seed as i64 + (x * x * 4_987_142) + (x * 5_947_611) + (z * z) * 4_392_871 + (z * 389_711);
+    let mut rng = Rng::new((mixed ^ 987_234_911) as u64);
+    rng.below(10) == 0
 }

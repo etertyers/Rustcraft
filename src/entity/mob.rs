@@ -8,6 +8,8 @@ use super::{
     ai::AiState,
     mobs::{MobDef, MobKind},
 };
+use serde::{Deserialize, Serialize};
+
 use crate::{
     inventory::stack::ItemStack,
     player::{
@@ -15,7 +17,7 @@ use crate::{
         physics::{Body, MoveInput},
         stats::{DamageSource, Stats, Surroundings},
     },
-    world::block::Fluid,
+    world::block::{BlockState, Fluid},
 };
 
 /// Ticks a hit makes a mob flash red (1.0.0's `maxHurtTime`).
@@ -24,11 +26,40 @@ const HURT_FLASH: u32 = 10;
 pub const DEATH_TICKS: u32 = 20;
 /// 1.0.0's `knockBack` strength.
 const KNOCKBACK: f64 = 0.4;
-/// Eye height as a fraction of a mob's height (1.0.0's `getEyeHeight`).
-const EYE_FRACTION: f64 = 0.85;
+/// What sets one mob apart from another of its kind: coat, dye, whether it
+/// is tame, sheared, saddled or angry, and a few counters.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MobData {
+    /// Which of the kind's textures it wears (0 is the plain one).
+    #[serde(default)]
+    pub variant: u8,
+    /// A sheep's dye, 0–15 in the order of the 16 wool colors.
+    #[serde(default)]
+    pub color: u8,
+    #[serde(default)]
+    pub sheared: bool,
+    #[serde(default)]
+    pub tamed: bool,
+    #[serde(default)]
+    pub sitting: bool,
+    #[serde(default)]
+    pub saddled: bool,
+    /// A slime's size: 1, 2 or 4 (0 for the kinds that have none).
+    #[serde(default)]
+    pub size: u8,
+    /// Ticks until a hen lays, a sheep regrows its wool, and so on.
+    #[serde(default)]
+    pub timer: u32,
+    /// Taming progress for a horse (temper) or similar.
+    #[serde(default)]
+    pub temper: u8,
+}
 
 #[derive(Debug, Clone)]
 pub struct Mob {
+    /// Tells it from the others for as long as the game runs (0 until the
+    /// game adds it).
+    pub id: u64,
     pub kind: MobKind,
     pub body: Body,
     prev_feet: DVec3,
@@ -52,12 +83,39 @@ pub struct Mob {
     pub ai: AiState,
     /// Its drops have been dropped (once, however it died).
     pub looted: bool,
+    pub data: MobData,
+    /// The block an enderman holds.
+    pub carrying: Option<BlockState>,
+    /// A creeper's swelling, 0–30, and whether a mob has its arms up.
+    pub swell: i32,
+    prev_swell: i32,
+    pub aggressive: bool,
+    /// The mob the player rides, if it's one.
+    pub ridden: bool,
 }
 
 impl Mob {
     pub fn new(kind: MobKind, def: &MobDef, feet: DVec3, yaw: f32) -> Self {
-        let body = Body::sized(feet, def.width, def.height, def.height * EYE_FRACTION);
+        Self::with_data(kind, def, feet, yaw, MobData::default())
+    }
+
+    /// A mob with the given traits; a slime's size sets its hitbox and
+    /// health.
+    pub fn with_data(kind: MobKind, def: &MobDef, feet: DVec3, yaw: f32, data: MobData) -> Self {
+        let size = f64::from(data.size.max(1));
+        let (width, height) = if data.size > 0 {
+            (def.width * size, def.height * size)
+        } else {
+            (def.width, def.height)
+        };
+        let health = if data.size > 0 {
+            (data.size.max(1) as i32).pow(2)
+        } else {
+            def.health
+        };
+        let body = Body::sized(feet, width, height, height * def.eye);
         Self {
+            id: 0,
             kind,
             body,
             prev_feet: feet,
@@ -65,7 +123,7 @@ impl Mob {
             prev_yaw: yaw,
             head_yaw: yaw,
             pitch: 0.0,
-            stats: Stats::with_health(def.health as f32),
+            stats: Stats::with_health(health as f32),
             hurt_time: 0,
             death_time: 0,
             age: 0,
@@ -74,7 +132,30 @@ impl Mob {
             prev_limb_amount: 0.0,
             ai: AiState::default(),
             looted: false,
+            data,
+            carrying: None,
+            swell: 0,
+            prev_swell: 0,
+            aggressive: false,
+            ridden: false,
         }
+    }
+
+    /// Forgets the path it was following.
+    pub fn clear_path(&mut self) {
+        self.ai.clear_path();
+    }
+
+    /// A creeper's swelling `alpha` of the way from the last tick, 0–1.
+    pub fn swell_amount(&self, alpha: f32) -> f32 {
+        let swell = self.prev_swell as f32 + (self.swell - self.prev_swell) as f32 * alpha;
+        (swell / 28.0).clamp(0.0, 1.0)
+    }
+
+    /// Its width and height now.
+    pub fn size(&self) -> (f64, f64) {
+        let a = self.body.aabb();
+        (a.max.x - a.min.x, a.max.y - a.min.y)
     }
 
     pub fn feet(&self) -> DVec3 {
@@ -124,6 +205,14 @@ impl Mob {
         fresh
     }
 
+    /// Hurts it with the world rather than an attacker (water on an
+    /// enderman, air for a squid): no flinching or fleeing.
+    pub fn hurt_by_world(&mut self, amount: f32, source: DamageSource) {
+        if !self.is_dead() && self.stats.damage(amount, source) {
+            self.hurt_time = HURT_FLASH;
+        }
+    }
+
     /// Pushes the mob away from `from`.
     pub fn knock_back(&mut self, from: DVec3) {
         knock_back(&mut self.body, from);
@@ -136,6 +225,7 @@ impl Mob {
         self.prev_yaw = self.yaw;
         self.prev_limb_amount = self.limb_amount;
         self.hurt_time = self.hurt_time.saturating_sub(1);
+        self.prev_swell = self.swell;
         self.age += 1;
         if self.is_dead() {
             self.death_time += 1;
@@ -165,18 +255,26 @@ impl Mob {
     /// What it drops on death: each drop 0–2 (or its range), cooked if it
     /// died burning.
     pub fn drops(&self, def: &MobDef, random: &mut impl FnMut() -> f32) -> Vec<ItemStack> {
-        def.drops
-            .iter()
-            .filter_map(|drop| {
-                let range = (drop.max - drop.min + 1) as f32;
-                let count = drop.min + ((random() * range) as u8).min(drop.max - drop.min);
-                let item = match drop.cooked {
-                    Some(cooked) if self.stats.fire > 0 => cooked,
-                    _ => drop.item,
-                };
-                (count > 0).then(|| ItemStack::with_damage(item, count, 0))
-            })
-            .collect()
+        // Only the smallest slimes drop slimeballs.
+        if self.data.size > 1 {
+            return Vec::new();
+        }
+        let mut stacks = Vec::new();
+        for drop in &def.drops {
+            if drop.chance < 1.0 && random() >= drop.chance {
+                continue;
+            }
+            let range = (drop.max - drop.min + 1) as f32;
+            let count = drop.min + ((random() * range) as u8).min(drop.max - drop.min);
+            let item = match drop.cooked {
+                Some(cooked) if self.stats.fire > 0 => cooked,
+                _ => drop.item,
+            };
+            if count > 0 {
+                stacks.push(ItemStack::with_damage(item, count, 0));
+            }
+        }
+        stacks
     }
 }
 

@@ -6,7 +6,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::{inventory::item::ItemId, world::block::BlockId};
+use crate::{
+    inventory::item::ItemId,
+    world::{biome::Biome, block::BlockId},
+};
 
 /// Index of a mob kind in the registry.
 pub type MobKind = usize;
@@ -29,14 +32,130 @@ pub struct MobDef {
     pub drops: Vec<MobDrop>,
     pub spawn: Spawn,
     pub model: Model,
+    /// Other textures one of these mobs may wear instead (cat and horse
+    /// coats, a wolf's tame and angry faces), picked by the mob's variant.
+    #[serde(default)]
+    pub variants: Vec<String>,
+    /// Further models drawn over it, each with its own texture (a sheep's
+    /// wool).
+    #[serde(default)]
+    pub layers: Vec<Layer>,
+    /// The model is drawn at this size.
+    #[serde(default = "one")]
+    pub scale: f32,
+    /// Climbs walls it walks into (spiders).
+    #[serde(default)]
+    pub climbs: bool,
+    /// Lives in water: swims in all three directions and cannot breathe
+    /// out of it.
+    #[serde(default)]
+    pub swims: bool,
+    /// Flies (bees, phantoms).
+    #[serde(default)]
+    pub flies: bool,
+    /// Takes damage from water and rain (endermen).
+    #[serde(default)]
+    pub hurt_by_water: bool,
+    /// Takes no fall damage.
+    #[serde(default)]
+    pub no_fall: bool,
+    /// Eye height as a fraction of its height.
+    #[serde(default = "eye_fraction")]
+    pub eye: f64,
 }
 
+fn one() -> f32 {
+    1.0
+}
+
+fn eye_fraction() -> f64 {
+    0.85
+}
+
+/// A second model drawn over a mob's body.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layer {
+    pub texture: String,
+    pub model: Model,
+    /// Whether it takes the mob's color (a dyed sheep's wool).
+    #[serde(default)]
+    pub dyed: bool,
+    /// Hidden when the mob is sheared.
+    #[serde(default)]
+    pub wool: bool,
+    /// Glows (an enderman's eyes) rather than being lit by the world.
+    #[serde(default)]
+    pub glow: bool,
+    /// Only drawn while the mob has this variant (a tamed wolf's collar).
+    #[serde(default)]
+    pub only_variant: Option<u8>,
+}
+
+/// How a mob decides what to do (1.0.0's `EntityCreature` family, and
+/// modern Minecraft's goals for the later ones).
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum Ai {
     /// Wanders, and runs when hurt (1.0.0's `EntityAnimal`).
     Passive,
     /// Chases and hits the player (1.0.0's `EntityMob`).
     Hostile { attack: f32 },
+    /// Leaves the player alone until hit, then chases and bites; golems
+    /// go after monsters too.
+    Neutral { attack: f32 },
+    /// Hostile in the dark, neutral in the light; leaps (spiders).
+    Spider { attack: f32 },
+    /// Keeps its distance and shoots arrows (skeletons).
+    Archer { interval: u32 },
+    /// Swells beside the player and blows up (creepers).
+    Creeper { power: f32 },
+    /// Angered by being looked at; teleports and carries blocks.
+    Enderman { attack: f32 },
+    /// Hops after the player (slimes).
+    Slime,
+    /// Keeps away and throws potions (witches).
+    Witch,
+    /// Circles overhead and dives (phantoms).
+    Phantom { attack: f32 },
+    /// Swims about in water (squid, fish).
+    Swimmer,
+    /// Tameable; hostile to what it's angry at, follows its owner.
+    Wolf { attack: f32 },
+    /// Tameable; sits and follows; scares creepers.
+    Cat,
+    /// Rideable once saddled; gentle until tamed.
+    Horse,
+    /// Hops about.
+    Rabbit,
+    /// Flies about flowers, stings once when angered.
+    Bee { attack: f32 },
+    /// Wanders at dusk and hunts small animals.
+    Fox { attack: f32 },
+    /// Wanders and keeps to the village.
+    Villager,
+}
+
+impl Ai {
+    /// Mobs that stay in the world when the player is far away, are saved
+    /// and don't count against the monster cap.
+    pub fn is_creature(self) -> bool {
+        !self.is_monster()
+    }
+
+    /// Mobs that spawn in the dark and despawn.
+    pub fn is_monster(self) -> bool {
+        matches!(
+            self,
+            Ai::Hostile { .. }
+                | Ai::Spider { .. }
+                | Ai::Archer { .. }
+                | Ai::Creeper { .. }
+                | Ai::Enderman { .. }
+                | Ai::Slime
+                | Ai::Witch
+                | Ai::Phantom { .. }
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -48,20 +167,56 @@ pub struct MobDrop {
     /// Dropped instead while the mob is burning (cooked porkchop).
     #[serde(default)]
     pub cooked: Option<ItemId>,
+    /// The chance it drops at all, 0–1 (default always).
+    #[serde(default = "one")]
+    pub chance: f32,
 }
 
+/// Where a mob spawns.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub enum Spawn {
+    /// Never by itself (spawned by other means).
+    Never,
     /// At world generation, in groups on these ground blocks in the light,
-    /// in a `chance` of new chunks.
+    /// in a `chance` of new chunks, in these biomes (all if empty).
     Ground {
         blocks: Vec<BlockId>,
         min_light: u8,
         chance: f32,
         group: u8,
+        #[serde(default)]
+        biomes: Vec<Biome>,
     },
-    /// Near the player wherever it's dark enough (1.0.0's monster spawning).
-    Dark { max_light: u8, group: u8 },
+    /// Near the player wherever it's dark enough (1.0.0's monster
+    /// spawning), in these biomes (all if empty); `weight` shares out the
+    /// cap among kinds.
+    Dark {
+        max_light: u8,
+        group: u8,
+        #[serde(default)]
+        biomes: Vec<Biome>,
+        #[serde(default = "hundred")]
+        weight: u32,
+    },
+    /// In water at generation and near the player, in these biomes.
+    Water {
+        chance: f32,
+        group: u8,
+        #[serde(default)]
+        biomes: Vec<Biome>,
+        /// Needs the open sky above (squid) or any depth (fish).
+        #[serde(default)]
+        min_depth: u8,
+    },
+    /// In dark places deep underground in "slime chunks" (a tenth of
+    /// chunks picked by the world seed), below this height.
+    SlimeChunk { below: i32 },
+    /// In the open sky above a player who has not slept for three days.
+    Phantom,
+}
+
+fn hundred() -> u32 {
+    100
 }
 
 /// A box model in Minecraft's model coordinates: pixels, y pointing down,
@@ -83,6 +238,11 @@ pub struct Part {
     /// Resting rotation around x, in radians.
     #[serde(default)]
     pub rest: f32,
+    /// Resting rotation around y and z.
+    #[serde(default)]
+    pub rest_y: f32,
+    #[serde(default)]
+    pub rest_z: f32,
     #[serde(default)]
     pub role: Role,
     #[serde(default)]
@@ -90,6 +250,10 @@ pub struct Part {
     /// More boxes moving with this part (the pig's snout).
     #[serde(default)]
     pub extra: Vec<PartBox>,
+    /// Pixels every box of the part is grown on each side (a layer drawn
+    /// over a body, a robe).
+    #[serde(default)]
+    pub grow: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -115,6 +279,19 @@ pub enum Role {
     ArmB,
     /// Zombie arms: held forward, bobbing.
     Reaching,
+    /// Wings beating with the mob's age (chickens, phantoms, bees); the
+    /// right one is mirrored.
+    WingA,
+    WingB,
+    /// One of a spider's eight legs, 0–7.
+    SpiderLeg(u8),
+    /// One of a squid's eight tentacles, 0–7.
+    Tentacle(u8),
+    /// A wolf's tail, wagging.
+    Tail,
+    /// Held raised while the mob is attacking (skeleton arms with a bow,
+    /// witch nose twitching): drawn up when the mob is aggressive.
+    Aim,
 }
 
 pub struct MobRegistry {
@@ -145,14 +322,58 @@ impl MobRegistry {
     pub fn iter(&self) -> impl Iterator<Item = (MobKind, &MobDef)> {
         self.mobs.iter().enumerate()
     }
+
+    /// Every texture the mobs use, in the order the renderer binds them:
+    /// each kind's own, then its variants, then its layers'.
+    pub fn textures(&self) -> Vec<&str> {
+        let mut names = Vec::new();
+        for mob in &self.mobs {
+            names.push(mob.texture.as_str());
+            names.extend(mob.variants.iter().map(String::as_str));
+            names.extend(mob.layers.iter().map(|l| l.texture.as_str()));
+        }
+        names
+    }
+
+    /// How many textures `textures` lists: the arrow's is the next slot.
+    pub fn texture_count(&self) -> usize {
+        self.mobs
+            .iter()
+            .map(|m| 1 + m.variants.len() + m.layers.len())
+            .sum()
+    }
+
+    /// The renderer's slot for `kind`'s texture with variant `variant`
+    /// (0 is the plain one).
+    pub fn texture_slot(&self, kind: MobKind, variant: u8) -> usize {
+        let before: usize = self.mobs[..kind]
+            .iter()
+            .map(|m| 1 + m.variants.len() + m.layers.len())
+            .sum();
+        let own = &self.mobs[kind];
+        before + (variant as usize).min(own.variants.len())
+    }
+
+    /// The slot of layer `layer` of `kind`.
+    pub fn layer_slot(&self, kind: MobKind, layer: usize) -> usize {
+        let before: usize = self.mobs[..kind]
+            .iter()
+            .map(|m| 1 + m.variants.len() + m.layers.len())
+            .sum();
+        before + 1 + self.mobs[kind].variants.len() + layer
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Mobs whose textures Kenzo's 1.12-era textures don't have; a resource
+    /// pack brings them.
+    const NO_BASE_TEXTURE: [&str; 5] = ["bee", "fox", "cod", "salmon", "phantom"];
+
     #[test]
-    fn pig_and_zombie_load_with_1_0_0_values() {
+    fn mobs_load_with_modern_values() {
         let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
         let pig = mobs.get(mobs.find("pig").unwrap());
         assert_eq!((pig.health, pig.width, pig.height), (10, 0.9, 0.9));
@@ -165,16 +386,86 @@ mod tests {
         let zombie = mobs.get(mobs.find("zombie").unwrap());
         assert_eq!(zombie.ai, Ai::Hostile { attack: 3.0 });
         assert!(zombie.burns_in_daylight);
-        assert_eq!(
+        assert!(matches!(
             zombie.spawn,
             Spawn::Dark {
                 max_light: 7,
-                group: 4
+                group: 4,
+                ..
             }
-        );
+        ));
+        assert_eq!(zombie.height, 1.95);
+        let creeper = mobs.get(mobs.find("creeper").unwrap());
+        assert_eq!(creeper.ai, Ai::Creeper { power: 3.0 });
+        let names: Vec<_> = mobs.iter().map(|(_, m)| m.name.as_str()).collect();
+        for want in [
+            "skeleton",
+            "creeper",
+            "spider",
+            "cave_spider",
+            "enderman",
+            "slime",
+            "witch",
+            "drowned",
+            "husk",
+            "stray",
+            "phantom",
+            "cow",
+            "sheep",
+            "chicken",
+            "wolf",
+            "cat",
+            "horse",
+            "rabbit",
+            "squid",
+            "cod",
+            "salmon",
+            "bee",
+            "fox",
+            "villager",
+            "iron_golem",
+        ] {
+            assert!(names.contains(&want), "missing {want}");
+        }
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "names are unique");
+    }
+
+    #[test]
+    fn every_texture_the_mobs_use_is_there_but_the_few_a_pack_must_bring() {
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
         let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
         for (_, mob) in mobs.iter() {
-            assert!(base.texture(&mob.texture).is_some(), "{}", mob.texture);
+            let own = std::iter::once(&mob.texture)
+                .chain(&mob.variants)
+                .chain(mob.layers.iter().map(|l| &l.texture));
+            for texture in own {
+                let missing = base.texture(texture).is_none();
+                assert_eq!(
+                    missing,
+                    NO_BASE_TEXTURE.contains(&mob.name.as_str()),
+                    "{} texture {texture}",
+                    mob.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn texture_slots_follow_the_order_of_the_list() {
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let names = mobs.textures();
+        assert_eq!(names.len(), mobs.texture_count());
+        for (kind, mob) in mobs.iter() {
+            assert_eq!(names[mobs.texture_slot(kind, 0)], mob.texture);
+            for (v, variant) in mob.variants.iter().enumerate() {
+                assert_eq!(names[mobs.texture_slot(kind, v as u8 + 1)], variant);
+            }
+            for (l, layer) in mob.layers.iter().enumerate() {
+                assert_eq!(names[mobs.layer_slot(kind, l)], layer.texture);
+            }
         }
     }
 }

@@ -63,6 +63,9 @@ pub struct SavedMob {
     pub position: [f64; 3],
     pub yaw: f32,
     pub health: f32,
+    /// Coat, dye, tameness and the like (added in M20).
+    #[serde(default)]
+    pub data: crate::entity::mob::MobData,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -21,13 +21,68 @@ const PIXELS: f32 = 16.0;
 /// Model y of the feet.
 const FEET_Y: f32 = 24.0;
 
-/// Adds `mob`'s model to `mesh`, `alpha` of the way between ticks, lit by
+/// Adds `mob`'s body to `mesh`, `alpha` of the way between ticks, lit by
 /// (sky, block) `light`.
 pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8, u8)) {
+    add_mob_model(mesh, mob, def, &def.model, alpha, light, [1.0; 3]);
+}
+
+/// The 16 dye colors a sheep's wool takes, in wool order (modern
+/// `DyeColor` texture colors).
+pub const DYE_COLORS: [[f32; 3]; 16] = [
+    [0.976, 0.996, 0.996],
+    [0.976, 0.502, 0.114],
+    [0.780, 0.306, 0.741],
+    [0.227, 0.702, 0.855],
+    [0.996, 0.847, 0.239],
+    [0.502, 0.780, 0.122],
+    [0.953, 0.545, 0.667],
+    [0.278, 0.310, 0.322],
+    [0.616, 0.616, 0.592],
+    [0.086, 0.612, 0.612],
+    [0.537, 0.196, 0.722],
+    [0.235, 0.267, 0.667],
+    [0.514, 0.329, 0.196],
+    [0.369, 0.486, 0.086],
+    [0.690, 0.180, 0.149],
+    [0.114, 0.114, 0.129],
+];
+
+/// What a model needs to know about the mob it's posed for.
+struct Pose {
+    swing: f32,
+    amount: f32,
+    head_yaw: f32,
+    pitch: f32,
+    time: f32,
+    aggressive: bool,
+    airborne: bool,
+    sitting: bool,
+}
+
+/// Adds one of `def`'s models (its body or a layer) posed for `mob`,
+/// multiplying its colors by `tint`.
+pub fn add_mob_model(
+    mesh: &mut Mesh,
+    mob: &Mob,
+    def: &MobDef,
+    model: &crate::entity::mobs::Model,
+    alpha: f32,
+    light: (u8, u8),
+    tint: [f32; 3],
+) {
     let (feet, yaw, limb_amount) = mob.pose(alpha);
-    let swing = mob.limb_swing;
     let head_yaw = angle_difference(mob.head_yaw, yaw);
-    let time = mob.age as f32 + alpha;
+    let pose = Pose {
+        swing: mob.limb_swing,
+        amount: limb_amount,
+        head_yaw,
+        pitch: mob.pitch,
+        time: mob.age as f32 + alpha,
+        aggressive: mob.aggressive,
+        airborne: !mob.body.on_ground,
+        sitting: mob.data.sitting,
+    };
     // Dead mobs tip over onto their side over 20 ticks (1.0.0's rotateCorpse).
     let death = if mob.is_dead() {
         let f = ((mob.death_time as f32 + alpha - 1.0) / DEATH_TICKS as f32 * 1.6)
@@ -39,23 +94,42 @@ pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8,
         0.0
     };
     let turn = Mat3::from_rotation_y(-yaw) * Mat3::from_rotation_z(death);
-    let tint = if mob.hurt_time > 0 {
+    // A hurt mob flashes red; a creeper swells and blinks white.
+    let mut color = if mob.hurt_time > 0 {
         [1.0, 0.6, 0.6]
     } else {
         [1.0; 3]
     };
+    let mut scale = Vec3::splat(def.scale);
+    if mob.data.size > 0 {
+        scale *= f32::from(mob.data.size);
+    }
+    let swell = mob.swell_amount(alpha);
+    if swell > 0.0 {
+        let wobble = 1.0 + (swell * 100.0).sin() * swell * 0.01;
+        let puff = swell * swell * swell * swell;
+        scale *= Vec3::new(
+            (1.0 + puff * 0.4) * wobble,
+            (1.0 + puff * 0.1) / wobble,
+            (1.0 + puff * 0.4) * wobble,
+        );
+        if ((swell * 10.0) as i32) % 2 == 0 {
+            color = color.map(|c| c + 1.5);
+        }
+    }
+    let color = [color[0] * tint[0], color[1] * tint[1], color[2] * tint[2]];
     let light = [light.0 as f32, light.1 as f32];
     let place = |model: Vec3| -> [f32; 3] {
         // Model space is world space turned 180° about z, in pixels, with
         // the feet at y 24.
-        let local = Vec3::new(-model.x, FEET_Y - model.y, model.z) / PIXELS;
+        let local = Vec3::new(-model.x, FEET_Y - model.y, model.z) / PIXELS * scale;
         (feet.as_vec3() + turn * local).to_array()
     };
-    for part in &def.model.parts {
-        let (pitch, turn_y) = animate(part, swing, limb_amount, head_yaw, mob.pitch, time);
+    for part in &model.parts {
+        let (rx, ry, rz, pivot) = animate(part, &pose);
         // 1.0.0 rotates a part about z, then y, then x (applied x first).
-        let rotation = Mat3::from_rotation_y(turn_y) * Mat3::from_rotation_x(pitch);
-        let pivot = Vec3::from(part.pivot);
+        let rotation =
+            Mat3::from_rotation_z(rz) * Mat3::from_rotation_y(ry) * Mat3::from_rotation_x(rx);
         let main = PartBox {
             uv: part.uv,
             from: part.from,
@@ -64,14 +138,14 @@ pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8,
         for b in std::iter::once(&main).chain(&part.extra) {
             add_box(
                 mesh,
-                def.model.texture_size,
+                model.texture_size,
                 b,
                 BoxStyle {
                     mirror: part.mirror,
-                    grow: 0.0,
+                    grow: part.grow,
                 },
                 |corner| place(pivot + rotation * corner),
-                tint,
+                color,
                 light,
             );
         }
@@ -225,33 +299,99 @@ pub fn add_minecart(mesh: &mut Mesh, cart: &Minecart, alpha: f32, light: (u8, u8
     }
 }
 
-/// A part's rotation this frame about x and y (1.0.0's
-/// `setRotationAngles`).
-fn animate(
-    part: &Part,
-    swing: f32,
-    amount: f32,
-    head_yaw: f32,
-    pitch: f32,
-    time: f32,
-) -> (f32, f32) {
-    use std::f32::consts::PI;
-    let stride = swing * 0.6662;
-    let x = match part.role {
-        Role::None => part.rest,
-        Role::Head => part.rest + pitch,
-        Role::LegA => stride.cos() * 1.4 * amount,
-        Role::LegB => (stride + PI).cos() * 1.4 * amount,
-        Role::ArmA => (stride + PI).cos() * amount,
-        Role::ArmB => stride.cos() * amount,
-        Role::Reaching => -PI / 2.0 + (time * 0.067).sin() * 0.05,
-    };
-    let y = if part.role == Role::Head {
-        head_yaw
+/// A part's rotation this frame about x, y and z, and where it pivots
+/// (1.0.0's `setRotationAngles`).
+fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+    let pivot = Vec3::from(part.pivot);
+    let stride = pose.swing * 0.6662;
+    let (rest_x, rest_y, rest_z) = (part.rest, part.rest_y, part.rest_z);
+    let amount = pose.amount;
+    let flap = if pose.airborne {
+        (pose.time * 1.1).sin().abs() * 1.0 + 0.4
     } else {
         0.0
     };
-    (x, y)
+    match part.role {
+        Role::None => (rest_x, rest_y, rest_z, pivot),
+        Role::Head => (rest_x + pose.pitch, rest_y + pose.head_yaw, rest_z, pivot),
+        Role::LegA => (
+            if pose.sitting {
+                rest_x
+            } else {
+                stride.cos() * 1.4 * amount
+            },
+            rest_y,
+            rest_z,
+            pivot,
+        ),
+        Role::LegB => (
+            if pose.sitting {
+                rest_x
+            } else {
+                (stride + PI).cos() * 1.4 * amount
+            },
+            rest_y,
+            rest_z,
+            pivot,
+        ),
+        Role::ArmA => ((stride + PI).cos() * amount, rest_y, rest_z, pivot),
+        Role::ArmB => (stride.cos() * amount, rest_y, rest_z, pivot),
+        Role::Reaching => (
+            -FRAC_PI_2 + (pose.time * 0.067).sin() * 0.05,
+            rest_y,
+            rest_z,
+            pivot,
+        ),
+        // Arms held out in front while hunting, else swinging.
+        Role::Aim => {
+            if pose.aggressive {
+                (-FRAC_PI_2 + pose.pitch, rest_y, rest_z, pivot)
+            } else {
+                (stride.cos() * amount, rest_y, rest_z, pivot)
+            }
+        }
+        Role::WingA => (rest_x, rest_y, rest_z + wing_beat(pose, flap), pivot),
+        Role::WingB => (rest_x, rest_y, rest_z - wing_beat(pose, flap), pivot),
+        Role::Tail => (rest_x, rest_y + stride.cos() * 1.4 * amount, rest_z, pivot),
+        Role::SpiderLeg(i) => {
+            let i = usize::from(i.min(7));
+            let f = FRAC_PI_4;
+            let g = FRAC_PI_4 / 2.0;
+            let yaws = [f, -f, g, -g, -g, g, -f, f];
+            let rolls = [-f, f, -f * 0.74, f * 0.74, -f * 0.74, f * 0.74, -f, f];
+            let phase = [0.0, PI, FRAC_PI_2, PI * 1.5][i / 2];
+            let wiggle = -((pose.swing * 0.6662 * 2.0 + phase).cos() * 0.4) * amount;
+            let lift = -((pose.swing * 0.6662 + phase).sin().abs() * 0.4) * amount;
+            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+            (
+                rest_x,
+                yaws[i] + wiggle * sign,
+                rolls[i] + lift * sign,
+                pivot,
+            )
+        }
+        Role::Tentacle(i) => {
+            let angle = f32::from(i) * PI * 2.0 / 8.0;
+            let swing = pose.time * 0.2 + f32::from(i);
+            (
+                swing.sin() * 0.5 + 0.2,
+                -angle + FRAC_PI_2,
+                rest_z,
+                Vec3::new(angle.cos() * 5.0, pivot.y, angle.sin() * 5.0),
+            )
+        }
+    }
+}
+
+/// How far a wing is raised: bees and phantoms beat all the time, birds
+/// only when off the ground.
+fn wing_beat(pose: &Pose, flap: f32) -> f32 {
+    if pose.aggressive && !pose.airborne {
+        0.0
+    } else {
+        flap
+    }
 }
 
 /// How a box is built beyond its size and texture position.

@@ -113,6 +113,7 @@ impl Game {
     pub fn wake(&mut self) {
         let feet = self.standing_feet();
         if self.sleep.take().is_some() {
+            self.stats.awake = 0;
             self.body = Body::new(feet);
             self.prev_feet = feet;
         }
