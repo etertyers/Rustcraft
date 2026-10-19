@@ -170,6 +170,22 @@ impl Game {
             }
             return;
         }
+        // A cart in front of the targeted block: punched to break, or
+        // used (sat in, opened).
+        if let Some(cart) = self.target_cart(eye, hit.as_ref()) {
+            if clicked {
+                self.mining = None;
+                self.attack_ticker = 0;
+                let damage = self.attack_damage();
+                self.hit_cart(cart, damage);
+                return;
+            }
+            if using && place_pressed && !wants_break {
+                self.use_cart(cart);
+                self.view.swing();
+                return;
+            }
+        }
         if !wants_break || hit.is_none() || self.shield_hand.is_some() {
             // Letting go or looking away starts the block over (1.0.0); a
             // raised shield keeps both hands busy.
@@ -224,6 +240,18 @@ impl Game {
                     .is_some_and(|stack| stack.id == items::FLINT_AND_STEEL)
                 {
                     self.strike_flint(&hit);
+                } else if let Some(kind) = self
+                    .held()
+                    .and_then(|stack| super::minecarts::kind_of(stack.id))
+                {
+                    // A minecart goes on a rail, not beside it.
+                    if self.place_cart(hit.block, kind) {
+                        self.view.swing();
+                        if self.mode.uses_up_items() {
+                            self.inventory.take(self.held_slot(), 1);
+                        }
+                        self.place_cooldown = PLACE_REPEAT_TICKS;
+                    }
                 } else {
                     self.place(&hit);
                 }

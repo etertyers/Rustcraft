@@ -130,11 +130,6 @@ impl Game {
         boxes
     }
 
-    /// Boxes of minecarts, which press detector rails and wooden plates.
-    fn rail_pressers(&self) -> Vec<(Aabb, Presser)> {
-        Vec::new()
-    }
-
     /// Records a note for the sound code.
     fn play_note(&mut self, at: IVec3, instrument: u8, note: u8) {
         if self.played_notes.len() >= NOTE_LOG {
@@ -373,7 +368,6 @@ pub(super) enum Presser {
     /// Everything: items and arrows too (wooden plates).
     Anything,
     /// Minecarts, which press detector rails.
-    #[allow(dead_code)]
     Cart,
 }
 

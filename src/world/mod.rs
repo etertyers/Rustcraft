@@ -19,6 +19,7 @@ pub mod manager;
 pub mod mesh;
 pub mod piston;
 pub mod props;
+pub mod rails;
 pub mod redstone;
 pub mod save;
 pub mod shape;

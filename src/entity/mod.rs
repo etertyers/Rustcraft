@@ -5,6 +5,7 @@ pub mod arrow;
 pub mod effects;
 pub mod falling;
 pub mod item;
+pub mod minecart;
 pub mod mob;
 pub mod mobs;
 pub mod particle;

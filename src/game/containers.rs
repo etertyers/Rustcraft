@@ -35,13 +35,15 @@ pub enum Container {
     Dispenser(IVec3, bool),
     /// The hopper at this block.
     Hopper(IVec3),
+    /// The chest or hopper minecart with this index.
+    Cart(usize),
 }
 
 impl Container {
     /// The block whose slots this shows, if it shows a block's.
     pub fn block(&self) -> Option<IVec3> {
         match *self {
-            Self::Crafting { .. } => None,
+            Self::Crafting { .. } | Self::Cart(_) => None,
             Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
                 Some(at)
             }
@@ -207,12 +209,36 @@ impl Game {
         }
     }
 
+    /// Opens the chest or hopper minecart `index`.
+    pub(super) fn open_cart(&mut self, index: usize) {
+        self.container = Some(Container::Cart(index));
+        self.release_input();
+    }
+
+    /// Closes a cart's screen when the cart is gone.
+    pub(super) fn close_if_cart_gone(&mut self) {
+        if let Some(Container::Cart(index)) = self.container
+            && index >= self.carts.len()
+        {
+            self.close_container();
+        }
+    }
+
     fn block_slots(&self) -> Option<&[Option<ItemStack>]> {
+        if let Some(Container::Cart(index)) = self.container {
+            return self.carts.get(index).map(|cart| cart.slots.as_slice());
+        }
         let at = self.open_block()?;
         self.chunks.block_entity(at).map(BlockEntity::slots)
     }
 
     fn block_slots_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
+        if let Some(Container::Cart(index)) = self.container {
+            return self
+                .carts
+                .get_mut(index)
+                .map(|cart| cart.slots.as_mut_slice());
+        }
         let at = self.open_block()?;
         self.chunks.block_entity_mut(at).map(BlockEntity::slots_mut)
     }
@@ -408,7 +434,8 @@ impl Game {
                 Container::Chest(_)
                 | Container::Furnace(_)
                 | Container::Dispenser(..)
-                | Container::Hopper(_),
+                | Container::Hopper(_)
+                | Container::Cart(_),
             ) => {
                 let count = self.block_slots().map_or(0, <[_]>::len);
                 (0..count).map(SlotRef::Block).collect()
@@ -462,8 +489,12 @@ impl Game {
     /// into its slots).
     fn transfer_from_inventory(&mut self, index: usize) {
         let items = self.items.clone();
-        if let Some(Container::Chest(_) | Container::Dispenser(..) | Container::Hopper(_)) =
-            self.container
+        if let Some(
+            Container::Chest(_)
+            | Container::Dispenser(..)
+            | Container::Hopper(_)
+            | Container::Cart(_),
+        ) = self.container
         {
             let Some(stack) = self.inventory.slot(index).copied() else {
                 return;

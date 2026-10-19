@@ -105,7 +105,7 @@ impl Game {
 
     /// Takes one item from the container at `cell` for a hopper under it:
     /// the first slot with something (a furnace gives only its output).
-    fn take_one_from(&mut self, cell: IVec3) -> Option<(usize, ItemStack)> {
+    pub(super) fn take_one_from(&mut self, cell: IVec3) -> Option<(usize, ItemStack)> {
         if !self.holds_items(cell) {
             return None;
         }
@@ -120,7 +120,7 @@ impl Game {
             .find_map(|i| entity.slots()[i].map(|stack| (i, ItemStack { count: 1, ..stack })))
     }
 
-    fn remove_one(&mut self, cell: IVec3, slot: usize) {
+    pub(super) fn remove_one(&mut self, cell: IVec3, slot: usize) {
         let Some(entity) = self.chunks.block_entity_mut(cell) else {
             return;
         };

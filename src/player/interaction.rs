@@ -11,7 +11,7 @@ use crate::{
         block::{BlockDef, BlockRegistry, BlockState, Placement, Shape},
         connect::{self, sturdy},
         props::{Prop, attach_face, axis, bed_part, door_half, half, hinge, rail_shape, slab_type},
-        shape,
+        rails, shape,
     },
 };
 
@@ -307,6 +307,7 @@ pub fn place_block_looking(
     let edits = match new.placement {
         Placement::Bed => place_bed(world, blocks, hit, (at, state), player)?.to_vec(),
         Placement::Door => place_door(world, blocks, hit, (at, state), player)?.to_vec(),
+        Placement::Rail => rails::place(&|p| state_at(world, p), at, state),
         _ => vec![(at, state)],
     };
     // Join fences, stairs and dust to what's around them.

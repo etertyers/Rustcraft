@@ -13,6 +13,7 @@ use crate::{
         effects::{Effect, EffectKind, SWEEP_FRAMES},
         falling::FallingBlock,
         item::ItemEntity,
+        minecart::{CartKind, Minecart},
         particle::Particle,
         tnt::PrimedTnt,
     },
@@ -83,6 +84,45 @@ pub fn add_falling_blocks(
             let texture = model.faces[face.index()];
             let color = models.icon_color(texture.tint).map(|c| c * face.shade());
             let corners = face_corners(face).map(|c| (corner + Vec3::from(c)).to_array());
+            mesh.quad(corners, texture.uv, [color; 4], [light; 4]);
+        }
+    }
+}
+
+/// Adds the block a chest, hopper or TNT minecart carries, three
+/// quarters size, turned with the cart.
+pub fn add_cart_blocks(
+    mesh: &mut Mesh,
+    carts: &[Minecart],
+    models: &BlockModels,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    for cart in carts {
+        let id = match cart.kind {
+            CartKind::Chest => blocks::CHEST,
+            CartKind::Hopper => blocks::HOPPER,
+            CartKind::Tnt => blocks::TNT,
+            CartKind::Rideable => continue,
+        };
+        let model = models.get(BlockState::of(id));
+        let base = cart.between_ticks(alpha);
+        let (sky, lit) = light_at(base + DVec3::Y * 0.5);
+        let light = [sky as f32, lit as f32];
+        let middle = (base + DVec3::Y * 0.47).as_vec3();
+        let turn = glam::Mat3::from_rotation_y(std::f32::consts::PI - cart.yaw);
+        let flash = if cart.kind == CartKind::Tnt && cart.fuse >= 0 && (cart.fuse / 5) % 2 == 0 {
+            2.5
+        } else {
+            1.0
+        };
+        for face in Face::ALL {
+            let texture = model.faces[face.index()];
+            let color = models
+                .icon_color(texture.tint)
+                .map(|c| c * face.shade() * flash);
+            let corners = face_corners(face)
+                .map(|c| (middle + turn * ((Vec3::from(c) - Vec3::splat(0.5)) * 0.75)).to_array());
             mesh.quad(corners, texture.uv, [color; 4], [light; 4]);
         }
     }
