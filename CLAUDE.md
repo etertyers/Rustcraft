@@ -104,6 +104,10 @@ src/
   entity/{mobs,mob,ai}.rs   # mob definitions (mobs.ron), a living mob, what each kind decides
   game/{mobs,mob_acts,animals}.rs   # mob ticks and spawning, what mobs do to the world, the player and animals
   world/worldgen/{climate,terrain,underground,features,ores}.rs   # climate noise and the biome table, land, surfaces and caves, cave biomes and geodes, trees and plants, veins
+  inventory/{enchant,anvil,grindstone}.rs   # enchantments and the table's offers, the anvil's rules, the grindstone's
+  player/experience.rs, entity/orb.rs   # levels and the bar, experience orbs
+  game/{experience,benches,gear}.rs   # orbs and where they come from, enchanting table / anvil / grindstone screens, what enchantments do in hand
+  ui/glint.rs   # the enchantment glint on icons (held and dropped items glint in shader.wgsl)
   audio/
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
@@ -361,7 +365,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - **Accurate ore generation by height**, following modern Minecraft's distributions adapted to our Y 0–255 world. Modern Y −64 to 63 is compressed into our Y 0 to 63, and everything at or above sea level keeps its modern Y. Ores use the modern triangular and uniform spreads, vein sizes and air-exposure reduction: coal (common high up, including in mountains), copper (mid-depth, more in dripstone caves), iron (deep, plus a band in mountains), gold (deep, extra in badlands), redstone and diamond (deepest, rarer when exposed to air), lapis (deep, peaking mid-low), emerald (mountain biomes only). Add deepslate and deepslate ore variants in the lowest layers. Write the final table in `DECISIONS.md` and unit-test that a sample of chunks matches the expected per-height counts.
 - **Done when:** a seed shows every new biome with correct terrain, trees, blocks and mobs; ores appear at the right heights (diamonds near the bottom, emeralds only in mountains); and the perf test still shows 60+ FPS at render distance 9.
 
-### - [ ] M22 — Experience, enchanting, and anvils
+### - [x] M22 — Experience, enchanting, and anvils
 - XP orbs from mobs, mining, smelting and breeding; XP bar and levels with modern level costs; XP lost on death.
 - Enchanting table with bookshelf power (up to 15), three offers, lapis cost, and the modern enchantment list for tools, weapons, armor, bows and fishing rods (where those exist).
 - Enchanted books, anvils (combine, repair, rename, "Too Expensive!" cap), grindstone.

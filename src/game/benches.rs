@@ -109,7 +109,12 @@ impl Game {
         let Some(stack) = bench.slots.first().and_then(Option::as_ref) else {
             return [None, None, None];
         };
-        if stack.is_enchanted() || stack.id == items::ENCHANTED_BOOK || stack.count != 1 {
+        // Books come in stacks; one at a time is enchanted. Anything else
+        // stacked can't be.
+        if stack.is_enchanted()
+            || stack.id == items::ENCHANTED_BOOK
+            || (stack.count != 1 && stack.id != items::BOOK)
+        {
             return [None, None, None];
         }
         let power = self.bookshelf_power(bench.at);
@@ -141,13 +146,31 @@ impl Game {
         let Some(mut item) = bench.slots[0].take() else {
             return false;
         };
+        let mut spare = None;
         if item.id == items::BOOK {
+            // One book of a stack becomes the enchanted book; the rest
+            // stay in the slot.
+            if item.count > 1 {
+                spare = Some(item.with_count(item.count - 1));
+            }
             item = ItemStack::new(items::ENCHANTED_BOOK, 1);
         }
         for &(enchantment, level) in &offer.enchants {
             item.enchant(enchantment, level);
         }
-        bench.slots[0] = Some(item);
+        match spare {
+            Some(rest) => {
+                bench.slots[0] = Some(rest);
+                let items = self.items.clone();
+                if let Some(left) = self.inventory.add(item, &items) {
+                    self.throw(left);
+                }
+            }
+            None => bench.slots[0] = Some(item),
+        }
+        let Some(Container::Bench(bench)) = &mut self.container else {
+            return false;
+        };
         if !free {
             if let Some(lapis) = bench.slots[1].as_mut() {
                 lapis.count -= price as u8;
@@ -615,5 +638,30 @@ mod tests {
         let before = other.stats.health;
         other.anvil_lands(state, IVec3::new(0, 64, 0), 1.0);
         assert_eq!(other.stats.health, before);
+    }
+
+    #[test]
+    fn a_stack_of_books_is_enchanted_one_book_at_a_time() {
+        let mut game = flat_game(GameMode::Survival);
+        table_with(&mut game, 15);
+        game.open_bench(BenchKind::Enchanting, TABLE);
+        if let Some(Container::Bench(bench)) = &mut game.container {
+            bench.slots[0] = Some(ItemStack::new(items::BOOK, 5));
+            bench.slots[1] = Some(ItemStack::new(items::LAPIS_LAZULI, 3));
+        }
+        give_levels(&mut game, 30);
+        assert!(game.enchant_item(0));
+        let bench = game.bench().unwrap();
+        assert_eq!(bench.slots[0], Some(ItemStack::new(items::BOOK, 4)));
+        let slot = game
+            .inventory
+            .find(items::ENCHANTED_BOOK)
+            .expect("the book");
+        assert!(game.inventory.slot(slot).unwrap().is_enchanted());
+        // A stack of anything else isn't enchantable.
+        if let Some(Container::Bench(bench)) = &mut game.container {
+            bench.slots[0] = Some(ItemStack::new(items::STICK, 4));
+        }
+        assert!(game.enchant_offers().iter().all(Option::is_none));
     }
 }
