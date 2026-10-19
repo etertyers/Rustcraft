@@ -5,12 +5,15 @@
 
 use glam::{DVec3, IVec3};
 
-use super::Game;
+use super::{
+    Game,
+    combat::{Outcome, Strike},
+};
 use crate::{
     entity::{
         ai::{self, Target, View},
         item::ItemEntity,
-        mob::{Mob, knock_back},
+        mob::{Mob, knock_back, push},
         mobs::{Ai, MobKind, Spawn},
         path::Terrain,
     },
@@ -152,10 +155,23 @@ impl Game {
             if def.burns_in_daylight && daytime && mob.body.liquid.is_none() {
                 self.maybe_ignite(mob);
             }
-            if let Some(damage) = intent.hit
-                && self.stats.damage(damage, DamageSource::Mob)
-            {
-                knock_back(&mut self.body, mob.feet());
+            if let Some(damage) = intent.hit {
+                let strike = Strike {
+                    amount: damage,
+                    source: DamageSource::Mob,
+                    from: Some(mob.feet()),
+                    ranged: false,
+                    axe: false,
+                };
+                match self.hurt_player(strike) {
+                    Outcome::Hurt { fresh: true } => knock_back(&mut self.body, mob.feet()),
+                    // A shield shoves the attacker back.
+                    Outcome::Blocked => {
+                        let away = mob.feet() - player_feet;
+                        push(&mut mob.body, crate::config::combat::SHIELD_KNOCKBACK, away);
+                    }
+                    _ => {}
+                }
             }
             if mob.is_dead() && !mob.looted {
                 mob.looted = true;

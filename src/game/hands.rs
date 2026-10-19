@@ -11,7 +11,12 @@ use crate::{
         item::ItemEntity,
         particle::{MAX_PARTICLES, Particle},
     },
-    inventory::{item::Tool, items, player::HOTBAR_SLOTS, stack::ItemStack},
+    inventory::{
+        item::Tool,
+        items,
+        player::{HOTBAR_SLOTS, Hand},
+        stack::ItemStack,
+    },
     player::{
         interaction::{self, BREAK_REPEAT_TICKS, PLACE_REPEAT_TICKS},
         raycast::Hit,
@@ -31,7 +36,64 @@ const EAT_TICKS: u32 = 32;
 impl Game {
     /// Eating or drawing a bow, which slows the player to a fifth.
     pub(super) fn using_item(&self) -> bool {
-        self.eating.is_some() || self.drawing.is_some()
+        self.eating.is_some() || self.drawing.is_some() || self.shield_hand.is_some()
+    }
+
+    /// The F key: swaps what the hands hold, ending whatever was in use.
+    pub fn swap_hands(&mut self) {
+        self.eating = None;
+        self.drawing = None;
+        self.shield_hand = None;
+        self.shield_ticks = 0;
+        self.inventory.swap_hands();
+    }
+
+    /// What the hand being used holds.
+    fn held(&self) -> Option<&ItemStack> {
+        self.inventory.hand_stack(self.use_hand)
+    }
+
+    /// The slot of the hand being used.
+    fn held_slot(&self) -> usize {
+        self.inventory.hand_slot(self.use_hand)
+    }
+
+    /// Whether `hand`'s item has something to do on a right-click now:
+    /// raising a shield, drawing a bow, eating, pouring a bucket, striking
+    /// flint, or placing a block against something looked at.
+    fn hand_uses(&self, hand: Hand, hit: Option<&Hit>) -> bool {
+        let Some(stack) = self.inventory.hand_stack(hand) else {
+            return false;
+        };
+        let Some(item) = self.items.item(stack.id) else {
+            return false;
+        };
+        if stack.id == items::SHIELD {
+            return true;
+        }
+        if hand == Hand::Main && (item.bucket.is_some() || item.shoots.is_some()) {
+            return true;
+        }
+        if let Some(food) = item.food {
+            return self.mode.is_vulnerable() && (food.always_edible || self.stats.can_eat());
+        }
+        hit.is_some() && (stack.id == items::FLINT_AND_STEEL || self.items.places(stack).is_some())
+    }
+
+    /// Whether `hand` holds something that shoots.
+    fn is_bow(&self, hand: Hand) -> bool {
+        self.inventory
+            .hand_stack(hand)
+            .and_then(|stack| self.items.item(stack.id))
+            .is_some_and(|item| item.shoots.is_some())
+    }
+
+    /// The hand a right-click uses: the main hand if it has something to do,
+    /// else the off-hand.
+    fn pick_use_hand(&self, hit: Option<&Hit>) -> Option<Hand> {
+        [Hand::Main, Hand::Off]
+            .into_iter()
+            .find(|&hand| self.hand_uses(hand, hit))
     }
 
     /// The block being mined and how far along it is (0–1), for the crack.
@@ -51,19 +113,38 @@ impl Game {
         self.place_cooldown = self.place_cooldown.saturating_sub(1);
         let wants_break = self.breaking || self.break_clicked;
         let using = self.placing || self.place_clicked;
-        if self.keep_drawing(using && !wants_break) {
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let hit = self.find_target(eye);
+        let hand = (using && !wants_break)
+            .then(|| self.pick_use_hand(hit.as_ref()))
+            .flatten();
+        // A shield stays up while its hand holds right-click.
+        self.keep_blocking(hand);
+        let bow_hand = hand.filter(|&h| self.is_bow(h));
+        self.use_hand = match (bow_hand, self.drawing) {
+            (Some(h), _) => h,
+            (None, Some(_)) => self.drawing_hand,
+            (None, None) => hand.unwrap_or(Hand::Main),
+        };
+        if self.keep_drawing(bow_hand.is_some()) {
             self.break_clicked = false;
             self.place_clicked = false;
             self.mining = None;
             return;
         }
-        if using && !wants_break && self.keep_eating() {
+        if let Some(h) = hand {
+            self.use_hand = h;
+        }
+        if hand.is_some() && self.keep_eating() {
             self.break_clicked = false;
             self.place_clicked = false;
             self.mining = None;
             return;
         }
         self.eating = None;
+        if let Some(h) = hand {
+            self.use_hand = h;
+        }
         let wants_place = using && self.place_cooldown == 0;
         let place_pressed = self.place_clicked;
         let clicked = self.break_clicked;
@@ -73,8 +154,6 @@ impl Game {
         }
         self.break_clicked = false;
         self.place_clicked = false;
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let hit = self.find_target(eye);
         // A mob in front of the targeted block is hit instead, once per click.
         if let Some(mob) = self.target_mob(eye, hit.as_ref())
             && (wants_break || self.mining.is_none())
@@ -89,7 +168,7 @@ impl Game {
             // Letting go or looking away starts the block over (1.0.0).
             self.mining = None;
         }
-        if using && !wants_break && self.holding_bucket() {
+        if using && !wants_break && self.use_hand == Hand::Main && self.holding_bucket() {
             // A bucket works on a fresh click, unless it's on a chest or
             // door, which opens as usual.
             let used = hit.is_some_and(|hit| self.activate(hit.block, place_pressed));
@@ -127,7 +206,14 @@ impl Game {
                     self.view.swing();
                 }
             } else if wants_place {
-                self.place(&hit);
+                if self
+                    .held()
+                    .is_some_and(|stack| stack.id == items::FLINT_AND_STEEL)
+                {
+                    self.strike_flint(&hit);
+                } else {
+                    self.place(&hit);
+                }
             }
         }
     }
@@ -234,34 +320,66 @@ impl Game {
     /// shoots on release. Returns true while drawing.
     fn keep_drawing(&mut self, using: bool) -> bool {
         let ammo = self
-            .inventory
-            .selected_stack()
+            .held()
             .and_then(|stack| self.items.item(stack.id))
             .and_then(|item| item.shoots);
         let Some(ammo) = ammo else {
             self.drawing = None;
             return false;
         };
-        let has_ammo = !self.mode.uses_up_items() || self.inventory.find(ammo).is_some();
+        let has_ammo = !self.mode.uses_up_items() || self.find_ammo(ammo).is_some();
         if using && has_ammo {
+            self.drawing_hand = self.use_hand;
             self.drawing = Some(self.drawing.map_or(1, |ticks| ticks + 1));
             return true;
         }
         if let Some(ticks) = self.drawing.take()
             && let Some(power) = arrow::bow_power(ticks)
         {
-            let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-            let forward = self.camera.forward().as_dvec3();
-            let pickup = self.mode.uses_up_items();
-            self.arrows.push(Arrow::shoot(eye, forward, power, pickup));
-            if pickup && let Some(slot) = self.inventory.find(ammo) {
-                self.inventory.take(slot, 1);
-            }
-            if self.mode.wears_tools() {
-                self.inventory.damage_selected(1, &self.items);
-            }
+            self.shoot_arrow(power, ammo);
         }
         false
+    }
+
+    /// The slot holding ammunition: the off-hand first, then the pack.
+    fn find_ammo(&self, ammo: crate::inventory::item::ItemId) -> Option<usize> {
+        if self
+            .inventory
+            .slot(crate::inventory::player::OFFHAND)
+            .is_some_and(|stack| stack.id == ammo)
+        {
+            return Some(crate::inventory::player::OFFHAND);
+        }
+        self.inventory.find(ammo)
+    }
+
+    /// Looses an arrow at `power` (0–1) from the bow in hand.
+    fn shoot_arrow(&mut self, power: f32, ammo: crate::inventory::item::ItemId) {
+        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let forward = self.camera.forward().as_dvec3();
+        let pickup = self.mode.uses_up_items();
+        // The arrow carries the shooter's own motion, up and down only in the air.
+        let mut carried = self.body.velocity;
+        if self.body.on_ground {
+            carried.y = 0.0;
+        }
+        let rng = &mut self.rng;
+        let mut random = || rng.next_f64();
+        self.arrows.push(Arrow::shoot(
+            eye,
+            forward,
+            power,
+            carried,
+            pickup,
+            &mut random,
+        ));
+        if pickup && let Some(slot) = self.find_ammo(ammo) {
+            self.inventory.take(slot, 1);
+        }
+        if self.mode.wears_tools() {
+            let slot = self.held_slot();
+            self.inventory.damage_slot(slot, 1, &self.items);
+        }
     }
 
     /// Moves arrows: hits on mobs, sticking in blocks, picking them up.
@@ -309,8 +427,8 @@ impl Game {
     /// A tick of eating the selected food while right-click is held.
     /// Returns false if the selected item can't be eaten now.
     fn keep_eating(&mut self) -> bool {
-        let slot = self.inventory.selected;
-        let Some(stack) = self.inventory.selected_stack().copied() else {
+        let slot = self.held_slot();
+        let Some(stack) = self.held().copied() else {
             return false;
         };
         let Some(food) = self.items.item(stack.id).and_then(|item| item.food) else {
@@ -429,7 +547,7 @@ impl Game {
 
     /// Places the selected stack's block against the clicked face.
     fn place(&mut self, hit: &Hit) {
-        let Some(stack) = self.inventory.selected_stack().copied() else {
+        let Some(stack) = self.held().copied() else {
             return;
         };
         let Some(block) = self.items.places(&stack) else {
@@ -446,7 +564,7 @@ impl Game {
         self.edit(&edits);
         self.view.swing();
         if self.mode.uses_up_items() {
-            self.inventory.take(self.inventory.selected, 1);
+            self.inventory.take(self.held_slot(), 1);
         }
         self.place_cooldown = PLACE_REPEAT_TICKS;
     }

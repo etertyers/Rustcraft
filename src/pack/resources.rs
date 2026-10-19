@@ -46,6 +46,19 @@ pub struct Resources {
     slices: HashMap<String, Slice>,
 }
 
+/// A shield's picture for the inventory: the plate on the front of its
+/// 64×64 entity texture (12×22 pixels from 1,1), fitted into a square tile.
+fn shield_icon(sheet: &RgbaImage) -> RgbaImage {
+    let scale = (sheet.width() / 64).max(1);
+    let plate = image::imageops::crop_imm(sheet, scale, scale, 12 * scale, 22 * scale).to_image();
+    let tile = 16 * scale;
+    let width = (tile * 12).div_ceil(22);
+    let plate = image::imageops::resize(&plate, width, tile, image::imageops::FilterType::Nearest);
+    let mut icon = RgbaImage::new(tile, tile);
+    image::imageops::replace(&mut icon, &plate, ((tile - width) / 2).into(), 0);
+    icon
+}
+
 /// `minecraft:block/stone` → `block/stone`.
 pub fn location(name: &str) -> &str {
     name.strip_prefix("minecraft:").unwrap_or(name)
@@ -155,6 +168,21 @@ impl Resources {
             });
         }
         self.slice_in(layer, name)
+            .or_else(|| self.derived_in(layer, name))
+    }
+
+    /// Textures made from others because no layout has them as files: the
+    /// shield's inventory picture is the front of its entity texture.
+    fn derived_in(&self, layer: usize, name: &str) -> Option<Texture> {
+        if location(name) != "item/shield" {
+            return None;
+        }
+        let sheet = self.texture_in(layer, "entity/shield_base_nopattern")?;
+        Some(Texture {
+            image: shield_icon(&sheet.image),
+            animation: None,
+            layer,
+        })
     }
 
     /// A texture cut from a sheet in one layer, if the name is on a sheet.
@@ -346,6 +374,38 @@ mod tests {
             (1, [0, 255, 0, 255])
         );
         assert!(bare.texture("particle/nothing").is_none());
+    }
+
+    #[test]
+    fn the_shield_icon_is_cut_from_its_entity_texture() {
+        let dir = TempDir::new("shield");
+        let base = dir.path().join("base");
+        std::fs::create_dir_all(base.join("textures/entity")).unwrap();
+        // A sheet that is red inside the 12×22 plate at (1,1) and blue outside.
+        let mut sheet = RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 255, 255]));
+        for y in 1..23 {
+            for x in 1..13 {
+                sheet.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+            }
+        }
+        let mut bytes = Vec::new();
+        sheet
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(
+            base.join("textures/entity/shield_base_nopattern.png"),
+            &bytes,
+        )
+        .unwrap();
+        let res = Resources::new(Pack::base(&base), Vec::new(), HashMap::new());
+        let icon = res.texture("item/shield").unwrap().image;
+        assert_eq!(icon.dimensions(), (16, 16));
+        // The plate fills the height and leaves clear margins at the sides.
+        assert_eq!(icon.get_pixel(8, 0).0, [255, 0, 0, 255]);
+        assert_eq!(icon.get_pixel(8, 15).0, [255, 0, 0, 255]);
+        assert_eq!(icon.get_pixel(0, 8).0[3], 0);
+        assert_eq!(icon.get_pixel(15, 8).0[3], 0);
+        assert!(res.texture("item/bucket").is_none());
     }
 
     #[test]

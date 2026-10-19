@@ -10,6 +10,7 @@ use crate::{
     config::combat as c,
     entity::{effects::Effect, mob::push},
     inventory::item::{Tool, ToolKind},
+    inventory::{items, player::Hand},
     player::stats::DamageSource,
 };
 
@@ -76,6 +77,30 @@ impl Stance {
             && self.on_ground
             && self.walked < self.speed
     }
+}
+
+/// A blow on the player.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Strike {
+    pub amount: f32,
+    pub source: DamageSource,
+    /// Where it came from, which a shield must face to block it.
+    pub from: Option<DVec3>,
+    /// A projectile, which a shield blocks without pushing back anyone.
+    pub ranged: bool,
+    /// Struck with an axe, which puts a raised shield out of use.
+    pub axe: bool,
+}
+
+/// What a blow did.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Outcome {
+    /// A raised shield took it.
+    Blocked,
+    /// It hurt; `fresh` hits knock the player back.
+    Hurt { fresh: bool },
+    /// Nothing happened (creative, dead, or a smaller hit while hurt).
+    Unhurt,
 }
 
 /// The result of a swing at a mob.
@@ -239,6 +264,90 @@ impl Game {
             + DVec3::Y * self.body.aabb().max.y * 0.5;
         self.effects
             .extend(Effect::sweep(in_front, self.camera.yaw));
+    }
+
+    /// Keeps the shield in `hand` raised while right-click is held with it,
+    /// or lowers it. A disabled shield stays down.
+    pub(super) fn keep_blocking(&mut self, hand: Option<Hand>) {
+        let raised = hand.filter(|&h| {
+            self.shield_cooldown == 0
+                && self
+                    .inventory
+                    .hand_stack(h)
+                    .is_some_and(|stack| stack.id == items::SHIELD)
+        });
+        match raised {
+            Some(h) => {
+                self.shield_hand = Some(h);
+                self.shield_ticks += 1;
+            }
+            None => {
+                self.shield_hand = None;
+                self.shield_ticks = 0;
+            }
+        }
+    }
+
+    /// Whether a shield is up and ready to take a blow (it takes 5 ticks to
+    /// raise).
+    pub fn is_blocking(&self) -> bool {
+        self.shield_hand.is_some() && self.shield_ticks >= c::SHIELD_RAISE_TICKS
+    }
+
+    /// The hand holding a raised shield, for drawing it.
+    pub fn shield_hand(&self) -> Option<Hand> {
+        self.shield_hand
+    }
+
+    /// Ticks left before a disabled shield can be raised again.
+    pub fn shield_cooldown(&self) -> u32 {
+        self.shield_cooldown
+    }
+
+    /// Puts the shield out of use for `ticks` (an axe blow: 100).
+    pub fn disable_shield(&mut self, ticks: u32) {
+        self.shield_cooldown = ticks;
+        self.shield_hand = None;
+        self.shield_ticks = 0;
+    }
+
+    /// Hurts the player, unless a raised shield facing the blow takes it
+    /// (modern `LivingEntity.hurt` with `isDamageSourceBlocked`): the
+    /// shield wears by one plus the damage for blows of three or more, and
+    /// an axe disables it for five seconds.
+    pub fn hurt_player(&mut self, strike: Strike) -> Outcome {
+        let blockable = matches!(strike.source, DamageSource::Mob | DamageSource::Arrow);
+        if blockable && self.is_blocking() && self.faces(strike.from) {
+            if strike.amount >= c::SHIELD_WEAR_FROM
+                && self.mode.wears_tools()
+                && let Some(hand) = self.shield_hand
+            {
+                let wear = 1 + strike.amount.floor() as u16;
+                if self.inventory.damage_hand(hand, wear, &self.items) {
+                    self.shield_hand = None;
+                    self.shield_ticks = 0;
+                }
+            }
+            if strike.axe {
+                self.disable_shield(c::SHIELD_DISABLE_TICKS);
+            }
+            return Outcome::Blocked;
+        }
+        if self.stats.damage(strike.amount, strike.source) {
+            Outcome::Hurt { fresh: true }
+        } else {
+            Outcome::Unhurt
+        }
+    }
+
+    /// Whether the player is turned toward `from`.
+    fn faces(&self, from: Option<DVec3>) -> bool {
+        let Some(from) = from else {
+            return false;
+        };
+        let to_player = self.body.position() - from;
+        let flat = DVec3::new(to_player.x, 0.0, to_player.z);
+        flat.length_squared() > 1e-9 && flat.normalize().dot(self.camera.forward().as_dvec3()) < 0.0
     }
 
     /// Whether the main hand's item is an axe.

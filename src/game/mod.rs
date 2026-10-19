@@ -11,6 +11,8 @@ mod mobs;
 #[cfg(test)]
 mod moves;
 #[cfg(test)]
+mod offhand;
+#[cfg(test)]
 mod progression;
 mod sleep;
 mod updates;
@@ -130,6 +132,13 @@ pub struct Game {
     last_main_item: Option<crate::inventory::item::ItemId>,
     /// Ticks until a disabled shield can be raised again.
     shield_cooldown: u32,
+    /// The hand a right-click is using the item of this tick (the main hand
+    /// unless it had nothing to do), and the hand a bow is being drawn in.
+    use_hand: crate::inventory::player::Hand,
+    drawing_hand: crate::inventory::player::Hand,
+    /// The hand holding a raised shield and for how many ticks.
+    shield_hand: Option<crate::inventory::player::Hand>,
+    shield_ticks: u32,
     pub arrows: Vec<Arrow>,
     /// Sand and gravel falling.
     pub falling: Vec<crate::entity::falling::FallingBlock>,
@@ -218,6 +227,10 @@ impl Game {
             attack_ticker: 100,
             last_main_item: None,
             shield_cooldown: 0,
+            use_hand: Default::default(),
+            drawing_hand: Default::default(),
+            shield_hand: None,
+            shield_ticks: 0,
             arrows: Vec::new(),
             falling: Vec::new(),
             falls_due: Vec::new(),
@@ -406,6 +419,8 @@ impl Game {
             self.inventory.selected = slot;
         } else if key == KeyCode::KeyQ && pressed && grabbed {
             self.throw_selected();
+        } else if key == KeyCode::KeyF && pressed && !repeat && grabbed {
+            self.swap_hands();
         } else if grabbed {
             self.keys.set_key(key, pressed);
         }

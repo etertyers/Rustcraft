@@ -30,6 +30,7 @@
     (name: "iron_pickaxe", texture: "iron_pickaxe", max_stack: 1, tool: (kind: Pickaxe, tier: Iron, attack: 4.0, attack_speed: 1.2)),
     (name: "iron_axe", texture: "iron_axe", max_stack: 1, tool: (kind: Axe, tier: Iron, attack: 9.0, attack_speed: 0.9)),
     (name: "flint_and_steel", texture: "flint_and_steel", max_stack: 1, durability: 64),
+    (name: "shield", texture: "shield", max_stack: 1, durability: 336),
     (name: "apple", texture: "apple", food: (hunger: 4, saturation: 0.3)),
     (name: "bow", texture: "bow", max_stack: 1, durability: 384, shoots: "arrow"),
     (name: "arrow", texture: "arrow"),

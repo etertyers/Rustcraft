@@ -87,6 +87,33 @@ impl Fires {
         }
     }
 
+    /// Lights a fire at `at` as flint and steel does (modern
+    /// `BaseFireBlock.canBePlacedAt`): in air where fire could stay, on a
+    /// sturdy block or beside something that burns. Returns the new block.
+    pub fn ignite(
+        &mut self,
+        world: &World,
+        blocks: &BlockRegistry,
+        at: IVec3,
+        time: u64,
+        random: &mut dyn FnMut(u32) -> u32,
+    ) -> Option<(IVec3, BlockState)> {
+        let mut step = Step {
+            world,
+            blocks,
+            fires: self,
+            time,
+            random,
+            edits: FastMap::default(),
+            order: Vec::new(),
+        };
+        if !step.is_air(at) || !step.can_survive(at) {
+            return None;
+        }
+        step.place_fire(at, 0);
+        Some((at, fire(0)))
+    }
+
     /// Puts out fire that lost its footing, runs the fire updates due by
     /// `time`, then random-ticks the lava in the chunks `near` the player.
     /// `random(n)` is a random number below `n`. Returns every changed
