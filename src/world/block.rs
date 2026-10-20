@@ -1546,6 +1546,22 @@ mod tests {
         ] {
             expected.push(format!("block/{name}"));
         }
+        // M25's fortress, bastion and netherite blocks.
+        for name in [
+            "ancient_debris_side",
+            "ancient_debris_top",
+            "chain",
+            "chiseled_nether_bricks",
+            "chiseled_polished_blackstone",
+            "cracked_nether_bricks",
+            "cracked_polished_blackstone_bricks",
+            "gilded_blackstone",
+            "netherite_block",
+            "polished_blackstone",
+            "polished_blackstone_bricks",
+        ] {
+            expected.push(format!("block/{name}"));
+        }
         // M24's Nether blocks from 1.16 on.
         for name in [
             "basalt_side",

@@ -86,6 +86,8 @@ pub fn repairs(tool: ItemId, material: ItemId) -> bool {
         material == "gold_ingot"
     } else if made_of("diamond_") {
         material == "diamond"
+    } else if made_of("netherite_") {
+        material == "netherite_ingot"
     } else if made_of("leather_") {
         material == "leather"
     } else {

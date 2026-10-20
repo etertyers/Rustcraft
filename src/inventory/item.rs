@@ -159,6 +159,8 @@ pub enum Tier {
     Stone,
     Iron,
     Diamond,
+    /// Modern netherite (M25).
+    Netherite,
 }
 
 impl Tier {
@@ -169,6 +171,7 @@ impl Tier {
             Tier::Stone => 4.0,
             Tier::Iron => 6.0,
             Tier::Diamond => 8.0,
+            Tier::Netherite => 9.0,
             Tier::Gold => 12.0,
         }
     }
@@ -180,6 +183,7 @@ impl Tier {
             Tier::Stone => 1,
             Tier::Iron => 2,
             Tier::Diamond => 3,
+            Tier::Netherite => 4,
         }
     }
 
@@ -189,6 +193,7 @@ impl Tier {
             Tier::Stone => 131,
             Tier::Iron => 250,
             Tier::Diamond => 1561,
+            Tier::Netherite => 2031,
             Tier::Gold => 32,
         }
     }
@@ -354,7 +359,7 @@ mod tests {
     fn every_item_texture_exists() {
         let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
         let missing = registry().missing_textures(|name| base.texture(name).is_some());
-        // M21's and M24's modern items, which Kenzo's 1.12-era textures
+        // M21's, M24's and M25's modern items, which Kenzo's 1.12-era textures
         // predate; a resource pack brings them.
         let needs_pack: BTreeSet<String> = [
             "amethyst_shard",
@@ -367,6 +372,20 @@ mod tests {
             "raw_copper",
             "warped_door",
             "warped_fungus_on_a_stick",
+            "chain",
+            "netherite_axe",
+            "netherite_boots",
+            "netherite_chestplate",
+            "netherite_helmet",
+            "netherite_hoe",
+            "netherite_ingot",
+            "netherite_leggings",
+            "netherite_pickaxe",
+            "netherite_scrap",
+            "netherite_shovel",
+            "netherite_sword",
+            "netherite_upgrade_smithing_template",
+            "wither_skeleton_skull",
         ]
         .map(|name| format!("item/{name}"))
         .into();

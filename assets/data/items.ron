@@ -200,4 +200,20 @@
     // Lights fires and portals like flint and steel, used up instead of worn.
     (name: "fire_charge", texture: "fire_charge"),
     (name: "warped_fungus_on_a_stick", texture: "warped_fungus_on_a_stick", max_stack: 1, durability: 100),
+    // M25
+    (name: "netherite_scrap", texture: "netherite_scrap"),
+    (name: "netherite_ingot", texture: "netherite_ingot"),
+    (name: "netherite_upgrade_smithing_template", texture: "netherite_upgrade_smithing_template"),
+    (name: "netherite_sword", texture: "netherite_sword", max_stack: 1, tool: (kind: Sword, tier: Netherite, attack: 8.0, attack_speed: 1.6, base_speed: 1.5, speeds: {"cobweb": 15.0}, wear: 2, hit_wear: 1)),
+    (name: "netherite_shovel", texture: "netherite_shovel", max_stack: 1, tool: (kind: Shovel, tier: Netherite, attack: 6.5, attack_speed: 1.0)),
+    (name: "netherite_pickaxe", texture: "netherite_pickaxe", max_stack: 1, tool: (kind: Pickaxe, tier: Netherite, attack: 6.0, attack_speed: 1.2)),
+    (name: "netherite_axe", texture: "netherite_axe", max_stack: 1, tool: (kind: Axe, tier: Netherite, attack: 10.0, attack_speed: 1.0)),
+    (name: "netherite_hoe", texture: "netherite_hoe", max_stack: 1, tool: (kind: Hoe, tier: Netherite, attack: 1.0, attack_speed: 4.0, wear: 0, hit_wear: 0)),
+    (name: "netherite_helmet", texture: "netherite_helmet", max_stack: 1, durability: 407),
+    (name: "netherite_chestplate", texture: "netherite_chestplate", max_stack: 1, durability: 592),
+    (name: "netherite_leggings", texture: "netherite_leggings", max_stack: 1, durability: 555),
+    (name: "netherite_boots", texture: "netherite_boots", max_stack: 1, durability: 481),
+    // The skull can't be placed yet (no head model); it's for the Wither,
+    // which isn't in v1.1.
+    (name: "wither_skeleton_skull", texture: "wither_skeleton_skull"),
 ]
