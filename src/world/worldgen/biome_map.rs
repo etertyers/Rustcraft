@@ -278,6 +278,92 @@ pub fn summary(stats: &BiomeStats) -> String {
     text
 }
 
+/// Surface heights and biomes on the quart grid, for the height map.
+pub struct HeightMap {
+    pub side: usize,
+    pub heights: Vec<i32>,
+    pub biomes: Vec<Biome>,
+}
+
+impl HeightMap {
+    /// `side` × `side` quarts centered on the origin, on every core.
+    pub fn sample(seed: u64, side: usize) -> Self {
+        let terrain = super::terrain::Terrain::new(seed);
+        let half = (side / 2) as i32;
+        let mut cells = vec![(0, Biome::Ocean); side * side];
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let rows_each = side.div_ceil(threads);
+        std::thread::scope(|scope| {
+            for (n, chunk) in cells.chunks_mut(rows_each * side).enumerate() {
+                let terrain = &terrain;
+                scope.spawn(move || {
+                    for (k, out) in chunk.iter_mut().enumerate() {
+                        let (i, j) = ((k % side) as i32, (n * rows_each + k / side) as i32);
+                        *out = terrain.corner_surface(i - half, j - half);
+                    }
+                });
+            }
+        });
+        Self {
+            side,
+            heights: cells.iter().map(|c| c.0).collect(),
+            biomes: cells.iter().map(|c| c.1).collect(),
+        }
+    }
+
+    /// Min, mean and max surface Y per biome, most common first.
+    pub fn stats(&self) -> Vec<(&'static str, i32, f64, i32, usize)> {
+        let mut by: BTreeMap<&'static str, (i32, i64, i32, usize)> = BTreeMap::new();
+        for (&h, b) in self.heights.iter().zip(&self.biomes) {
+            let e = by.entry(b.name()).or_insert((i32::MAX, 0, i32::MIN, 0));
+            e.0 = e.0.min(h);
+            e.1 += i64::from(h);
+            e.2 = e.2.max(h);
+            e.3 += 1;
+        }
+        let mut rows: Vec<_> = by
+            .into_iter()
+            .map(|(n, (lo, sum, hi, count))| (n, lo, sum as f64 / count as f64, hi, count))
+            .collect();
+        rows.sort_by_key(|row| std::cmp::Reverse(row.4));
+        rows
+    }
+
+    /// Biome colors shaded by the slope (light from the north-west), with
+    /// water darkened by its depth.
+    pub fn render(&self) -> RgbaImage {
+        let side = self.side as u32;
+        let at = |i: i64, j: i64| {
+            let (i, j) = (i.clamp(0, side as i64 - 1), j.clamp(0, side as i64 - 1));
+            self.heights[j as usize * self.side + i as usize]
+        };
+        RgbaImage::from_fn(side, side, |i, j| {
+            let (i64i, i64j) = (i as i64, j as i64);
+            let h = at(i64i, i64j);
+            let dx = f64::from(at(i64i + 1, i64j) - at(i64i - 1, i64j)) / 8.0;
+            let dz = f64::from(at(i64i, i64j + 1) - at(i64i, i64j - 1)) / 8.0;
+            let shade = (1.0 - 0.6 * (dx + dz)).clamp(0.35, 1.5);
+            let [r, g, b] = color(self.biomes[j as usize * self.side + i as usize]);
+            let depth = if h < crate::config::SEA_LEVEL {
+                1.0 - (f64::from(crate::config::SEA_LEVEL - h) / 40.0).min(0.75)
+            } else {
+                1.0
+            };
+            let k = |c: u8| (f64::from(c) * shade * depth).clamp(0.0, 255.0) as u8;
+            Rgba([k(r), k(g), k(b), 255])
+        })
+    }
+}
+
+/// The height map's printed table.
+pub fn height_summary(rows: &[(&'static str, i32, f64, i32, usize)]) -> String {
+    let mut text = String::from("biome                  min Y   mean Y   max Y\n");
+    for (name, lo, mean, hi, _) in rows {
+        text += &format!("{name:<22} {lo:>5}   {mean:>6.1}   {hi:>5}\n");
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

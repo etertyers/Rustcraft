@@ -237,14 +237,8 @@ pub fn blend(corners: [Climate; 4], tx: f64, tz: f64) -> Climate {
 pub struct Lay {
     /// Y of the topmost solid block.
     pub height: i32,
-    /// 0 (lowland) to 1 (mountain range).
-    pub mountain: f64,
-    /// 1 in a river's bed, falling to 0 at its banks.
-    pub river: f64,
-    /// 1 where erosion has worn the land flat at sea level (swamps).
-    pub flat: f64,
-    /// Whether this is a mushroom island.
-    pub mushroom: bool,
+    /// The surface height the shape pulls toward (the preliminary surface).
+    pub offset: f64,
 }
 
 #[cfg(test)]

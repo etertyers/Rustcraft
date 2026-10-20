@@ -205,3 +205,60 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 - Chunks generated before this change keep their old biomes.
 - The village seeds listed in the M23 PR were found with the old biomes and
   will have moved.
+
+## Session 2 summary (terrain shape)
+
+**How it works**
+- **Splines** (`src/world/worldgen/terrain_shape.rs`): continentalness, then erosion, then PV, nested as in vanilla's `TerrainProvider`. They give each column three values:
+  - `offset`: the surface height it's pulled toward.
+  - `factor`: how tightly it's pulled. The factor follows erosion, from 0.035 in mountains to 0.35 on worn-flat land. It's tighter in valleys (0.5) and under the sea (0.25).
+  - `jaggedness`: up to 18 extra blocks of ridged noise, only on peaks (PV > 0.4), at low erosion, inland.
+- **Density** (`terrain.rs`): `(offset + jaggedness × ridge − y) × factor + 0.6 × base 3D noise`, solid above zero.
+  - It's computed at the corners of 4 × 8 × 4 cells and trilinearly interpolated.
+  - Corners where the pull alone decides the sign skip the noise; that's the main speed trick.
+  - The noise fades out between Y 180 and 200, so nothing floats up there.
+  - The pull is capped at Y 240, and nothing is solid from Y 248.
+  - The chunk fill, the area's column heights and single-column `height()` all use the same corner grid, so features, structures and the filled chunk always agree.
+- **Water and caves**: water fills from the surface to Y 63. Caves stay 4 blocks below the floor of any water (it was 3).
+- **Depth**: cave biome depth now comes from the offset (the preliminary surface) at the quart's corner.
+- **Height map tool**: `cargo run --release -- --height-map --seed <n> --size <pixels> [--out <png>]`.
+  - It writes biome colors hillshaded from the north-west, with water darkened by depth. The default output is `docs/screenshots/m21-height-map.png`.
+  - It prints min, mean and max surface Y per biome.
+
+**Per-biome surface Y** (seed 20111118, 8192 blocks across):
+
+| Biome | min | mean | max |
+|---|---|---|---|
+| Deep oceans | 37 | 41–42 | 49–55 |
+| Oceans | 44 | 49–52 | 58 |
+| Beach | 55 | 60 | 69 |
+| Stony shore | 55 | 62 | 86 |
+| River | 55 | 57 | 59 |
+| Swamps | 57 | 64–65 | 83 |
+| Plains | 55 | 79 | 174 |
+| Forest | 55 | 86 | 218 |
+| Meadow | 93 | 125 | 176 |
+| Snowy slopes | 59 | 126 | 217 |
+| Jagged peaks | 128 | 180 | 227 |
+| Frozen peaks | 131 | 189 | 238 |
+| Mushroom fields | 54 | 66 | 72 |
+
+**Benchmark**: "generate a chunk" takes 1.25 ms, against 1.31 ms before this session.
+
+**Tests**
+- Added:
+  - Ocean biome columns sit under Y 60, and peaks average above 150 with nothing above 250.
+  - River columns hold water at Y 63 over a bed at 61 or lower.
+  - No terrain floats above 200.
+  - The same seed gives the same chunks.
+  - The spline targets hold, and jaggedness appears only on low-erosion peaks.
+- Changed:
+  - Lowland steps (erosion −0.2 and up) are at most 7 blocks, and anywhere at most 16.
+  - The old "peaks over 200 in this square" test is replaced by the per-biome one.
+
+**Known issues**
+- **Mushroom fields** rise as low islands (Y 54–72), as in vanilla, not the Y 35–45 sea floor the brief listed.
+- **Valley steps**: worn land can step up to 7 blocks where it drops into a river valley.
+- **Overhangs and caves**: mountains with low erosion have 3D overhangs. Air pockets the 3D noise leaves under the surface stay dry, even below sea level (there are no aquifers).
+- **Valleys in mountains**: every valley dips to just under sea level, even where the biome table says mountain (Valleys E0–E1 Mid/Far). These are dry or water-filled gorges.
+- **Old chunks**: chunks generated before this change keep their old shape, so there's a seam where old meets new.

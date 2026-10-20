@@ -12,8 +12,9 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::{
     biome_source,
-    climate::{self, COAST, Climate, ClimateNoise, Lay, MUSHROOM, OCEAN, noise_offset, noise_seed},
+    climate::{Climate, ClimateNoise, Lay, noise_offset, noise_seed},
     rng::{Rng, mix},
+    terrain_shape::Shaper,
 };
 use crate::{
     config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT},
@@ -56,7 +57,7 @@ const CAVERN_TOP: i32 = 56;
 /// squeezed into our y 0..63 like the ores.
 const LAVA_LEVEL: i32 = 5;
 /// Caves stay this far below the floor of any water.
-const CAVE_WATER_MARGIN: i32 = 3;
+const CAVE_WATER_MARGIN: i32 = 4;
 /// Caves stop this far under the surface, except at cave entrances.
 const CAVE_ROOF: i32 = 3;
 /// Cave noise is sampled every `CAVE_CELL_XZ` blocks across and
@@ -83,6 +84,8 @@ pub struct Column {
     pub cave: Option<Biome>,
     /// Steepest drop to a neighboring column, in blocks.
     pub slope: i32,
+    /// The preliminary surface (the shape's offset) at the quart's corner.
+    pub offset: f64,
 }
 
 impl Column {
@@ -98,8 +101,11 @@ pub struct Terrain {
     /// Coordinate shifts for the detail noise (see `noise_offset`).
     shift: [f64; 3],
     climate: ClimateNoise,
-    hills: Fbm<Perlin>,
-    ridges: Fbm<Perlin>,
+    shaper: Shaper,
+    /// The 3D noise that shapes the land around its offset.
+    base: Fbm<Perlin>,
+    /// Sharp ridges added on peaks.
+    jagged: Perlin,
     /// Varies surface layer depth and beach/gravel patches.
     surface: Perlin,
     entrances: Perlin,
@@ -119,13 +125,91 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
-/// Rivers run where weirdness crosses zero (where peaks-and-valleys is a
-/// valley, as the river biome is), this far either side in weirdness.
-const RIVER_BED: f64 = 0.03;
-/// Their valleys reach this far either side.
-const RIVER_VALLEY: f64 = 0.12;
-/// The bottom of a river bed.
-const RIVER_FLOOR: f64 = SEA_LEVEL as f64 - 4.0;
+/// Density is sampled at the corners of 4 × 8 × 4 cells and blended in
+/// between (modern `NoiseChunk`).
+const CELL_XZ: i32 = 4;
+const CELL_Y: i32 = 8;
+/// Corners up a column, every 8 blocks from 0 to the top.
+const LEVELS: usize = WORLD_HEIGHT / CELL_Y as usize + 1;
+/// The most the 3D noise moves density; it fades out from `NOISE_FADE`
+/// up to `NOISE_TOP`, so nothing floats up there.
+const NOISE_AMPLITUDE: f64 = 0.6;
+const NOISE_FADE: f64 = 180.0;
+const NOISE_TOP: f64 = 200.0;
+/// Highest the surface is pulled to, and nothing solid from `CAP` up.
+const MAX_TARGET: f64 = 240.0;
+const CAP: i32 = 248;
+
+/// Densities up one corner column, every `CELL_Y` blocks.
+type Levels = [f64; LEVELS];
+
+/// Corner columns on the `CELL_XZ` grid, and their shapes.
+struct Corners {
+    gx0: i32,
+    gz0: i32,
+    row: usize,
+    levels: Vec<Levels>,
+    offsets: Vec<f64>,
+    /// The climate at each corner (what its quart's biome comes from).
+    climates: Vec<Climate>,
+}
+
+impl Corners {
+    fn index(&self, gx: i32, gz: i32) -> usize {
+        (gz - self.gz0) as usize * self.row + (gx - self.gx0) as usize
+    }
+
+    /// The column at (x, z): its density levels blended from the four
+    /// corners round it.
+    fn levels(&self, x: i32, z: i32) -> Levels {
+        let (gx, gz) = (x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ));
+        let (tx, tz) = (
+            (x - gx * CELL_XZ) as f64 / CELL_XZ as f64,
+            (z - gz * CELL_XZ) as f64 / CELL_XZ as f64,
+        );
+        let i = self.index(gx, gz);
+        let (a, b, c, d) = (
+            &self.levels[i],
+            &self.levels[i + 1],
+            &self.levels[i + self.row],
+            &self.levels[i + self.row + 1],
+        );
+        std::array::from_fn(|k| lerp(lerp(a[k], b[k], tx), lerp(c[k], d[k], tx), tz))
+    }
+
+    /// The offset of the corner at the quart holding (x, z).
+    fn offset(&self, x: i32, z: i32) -> f64 {
+        self.offsets[self.index(x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ))]
+    }
+}
+
+/// The density at height `y` from a column's levels.
+fn density(levels: &Levels, y: i32) -> f64 {
+    let k = (y / CELL_Y) as usize;
+    if k + 1 >= LEVELS {
+        return levels[LEVELS - 1];
+    }
+    lerp(
+        levels[k],
+        levels[k + 1],
+        (y % CELL_Y) as f64 / CELL_Y as f64,
+    )
+}
+
+/// The topmost solid height in a column (0 if none).
+fn top_of(levels: &Levels) -> i32 {
+    for k in (0..LEVELS - 1).rev() {
+        if levels[k].max(levels[k + 1]) <= 0.0 {
+            continue;
+        }
+        for y in (k as i32 * CELL_Y..(k as i32 + 1) * CELL_Y).rev() {
+            if density(levels, y) > 0.0 {
+                return y;
+            }
+        }
+    }
+    0
+}
 
 const BAND_COUNT: usize = 64;
 
@@ -140,8 +224,9 @@ impl Terrain {
             seed,
             shift: noise_offset(seed, 0),
             climate: ClimateNoise::new(seed),
-            hills: fbm(4, 4, 140.0),
-            ridges: fbm(14, 3, 70.0),
+            shaper: Shaper::new(),
+            base: fbm(4, 3, 90.0),
+            jagged: Perlin::new(noise_seed(seed, 14)),
             surface: Perlin::new(noise_seed(seed, 5)),
             entrances: Perlin::new(noise_seed(seed, 16)),
             tunnel_a: Perlin::new(noise_seed(seed, 6)),
@@ -160,63 +245,93 @@ impl Terrain {
         self.climate.at(x, z)
     }
 
-    /// How the land lies at a column with climate `c`.
-    fn lay(&self, x: i32, z: i32, c: &Climate) -> Lay {
-        let sea = SEA_LEVEL as f64;
-        let (fx, fz) = (x as f64 + self.shift[0], z as f64 + self.shift[2]);
-        let continent = c.continent;
-        // 0 at the shore, 1 far inland.
-        let inland = smoothstep(COAST, 0.45, continent);
-        // Ocean floors deepen away from the shore: 58 at the edge of the
-        // ocean, about 42 where it turns deep, 28 at the deepest.
-        let deep = ((OCEAN - continent) / (1.0 + OCEAN)).clamp(0.0, 1.0);
-        let ocean_floor = sea - 5.0 - 30.0 * deep.powf(0.7);
-        let land = sea + 2.0 + 16.0 * inland;
-        let shelf = smoothstep(OCEAN, COAST, continent);
-        let mut height = lerp(ocean_floor, land, shelf);
+    /// The density levels of the corner column at grid point (gx, gz)
+    /// (block x = gx × 4), and its offset: `(offset − y) × factor`, pulled
+    /// toward the offset plus jagged peaks, moved by the 3D noise where it
+    /// could matter.
+    fn corner(&self, gx: i32, gz: i32, c: &Climate) -> (Levels, f64) {
+        let (x, z) = (gx * CELL_XZ, gz * CELL_XZ);
+        let shape = self.shaper.shape(c);
+        let ridge = 1.0
+            - self
+                .jagged
+                .get([
+                    x as f64 / 24.0 + self.shift[0],
+                    z as f64 / 24.0 + self.shift[2],
+                ])
+                .abs();
+        let target = (shape.offset + shape.jaggedness * ridge * ridge).min(MAX_TARGET);
+        let levels = std::array::from_fn(|k| {
+            let y = k as i32 * CELL_Y;
+            if y >= CAP {
+                return -1.0;
+            }
+            let pulled = (target - y as f64) * shape.factor;
+            let amplitude = NOISE_AMPLITUDE * smoothstep(NOISE_TOP, NOISE_FADE, y as f64);
+            // Far from the surface the noise can't change the sign.
+            if pulled.abs() >= amplitude {
+                return pulled;
+            }
+            let noise = self.base.get([
+                x as f64 + self.shift[0],
+                y as f64 * 1.5 + self.shift[1],
+                z as f64 + self.shift[2],
+            ]);
+            pulled + amplitude * noise.clamp(-1.0, 1.0)
+        });
+        (levels, shape.offset)
+    }
 
-        // Mountains rise far enough inland where erosion is low, highest
-        // where weirdness folds into peaks.
-        let mountain = inland.powf(1.2) * smoothstep(0.05, -0.4, c.erosion);
-        let peaks = smoothstep(-0.3, 1.0, c.peaks());
-        height += mountain * (25.0 + 125.0 * peaks);
-        let roughness = 1.0 - smoothstep(-1.0, 1.0, c.erosion);
-        let hills = self.hills.get([fx, fz]);
-        height += hills * (3.0 + 10.0 * inland * roughness + 22.0 * mountain);
-        if mountain > 0.05 {
-            let ridge = 1.0 - self.ridges.get([fx, fz]).abs() * 1.6;
-            height += ridge.max(0.0).powi(2) * 20.0 * mountain * peaks;
+    /// The corners covering blocks `x0..=x1`, `z0..=z1`.
+    fn corners(&self, x0: i32, z0: i32, x1: i32, z1: i32) -> Corners {
+        let (gx0, gz0) = (x0.div_euclid(CELL_XZ), z0.div_euclid(CELL_XZ));
+        let (gx1, gz1) = (x1.div_euclid(CELL_XZ) + 1, z1.div_euclid(CELL_XZ) + 1);
+        let row = (gx1 - gx0 + 1) as usize;
+        let mut levels = Vec::with_capacity(row * (gz1 - gz0 + 1) as usize);
+        let mut offsets = Vec::with_capacity(levels.capacity());
+        let mut climates = Vec::with_capacity(levels.capacity());
+        for gz in gz0..=gz1 {
+            for gx in gx0..=gx1 {
+                let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
+                let (l, o) = self.corner(gx, gz, &c);
+                levels.push(l);
+                offsets.push(o);
+                climates.push(c);
+            }
         }
-
-        // Worn-flat land sinks to the sea: swamps.
-        let flat = smoothstep(0.5, 0.78, c.erosion)
-            * (1.0 - mountain)
-            * smoothstep(COAST, COAST + 0.12, continent);
-        height = lerp(height, sea - 0.4 + hills * 1.5, flat);
-
-        // Rivers cut valleys down to just under sea level, then a bed.
-        let strength = (1.0 - smoothstep(0.08, 0.3, mountain))
-            * (1.0 - smoothstep(95.0, 125.0, height))
-            * smoothstep(OCEAN, COAST, continent);
-        let off = c.weirdness.abs();
-        let valley = (1.0 - smoothstep(0.0, RIVER_VALLEY, off)) * strength;
-        let river = (1.0 - smoothstep(0.0, RIVER_BED, off)) * strength;
-        height = lerp(height, height.min(sea + 1.0), valley);
-        height = lerp(height, RIVER_FLOOR, river);
-
-        // Mushroom islands: low hills far out at sea.
-        let island = smoothstep(MUSHROOM + 0.05, MUSHROOM, continent);
-        if island > 0.0 {
-            height = lerp(height, sea + 3.0 + hills.abs() * 6.0, island);
+        Corners {
+            gx0,
+            gz0,
+            row,
+            levels,
+            offsets,
+            climates,
         }
-        let mushroom = island > 0.5;
+    }
+
+    /// How the land lies at one column.
+    fn lay(&self, x: i32, z: i32) -> Lay {
+        let corners = self.corners(x, z, x, z);
         Lay {
-            height: height.round().clamp(6.0, WORLD_HEIGHT as f64 - 16.0) as i32,
-            mountain,
-            river,
-            flat,
-            mushroom,
+            height: top_of(&corners.levels(x, z)),
+            offset: corners.offset(x, z),
         }
+    }
+
+    /// The surface height and biome at the corner column of grid point
+    /// (gx, gz) (block x = gx × 4), for maps.
+    pub fn corner_surface(&self, gx: i32, gz: i32) -> (i32, Biome) {
+        let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
+        let (levels, _) = self.corner(gx, gz, &c);
+        (top_of(&levels), biome_source::surface(&c))
+    }
+
+    /// The preliminary surface (the shape's offset) at the quart holding
+    /// (x, z).
+    pub fn offset(&self, x: i32, z: i32) -> f64 {
+        let (gx, gz) = (x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ));
+        let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
+        self.shaper.shape(&c).offset
     }
 
     /// The surface biome of the quart holding (x, z), straight from the
@@ -227,7 +342,7 @@ impl Terrain {
 
     /// Height of the topmost solid block.
     pub fn height(&self, x: i32, z: i32) -> i32 {
-        self.lay(x, z, &self.climate(x, z)).height
+        self.lay(x, z).height
     }
 
     /// Noise in -1..1 for surface details at a column.
@@ -241,9 +356,8 @@ impl Terrain {
     /// The column at (x, z), working out its neighbors' heights for the slope.
     pub fn column(&self, x: i32, z: i32) -> Column {
         let around = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.height(x + dx, z + dz));
-        let c = self.climate(x, z);
         let quart = self.climate.quart(x, z);
-        self.column_with(x, z, quart, self.lay(x, z, &c), around)
+        self.column_with(x, z, quart, self.lay(x, z), around)
     }
 
     /// The column at (x, z) with its quart's climate `quart` (which picks
@@ -269,6 +383,7 @@ impl Terrain {
             entrance,
             cave,
             slope,
+            offset: lay.offset,
         }
     }
 
@@ -346,41 +461,16 @@ impl Terrain {
         let (cx, cz) = center.min_block();
         let (min_x, min_z) = (cx - Area::MARGIN, cz - Area::MARGIN);
         let side = Area::SIDE;
-        // Climate on the grid, covering one column more each way for the slopes.
-        let grid = climate::GRID;
-        let (gx0, gz0) = ((min_x - 1).div_euclid(grid), (min_z - 1).div_euclid(grid));
-        let (gx1, gz1) = (
-            (min_x + side).div_euclid(grid) + 1,
-            (min_z + side).div_euclid(grid) + 1,
-        );
-        let row = (gx1 - gx0 + 1) as usize;
-        let samples: Vec<Climate> = (gz0..=gz1)
-            .flat_map(|j| (gx0..=gx1).map(move |i| (i, j)))
-            .map(|(i, j)| self.climate.sample(i * grid, j * grid))
-            .collect();
-        let climate_at = |x: i32, z: i32| {
-            let (gx, gz) = (x.div_euclid(grid), z.div_euclid(grid));
-            let (i, j) = ((gx - gx0) as usize, (gz - gz0) as usize);
-            let tx = (x - gx * grid) as f64 / grid as f64;
-            let tz = (z - gz * grid) as f64 / grid as f64;
-            climate::blend(
-                [
-                    samples[j * row + i],
-                    samples[j * row + i + 1],
-                    samples[(j + 1) * row + i],
-                    samples[(j + 1) * row + i + 1],
-                ],
-                tx,
-                tz,
-            )
-        };
-        // Lays one column further each way, for the slopes.
+        // Density corners covering one column more each way, for the slopes.
+        let corners = self.corners(min_x - 1, min_z - 1, min_x + side, min_z + side);
         let wide = (side + 2) as usize;
         let mut lays = Vec::with_capacity(wide * wide);
         for z in min_z - 1..min_z + side + 1 {
             for x in min_x - 1..min_x + side + 1 {
-                let c = climate_at(x, z);
-                lays.push(self.lay(x, z, &c));
+                lays.push(Lay {
+                    height: top_of(&corners.levels(x, z)),
+                    offset: corners.offset(x, z),
+                });
             }
         }
         let mut columns = Vec::with_capacity((side * side) as usize);
@@ -389,11 +479,8 @@ impl Terrain {
                 let i = (z as usize + 1) * wide + x as usize + 1;
                 let around = [i + 1, i - 1, i + wide, i - wide].map(|j| lays[j].height);
                 let (wx, wz) = (min_x + x, min_z + z);
-                let (qi, qj) = (
-                    (wx.div_euclid(grid) - gx0) as usize,
-                    (wz.div_euclid(grid) - gz0) as usize,
-                );
-                let quart = samples[qj * row + qi];
+                let quart =
+                    corners.climates[corners.index(wx.div_euclid(CELL_XZ), wz.div_euclid(CELL_XZ))];
                 columns.push(self.column_with(wx, wz, quart, lays[i], around));
             }
         }
@@ -401,6 +488,7 @@ impl Terrain {
             min_x,
             min_z,
             columns,
+            corners,
         }
     }
 
@@ -595,16 +683,23 @@ impl Terrain {
                     && z % 4 == 0
                 {
                     let (lo, hi) = biome_source::CAVE_DEPTH;
-                    let top = column.height - (lo * 128.0).ceil() as i32;
-                    let bottom = (column.height - (hi * 128.0) as i32).max(CAVE_BIOME_FLOOR);
+                    let surface = column.offset.round() as i32;
+                    let top = surface - (lo * 128.0).ceil() as i32;
+                    let bottom = (surface - (hi * 128.0) as i32).max(CAVE_BIOME_FLOOR);
                     for y in (bottom..=top).step_by(4) {
                         chunk.set_cave_biome(x, y as usize, z, Some(cave));
                     }
                 }
                 let depth = 3 + (self.surface_noise(wx, wz, 8.0, 7.3) * 1.5 + 1.5) as i32;
+                // Solid wherever the blended density is above zero; the
+                // surface layers follow the topmost solid block, and
+                // overhangs leave air under them.
+                let levels = area.corners.levels(wx, wz);
                 for y in 1..=column.height {
-                    let block = self.layer(&column, wx, y, wz, depth, &mut rng);
-                    chunk.set(x, y as usize, z, block);
+                    if density(&levels, y) > 0.0 {
+                        let block = self.layer(&column, wx, y, wz, depth, &mut rng);
+                        chunk.set(x, y as usize, z, block);
+                    }
                 }
                 for y in column.height + 1..=SEA_LEVEL {
                     chunk.set(x, y as usize, z, WATER);
@@ -727,6 +822,8 @@ pub struct Area {
     min_x: i32,
     min_z: i32,
     columns: Vec<Column>,
+    /// The density corners, for filling the chunk.
+    corners: Corners,
 }
 
 impl Area {
@@ -860,20 +957,96 @@ mod tests {
         );
     }
 
+    /// Surface heights and biomes on the quart grid of a square
+    /// `side` quarts across round the origin.
+    fn quarts(terrain: &Terrain, side: i32) -> Vec<(i32, Biome)> {
+        (-side / 2..side / 2)
+            .flat_map(|j| (-side / 2..side / 2).map(move |i| (i, j)))
+            .map(|(i, j)| terrain.corner_surface(i * 3, j * 3))
+            .collect()
+    }
+
     #[test]
-    fn mountains_reach_high_and_oceans_deep() {
+    fn oceans_sit_low_peaks_high_and_nothing_reaches_250() {
         let terrain = Terrain::new(20111118);
-        let mut heights: Vec<i32> = (-4000..4000)
-            .step_by(40)
-            .flat_map(|z| (-4000..4000).step_by(40).map(move |x| (x, z)))
-            .map(|(x, z)| terrain.height(x, z))
-            .collect();
+        let cells = quarts(&terrain, 1200);
+        let mean = |pick: fn(Biome) -> bool| {
+            let hs: Vec<f64> = cells
+                .iter()
+                .filter(|c| pick(c.1))
+                .map(|c| f64::from(c.0))
+                .collect();
+            (hs.iter().sum::<f64>() / hs.len().max(1) as f64, hs.len())
+        };
+        for &(h, biome) in &cells {
+            if biome.is_ocean() {
+                assert!(h < 60, "{biome:?} at {h}");
+            }
+            assert!(h <= 250, "{h}");
+        }
+        let (peaks, n) = mean(|b| matches!(b, Biome::JaggedPeaks | Biome::FrozenPeaks));
+        assert!(n > 50 && peaks > 150.0, "peaks average {peaks} over {n}");
+        let mut heights: Vec<i32> = cells.iter().map(|c| c.0).collect();
         heights.sort();
-        let q = |p: f64| heights[((heights.len() - 1) as f64 * p) as usize];
-        assert!(q(0.995) > 200, "highest peaks reach only {}", q(0.995));
-        assert!(*heights.last().unwrap() <= WORLD_HEIGHT as i32 - 16);
-        assert!(q(0.02) < 40, "deep oceans only reach {}", q(0.02));
-        assert!((60..75).contains(&q(0.5)), "median height {}", q(0.5));
+        assert!(
+            heights[heights.len() / 50] < 45,
+            "deep oceans only reach {}",
+            heights[heights.len() / 50]
+        );
+    }
+
+    #[test]
+    fn rivers_hold_water_to_sea_level_over_a_low_bed() {
+        let terrain = Terrain::new(20111118);
+        let mut checked = 0;
+        'search: for j in -400..400 {
+            for i in -400..400 {
+                let (x, z) = (i * 12, j * 12);
+                if terrain.biome_at(x, z) != Biome::River || terrain.height(x, z) >= SEA_LEVEL {
+                    continue;
+                }
+                let chunk = terrain.generate(ChunkPos::of_block(x, z));
+                let (lx, lz) = local(x, z);
+                let column = terrain.column(x, z);
+                assert!(column.height <= 61, "river bed at {}", column.height);
+                assert_eq!(chunk.get(lx, SEA_LEVEL as usize, lz), WATER);
+                assert!(chunk.get(lx, SEA_LEVEL as usize + 1, lz).is_air());
+                checked += 1;
+                if checked == 20 {
+                    break 'search;
+                }
+            }
+        }
+        assert_eq!(checked, 20);
+    }
+
+    #[test]
+    fn nothing_floats_above_200() {
+        let terrain = Terrain::new(15);
+        let mut high = 0;
+        for j in -6..6 {
+            for i in -6..6 {
+                // The terrain alone (trees overhang, caves are carved).
+                let mut chunk = Chunk::new(ChunkPos::new(i * 7, j * 7));
+                terrain.fill(&mut chunk);
+                for z in 0..16 {
+                    for x in 0..16 {
+                        // From 200 up, every column is solid from 200 to its
+                        // top: no air under solid ground.
+                        let solid = |y: usize| chunk.get(x, y, z).def().solid;
+                        let top = (200..WORLD_HEIGHT).rev().find(|&y| solid(y));
+                        if let Some(top) = top {
+                            high += 1;
+                            for y in 200..top {
+                                let b = chunk.get(x, y, z);
+                                assert!(!b.is_air(), "a gap at {y} under {top}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(high > 0, "nothing reached 200 to check");
     }
 
     #[test]
@@ -883,22 +1056,22 @@ mod tests {
         for z in (-3000..3000).step_by(61) {
             let mut previous = terrain.height(-3000, z);
             for x in -2999..3000 {
-                let c = terrain.climate(x, z);
-                let lay = terrain.lay(x, z, &c);
+                let lay = terrain.lay(x, z);
                 let step = (lay.height - previous).abs();
                 anywhere = anywhere.max(step);
-                // Lowlands, not counting the sea floor far under water.
-                if lay.mountain < 0.02 && lay.height > SEA_LEVEL - 12 {
+                // Lowlands (worn smooth: erosion -0.2 and up, pulled to
+                // under 90), not counting the sea floor far under water.
+                let worn = terrain.climate.quart(x, z).erosion >= -0.2;
+                if worn && lay.offset < 90.0 && lay.height > SEA_LEVEL - 12 {
                     lowland = lowland.max(step);
                 }
                 previous = lay.height;
             }
         }
-        // Rivers follow weirdness valleys (as the river biome does), and
-        // their banks steepen where weirdness changes fast; the terrain
-        // rework (worldgen session 2) shapes valleys properly.
-        assert!(lowland <= 8, "a {lowland}-block step in the lowlands");
-        assert!(anywhere <= 14, "a {anywhere}-block cliff");
+        // Worn land holds to its offset; mountains are left to the 3D
+        // noise, whose overhangs make the top jump further.
+        assert!(lowland <= 7, "a {lowland}-block step in the lowlands");
+        assert!(anywhere <= 16, "a {anywhere}-block cliff");
     }
 
     #[test]
@@ -1162,16 +1335,11 @@ mod tests {
                     let h = terrain.height(x, z);
                     steps[((h - prev).unsigned_abs() as usize).min(63)] += 1;
                     if (h - prev).abs() > 9 {
-                        let c = terrain.climate(x, z);
-                        let lay = terrain.lay(x, z, &c);
                         println!(
-                            "    step {} at {x},{z}: {:?} m {:.2} river {:.2} flat {:.2} {:?}",
+                            "    step {} at {x},{z}: {:?} offset {:.1}",
                             h - prev,
                             terrain.column(x, z).biome,
-                            lay.mountain,
-                            lay.river,
-                            lay.flat,
-                            lay.mushroom
+                            terrain.lay(x, z).offset,
                         );
                     }
                     prev = h;

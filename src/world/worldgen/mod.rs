@@ -9,4 +9,5 @@ pub mod gallery;
 pub mod ores;
 pub mod rng;
 pub mod terrain;
+pub mod terrain_shape;
 pub mod underground;
