@@ -52,6 +52,10 @@ impl Game {
             self.schedule_fall(at);
             for face in Face::ALL {
                 let next = at + IVec3::from_array(face.normal());
+                if self.break_loose_portal(next) {
+                    queue.push_back(next);
+                    continue;
+                }
                 self.pop_unsupported(next, at);
                 self.harden(next);
                 self.schedule_fall(next);

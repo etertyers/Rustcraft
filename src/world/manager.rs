@@ -31,12 +31,13 @@ use super::{
     light::{ChunkLight, light_chunk},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
     save::{RegionStore, SaveError},
-    worldgen::{flat, terrain::Terrain},
+    worldgen::{flat, nether::Nether, terrain::Terrain},
 };
 
 /// Where new chunks come from.
 pub enum ChunkSource {
     Terrain(Box<Terrain>),
+    Nether(Box<Nether>),
     Flat,
     /// Fixed chunks (the block gallery); anywhere else is empty.
     Fixed(HashMap<ChunkPos, Chunk>),
@@ -46,6 +47,7 @@ impl ChunkSource {
     fn generate(&self, pos: ChunkPos) -> Chunk {
         match self {
             ChunkSource::Terrain(terrain) => terrain.generate(pos),
+            ChunkSource::Nether(nether) => nether.generate(pos),
             ChunkSource::Flat => flat::flat_chunk(pos),
             ChunkSource::Fixed(chunks) => {
                 chunks.get(&pos).cloned().unwrap_or_else(|| Chunk::new(pos))
@@ -56,6 +58,7 @@ impl ChunkSource {
     pub fn seed(&self) -> Option<u64> {
         match self {
             ChunkSource::Terrain(terrain) => Some(terrain.seed()),
+            ChunkSource::Nether(nether) => Some(nether.world_seed()),
             _ => None,
         }
     }
@@ -128,6 +131,8 @@ pub struct ChunkManager {
     lights: FastMap<ChunkPos, ChunkLight>,
     /// Time the workers spent, for `--perf-test`.
     stats: Arc<WorkStats>,
+    /// Chunks `load_now` brought in, reported by the next `update`.
+    loaded_now: Vec<ChunkPos>,
 }
 
 /// Offsets within `radius + 1` chunks (one ring more is generated so the
@@ -290,6 +295,7 @@ impl ChunkManager {
             relight: FastSet::default(),
             lights: FastMap::default(),
             stats,
+            loaded_now: Vec::new(),
         }
     }
 
@@ -333,14 +339,17 @@ impl ChunkManager {
         let mut changes = Changes {
             meshes: std::mem::take(&mut self.remeshed),
             unloaded: Vec::new(),
-            loaded: Vec::new(),
+            loaded: std::mem::take(&mut self.loaded_now),
         };
 
         for _ in 0..MAX_RESULTS_PER_FRAME {
             match self.done.try_recv() {
                 Ok(Done::Generated(chunk)) => {
                     self.generating.remove(&chunk.pos);
-                    if Self::distance(chunk.pos, center) <= self.radius + 1 {
+                    // A chunk loaded on the spot (`load_now`) may beat its job.
+                    if self.world.get(chunk.pos).is_none()
+                        && Self::distance(chunk.pos, center) <= self.radius + 1
+                    {
                         changes.loaded.push(chunk.pos);
                         self.world.insert(*chunk);
                     }
@@ -452,6 +461,53 @@ impl ChunkManager {
                 self.relight.insert(pos);
             }
         }
+    }
+
+    pub fn models(&self) -> &Arc<BlockModels> {
+        &self.models
+    }
+
+    pub fn blend(&self) -> i32 {
+        self.blend
+    }
+
+    /// Loads (or generates) the chunk at `pos` right away on this thread,
+    /// for places that need it this tick: where a portal leads.
+    pub fn load_now(&mut self, pos: ChunkPos) {
+        if self.world.get(pos).is_some() {
+            return;
+        }
+        if let Some(chunk) = self.unloaded_edits.remove(&pos) {
+            self.world.insert_shared(chunk);
+        } else {
+            let chunk = self.source.load_or_generate(self.store.as_deref(), pos);
+            self.world.insert(chunk);
+        }
+        self.loaded_now.push(pos);
+    }
+
+    /// Drops every chunk, keeping the changed ones in memory until they're
+    /// saved: for a dimension the player has left.
+    pub fn unload_all(&mut self) {
+        let loaded: Vec<ChunkPos> = self.world.positions().collect();
+        for pos in loaded {
+            if let Some(chunk) = self.world.remove(pos)
+                && self.unsaved.contains(&pos)
+            {
+                self.unloaded_edits.insert(pos, chunk);
+            }
+        }
+        self.meshed.clear();
+        self.relight.clear();
+        self.lights.clear();
+        self.remeshed.clear();
+        self.loaded_now.clear();
+    }
+
+    /// Whether the chunks within `reach` of `center` are loaded and drawn.
+    pub fn ready_around(&self, center: ChunkPos, reach: i32) -> bool {
+        (-reach..=reach)
+            .all(|dz| (-reach..=reach).all(|dx| self.meshed.contains(&center.offset(dx, dz))))
     }
 
     /// Chunks drawn in each direction.

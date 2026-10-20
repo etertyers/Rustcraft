@@ -255,7 +255,7 @@ impl Game {
     }
 
     /// The mob the player sits on.
-    fn mount_index(&self) -> Option<usize> {
+    pub(super) fn mount_index(&self) -> Option<usize> {
         let id = self.mounted?;
         self.mobs.iter().position(|m| m.id == id)
     }

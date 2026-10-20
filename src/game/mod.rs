@@ -7,6 +7,7 @@ mod benches;
 mod capture;
 mod combat;
 mod containers;
+mod dimensions;
 pub mod environment;
 mod experience;
 mod explosion;
@@ -23,6 +24,7 @@ mod mobs;
 mod moves;
 #[cfg(test)]
 mod offhand;
+mod portals;
 #[cfg(test)]
 mod progression;
 mod redstone;
@@ -69,7 +71,7 @@ use crate::{
         fast_hash::{FastMap, FastSet},
         fire::Fires,
         fluid::{self, Fluids},
-        manager::{ChunkManager, ChunkSource},
+        manager::ChunkManager,
         mesh::BlockModels,
         redstone::Redstone,
         worldgen::{rng::Rng, terrain::Terrain},
@@ -213,6 +215,19 @@ pub struct Game {
     /// Where the world is saved; `None` for the test worlds.
     saved: Option<SavedWorld>,
     ticks_since_save: u32,
+    /// The dimension the player is in, and the others as they were left.
+    dimension: crate::world::dimension::Dimension,
+    away: FastMap<crate::world::dimension::Dimension, dimensions::Away>,
+    /// Set on going to another dimension, until the app has seen it.
+    dimension_changed: bool,
+    /// Ticks spent waiting for the chunks around a player who just went
+    /// to another dimension.
+    arriving: Option<u32>,
+    /// Every Nether portal lit or built, by dimension: a block of its
+    /// bottom row (where linking looks first).
+    portals: Vec<(crate::world::dimension::Dimension, [i32; 3])>,
+    /// Standing in a portal.
+    portal: portals::PortalState,
 }
 
 /// A world's folder and its level data, kept for the next save.
@@ -300,6 +315,12 @@ impl Game {
             time: 0,
             saved: None,
             ticks_since_save: 0,
+            dimension: Default::default(),
+            away: FastMap::default(),
+            dimension_changed: false,
+            arriving: None,
+            portals: Vec::new(),
+            portal: Default::default(),
         }
     }
 
@@ -314,7 +335,7 @@ impl Game {
             level.seed,
             level.game_mode.name()
         );
-        let source = ChunkSource::Terrain(Box::new(Terrain::new(level.seed)));
+        let source = dimensions::source_for(level.dimension, level.seed);
         let chunks = ChunkManager::with_store(
             source,
             dir.regions(level.dimension),
@@ -344,6 +365,8 @@ impl Game {
             .iter()
             .map(|&(x, z)| ChunkPos::new(x, z))
             .collect();
+        game.dimension = level.dimension;
+        game.portals = level.portals.clone();
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -352,8 +375,15 @@ impl Game {
     pub fn with_mobs(mut self, mobs: Arc<MobRegistry>) -> Self {
         self.mob_defs = mobs;
         if let Some(saved) = &self.saved {
-            let animals = saved.level.mobs.clone();
-            self.restore_mobs(&animals);
+            let (animals, populated) =
+                (saved.level.mobs.clone(), saved.level.away_populated.clone());
+            let here: Vec<_> = animals
+                .iter()
+                .filter(|mob| mob.dimension == self.dimension)
+                .cloned()
+                .collect();
+            self.restore_mobs(&here);
+            self.restore_away(&animals, &populated);
         }
         self
     }
@@ -379,6 +409,7 @@ impl Game {
         self.ticks_since_save = 0;
         let mobs = self.saved_mobs();
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
+        let (away_mobs, away_populated) = self.away_for_saving();
         if self.saved.is_none() {
             return Ok(());
         }
@@ -415,7 +446,11 @@ impl Game {
         };
         saved.level.time = self.time;
         saved.level.mobs = mobs;
+        saved.level.mobs.extend(away_mobs);
         saved.level.populated = populated;
+        saved.level.away_populated = away_populated;
+        saved.level.dimension = self.dimension;
+        saved.level.portals = self.portals.clone();
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -620,6 +655,11 @@ impl Game {
     /// One game tick: player physics, then breaking and placing.
     fn tick(&mut self) {
         self.prev_feet = self.body.position();
+        // Nothing happens until the chunks around an arriving player load.
+        self.tick_arrival();
+        if self.is_arriving() {
+            return;
+        }
         if !self.stats.is_dead() {
             if self.is_sleeping() {
                 self.tick_sleep();
@@ -639,6 +679,7 @@ impl Game {
             if !self.is_sleeping() {
                 self.use_hands();
             }
+            self.tick_portal();
         }
         self.tick_view();
         if !self.is_sleeping() {
@@ -800,12 +841,21 @@ impl Game {
     /// Back beside the bed last slept in, or the world spawn, with full
     /// health and food (1.0.0's respawn).
     pub fn respawn(&mut self) {
+        // Beds and the world spawn are in the Overworld.
+        let away = self.dimension != crate::world::dimension::Dimension::Overworld;
+        if away {
+            let spawn = self.spawn;
+            self.change_dimension(crate::world::dimension::Dimension::Overworld, spawn);
+        }
         let feet = self.respawn_point();
         self.body = Body::new(feet);
         self.prev_feet = feet;
         self.stats = Stats::default();
         self.mining = None;
         self.release_input();
+        if away && let Err(err) = self.save() {
+            error!("saving after respawning: {err}");
+        }
     }
 
     /// The block the crosshair points at from `eye`, within reach: the
@@ -971,7 +1021,7 @@ pub(crate) mod tests {
     /// straight down, with every chunk around them loaded.
     pub(crate) fn flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
-        let chunks = ChunkManager::new(ChunkSource::Flat, models, 1, 2);
+        let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 1, 2);
         let feet = DVec3::new(0.5, 64.0, 0.5);
         let mut game = Game::new(chunks, items, feet, feet, 0.0, -std::f32::consts::FRAC_PI_2);
         game.mode = mode;
@@ -1372,7 +1422,7 @@ pub(crate) mod tests {
     /// A flat world 5×5 chunks around the origin with light computed.
     pub(crate) fn lit_flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
-        let chunks = ChunkManager::new(ChunkSource::Flat, models, 2, 4);
+        let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 2, 4);
         let feet = DVec3::new(0.5, 64.0, 0.5);
         let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).with_mobs(mob_registry());
         game.mode = mode;

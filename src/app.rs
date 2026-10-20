@@ -722,6 +722,10 @@ impl App {
         // scene being captured stands still.
         let frozen = self.pause.is_some() || self.shot.is_some();
         game.advance(if frozen { 0.0 } else { dt });
+        // Another dimension's chunks replace this one's.
+        if game.take_dimension_change() {
+            renderer.clear_world();
+        }
         let ticked = Instant::now();
 
         let p = game.camera.position;

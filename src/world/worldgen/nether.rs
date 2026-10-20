@@ -86,6 +86,8 @@ fn upright(id: crate::world::block::BlockId) -> BlockState {
 type Levels = [f64; LEVELS];
 
 pub struct Nether {
+    /// The world's seed, and the Nether's own mixed from it.
+    world_seed: u64,
     seed: u64,
     shift: [f64; 3],
     shape: Fbm<Perlin>,
@@ -110,9 +112,11 @@ const POINTS: [(Biome, f64, f64, f64); 5] = [
 impl Nether {
     pub fn new(seed: u64) -> Self {
         // Its own noises, unlike the Overworld's.
+        let world_seed = seed;
         let seed = mix(seed ^ 0x0000_4E45_5448_4552);
         let fbm = |index, octaves| Fbm::<Perlin>::new(noise_seed(seed, index)).set_octaves(octaves);
         Self {
+            world_seed,
             seed,
             shift: noise_offset(seed, 0),
             shape: fbm(1, 4),
@@ -163,8 +167,8 @@ impl Nether {
         })
     }
 
-    pub fn seed(&self) -> u64 {
-        self.seed
+    pub fn world_seed(&self) -> u64 {
+        self.world_seed
     }
 
     pub fn generate(&self, pos: ChunkPos) -> Chunk {

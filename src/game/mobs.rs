@@ -804,6 +804,7 @@ impl Game {
                 yaw: mob.yaw,
                 health: mob.stats.health,
                 data: mob.data.clone(),
+                dimension: self.dimension,
             })
             .collect()
     }

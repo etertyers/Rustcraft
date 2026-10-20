@@ -51,9 +51,17 @@ pub struct Level {
     /// Chunks whose animals have been placed (added in M9).
     #[serde(default)]
     pub populated: Vec<(i32, i32)>,
-    /// The dimension the player is in (added in v1.1).
+    /// The dimension the player is in (added in v1.1); `player`, and
+    /// `populated`, are in it.
     #[serde(default)]
     pub dimension: Dimension,
+    /// Chunks that have had their animals placed in the other dimensions
+    /// (added in M24).
+    #[serde(default)]
+    pub away_populated: Vec<(Dimension, i32, i32)>,
+    /// The Nether portals there are, by dimension, for linking (M24).
+    #[serde(default)]
+    pub portals: Vec<(Dimension, [i32; 3])>,
 }
 
 /// A mob as saved in level.ron.
@@ -66,6 +74,9 @@ pub struct SavedMob {
     /// Coat, dye, tameness and the like (added in M20).
     #[serde(default)]
     pub data: crate::entity::mob::MobData,
+    /// The dimension it's in (added in M24).
+    #[serde(default)]
+    pub dimension: Dimension,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -111,6 +122,8 @@ impl Level {
             mobs: Vec::new(),
             populated: Vec::new(),
             dimension: Dimension::Overworld,
+            away_populated: Vec::new(),
+            portals: Vec::new(),
         }
     }
 }

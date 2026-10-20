@@ -195,6 +195,11 @@ impl Game {
         let Some(at) = hit.adjacent() else {
             return;
         };
+        // Fire in an obsidian frame lights it as a portal.
+        if self.light_portal(at) {
+            self.finish_flint();
+            return;
+        }
         let rng = &mut self.rng;
         let mut random = |n: u32| rng.below(n);
         let Some(edit) = self.fires.ignite(
