@@ -32,6 +32,67 @@ by the shift noise (×4):
   column, cave biomes per cell, from the climate at the cell's corner. There's
   no blending and no randomness.
 
+## Trees
+
+Trees are placed like vanilla 1.21's placed tree features. Code: `TREES`,
+`plan()` and `large()` in `src/world/worldgen/features.rs`.
+
+- **Attempts**: each biome makes `count` attempts per chunk, plus one more
+  with chance `extra`. Each attempt picks a random column in the chunk.
+  Dark forests instead make 16 attempts, one in each 4 × 4 cell.
+- **Filters**: an attempt is dropped, not retried, when:
+  - the column is a different biome;
+  - the ground isn't grass, dirt or podzol (mangroves also take mud;
+    huge mushrooms take mycelium);
+  - water stands over the ground (swamps allow 2 deep, mangroves 5);
+  - a cave opens there; or
+  - a dry run of the tree shows its trunk would meet the ground or a log
+    of a tree planted earlier in the same chunk. Leaves may overlap.
+- **Mixes**: each tree's chance is rolled in turn, like vanilla's random
+  selector.
+- **Across chunks**: a tree's trunk is always in its own chunk, and its
+  leaves may spill into the neighbors. Each chunk re-plans its eight
+  neighbors' trees from the terrain alone and keeps the blocks that land
+  inside itself. `Area::MARGIN` (17) covers those neighbors, so a chunk's
+  trees don't depend on load order or on which chunk asks.
+- **Fallbacks**: biomes Rustcraft lacks use their fallback's row (see the
+  appendix). Wooded badlands is generated as badlands, so it has no trees.
+
+| Biome | Attempts (count + extra) | Trees |
+|---|---|---|
+| plains | 0 + 5% | 33% fancy oak, else oak |
+| meadow | 0 + 1% | oak, fancy oak, tall birch (thirds) |
+| forest | 10 + 10% | 20% birch, 10% fancy oak, else oak |
+| birch forest | 10 + 10% | birch |
+| dark forest | 16 (4 × 4 grid) | 2.5% brown and 5% red huge mushroom, ⅔ dark oak, 20% birch, 10% fancy oak, else oak |
+| taiga, snowy taiga | 10 + 10% | 33% pine, else spruce |
+| grove | 10 + 10% | pine |
+| snowy plains | 0 + 10% | spruce |
+| windswept hills | 0 + 10% | 66% spruce, else oak |
+| savanna | 1 + 10% | 80% acacia, else oak |
+| jungle | 50 + 10% | 10% fancy oak, 50% bush, 33% mega jungle, else jungle tree |
+| bamboo jungle | 30 + 10% | as jungle |
+| swamp | 2 + 10% | swamp oak with vines |
+| mangrove swamp | 25 | mangrove |
+| cherry grove | 10 + 10% | cherry |
+| mushroom fields | 1 | huge mushroom (half brown, half red) |
+| everything else | 0 | none |
+
+Ice spikes (3 per chunk) and icebergs (6% of frozen ocean chunks) use the
+same table and planning, and an azalea tree grows over lush caves 40% of
+the time.
+
+**Measured** (seed 20111118, 500 chunks per biome, trees per chunk):
+plains 0.036, meadow 0.004, forest 6.8, birch forest 6.7, dark forest 9.0,
+taiga 6.6, snowy taiga 7.1, grove 7.1, snowy plains 0.072, windswept hills
+0.054, savanna 0.72, jungle 27.0, bamboo jungle 18.3, swamp 1.24, mangrove
+swamp 19.5, cherry grove 7.6, mushroom fields 0.77. Before this change,
+open biomes had several times vanilla's numbers: windswept hills 1.09,
+plains 0.22 and meadow 0.17.
+
+**Cost**: "generate a chunk" takes 1.43 ms, against 1.26 ms before (+13%),
+mostly from the wider area.
+
 ## Appendix: vanilla 1.21 biome placement (from OverworldBiomeBuilder)
 
 Bands:
