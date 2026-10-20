@@ -33,10 +33,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-// 1.0.0's light level to brightness curve (`lightBrightnessTable`, overworld).
+// 1.0.0's light level to brightness curve (`lightBrightnessTable`, overworld),
+// lifted by the dimension's ambient light as modern `getBrightness` is.
 fn brightness(level: f32) -> f32 {
     let dark = 1.0 - level / 15.0;
-    return (1.0 - dark) / (dark * 3.0 + 1.0);
+    let curve = (1.0 - dark) / (dark * 3.0 + 1.0);
+    let ambient = globals.extra.w;
+    return curve + ambient * (1.0 - curve);
 }
 
 // 1.0.0's lightmap (`EntityRenderer.updateLightmap`) with the "Moody"

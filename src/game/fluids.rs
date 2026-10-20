@@ -94,7 +94,12 @@ impl Game {
                 if def_at(at).is_none_or(|def| def.stops_fluid()) {
                     return;
                 }
-                let source = fluid::at_level(fluid, 0);
+                // Water poured in the Nether boils away.
+                let source = if self.evaporates(fluid) {
+                    world.block(at.x, at.y, at.z).unwrap_or(BlockState::AIR)
+                } else {
+                    fluid::at_level(fluid, 0)
+                };
                 ((at, source), Bucket::Empty)
             }
         };
@@ -105,6 +110,13 @@ impl Game {
             self.inventory
                 .set(slot, Some(ItemStack::with_damage(id, 1, 0)));
         }
+    }
+
+    /// Whether `fluid` boils away when poured here: water in the Nether
+    /// (modern `DimensionType.ultraWarm`).
+    pub(super) fn evaporates(&self, fluid: crate::world::block::Fluid) -> bool {
+        fluid == crate::world::block::Fluid::Water
+            && self.dimension() == crate::world::dimension::Dimension::Nether
     }
 
     /// One tick of flowing water and lava.
@@ -215,11 +227,20 @@ impl Game {
         self.finish_flint();
     }
 
-    /// Swings and wears the flint after it lit something.
+    /// Swings and wears the flint after it lit something; a fire charge
+    /// is used up instead.
     fn finish_flint(&mut self) {
         self.view.swing();
-        if self.mode.wears_tools() {
-            let slot = self.inventory.hand_slot(self.use_hand);
+        let slot = self.inventory.hand_slot(self.use_hand);
+        let charge = self
+            .inventory
+            .slot(slot)
+            .is_some_and(|stack| stack.id == crate::inventory::items::FIRE_CHARGE);
+        if charge {
+            if self.mode.uses_up_items() {
+                self.inventory.take(slot, 1);
+            }
+        } else if self.mode.wears_tools() {
             self.inventory.damage_slot(slot, 1, &self.items);
         }
         self.place_cooldown = crate::player::interaction::PLACE_REPEAT_TICKS;

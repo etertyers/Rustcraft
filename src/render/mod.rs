@@ -75,6 +75,12 @@ pub struct Environment {
     /// The sunrise or sunset glow and its strength.
     pub sunrise: Option<(Vec3, f32)>,
     pub cloud_height: f32,
+    /// Whether there's a sky with a sun, moon, stars and clouds (not in
+    /// the Nether: there it's all fog).
+    pub sky: bool,
+    /// The dimension's ambient light, lifting the dark (modern
+    /// `DimensionType.ambientLight`: 0.1 in the Nether).
+    pub ambient: f32,
 }
 
 /// The sky images from the packs' `environment/` folder.
@@ -887,7 +893,7 @@ impl Renderer {
             }
             // Clouds and water both blend: draw whichever is farther first.
             let above_clouds = camera.position.y > environment.cloud_height;
-            if above_clouds {
+            if above_clouds && environment.sky {
                 self.draw_clouds(&mut pass);
             }
             pass.set_pipeline(&self.translucent_pipeline);
@@ -904,7 +910,7 @@ impl Renderer {
                     chunk.opaque..chunk.opaque + chunk.translucent,
                 );
             }
-            if !above_clouds {
+            if !above_clouds && environment.sky {
                 self.draw_clouds(&mut pass);
             }
             if outline > 0 {
@@ -1043,7 +1049,12 @@ fn globals(
         ],
         sky_color: env.sky_color.extend(env.celestial_angle).to_array(),
         sunrise: sunrise.extend(strength).to_array(),
-        extra: [env.moon_phase as f32, env.cloud_height, 0.0, 0.0],
+        extra: [
+            env.moon_phase as f32,
+            env.cloud_height,
+            if env.sky { 0.0 } else { 1.0 },
+            env.ambient,
+        ],
     }
 }
 

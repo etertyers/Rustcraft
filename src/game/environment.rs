@@ -8,7 +8,7 @@ use super::Game;
 use crate::{
     config::{CHUNK_SIZE, CLOUD_HEIGHT, RENDER_DISTANCE},
     render::Environment,
-    world::{biome::Biome, block::Fluid, daytime},
+    world::{biome::Biome, block::Fluid, daytime, dimension::Dimension},
 };
 
 /// 1.0.0 mixes this much of the sky color into the fog at its "far" render
@@ -29,6 +29,16 @@ impl Game {
     pub fn environment(&self) -> Environment {
         let p = self.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();
+        let view = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
+        if self.dimension == Dimension::Nether {
+            return nether(
+                self.time,
+                self.tick_alpha() as f32,
+                biome,
+                view,
+                self.eye_in(),
+            );
+        }
         let mut environment = environment(
             self.time,
             self.tick_alpha() as f32,
@@ -37,7 +47,7 @@ impl Game {
             self.eye_in(),
         );
         // Fog ends at the chosen render distance.
-        let fog_end = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
+        let fog_end = view;
         environment.fog_start *= fog_end / environment.fog_end;
         environment.fog_end = fog_end;
         environment
@@ -86,8 +96,52 @@ pub fn environment(
         moon_phase: daytime::moon_phase(time),
         sunrise,
         cloud_height: CLOUD_HEIGHT,
+        sky: true,
+        ambient: 0.0,
     }
 }
+
+/// The Nether's: no sky, no sun, thick fog the color of the biome, and
+/// a little ambient light (modern `NetherEffects`, `FogRenderer`'s thick
+/// fog, and the Nether's 0.1 ambient light). `view` is the render
+/// distance in blocks.
+pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Fluid>) -> Environment {
+    let fog = biome.nether_fog().unwrap_or(0x330808);
+    let fog = Vec3::new(
+        (fog >> 16 & 0xFF) as f32,
+        (fog >> 8 & 0xFF) as f32,
+        (fog & 0xFF) as f32,
+    ) / 255.0;
+    let (fog_density, fog_color) = match eye {
+        None => (0.0, fog),
+        Some(Fluid::Water) => WATER_FOG,
+        Some(Fluid::Lava) => LAVA_FOG,
+    };
+    Environment {
+        time: time as f32 + partial,
+        celestial_angle: 0.0,
+        sky_color: fog_color,
+        fog_color,
+        fog_start: view * NETHER_FOG_START,
+        fog_end: view.min(NETHER_FOG_REACH) * NETHER_FOG_END,
+        fog_density,
+        sun_brightness: 0.0,
+        star_brightness: 0.0,
+        moon_phase: 0,
+        sunrise: None,
+        cloud_height: CLOUD_HEIGHT,
+        sky: false,
+        ambient: NETHER_AMBIENT,
+    }
+}
+
+/// Modern thick fog: from 5% of the render distance to half of it (at
+/// most 192 blocks).
+const NETHER_FOG_START: f32 = 0.05;
+const NETHER_FOG_END: f32 = 0.5;
+const NETHER_FOG_REACH: f32 = 192.0;
+/// Modern `DimensionType` ambient light of the Nether.
+const NETHER_AMBIENT: f32 = 0.1;
 
 #[cfg(test)]
 mod tests {
@@ -112,6 +166,20 @@ mod tests {
         assert_eq!((env.fog_density, env.fog_color), WATER_FOG);
         let lava = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, Some(Fluid::Lava));
         assert_eq!(lava.fog_density, 2.0);
+    }
+
+    #[test]
+    fn the_nether_has_thick_fog_the_color_of_its_biome_and_no_sky() {
+        let wastes = nether(6000, 0.0, Biome::NetherWastes, 144.0, None);
+        assert!(!wastes.sky);
+        assert_eq!(wastes.ambient, 0.1);
+        assert!((wastes.fog_start - 7.2).abs() < 1e-4);
+        assert_eq!(wastes.fog_end, 72.0);
+        assert_eq!(wastes.fog_color, wastes.sky_color);
+        assert!(wastes.fog_color.x > wastes.fog_color.z, "reddish");
+        let valley = nether(6000, 0.0, Biome::SoulSandValley, 144.0, None);
+        assert!(valley.fog_color.z > valley.fog_color.x, "bluish");
+        assert!(environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None).sky);
     }
 
     #[test]

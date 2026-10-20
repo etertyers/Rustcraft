@@ -31,6 +31,8 @@ const BED_REACH: DVec3 = DVec3::new(3.0, 2.0, 3.0);
 const MESSAGE_TICKS: u32 = 200;
 /// A lying player's eyes above the bed's cell.
 const LYING_EYE: f64 = 11.0 / 16.0;
+/// A bed used outside the Overworld blows up this hard, setting fires.
+const BED_BLAST: f32 = 5.0;
 
 /// Lying in the bed whose head is at `head`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,6 +67,14 @@ impl Game {
         } else {
             cell
         };
+        // Outside the Overworld a bed blows up (modern `BedBlock.use`).
+        if self.dimension() != crate::world::dimension::Dimension::Overworld {
+            let foot = head - bed_direction(block);
+            let air = crate::world::block::BlockState::AIR;
+            self.edit(&[(head, air), (foot, air)]);
+            self.explode_with_fire(head.as_dvec3() + DVec3::splat(0.5), BED_BLAST);
+            return;
+        }
         let angle = daytime::celestial_angle(self.time, 0.0);
         if daytime::is_daytime(angle) {
             return self.say("You can only sleep at night");
@@ -227,6 +237,28 @@ mod tests {
             .set_blocks(&[(foot, bed), (head, bed.with(Prop::BedPart, bed_part::HEAD))]);
         game.time = time;
         (game, head)
+    }
+
+    #[test]
+    fn a_bed_in_the_nether_blows_up_and_sets_fires() {
+        let (mut game, head) = game_with_bed(18000);
+        game.dimension = crate::world::dimension::Dimension::Nether;
+        game.use_bed(head);
+        assert!(!game.is_sleeping());
+        let world = game.chunks.world();
+        assert!(world.block(head.x, head.y, head.z).unwrap().is_air());
+        // A crater with fire in it, and a hurt player beside it.
+        assert!(world.block(head.x, head.y - 1, head.z).unwrap().is_air());
+        let fires = (-5..=5)
+            .flat_map(|dz| (-5..=5).flat_map(move |dx| (58..68).map(move |y| (dx, y, dz))))
+            .filter(|&(dx, y, dz)| {
+                world
+                    .block(head.x + dx, y, head.z + dz)
+                    .is_some_and(|b| b.is(blocks::FIRE))
+            })
+            .count();
+        assert!(fires > 0, "fire in the crater");
+        assert!(game.stats.health < 20.0);
     }
 
     #[test]

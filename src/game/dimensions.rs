@@ -144,6 +144,7 @@ impl Game {
         self.orbs = arrived.orbs;
         self.carts = arrived.carts;
         self.fluids = arrived.fluids;
+        self.fluids.warm = to == Dimension::Nether;
         self.fires = arrived.fires;
         self.redstone = arrived.redstone;
         self.restore_mobs(&arrived.mobs);
@@ -224,5 +225,64 @@ pub fn source_for(dimension: Dimension, seed: u64) -> ChunkSource {
         Dimension::Nether => ChunkSource::Nether(Box::new(Nether::new(seed))),
         // The End comes in M27; until then it's the Overworld's land.
         Dimension::Overworld | Dimension::End => ChunkSource::Terrain(Box::new(Terrain::new(seed))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        game::tests::flat_game,
+        inventory::{items, stack::ItemStack},
+        player::mode::GameMode,
+        world::blocks,
+    };
+
+    #[test]
+    fn water_poured_in_the_nether_boils_away_but_lava_doesnt() {
+        for (dimension, fluid_bucket, stays) in [
+            (Dimension::Nether, items::WATER_BUCKET, None),
+            (
+                Dimension::Overworld,
+                items::WATER_BUCKET,
+                Some(blocks::WATER),
+            ),
+            (Dimension::Nether, items::LAVA_BUCKET, Some(blocks::LAVA)),
+        ] {
+            let mut game = flat_game(GameMode::Survival);
+            game.dimension = dimension;
+            game.inventory.set(0, Some(ItemStack::new(fluid_bucket, 1)));
+            game.camera.pitch = -0.6;
+            game.advance(0.0);
+            let at = game.target.unwrap().adjacent().unwrap();
+            let eye = game.body.position() + DVec3::Y * game.body.eye_height();
+            game.use_bucket(eye);
+            let block = game.chunks.world().block(at.x, at.y, at.z).unwrap();
+            match stays {
+                Some(id) => assert!(block.is(id), "{dimension:?}"),
+                None => assert!(block.is_air(), "boiled away"),
+            }
+            assert_eq!(game.inventory.slot(0).unwrap().id, items::BUCKET, "emptied");
+        }
+    }
+
+    #[test]
+    fn animals_stay_in_their_dimension() {
+        let mut game = flat_game(GameMode::Creative);
+        game.mob_defs = crate::game::tests::mob_registry();
+        let pig = game.mob_defs.find("pig").unwrap();
+        let feet = DVec3::new(3.5, 64.0, 3.5);
+        let mob = game.new_mob(pig, feet, 0.0);
+        game.add_mob(mob);
+        assert_eq!(game.saved_mobs().len(), 1);
+        game.change_dimension(Dimension::Nether, DVec3::new(0.5, 80.0, 0.5));
+        assert!(game.mobs.is_empty() && game.saved_mobs().is_empty());
+        let (away, _) = game.away_for_saving();
+        assert_eq!(away.len(), 1);
+        assert_eq!(away[0].dimension, Dimension::Overworld);
+        game.change_dimension(Dimension::Overworld, DVec3::new(0.5, 64.0, 0.5));
+        // Back in the stash, waiting for its chunk.
+        assert_eq!(game.saved_mobs().len(), 1);
+        assert!(game.away_for_saving().0.is_empty());
     }
 }

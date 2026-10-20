@@ -43,6 +43,8 @@ const FIRE_DAMAGE: f32 = 1.0;
 /// sets the player burning for at least 8 s.
 const IN_FIRE_DAMAGE: f32 = 1.0;
 const IN_FIRE_TICKS: i32 = 160;
+/// Standing on a magma block hurts this much a hit.
+const MAGMA_DAMAGE: f32 = 1.0;
 /// Exhaustion each healed point costs, so healing uses up food.
 const HEAL_EXHAUSTION: f32 = 6.0;
 /// Most hits tire the player this much; falling, drowning, burning and
@@ -65,6 +67,8 @@ pub enum DamageSource {
     Explosion,
     /// A falling anvil landed on them.
     Anvil,
+    /// Standing on a magma block (M24).
+    HotFloor,
 }
 
 impl DamageSource {
@@ -81,6 +85,7 @@ impl DamageSource {
             DamageSource::Arrow => "was shot",
             DamageSource::Explosion => "blew up",
             DamageSource::Anvil => "was squashed by a falling anvil",
+            DamageSource::HotFloor => "discovered the floor was lava",
         }
     }
 
@@ -92,6 +97,7 @@ impl DamageSource {
             | DamageSource::Mob
             | DamageSource::Arrow
             | DamageSource::Explosion
+            | DamageSource::HotFloor
             | DamageSource::Anvil => DAMAGE_EXHAUSTION,
             DamageSource::Fall
             | DamageSource::Drowning
@@ -118,6 +124,8 @@ pub struct Surroundings {
     pub flying: bool,
     /// On a ladder or vine, or bouncing on slime: a fall is cancelled.
     pub no_fall: bool,
+    /// Standing on a magma block without sneaking.
+    pub on_magma: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -259,6 +267,11 @@ impl Stats {
                 self.fire = self.fire.max(IN_FIRE_TICKS);
             }
         }
+        // Modern `MagmaBlock.stepOn`: 1 a hit, as often as the hurt
+        // cooldown lets it.
+        if around.on_magma && vulnerable {
+            self.damage(MAGMA_DAMAGE, DamageSource::HotFloor);
+        }
         if around.in_lava && vulnerable {
             self.damage(LAVA_DAMAGE, DamageSource::Lava);
             self.fire = LAVA_FIRE_TICKS;
@@ -342,6 +355,7 @@ mod tests {
         in_water: false,
         in_lava: false,
         in_fire: false,
+        on_magma: false,
         eyes_in_water: false,
         flying: false,
         no_fall: false,
@@ -350,6 +364,24 @@ mod tests {
         on_ground: false,
         ..GROUND
     };
+
+    #[test]
+    fn magma_burns_feet_through_the_hurt_cooldown() {
+        let mut stats = Stats::default();
+        let on_magma = Surroundings {
+            on_magma: true,
+            ..GROUND
+        };
+        for _ in 0..20 {
+            stats.tick(&on_magma, true);
+        }
+        // A hit every 10 ticks: two in a second.
+        assert_eq!(stats.health, 18.0);
+        assert_eq!(stats.last_source, Some(DamageSource::HotFloor));
+        let mut creative = Stats::default();
+        creative.tick(&on_magma, false);
+        assert_eq!(creative.health, 20.0);
+    }
 
     fn fall(stats: &mut Stats, blocks: f32) {
         stats.tick(

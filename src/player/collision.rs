@@ -309,7 +309,9 @@ impl Collider for WorldCollider<'_> {
     }
 
     fn in_fire(&self, region: &Aabb) -> bool {
-        self.any_cell(region, |block| block.is(blocks::FIRE))
+        self.any_cell(region, |block| {
+            block.is(blocks::FIRE) || block.is(blocks::SOUL_FIRE)
+        })
     }
 
     fn in_lava(&self, region: &Aabb) -> bool {

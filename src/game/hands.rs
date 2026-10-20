@@ -84,7 +84,9 @@ impl Game {
         if let Some(food) = item.food {
             return self.mode.is_vulnerable() && (food.always_edible || self.stats.can_eat());
         }
-        hit.is_some() && (stack.id == items::FLINT_AND_STEEL || self.items.places(stack).is_some())
+        hit.is_some()
+            && (matches!(stack.id, items::FLINT_AND_STEEL | items::FIRE_CHARGE)
+                || self.items.places(stack).is_some())
     }
 
     /// Whether `hand` holds something that shoots.
@@ -246,10 +248,9 @@ impl Game {
                     self.view.swing();
                 }
             } else if wants_place {
-                if self
-                    .held()
-                    .is_some_and(|stack| stack.id == items::FLINT_AND_STEEL)
-                {
+                if self.held().is_some_and(|stack| {
+                    matches!(stack.id, items::FLINT_AND_STEEL | items::FIRE_CHARGE)
+                }) {
                     self.strike_flint(&hit);
                 } else if let Some(kind) = self
                     .held()

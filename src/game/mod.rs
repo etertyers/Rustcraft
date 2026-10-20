@@ -366,6 +366,7 @@ impl Game {
             .map(|&(x, z)| ChunkPos::new(x, z))
             .collect();
         game.dimension = level.dimension;
+        game.fluids.warm = level.dimension == crate::world::dimension::Dimension::Nether;
         game.portals = level.portals.clone();
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
@@ -801,6 +802,9 @@ impl Game {
             eyes_in_water,
             flying: self.body.flying,
             no_fall: self.body.on_climbable || self.body.bounced,
+            on_magma: self.body.on_ground
+                && !self.body.sneaking
+                && self.standing_on(crate::world::blocks::MAGMA_BLOCK),
         };
         self.stats.tick(&around, vulnerable);
         if vulnerable {
@@ -836,6 +840,15 @@ impl Game {
             self.entities
                 .push(ItemEntity::scattered(stack, eye, &mut random));
         }
+    }
+
+    /// Whether the block under the player's feet is `id`.
+    fn standing_on(&self, id: crate::world::block::BlockId) -> bool {
+        let below = (self.body.position() - DVec3::Y * 0.01).floor().as_ivec3();
+        self.chunks
+            .world()
+            .block(below.x, below.y, below.z)
+            .is_some_and(|b| b.is(id))
     }
 
     /// Back beside the bed last slept in, or the world spawn, with full

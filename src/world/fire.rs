@@ -11,7 +11,7 @@ use glam::IVec3;
 use super::{
     World,
     block::{BlockDef, BlockRegistry, BlockState, Shape},
-    blocks::{FIRE, LAVA, NETHERRACK},
+    blocks::{FIRE, LAVA, NETHERRACK, SOUL_FIRE, SOUL_SAND, SOUL_SOIL},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     fast_hash::{FastMap, FastSet},
     props::Prop,
@@ -107,7 +107,16 @@ impl Fires {
             edits: FastMap::default(),
             order: Vec::new(),
         };
-        if !step.is_air(at) || !step.can_survive(at) {
+        if !step.is_air(at) {
+            return None;
+        }
+        // On soul sand or soul soil it's soul fire, which burns there
+        // forever and never spreads (modern `SoulFireBlock`).
+        let below = world.block(at.x, at.y - 1, at.z);
+        if below.is_some_and(|b| b.is(SOUL_SAND) || b.is(SOUL_SOIL)) {
+            return Some((at, BlockState::of(SOUL_FIRE)));
+        }
+        if !step.can_survive(at) {
             return None;
         }
         step.place_fire(at, 0);

@@ -925,6 +925,7 @@ impl App {
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
             time: game.time(),
+            dimension: game.dimension(),
         };
         let hud = Hud {
             crosshair: self.cursor_grabbed,
@@ -962,6 +963,8 @@ impl App {
             }),
             sleep: game.sleep_fade(),
             message: game.message.as_ref().map(|(text, _)| text.clone()),
+            portal: game.portal_swirl(),
+            loading: game.is_arriving(),
         };
         let view_of = |stack: &ItemStack| {
             let icons = self.icons.as_ref()?;

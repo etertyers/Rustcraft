@@ -17,7 +17,8 @@ struct Globals {
     sky_color: vec4<f32>,
     // rgb: sunrise or sunset glow (sRGB); a: its strength.
     sunrise: vec4<f32>,
-    // x: moon phase 0–7; y: cloud height.
+    // x: moon phase 0–7; y: cloud height; z: 1 where there's no sky (the
+    // Nether); w: the dimension's ambient light.
     extra: vec4<f32>,
 };
 

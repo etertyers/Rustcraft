@@ -698,7 +698,7 @@
     (name: "bone_block", hardness: 2.0, props: [Axis], placement: Axis, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "bone_block_top", side: "bone_block_side")),
     // Fire on soul sand or soul soil burns blue, gives less light and
     // doesn't spread.
-    (name: "soul_fire", hardness: 0.0, item: false, drops: Nothing, replaceable: true, shape: Fire, layer: Cutout, solid: false, light: 10, textures: (all: "soul_fire_0")),
+    (name: "soul_fire", hardness: 0.0, item: false, drops: Nothing, replaceable: true, needs_ground: true, shape: Fire, layer: Cutout, solid: false, light: 10, textures: (all: "soul_fire_0")),
     (name: "soul_torch", hardness: 0.0, placement: Torch(wall: "soul_wall_torch"), shape: Torch, layer: Cutout, solid: false, light: 10, textures: (all: "soul_torch")),
     (name: "soul_wall_torch", hardness: 0.0, props: [Facing], item: false, drops: All([(item: "soul_torch")]), shape: Torch, layer: Cutout, solid: false, light: 10, textures: (all: "soul_torch")),
     (name: "soul_lantern", hardness: 3.5, tool: Pickaxe, harvest: (tools: [Pickaxe]), needs_ground: true, shape: Lantern, layer: Cutout, light: 10, solid: true, textures: (all: "soul_lantern")),

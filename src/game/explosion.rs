@@ -173,6 +173,32 @@ impl Game {
     /// Blows up at `center`: hurts what is near, destroys blocks (each
     /// dropping with a chance of one in `power`) and lights TNT in the way.
     pub fn explode(&mut self, center: DVec3, power: f32) {
+        self.blow_up(center, power);
+    }
+
+    /// Blows up at `center` like `explode`, then sets fire to a third of
+    /// the cleared cells with ground under them (modern explosions that
+    /// cause fire: beds in the Nether, ghast fireballs).
+    pub fn explode_with_fire(&mut self, center: DVec3, power: f32) {
+        let cleared = self.blow_up(center, power);
+        let mut fires = Vec::new();
+        for cell in cleared {
+            let world = self.chunks.world();
+            let free = world
+                .block(cell.x, cell.y, cell.z)
+                .is_some_and(|b| b.is_air());
+            let ground = world
+                .block(cell.x, cell.y - 1, cell.z)
+                .is_some_and(|b| b.def().is_opaque_cube());
+            if free && ground && self.rng.below(3) == 0 {
+                fires.push((cell, crate::world::block::BlockState::of(blocks::FIRE)));
+            }
+        }
+        self.edit(&fires);
+    }
+
+    /// The explosion itself; returns the cells it cleared.
+    fn blow_up(&mut self, center: DVec3, power: f32) -> Vec<glam::IVec3> {
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         let cells = explosion::destroyed(self.chunks.world(), center, power, &mut random);
@@ -207,6 +233,7 @@ impl Game {
             edits.push((cell, crate::world::block::BlockState::AIR));
         }
         self.edit(&edits);
+        edits.into_iter().map(|(cell, _)| cell).collect()
     }
 }
 
