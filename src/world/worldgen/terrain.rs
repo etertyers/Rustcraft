@@ -843,7 +843,10 @@ pub struct Area {
 }
 
 impl Area {
-    pub const MARGIN: i32 = 12;
+    /// Every column of the eight chunks around, plus one for the far
+    /// corner of a 2 × 2 trunk on their edge: trees are planned from the
+    /// chunk they stand in.
+    pub const MARGIN: i32 = CHUNK_SIZE as i32 + 1;
     const SIDE: i32 = CHUNK_SIZE as i32 + 2 * Self::MARGIN;
 
     /// The column at (x, z), which must be in the chunk or next to it.
