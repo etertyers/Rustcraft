@@ -94,9 +94,12 @@ impl Game {
             }
             if let Some(hit) = intent.hit {
                 match hit.victim {
-                    Victim::Player => {
-                        self.mob_strikes_player(&mut mobs[index], hit.damage, player_feet)
-                    }
+                    Victim::Player => self.mob_strikes_player(
+                        &mut mobs[index],
+                        hit.damage,
+                        player_feet,
+                        intent.toss,
+                    ),
                     Victim::Mob(victim) => {
                         if victim < mobs.len() && victim != index {
                             mobs[victim].hurt(hit.damage, Some(feet), DamageSource::Mob);
@@ -106,6 +109,9 @@ impl Game {
             }
             if let Some(shot) = intent.shot {
                 self.mob_shoots(&mobs[index], shot.from, shot.at);
+            }
+            if let Some(shot) = intent.fireball {
+                self.loose_fireball(shot.from, shot.at);
             }
             if let Some(tp) = intent.teleport {
                 self.teleport_mob(&mut mobs[index], tp);
@@ -124,7 +130,9 @@ impl Game {
         }
     }
 
-    fn mob_strikes_player(&mut self, mob: &mut Mob, damage: f32, player_feet: DVec3) {
+    /// `toss`: the blow throws the player up too (a hoglin's, modern
+    /// `HoglinBase.throwTarget`).
+    fn mob_strikes_player(&mut self, mob: &mut Mob, damage: f32, player_feet: DVec3, toss: bool) {
         let strike = Strike {
             amount: damage,
             source: DamageSource::Mob,
@@ -135,6 +143,10 @@ impl Game {
         match self.hurt_player(strike) {
             Outcome::Hurt { fresh: true } => {
                 knock_back(&mut self.body, mob.feet());
+                if toss {
+                    let lift = 0.25 + self.rng.next_f64() * 0.25;
+                    self.body.velocity.y = self.body.velocity.y.max(0.0) + lift;
+                }
                 // Tame wolves take up the fight against whatever hit.
                 self.threat_id = mob.id;
                 self.threat_ticks = 100;

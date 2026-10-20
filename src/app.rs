@@ -46,8 +46,8 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_orbs, add_particles,
-            add_primed_tnt, item_mesh,
+            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_fireballs, add_orbs,
+            add_particles, add_primed_tnt, item_mesh,
         },
         held::HeldCache,
         icons::ItemIcons,
@@ -824,6 +824,13 @@ impl App {
                 );
                 add_cart_blocks(&mut mesh, &game.carts, models, game.tick_alpha(), light_at);
                 add_primed_tnt(&mut mesh, &game.primed, models, game.tick_alpha(), light_at);
+                add_fireballs(
+                    &mut mesh,
+                    &game.fireballs,
+                    icons,
+                    &view_camera,
+                    game.tick_alpha(),
+                );
                 add_particles(
                     &mut mesh,
                     &game.particles,
@@ -892,6 +899,7 @@ impl App {
                 add_mob(&mut meshes[index].1, mob, def, alpha, light);
                 for (i, layer) in def.layers.iter().enumerate() {
                     if (layer.wool && mob.data.sheared)
+                        || (layer.saddle && !mob.data.saddled)
                         || layer.only_variant.is_some_and(|v| v != mob.data.variant)
                     {
                         continue;

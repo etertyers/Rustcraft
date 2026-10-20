@@ -173,6 +173,11 @@ impl Game {
             self.view.swing();
             return;
         }
+        // A punched fireball flies back.
+        if clicked && self.deflect_fireball(eye) {
+            self.mining = None;
+            return;
+        }
         // A mob in front of the targeted block is hit instead, once per click.
         if let Some(mob) = self.target_mob(eye, hit.as_ref())
             && (wants_break || self.mining.is_none())
@@ -506,6 +511,7 @@ impl Game {
                     }
                     if !arrow.hostile {
                         self.mobs[index].hit_by_player();
+                        self.rally(index);
                     }
                 }
                 Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from)),

@@ -22,6 +22,7 @@ mod mob_tests;
 mod mobs;
 #[cfg(test)]
 mod moves;
+mod nether_mobs;
 #[cfg(test)]
 mod offhand;
 mod portals;
@@ -162,6 +163,8 @@ pub struct Game {
     shield_hand: Option<crate::inventory::player::Hand>,
     shield_ticks: u32,
     pub arrows: Vec<Arrow>,
+    /// Ghasts' fireballs in flight.
+    pub fireballs: Vec<crate::entity::fireball::Fireball>,
     /// Sand and gravel falling.
     pub falling: Vec<crate::entity::falling::FallingBlock>,
     /// Blocks due to start falling, by tick.
@@ -284,6 +287,7 @@ impl Game {
             shield_hand: None,
             shield_ticks: 0,
             arrows: Vec::new(),
+            fireballs: Vec::new(),
             falling: Vec::new(),
             falls_due: Vec::new(),
             post_processing: Vec::new(),
@@ -698,6 +702,7 @@ impl Game {
         self.tick_items();
         self.tick_particles();
         self.tick_arrows();
+        self.tick_fireballs();
         self.tick_mobs();
         self.tick_spawners();
         self.tick_fluids();

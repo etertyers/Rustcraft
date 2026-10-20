@@ -59,6 +59,12 @@ pub struct MobDef {
     /// Takes no fall damage.
     #[serde(default)]
     pub no_fall: bool,
+    /// Fire and lava don't hurt it (the Nether's mobs, M24).
+    #[serde(default)]
+    pub fire_immune: bool,
+    /// Walks on lava as on ground (striders).
+    #[serde(default)]
+    pub walks_on_lava: bool,
     /// Eye height as a fraction of its height.
     #[serde(default = "eye_fraction")]
     pub eye: f64,
@@ -90,6 +96,9 @@ pub struct Layer {
     /// Only drawn while the mob has this variant (a tamed wolf's collar).
     #[serde(default)]
     pub only_variant: Option<u8>,
+    /// Only drawn while the mob is saddled (a strider's saddle).
+    #[serde(default)]
+    pub saddle: bool,
 }
 
 /// How a mob decides what to do (1.0.0's `EntityCreature` family, and
@@ -133,6 +142,17 @@ pub enum Ai {
     Fox { attack: f32 },
     /// Wanders and keeps to the village.
     Villager,
+    /// Floats about and shoots fireballs at the player (ghasts).
+    Ghast,
+    /// Neutral until hurt, then angry with every zombified piglin around.
+    ZombifiedPiglin { attack: f32 },
+    /// Hostile unless the player wears gold; takes gold to barter.
+    Piglin { attack: f32 },
+    /// Hostile; tosses what it hits into the air.
+    Hoglin { attack: f32 },
+    /// Walks the lava; rideable once saddled, steered with a warped
+    /// fungus on a stick.
+    Strider,
 }
 
 impl Ai {
@@ -154,6 +174,10 @@ impl Ai {
                 | Ai::Slime
                 | Ai::Witch
                 | Ai::Phantom { .. }
+                | Ai::Ghast
+                | Ai::ZombifiedPiglin { .. }
+                | Ai::Piglin { .. }
+                | Ai::Hoglin { .. }
         )
     }
 }
@@ -197,7 +221,20 @@ pub enum Spawn {
         biomes: Vec<Biome>,
         #[serde(default = "hundred")]
         weight: u32,
+        /// Nether biomes it spawns in too, each with a weight and group
+        /// (skeletons in soul sand valleys, endermen); `biomes` are only
+        /// ever the Overworld's.
+        #[serde(default)]
+        nether: Vec<(Biome, u32, u8)>,
     },
+    /// Near the player in the Nether wherever it's dark enough, in these
+    /// biomes, each with a weight and group (M24).
+    Nether {
+        max_light: u8,
+        biomes: Vec<(Biome, u32, u8)>,
+    },
+    /// On the lava sea near the player, in these biomes (striders).
+    Lava { group: u8, biomes: Vec<Biome> },
     /// In water at generation and near the player, in these biomes.
     Water {
         chance: f32,
@@ -370,7 +407,17 @@ mod tests {
 
     /// Mobs whose textures Kenzo's 1.12-era textures don't have; a resource
     /// pack brings them.
-    const NO_BASE_TEXTURE: [&str; 5] = ["bee", "fox", "cod", "salmon", "phantom"];
+    const NO_BASE_TEXTURE: [&str; 9] = [
+        "bee",
+        "fox",
+        "cod",
+        "salmon",
+        "phantom",
+        "zombified_piglin",
+        "piglin",
+        "hoglin",
+        "strider",
+    ];
 
     #[test]
     fn mobs_load_with_modern_values() {

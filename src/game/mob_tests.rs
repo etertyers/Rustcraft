@@ -753,6 +753,53 @@ fn new_biomes_bring_their_own_monsters_and_mushroom_fields_none() {
 }
 
 #[test]
+fn the_nether_spawns_its_own_monsters_and_the_overworld_none_of_them() {
+    let mut game = night_game(GameMode::Survival);
+    let chunk = crate::world::chunk::ChunkPos::new(0, 0);
+    let mut kinds_in = |biome: Biome| {
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..2000 {
+            if let Some((kind, _, _)) = game.pick_dark_kind(biome, IVec3::new(8, 40, 8), chunk) {
+                seen.insert(game.mob_defs.get(kind).name.clone());
+            }
+        }
+        seen
+    };
+    let set = |names: &[&str]| names.iter().map(|n| n.to_string()).collect();
+    assert_eq!(
+        kinds_in(Biome::NetherWastes),
+        set(&[
+            "enderman",
+            "ghast",
+            "magma_cube",
+            "piglin",
+            "zombified_piglin"
+        ])
+    );
+    assert_eq!(
+        kinds_in(Biome::CrimsonForest),
+        set(&["hoglin", "piglin", "zombified_piglin"])
+    );
+    assert_eq!(kinds_in(Biome::WarpedForest), set(&["enderman"]));
+    assert_eq!(
+        kinds_in(Biome::SoulSandValley),
+        set(&["enderman", "ghast", "skeleton"])
+    );
+    assert_eq!(kinds_in(Biome::BasaltDeltas), set(&["ghast", "magma_cube"]));
+    let overworld = kinds_in(Biome::Plains);
+    for nether in [
+        "ghast",
+        "magma_cube",
+        "piglin",
+        "zombified_piglin",
+        "hoglin",
+        "strider",
+    ] {
+        assert!(!overworld.contains(nether), "{nether} in the plains");
+    }
+}
+
+#[test]
 fn animals_and_fish_spawn_in_their_modern_biomes() {
     let game = lit_flat_game(GameMode::Creative);
     let spawns_in = |name: &str, biome: Biome| {
@@ -798,7 +845,8 @@ fn every_mob_model_stands_on_its_feet_and_is_about_its_hitbox_tall() {
         let ys = mesh.vertices.iter().map(|v| v.position[1]);
         let (min, max) = ys.fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
         let tall = (max - min) as f64;
-        let scaled = def.height * f64::from(def.scale);
+        // A ghast's hitbox is already the size of its 4.5-times model.
+        let scaled = def.height * f64::from(def.scale).min(1.1);
         assert!(
             tall > scaled * 0.5 && tall < scaled * 2.3 + 0.6,
             "{} is {tall} tall for a hitbox of {}",

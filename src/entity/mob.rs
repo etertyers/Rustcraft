@@ -102,6 +102,8 @@ pub struct Mob {
     /// Ticks left in which a death counts as the player's kill (it
     /// drops experience only then).
     pub player_hit: u32,
+    /// Fire and lava don't hurt it (from its kind).
+    pub fire_immune: bool,
 }
 
 impl Mob {
@@ -149,6 +151,7 @@ impl Mob {
             aggressive: false,
             ridden: false,
             player_hit: 0,
+            fire_immune: def.fire_immune,
         }
     }
 
@@ -252,12 +255,17 @@ impl Mob {
         }
         self.body.tick(input, self.yaw, world);
         let moved = self.feet() - self.prev_feet;
+        // The Nether's mobs shrug off fire and lava.
+        let burns = !self.fire_immune;
+        if !burns {
+            self.stats.fire = 0;
+        }
         let around = Surroundings {
             on_ground: self.body.on_ground,
             fell: -moved.y as f32,
             in_water: self.body.liquid == Some(Fluid::Water),
-            in_lava: self.body.liquid == Some(Fluid::Lava),
-            in_fire: world.in_fire(&self.body.aabb()),
+            in_lava: burns && self.body.liquid == Some(Fluid::Lava),
+            in_fire: burns && world.in_fire(&self.body.aabb()),
             eyes_in_water,
             flying: false,
             no_fall: false,
@@ -278,8 +286,10 @@ impl Mob {
         looting: u8,
         random: &mut impl FnMut() -> f32,
     ) -> Vec<ItemStack> {
-        // Only the smallest slimes drop slimeballs.
-        if self.data.size > 1 {
+        // Only the smallest slimes drop slimeballs, and only the bigger
+        // magma cubes magma cream.
+        let small = self.data.size <= 1;
+        if self.data.size > 0 && small == (def.name == "magma_cube") {
             return Vec::new();
         }
         let mut stacks = Vec::new();

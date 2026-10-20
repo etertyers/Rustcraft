@@ -69,6 +69,8 @@ pub enum DamageSource {
     Anvil,
     /// Standing on a magma block (M24).
     HotFloor,
+    /// A ghast's fireball (M24).
+    Fireball,
 }
 
 impl DamageSource {
@@ -86,6 +88,7 @@ impl DamageSource {
             DamageSource::Explosion => "blew up",
             DamageSource::Anvil => "was squashed by a falling anvil",
             DamageSource::HotFloor => "discovered the floor was lava",
+            DamageSource::Fireball => "was fireballed by Ghast",
         }
     }
 
@@ -98,6 +101,7 @@ impl DamageSource {
             | DamageSource::Arrow
             | DamageSource::Explosion
             | DamageSource::HotFloor
+            | DamageSource::Fireball
             | DamageSource::Anvil => DAMAGE_EXHAUSTION,
             DamageSource::Fall
             | DamageSource::Drowning
