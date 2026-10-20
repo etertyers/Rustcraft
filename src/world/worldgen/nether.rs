@@ -171,6 +171,17 @@ impl Nether {
         self.world_seed
     }
 
+    /// Feet height on the lowest floor above the lava at (x, z) with room
+    /// to stand, if there is one: where test worlds start.
+    pub fn standing_height(&self, x: i32, z: i32) -> Option<i32> {
+        let mut land = Land::new(self);
+        land.floors(x, z)
+            .into_iter()
+            .rev()
+            .find(|&y| (1..=3).all(|up| land.open(x, y + up, z)))
+            .map(|y| y + 1)
+    }
+
     pub fn generate(&self, pos: ChunkPos) -> Chunk {
         let mut land = Land::new(self);
         let mut chunk = Chunk::new(pos);
@@ -1080,6 +1091,49 @@ mod tests {
             }
         }
         image.save(path).unwrap();
+    }
+
+    /// `cargo test --release nether_views -- --ignored --nocapture`: a big
+    /// open floor in each biome of seed 20111118, for `--shot` scenes.
+    #[test]
+    #[ignore]
+    fn nether_views() {
+        let nether = Nether::new(20111118);
+        for biome in Biome::NETHER {
+            let mut found = None;
+            'search: for r in (0..1500).step_by(16) {
+                for (x, z) in [
+                    (r, 0),
+                    (0, r),
+                    (-r, 0),
+                    (0, -r),
+                    (r, r),
+                    (-r, r),
+                    (r, -r),
+                    (-r, -r),
+                ] {
+                    let all = (-12..=12).step_by(6).all(|dx| {
+                        (-12..=12)
+                            .step_by(6)
+                            .all(|dz| nether.biome(x + dx, z + dz) == biome)
+                    });
+                    if !all {
+                        continue;
+                    }
+                    let mut land = Land::new(&nether);
+                    for y in land.floors(x, z) {
+                        let room = (1..40).take_while(|&up| land.open(x, y + up, z)).count();
+                        // Open ahead to the south too.
+                        let ahead = (1..30).all(|dz| land.open(x, y + 6, z + dz));
+                        if room >= 20 && ahead {
+                            found = Some((x, y, z, room));
+                            break 'search;
+                        }
+                    }
+                }
+            }
+            eprintln!("{biome:?}: {found:?}");
+        }
     }
 
     #[test]

@@ -48,6 +48,14 @@ impl Game {
         self.dimension
     }
 
+    /// A test world that starts in `dimension` (its chunks must come from
+    /// there).
+    pub fn starting_in(mut self, dimension: Dimension) -> Self {
+        self.dimension = dimension;
+        self.fluids.warm = dimension == Dimension::Nether;
+        self
+    }
+
     /// Whether the player went to another dimension since the last call,
     /// so the renderer drops the chunks it drew.
     pub fn take_dimension_change(&mut self) -> bool {

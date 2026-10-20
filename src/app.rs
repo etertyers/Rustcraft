@@ -68,7 +68,7 @@ use crate::{
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
         shape::Cuboid,
-        worldgen::{gallery, terrain::Terrain},
+        worldgen::{gallery, nether::Nether, terrain::Terrain},
     },
 };
 
@@ -88,6 +88,8 @@ pub enum WorldKind {
     Flat,
     /// Every block and variant on display (`--gallery`).
     Gallery,
+    /// The Nether of a seed, starting there (`--nether`).
+    Nether { seed: u64 },
 }
 
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
@@ -322,6 +324,25 @@ impl App {
                 let (x, y, z) = terrain.spawn_point();
                 let spawn = DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
                 (ChunkSource::Terrain(Box::new(terrain)), spawn, 0.0, 0.0)
+            }
+            // On the floor nearest the origin.
+            WorldKind::Nether { seed } => {
+                let nether = Nether::new(seed);
+                let spawn = (0..64)
+                    .flat_map(|r| [(r, 0), (0, r), (-r, 0), (0, -r)])
+                    .find_map(|(x, z)| {
+                        let y = nether.standing_height(x, z)?;
+                        Some(DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5))
+                    })
+                    .unwrap_or(DVec3::new(0.5, 64.0, 0.5));
+                let chunks = ChunkManager::new(
+                    ChunkSource::Nether(Box::new(nether)),
+                    models,
+                    config::RENDER_DISTANCE,
+                    chunk_workers(),
+                );
+                let game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0);
+                return Ok(game.starting_in(crate::world::dimension::Dimension::Nether));
             }
             // On the grass at the origin.
             WorldKind::Flat => (ChunkSource::Flat, DVec3::new(0.5, ground, 0.5), 0.0, 0.0),

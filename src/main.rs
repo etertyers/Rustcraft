@@ -115,6 +115,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     let mut bench = None;
     let (mut shot, mut out) = (None, None);
     let mut test_world = None;
+    let mut nether = false;
     let mut view = ViewMode::First;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -169,6 +170,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
             }
             "--gallery" => test_world = Some(app::WorldKind::Gallery),
             "--flat" => test_world = Some(app::WorldKind::Flat),
+            "--nether" => nether = true,
             "--world" => world = Some(args.next().context("--world needs a name")?),
             "--creative" => mode = player::mode::GameMode::Creative,
             "--seed" => {
@@ -180,7 +182,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
                 );
             }
             other => anyhow::bail!(
-                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --bench [seconds], --distance <chunks> or --shot <name>)"
+                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --nether, --bench [seconds], --distance <chunks> or --shot <name>)"
             ),
         }
     }
@@ -193,6 +195,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
         return Ok((Some(app::WorldKind::Generated { seed }), bench, None, view));
     }
     let world = match (world, seed) {
+        _ if nether => Some(app::WorldKind::Nether {
+            seed: seed.unwrap_or(bench::SEED),
+        }),
         _ if test_world.is_some() => test_world,
         (Some(name), seed) => Some(app::WorldKind::Saved { name, seed, mode }),
         (None, Some(seed)) => Some(app::WorldKind::Generated { seed }),
