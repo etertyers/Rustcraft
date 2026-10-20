@@ -220,7 +220,10 @@ pub fn add_particles(
         let center = particle.position_between_ticks(alpha);
         let (sky, block) = light_at(center);
         let texture = models.get(particle.block).faces[particle.face.index()];
-        let color = models.icon_color(texture.tint).map(|c| c * PARTICLE_SHADE);
+        let color = particle
+            .tint
+            .unwrap_or_else(|| models.icon_color(texture.tint))
+            .map(|c| c * PARTICLE_SHADE);
         let [u0, v0, u1, v1] = texture.uv;
         let [wu, wv] = particle.window;
         let (du, dv) = (u1 - u0, v1 - v0);

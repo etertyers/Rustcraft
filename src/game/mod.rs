@@ -26,6 +26,7 @@ mod nether_mobs;
 #[cfg(test)]
 mod offhand;
 mod portals;
+mod potions;
 #[cfg(test)]
 mod progression;
 mod redstone;
@@ -165,6 +166,8 @@ pub struct Game {
     pub arrows: Vec<Arrow>,
     /// Ghasts' fireballs in flight.
     pub fireballs: Vec<crate::entity::fireball::Fireball>,
+    /// Splash potions in flight.
+    pub thrown: Vec<crate::entity::thrown::ThrownPotion>,
     /// Sand and gravel falling.
     pub falling: Vec<crate::entity::falling::FallingBlock>,
     /// Blocks due to start falling, by tick.
@@ -288,6 +291,7 @@ impl Game {
             shield_ticks: 0,
             arrows: Vec::new(),
             fireballs: Vec::new(),
+            thrown: Vec::new(),
             falling: Vec::new(),
             falls_due: Vec::new(),
             post_processing: Vec::new(),
@@ -712,6 +716,8 @@ impl Game {
         self.tick_particles();
         self.tick_arrows();
         self.tick_fireballs();
+        self.tick_thrown();
+        self.swirl_effects();
         self.tick_mobs();
         self.tick_spawners();
         self.tick_fluids();
@@ -751,6 +757,7 @@ impl Game {
             using_item: self.using_item(),
             ..self.keys.move_input()
         };
+        effects_move(&mut self.body, &self.stats.effects);
         self.body.tick(&input, self.camera.yaw, &collider);
         if self.body.position().y < VOID_Y {
             if self.mode.is_vulnerable() {
@@ -897,6 +904,14 @@ impl Game {
                 .map_or(&[], |block| shapes.outline(block))
         })
     }
+}
+
+/// What status effects do to how `body` moves this tick.
+pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Effects) {
+    use crate::player::effects::Effect;
+    body.speed_factor = effects.speed_factor();
+    body.jump_bonus = effects.jump_boost().0;
+    body.slow_falling = effects.has(Effect::SlowFalling);
 }
 
 /// A seed for drop and throw randomness, from the clock.

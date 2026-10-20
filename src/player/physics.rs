@@ -71,6 +71,8 @@ const LAVA_DRAG: f64 = 0.5;
 /// and in lava (a quarter).
 const WATER_SINK: f64 = GRAVITY / 16.0;
 const LAVA_SINK: f64 = GRAVITY / 4.0;
+/// Gravity while falling under Slow Falling.
+const SLOW_FALL_GRAVITY: f64 = 0.01;
 /// Upward speed added each tick holding jump in a fluid.
 const SWIM_UP: f64 = 0.04;
 /// Fluid this deep (in blocks, over the feet) swims on jumping; shallower
@@ -136,6 +138,11 @@ pub struct Body {
     pub bounced: bool,
     /// Whether the body is in a ladder or vine.
     pub on_climbable: bool,
+    /// What status effects do to moving (M26): walking scaled by Speed and
+    /// Slowness, jumps raised by Jump Boost, falls slowed by Slow Falling.
+    pub speed_factor: f64,
+    pub jump_bonus: f64,
+    pub slow_falling: bool,
     pose: Pose,
     /// Whether this is the player, who has poses (mobs stay standing).
     has_poses: bool,
@@ -183,6 +190,9 @@ impl Body {
             sprint_tap_timer: 0,
             was_jumping: false,
             fly_tap_timer: 0,
+            speed_factor: 1.0,
+            jump_bonus: 0.0,
+            slow_falling: false,
         }
     }
 
@@ -330,7 +340,8 @@ impl Body {
                 self.velocity.y += SWIM_UP;
             } else if self.on_ground {
                 self.jumped = true;
-                let power = JUMP_VELOCITY * self.block_factor(|x, y, z| world.jump_factor(x, y, z));
+                let power = JUMP_VELOCITY * self.block_factor(|x, y, z| world.jump_factor(x, y, z))
+                    + self.jump_bonus;
                 self.velocity.y = self.velocity.y.max(power);
                 if self.sprinting {
                     self.velocity += facing * SPRINT_JUMP_BOOST;
@@ -347,7 +358,8 @@ impl Body {
         } else if self.on_ground {
             // Independent of friction at normal slipperiness: the speed
             // attribute times 0.216 over the block's friction cubed.
-            WALK_ACCELERATION * sprint * 0.216 / block_friction(friction).powi(3)
+            WALK_ACCELERATION * sprint * self.speed_factor * 0.216
+                / block_friction(friction).powi(3)
         } else {
             AIR_ACCELERATION * sprint
         };
@@ -398,7 +410,13 @@ impl Body {
                 self.flying = false;
             }
         } else {
-            self.velocity.y = (self.velocity.y - GRAVITY) * VERTICAL_DRAG;
+            // Slow Falling: modern's 0.01 gravity while falling.
+            let gravity = if self.slow_falling && self.velocity.y <= 0.0 {
+                SLOW_FALL_GRAVITY
+            } else {
+                GRAVITY
+            };
+            self.velocity.y = (self.velocity.y - gravity) * VERTICAL_DRAG;
         }
         self.velocity.x *= friction;
         self.velocity.z *= friction;

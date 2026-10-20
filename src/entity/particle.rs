@@ -35,6 +35,11 @@ pub struct Particle {
     pub face: Face,
     /// Where in the texture its quarter-size window sits, 0–0.75 each way.
     pub window: [f32; 2],
+    /// Drawn this color (sRGB) instead of the block's: effect swirls and
+    /// potion splashes (M26).
+    pub tint: Option<[f32; 3]>,
+    /// Pulled down this much a tick (swirls drift up instead).
+    gravity: f64,
 }
 
 impl Particle {
@@ -67,7 +72,32 @@ impl Particle {
             block,
             face,
             window: [(r() * 3.0 / 4.0) as f32, (r() * 3.0 / 4.0) as f32],
+            tint: None,
+            gravity: GRAVITY,
         }
+    }
+
+    /// A speck of `color` (0xRRGGBB) at `at`, drifting up and fading
+    /// (modern `SpellParticle`, drawn as a square of white wool).
+    pub fn colored(at: DVec3, color: u32, random: &mut impl FnMut() -> f32) -> Self {
+        let mut speck = Self::new(
+            at,
+            DVec3::ZERO,
+            BlockState::of(crate::world::blocks::WHITE_WOOL),
+            Face::Top,
+            random,
+        );
+        speck.velocity = DVec3::new(
+            f64::from(random() - 0.5) * 0.05,
+            0.03,
+            f64::from(random() - 0.5) * 0.05,
+        );
+        speck.gravity = -0.002;
+        speck.lifetime = 16 + (random() * 8.0) as u32;
+        speck.half_width = 0.06;
+        let channel = |shift: u32| ((color >> shift) & 0xFF) as f32 / 255.0;
+        speck.tint = Some([channel(16), channel(8), channel(0)]);
+        speck
     }
 
     /// The burst from breaking `block` at `cell`: 4×4×4 particles flying
@@ -124,7 +154,7 @@ impl Particle {
     pub fn tick(&mut self, world: &impl Collider) {
         self.prev_position = self.position;
         self.age += 1;
-        self.velocity.y -= GRAVITY;
+        self.velocity.y -= self.gravity;
         let mut on_ground = false;
         let mut boxes = Vec::new();
         for axis in 0..3 {

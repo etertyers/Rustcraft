@@ -107,6 +107,7 @@ impl Game {
         self.stashed_mobs.clear();
         self.arrows.clear();
         self.fireballs.clear();
+        self.thrown.clear();
         self.particles.clear();
         self.effects.clear();
         self.falling.clear();

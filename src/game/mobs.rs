@@ -337,6 +337,7 @@ impl Game {
             if !mob.body.free_flight {
                 mob.body.may_fly = false;
             }
+            super::effects_move(&mut mob.body, &mob.stats.effects);
             if def.walks_on_lava {
                 mob.tick(&intent.input, &LavaFloor(&collider), eyes);
             } else {

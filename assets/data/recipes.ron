@@ -10,9 +10,8 @@
 // recipes; anything made of planks takes any planks.
 //
 // Left out, because their systems aren't in the game (see DECISIONS.md):
-// boat, fishing rod, map, painting, cake (no milk), enchanting table, brewing
-// stand, cauldron, glass bottle, blaze powder, eye of ender, magma cream,
-// fermented spider eye, glistering melon, nether brick blocks.
+// boat, map, painting, cake (no milk), eye of ender. Enchanting (M22),
+// the Nether's (M24, M25) and brewing's (M26) came with their milestones.
 #![enable(implicit_some)]
 (
     tags: {
@@ -306,6 +305,12 @@
         (result: (item: "amethyst_block", count: 1), pattern: ["##", "##"], key: {'#': (item: "amethyst_shard")}),
         (result: (item: "copper_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "copper_ingot")}),
         (result: (item: "emerald_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "emerald")}),
+        // M26: brewing
+        (result: (item: "brewing_stand", count: 1), pattern: [" B ", "###"], key: {'B': (item: "blaze_rod"), '#': (item: "cobblestone")}),
+        (result: (item: "cauldron", count: 1), pattern: ["# #", "# #", "###"], key: {'#': (item: "iron_ingot")}),
+        (result: (item: "glass_bottle", count: 3), pattern: ["# #", " # "], key: {'#': (item: "glass")}),
+        (result: (item: "glistering_melon_slice", count: 1), pattern: ["###", "#M#", "###"], key: {'#': (item: "gold_nugget"), 'M': (item: "melon_slice")}),
+        (result: (item: "golden_carrot", count: 1), pattern: ["###", "#C#", "###"], key: {'#': (item: "gold_nugget"), 'C': (item: "carrot")}),
         // M25
         (result: (item: "netherite_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "netherite_ingot")}),
         (result: (item: "netherite_upgrade_smithing_template", count: 2), pattern: ["#T#", "#N#", "###"], key: {'#': (item: "diamond"), 'T': (item: "netherite_upgrade_smithing_template"), 'N': (item: "netherrack")}),
@@ -461,6 +466,9 @@
         (result: (item: "pink_dye", count: 2), ingredients: [(item: "peony")]),
         (result: (item: "white_wool", count: 1), ingredients: [(item: "white_dye"), (tag: "wool")]),
         (result: (item: "blue_wool", count: 1), ingredients: [(item: "blue_dye"), (item: "white_wool")]),
+        // M26
+        (result: (item: "fermented_spider_eye", count: 1), ingredients: [(item: "spider_eye"), (item: "brown_mushroom"), (item: "sugar")]),
+        (result: (item: "magma_cream", count: 1), ingredients: [(item: "blaze_powder"), (item: "slime_ball")]),
         // M25
         (result: (item: "netherite_ingot", count: 1), ingredients: [(item: "netherite_scrap"), (item: "netherite_scrap"), (item: "netherite_scrap"), (item: "netherite_scrap"), (item: "gold_ingot"), (item: "gold_ingot"), (item: "gold_ingot"), (item: "gold_ingot")]),
         (result: (item: "netherite_ingot", count: 9), ingredients: [(item: "netherite_block")]),

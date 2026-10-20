@@ -144,9 +144,12 @@ impl Game {
     }
 
     /// Damage of a full swing with the main hand's item.
+    /// The swing's full damage: the item's, with Strength and Weakness.
     pub(super) fn attack_damage(&self) -> f32 {
-        self.selected_tool()
-            .map_or(c::HAND_DAMAGE, |tool| tool.attack)
+        let base = self
+            .selected_tool()
+            .map_or(c::HAND_DAMAGE, |tool| tool.attack);
+        (base + self.stats.effects.attack_bonus()).max(0.0)
     }
 
     /// How charged the next swing is, `partial` of the way into a tick.

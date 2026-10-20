@@ -8,6 +8,7 @@ pub mod grindstone;
 pub mod item;
 pub mod items;
 pub mod player;
+pub mod potion;
 pub mod slots;
 pub mod smithing;
 pub mod stack;

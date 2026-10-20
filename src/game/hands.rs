@@ -81,6 +81,9 @@ impl Game {
         if hand == Hand::Main && (item.bucket.is_some() || item.shoots.is_some()) {
             return true;
         }
+        if Self::is_drink(stack.id) || stack.id == items::SPLASH_POTION {
+            return true;
+        }
         if let Some(food) = item.food {
             return self.mode.is_vulnerable() && (food.always_edible || self.stats.can_eat());
         }
@@ -148,6 +151,17 @@ impl Game {
             self.break_clicked = false;
             self.place_clicked = false;
             self.mining = None;
+            return;
+        }
+        // A splash potion is thrown, once per click.
+        if hand.is_some()
+            && self.place_clicked
+            && self.held().is_some_and(|s| s.id == items::SPLASH_POTION)
+        {
+            let slot = self.held_slot();
+            self.throw_potion(slot);
+            self.break_clicked = false;
+            self.place_clicked = false;
             return;
         }
         self.eating = None;
@@ -551,12 +565,16 @@ impl Game {
         let Some(stack) = self.held().cloned() else {
             return false;
         };
-        let Some(food) = self.items.item(stack.id).and_then(|item| item.food) else {
-            return false;
-        };
-        let hungry = food.always_edible || self.stats.can_eat();
-        if !self.mode.is_vulnerable() || !hungry {
-            return false;
+        let drink = Self::is_drink(stack.id);
+        let food = self.items.item(stack.id).and_then(|item| item.food);
+        if !drink {
+            let Some(food) = food else {
+                return false;
+            };
+            let hungry = food.always_edible || self.stats.can_eat();
+            if !self.mode.is_vulnerable() || !hungry {
+                return false;
+            }
         }
         let ticks = match self.eating {
             Some((eating_slot, ticks)) if eating_slot == slot => ticks + 1,
@@ -567,8 +585,16 @@ impl Game {
             return true;
         }
         self.eating = None;
+        if drink {
+            self.finish_drinking(slot, &stack);
+            return true;
+        }
+        let Some(food) = food else {
+            return false;
+        };
         self.inventory.take(slot, 1);
         self.stats.eat(food.hunger, food.saturation);
+        self.food_effects(stack.id);
         if let Some(leftover) = self.items.item(stack.id).and_then(|item| item.leftover) {
             let bowl = ItemStack::with_damage(leftover, 1, 0);
             if self.inventory.slot(slot).is_none() {
@@ -771,7 +797,7 @@ impl Game {
     }
 
     /// Adds particles, dropping the oldest past 1.0.0's limit.
-    fn add_particles(&mut self, particles: impl IntoIterator<Item = Particle>) {
+    pub(super) fn add_particles(&mut self, particles: impl IntoIterator<Item = Particle>) {
         self.particles.extend(particles);
         let over = self.particles.len().saturating_sub(MAX_PARTICLES);
         self.particles.drain(..over);
