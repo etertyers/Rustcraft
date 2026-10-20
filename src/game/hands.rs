@@ -81,7 +81,9 @@ impl Game {
         if hand == Hand::Main && (item.bucket.is_some() || item.shoots.is_some()) {
             return true;
         }
-        if Self::is_drink(stack.id) || stack.id == items::SPLASH_POTION {
+        if Self::is_drink(stack.id)
+            || matches!(stack.id, items::SPLASH_POTION | items::GLASS_BOTTLE)
+        {
             return true;
         }
         if let Some(food) = item.food {
@@ -151,6 +153,22 @@ impl Game {
             self.break_clicked = false;
             self.place_clicked = false;
             self.mining = None;
+            return;
+        }
+        // Buckets and bottles in a cauldron, bottles filled from water.
+        if self.place_clicked && !wants_break && hit.is_some_and(|h| self.use_cauldron(h.block)) {
+            self.view.swing();
+            self.place_clicked = false;
+            return;
+        }
+        if hand.is_some()
+            && self.place_clicked
+            && self.held().is_some_and(|s| s.id == items::GLASS_BOTTLE)
+        {
+            self.place_clicked = false;
+            if self.fill_bottle(eye) {
+                self.view.swing();
+            }
             return;
         }
         // A splash potion is thrown, once per click.
@@ -671,6 +689,7 @@ impl Game {
             Activate::Anvil => self.open_bench(BenchKind::Anvil, cell),
             Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
             Activate::Smithing => self.open_bench(BenchKind::Smithing, cell),
+            Activate::Brewing => self.open_brewing(cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }

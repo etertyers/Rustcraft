@@ -729,6 +729,7 @@ impl Game {
         self.tick_falling();
         self.post_process();
         self.tick_furnaces();
+        self.tick_brewing();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS

@@ -56,6 +56,7 @@ pub struct GuiTextures {
     pub enchanting: TextureHandle,
     pub anvil: TextureHandle,
     pub grindstone: TextureHandle,
+    pub brewing: TextureHandle,
     /// Falls back to the anvil's sheet: Kenzo's 1.12 GUI has no smithing
     /// table, so the slots then sit over the wrong outlines.
     pub smithing: TextureHandle,
@@ -149,6 +150,7 @@ impl GuiTextures {
             enchanting: sheet("gui/container/enchanting_table", &[])?,
             anvil: sheet("gui/container/anvil", &[])?,
             grindstone: sheet("gui/container/grindstone", &[])?,
+            brewing: sheet("gui/container/brewing_stand", &[])?,
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,

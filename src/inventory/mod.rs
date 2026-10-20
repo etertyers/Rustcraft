@@ -1,6 +1,7 @@
 //! Items, stacks, the player's inventory, crafting and furnaces.
 
 pub mod anvil;
+pub mod brewing;
 pub mod crafting;
 pub mod enchant;
 pub mod furnace;

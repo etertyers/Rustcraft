@@ -6,7 +6,7 @@ use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
-    furnace,
+    brewing, furnace,
     player::{HOTBAR_SLOTS, MAIN_SLOTS, OFFHAND},
     slots::{Click, SlotRef},
     stack::ItemStack,
@@ -25,6 +25,8 @@ pub enum Screen {
     Crafting,
     Chest,
     Furnace,
+    /// A brewing stand's bottles, ingredient and fuel (M26).
+    Brewing,
     /// A dispenser's 3×3 slots, or a dropper's.
     Dispenser {
         dropper: bool,
@@ -142,6 +144,8 @@ pub struct ScreenView<'a> {
     pub slot: &'a dyn Fn(SlotRef) -> Option<(SlotView, String)>,
     /// A furnace's fuel left and cooking progress, each 0–1.
     pub furnace: Option<(f32, f32)>,
+    /// The open brewing stand's progress and fuel, 0–1.
+    pub brewing: Option<(f32, f32)>,
     /// The stack held on the mouse.
     pub cursor: Option<SlotView>,
     /// Creative: every block and item, with how it looks and its name.
@@ -211,6 +215,7 @@ fn panel_size(screen: &Screen) -> [f32; 2] {
         Screen::Inventory
         | Screen::Crafting
         | Screen::Furnace
+        | Screen::Brewing
         | Screen::Dispenser { .. }
         | Screen::Enchanting
         | Screen::Anvil
@@ -269,6 +274,17 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
             (SlotRef::Block(furnace::INPUT), [56.0, 17.0]),
             (SlotRef::Block(furnace::FUEL), [56.0, 53.0]),
             (SlotRef::Block(furnace::OUTPUT), [116.0, 35.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
+        // 1.9+'s layout, with the fuel slot top left.
+        Screen::Brewing => [
+            (SlotRef::Block(brewing::BOTTLES[0]), [56.0, 51.0]),
+            (SlotRef::Block(brewing::BOTTLES[1]), [79.0, 58.0]),
+            (SlotRef::Block(brewing::BOTTLES[2]), [102.0, 51.0]),
+            (SlotRef::Block(brewing::INGREDIENT), [79.0, 17.0]),
+            (SlotRef::Block(brewing::FUEL), [17.0, 17.0]),
         ]
         .into_iter()
         .chain(inventory)
@@ -336,6 +352,7 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
         Screen::Creative { .. } => &[],
         Screen::Chest => &[("Chest", [8.0, 6.0]), ("Inventory", [8.0, 74.0])],
         Screen::Furnace => &[("Furnace", [60.0, 6.0]), ("Inventory", [8.0, 72.0])],
+        Screen::Brewing => &[("Brewing Stand", [57.0, 6.0]), ("Inventory", [8.0, 72.0])],
         Screen::Dispenser { dropper: false } => {
             &[("Dispenser", [60.0, 6.0]), ("Inventory", [8.0, 72.0])]
         }
@@ -412,6 +429,7 @@ pub fn show(
         Screen::Creative { .. } => &textures.creative,
         Screen::Chest => &textures.chest,
         Screen::Furnace => &textures.furnace,
+        Screen::Brewing => &textures.brewing,
         Screen::Dispenser { .. } => &textures.dispenser,
         Screen::Hopper => &textures.hopper,
         Screen::Enchanting => &textures.enchanting,
@@ -452,6 +470,9 @@ pub fn show(
     }
     if let (Screen::Furnace, Some((fuel, cooked))) = (*screen, view.furnace) {
         paint_furnace_progress(&painter, background.id(), origin, scale, fuel, cooked);
+    }
+    if let (Screen::Brewing, Some((brewed, fuel))) = (*screen, view.brewing) {
+        paint_brewing_progress(&painter, background.id(), origin, scale, brewed, fuel);
     }
     for &(text, at) in labels(screen) {
         painter.text(
@@ -940,6 +961,40 @@ fn paint_furnace_progress(
         origin + vec2(79.0, 34.0) * scale,
         scale,
     );
+}
+
+/// The brewing stand's arrow, growing down as the brew goes on, and its
+/// blaze bar, shrinking as the fuel burns (1.9+'s `BrewingStandScreen`).
+fn paint_brewing_progress(
+    painter: &Painter,
+    texture: egui::TextureId,
+    origin: Pos2,
+    scale: f32,
+    brewed: f32,
+    fuel: f32,
+) {
+    let arrow = (brewed * 28.0).floor();
+    if arrow > 0.0 {
+        gui::sheet_image(
+            painter,
+            texture,
+            [176.0, 0.0],
+            [9.0, arrow],
+            origin + vec2(97.0, 16.0) * scale,
+            scale,
+        );
+    }
+    let bar = (fuel * 18.0).ceil();
+    if bar > 0.0 {
+        gui::sheet_image(
+            painter,
+            texture,
+            [176.0, 29.0],
+            [bar, 4.0],
+            origin + vec2(60.0, 44.0) * scale,
+            scale,
+        );
+    }
 }
 
 /// 1.0.0's item name tooltip: white text on a dark box above-right of the mouse.

@@ -39,6 +39,8 @@ pub enum BlockEntity {
     Hopper(Hopper),
     /// A monster spawner (added in M23, so it comes last for old saves).
     Spawner(Spawner),
+    /// A brewing stand (M26).
+    BrewingStand(crate::inventory::brewing::BrewingStand),
 }
 
 /// What a spawner makes, and the ticks until it next tries.
@@ -73,6 +75,7 @@ impl BlockEntity {
             Self::Chest(slots) | Self::Dispenser(slots) => slots,
             Self::Furnace(furnace) => &furnace.slots,
             Self::Hopper(hopper) => &hopper.slots,
+            Self::BrewingStand(stand) => &stand.slots,
             Self::Spawner(_) => &[],
         }
     }
@@ -82,6 +85,7 @@ impl BlockEntity {
             Self::Chest(slots) | Self::Dispenser(slots) => slots,
             Self::Furnace(furnace) => &mut furnace.slots,
             Self::Hopper(hopper) => &mut hopper.slots,
+            Self::BrewingStand(stand) => &mut stand.slots,
             Self::Spawner(_) => &mut [],
         }
     }

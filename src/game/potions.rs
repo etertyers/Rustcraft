@@ -68,6 +68,83 @@ impl Game {
         }
     }
 
+    /// Right-click on a cauldron with a water bucket (fills it), an empty
+    /// bucket (takes a full one's water), a glass bottle (takes a third) or
+    /// a water bottle (adds a third). Returns whether anything happened.
+    pub(super) fn use_cauldron(&mut self, cell: glam::IVec3) -> bool {
+        use crate::world::{block::BlockState, blocks, props::Prop};
+        let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z) else {
+            return false;
+        };
+        let level = if block.is(blocks::WATER_CAULDRON) {
+            block.number(Prop::LevelCauldron)
+        } else if block.is(blocks::CAULDRON) {
+            0
+        } else {
+            return false;
+        };
+        let Some(held) = self.held().cloned() else {
+            return false;
+        };
+        let water = potion::of(&held).is_some_and(|p| p.id == "water") && held.id == items::POTION;
+        let (new_level, gives) = match held.id {
+            items::WATER_BUCKET if level < 3 => (3, items::BUCKET),
+            items::BUCKET if level == 3 => (0, items::WATER_BUCKET),
+            items::GLASS_BOTTLE if level > 0 => (level - 1, items::POTION),
+            items::POTION if water && level < 3 => (level + 1, items::GLASS_BOTTLE),
+            _ => return false,
+        };
+        let state = if new_level == 0 {
+            BlockState::of(blocks::CAULDRON)
+        } else {
+            BlockState::of(blocks::WATER_CAULDRON).with_number(Prop::LevelCauldron, new_level)
+        };
+        self.edit(&[(cell, state)]);
+        self.swap_held(ItemStack::new(gives, 1));
+        true
+    }
+
+    /// Fills the held glass bottle from the water source looked at.
+    pub(super) fn fill_bottle(&mut self, eye: DVec3) -> bool {
+        let world = self.chunks.world();
+        let dir = self.camera.forward().as_dvec3();
+        let water = |at: glam::IVec3| {
+            world
+                .block(at.x, at.y, at.z)
+                .is_some_and(|b| b.def().is_targetable() || b.is(crate::world::blocks::WATER))
+        };
+        let Some(hit) = crate::player::raycast::raycast(eye, dir, crate::config::REACH, water)
+        else {
+            return false;
+        };
+        let is_water = world
+            .block(hit.block.x, hit.block.y, hit.block.z)
+            .is_some_and(|b| b.is(crate::world::blocks::WATER));
+        if !is_water {
+            return false;
+        }
+        self.swap_held(ItemStack::new(items::POTION, 1));
+        true
+    }
+
+    /// Uses up one of the held item for `got` (a bottle filled, a bucket
+    /// emptied), into the hand if it's free, the inventory if not.
+    fn swap_held(&mut self, got: ItemStack) {
+        if !self.mode.uses_up_items() {
+            if got.id == items::POTION && self.inventory.add(got.clone(), &self.items).is_some() {
+                self.throw(got);
+            }
+            return;
+        }
+        let slot = self.held_slot();
+        self.inventory.take(slot, 1);
+        if self.inventory.slot(slot).is_none() {
+            self.inventory.set(slot, Some(got));
+        } else if let Some(rest) = self.inventory.add(got, &self.items) {
+            self.throw(rest);
+        }
+    }
+
     /// The effects eating `food` gives.
     pub(super) fn food_effects(&mut self, food: crate::inventory::item::ItemId) {
         let vulnerable = self.mode.is_vulnerable();
@@ -345,6 +422,86 @@ mod tests {
         assert_eq!(game.stats.effects.amplifier(Effect::Regeneration), Some(1));
         assert!(game.stats.effects.has(Effect::Absorption));
         assert_eq!(game.stats.absorption, 4.0);
+    }
+
+    #[test]
+    fn a_stand_brews_fire_resistance_from_a_cauldron_filled_bottle() {
+        use crate::{game::Container, inventory::brewing};
+        let mut game = flat_game(GameMode::Survival);
+        let cauldron = IVec3::new(0, 64, -2);
+        game.chunks
+            .set_blocks(&[(cauldron, BlockState::of(blocks::CAULDRON))]);
+        game.inventory
+            .set(0, Some(ItemStack::new(items::WATER_BUCKET, 1)));
+        game.inventory.selected = 0;
+        assert!(game.use_cauldron(cauldron));
+        assert_eq!(game.inventory.slot(0).map(|s| s.id), Some(items::BUCKET));
+        game.inventory
+            .set(0, Some(ItemStack::new(items::GLASS_BOTTLE, 3)));
+        for _ in 0..3 {
+            assert!(game.use_cauldron(cauldron));
+        }
+        assert!(
+            game.chunks
+                .world()
+                .block(0, 64, -2)
+                .unwrap()
+                .is(blocks::CAULDRON),
+            "emptied"
+        );
+        let bottles: u8 = (0..36)
+            .filter_map(|i| game.inventory.slot(i))
+            .filter(|s| potion::of(s).is_some_and(|p| p.id == "water"))
+            .map(|s| s.count)
+            .sum();
+        assert_eq!(bottles, 3);
+
+        let stand = IVec3::new(2, 64, 0);
+        game.chunks
+            .set_blocks(&[(stand, BlockState::of(blocks::BREWING_STAND))]);
+        game.open_brewing(stand);
+        let put = |game: &mut Game, slot: usize, stack: ItemStack| {
+            if let Some(slots) = game.block_slots_mut() {
+                slots[slot] = Some(stack);
+            }
+        };
+        for i in brewing::BOTTLES {
+            put(&mut game, i, potion::stack(items::POTION, "water"));
+        }
+        put(
+            &mut game,
+            brewing::INGREDIENT,
+            ItemStack::new(items::NETHER_WART, 1),
+        );
+        put(
+            &mut game,
+            brewing::FUEL,
+            ItemStack::new(items::BLAZE_POWDER, 1),
+        );
+        for _ in 0..402 {
+            game.tick();
+        }
+        put(
+            &mut game,
+            brewing::INGREDIENT,
+            ItemStack::new(items::MAGMA_CREAM, 1),
+        );
+        for _ in 0..402 {
+            game.tick();
+        }
+        assert!(matches!(game.container, Some(Container::Brewing(_))));
+        let slots = game.block_slots().unwrap().to_vec();
+        for i in brewing::BOTTLES {
+            assert_eq!(
+                potion::of(slots[i].as_ref().unwrap()).unwrap().id,
+                "fire_resistance"
+            );
+        }
+        let shown = game.chunks.world().block(2, 64, 0).unwrap();
+        assert!(
+            shown.bool(crate::world::props::Prop::HasBottle1),
+            "bottles on the stand"
+        );
     }
 
     fn drink_like_food(game: &mut Game, food: crate::inventory::item::ItemId) {

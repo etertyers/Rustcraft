@@ -612,6 +612,7 @@ impl App {
             Container::Crafting { .. } => Screen::Crafting,
             Container::Chest(_) => Screen::Chest,
             Container::Furnace(_) => Screen::Furnace,
+            Container::Brewing(_) => Screen::Brewing,
             Container::Dispenser(_, dropper) => Screen::Dispenser { dropper: *dropper },
             Container::Hopper(_) => Screen::Hopper,
             Container::Merchant(_) => Screen::Merchant,
@@ -1013,6 +1014,7 @@ impl App {
         let view = ScreenView {
             slot: &slot,
             furnace: game.furnace_progress(),
+            brewing: game.brewing_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
             bench: bench_view(game),
