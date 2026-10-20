@@ -111,6 +111,8 @@ src/
   world/structure/   # structure placement and per-chunk writing, templates (RON) and jigsaw joining, loot; designs/ draws the shipped templates (--write-structures)
   entity/villager.rs, game/villagers.rs   # professions, levels and trades; job sites, beds, schedule, breeding, golems, trading
   game/{spawners,capture}.rs   # spawners spawning, the creative capture tool (F8/F9 corners, F10 save)
+  world/{dimension,portal}.rs, world/worldgen/nether.rs   # dimensions, portal frames, the Nether's terrain, biomes and features
+  game/{dimensions,portals,nether_mobs}.rs, entity/fireball.rs   # switching dimensions, lighting and travelling through portals, ghasts' fireballs, bartering, striders
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
@@ -387,7 +389,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 
 #### Checkpoint C — The Nether
 
-### - [ ] M24 — The Nether: dimension and biomes
+### - [x] M24 — The Nether: dimension and biomes
 - Nether portal: obsidian frame of any valid size, lit with flint and steel or fire, linked portal travel at 8:1 coordinates, portal animation and transition.
 - The Nether (height 128, bedrock floor and ceiling, lava ocean) with nether wastes, crimson forest, warped forest, soul sand valley and basalt deltas, and all their blocks.
 - Nether mobs: ghast, zombified piglin, piglin (bartering with gold), hoglin, magma cube, strider (rideable).

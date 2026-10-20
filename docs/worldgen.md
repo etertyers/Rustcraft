@@ -372,3 +372,32 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 - **Missing biomes**: `stony_peaks`, `snowy_beach` and `frozen_river` are still fallbacks (windswept hills, beach, river) with their surfaces approximated.
 - **Old chunks**: saved worlds show seams at the edge of explored land (DECISIONS).
 - **Badlands below Y 100**: gentle badlands land is plain red sand. Bands show only on slopes and higher ground.
+
+## The Nether (M24)
+
+`world/worldgen/nether.rs`. The Nether is y 0–127 (air above the roof), with its own noises mixed from the world seed.
+
+- **Shape**: 3D noise (`Fbm<Perlin>`, 4 octaves, 56 blocks across and 34 up, −0.08 toward open) at the corners of 4 × 8 × 4 cells, blended in between. Over the bottom 24 blocks the density slides toward 2.5 and over the top 24 toward 0.9375 (modern `slideNetherLike`), so floors and roofs close the caverns. Bedrock always at y 0 and 127, and at y 1–4 / 123–126 with chance 4/5 … 1/5.
+- **Lava sea**: open space at y 31 and below is lava.
+- **Biomes**: modern's Nether multi-noise points on temperature and humidity (offsets for warped forest and basalt deltas), from 2-octave noise 260 blocks across, picked at the middle of each 4 × 4 quart.
+- **Surfaces** (bare terrain only, so every chunk agrees): crimson and warped nylium on forest floors above the lava; soul sand or soul soil (patch noise) three deep on valley floors and two under their ceilings; basalt or blackstone four deep on delta floors and two under ceilings; soul sand and gravel patches on the wastes' shores (y 30–34); netherrack elsewhere.
+- **Features**, per chunk, in order (each chunk replays its eight neighbors' and keeps what lands in it; features read only the bare terrain, except vines, which stay in one column and stop at anything already there):
+
+| Feature | Where | Per chunk |
+|---|---|---|
+| Basalt (12) and blackstone (4) blobs, radius 3–6 | deltas | 16 tries |
+| Quartz ore veins (radius ~1.6) | everywhere, y 10–118 | 16 (32 in deltas) |
+| Gold ore veins (~1.4) | everywhere, y 10–118 | 10 (20 in deltas) |
+| Magma (~2.6) | y 27–36 | 4 |
+| Gravel (~2.4) | y 5–31 | 2 |
+| Lava springs: closed (in solid rock), open (one side open, rock above) | y 10–118 | 20 tries; open ones 4 (8 in deltas) |
+| Lava deltas: lava pools 2–5 across, 0–1 magma rim | deltas floors | 6 |
+| Basalt columns: 2 large (reach 2–3, 5–10 tall), 3 small | deltas, from floor or lava | 5 |
+| Basalt pillars floor to ceiling | valleys | 3 |
+| Glowstone clumps (600 tries to add a cell touching exactly one) | under ceilings | 6–15 |
+| Fire / soul fire patches | wastes / valleys | 0–3 |
+| Weeping vines with nether wart block patches | crimson ceilings | 10 |
+| Roots, fungi, sprouts, twisting vines (on nylium); mushrooms | forests; wastes and valleys | per floor column |
+| Huge crimson / warped fungi (stem 4–13, doubled 1 in 12, thick 6%; wart cap with shroomlight, weeping vines under crimson caps) | forests on nylium | 8 |
+
+Generating a Nether chunk takes 1.38 ms (`cargo bench`), about what an Overworld one does. `cargo test --release nether_slice -- --ignored` with `NETHER_SLICE=out.png` draws a side view, and `nether_views` finds open spots in each biome for screenshots.
