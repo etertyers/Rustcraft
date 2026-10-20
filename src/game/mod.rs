@@ -494,10 +494,11 @@ impl Game {
         self.place_clicked = false;
     }
 
-    /// Applies the player's settings: render distance, field of view and
-    /// mouse sensitivity.
+    /// Applies the player's settings: render distance, biome blend, field
+    /// of view and mouse sensitivity.
     pub fn apply_options(&mut self, options: &Options) {
         self.chunks.set_radius(options.render_distance);
+        self.chunks.set_blend(options.biome_blend);
         self.camera.fov = options.fov;
         self.view.bobbing = options.view_bobbing;
         self.sensitivity = options.sensitivity;

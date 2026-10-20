@@ -90,6 +90,11 @@ pub const BIOME_SCALE: f64 = 1.0;
 /// Chunks drawn in each direction around the player.
 pub const RENDER_DISTANCE: i32 = 9;
 
+/// Default biome blend radius in columns: 2 averages grass and foliage
+/// colors over 5 × 5 columns (modern's default "Biome Blend: 5x5"); 0 is
+/// off.
+pub const BIOME_BLEND: i32 = 2;
+
 /// Combat, after modern (1.9+) Java Edition's `Player.attack`. Damage is in
 /// health points (half hearts); speeds in swings a second.
 pub mod combat {

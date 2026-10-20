@@ -1,6 +1,7 @@
 //! Blocks, chunks and the loaded world.
 
 pub mod biome;
+pub mod blend;
 pub mod block;
 pub mod block_entity;
 pub mod blocks;

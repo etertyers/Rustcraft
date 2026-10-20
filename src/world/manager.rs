@@ -20,7 +20,7 @@ use glam::IVec3;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use log::error;
 
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::{self, CHUNK_SIZE, WORLD_HEIGHT};
 
 use super::{
     World,
@@ -108,6 +108,8 @@ pub struct ChunkManager {
     meshed: FastSet<ChunkPos>,
     /// Chunks within this distance (in chunks, per axis) are meshed and drawn.
     radius: i32,
+    /// Biome blend radius for meshing, in columns.
+    blend: i32,
     /// Offsets within `radius + 1`, nearest first.
     offsets: Vec<(i32, i32)>,
     max_in_flight: usize,
@@ -279,6 +281,7 @@ impl ChunkManager {
             meshing: FastSet::default(),
             meshed: FastSet::default(),
             radius,
+            blend: config::BIOME_BLEND,
             offsets,
             revisions: FastMap::default(),
             unsaved: FastSet::default(),
@@ -409,8 +412,9 @@ impl ChunkManager {
                 && (!self.meshed.contains(&pos) || self.relight.contains(&pos))
                 && !self.meshing.contains(&pos)
                 && self.neighbors_loaded(pos)
-                && let Some(area) = self.world.area(pos)
+                && let Some(mut area) = self.world.area(pos)
             {
+                area.blend = self.blend;
                 self.meshing.insert(pos);
                 let _ = jobs.send(Job::Mesh(
                     pos,
@@ -436,6 +440,18 @@ impl ChunkManager {
 
     fn revision(&self, pos: ChunkPos) -> u32 {
         self.revisions.get(&pos).copied().unwrap_or(0)
+    }
+
+    /// Changes the biome blend radius, remeshing every drawn chunk in the
+    /// background if it changed.
+    pub fn set_blend(&mut self, blend: i32) {
+        if blend != self.blend {
+            self.blend = blend;
+            for &pos in &self.meshed {
+                *self.revisions.entry(pos).or_default() += 1;
+                self.relight.insert(pos);
+            }
+        }
     }
 
     /// Chunks drawn in each direction.
@@ -515,8 +531,9 @@ impl ChunkManager {
             }
             // Chunks not drawn yet get meshed by `update` as usual.
             if self.meshed.contains(&pos)
-                && let Some(area) = self.world.area(pos)
+                && let Some(mut area) = self.world.area(pos)
             {
+                area.blend = self.blend;
                 let light = light_chunk(&self.models, &area);
                 self.remeshed
                     .push((pos, mesh_chunk(&self.models, &area, &light)));

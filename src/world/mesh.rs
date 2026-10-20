@@ -5,6 +5,7 @@ use std::sync::Arc;
 use super::{
     Face,
     biome::{Biome, BiomeColors},
+    blend::Tints,
     block::{
         BlockRegistry, BlockState, FaceTint, Fluid, RenderLayer, Shape, Textures, door_box,
         door_side, texture_location,
@@ -16,7 +17,7 @@ use super::{
     shape::{self, Cuboid},
 };
 use crate::{
-    config::{CHUNK_SIZE, WORLD_HEIGHT},
+    config::{self, CHUNK_SIZE, WORLD_HEIGHT},
     pack::model::BlockOverrides,
     render::vertex::Vertex,
 };
@@ -245,10 +246,13 @@ fn build_model(
     }
 }
 
-/// A chunk plus its eight neighbors, so faces on the border can be culled.
+/// A chunk plus its eight neighbors, so faces on the border can be culled
+/// and biome colors blended across it.
 pub struct ChunkArea {
     /// `chunks[dz + 1][dx + 1]` is the chunk at offset (dx, dz) from the center.
     chunks: [[Option<Arc<Chunk>>; 3]; 3],
+    /// Biome blend radius in columns (0 is off).
+    pub blend: i32,
 }
 
 impl ChunkArea {
@@ -261,7 +265,31 @@ impl ChunkArea {
             }
         }
         chunks[1][1] = Some(center);
-        Self { chunks }
+        Self {
+            chunks,
+            blend: config::BIOME_BLEND,
+        }
+    }
+
+    /// The biome of a column relative to the center chunk's origin, up to a
+    /// chunk into the neighbors. Where a neighbor isn't loaded, the nearest
+    /// column of the center chunk stands in.
+    pub fn biome(&self, x: i32, z: i32) -> Biome {
+        let size = CHUNK_SIZE as i32;
+        let last = size as usize - 1;
+        let (cx, cz) = (x.div_euclid(size), z.div_euclid(size));
+        let neighbor = self
+            .chunks
+            .get((cz + 1) as usize)
+            .and_then(|row| row.get((cx + 1) as usize))
+            .and_then(|chunk| chunk.as_deref());
+        match neighbor {
+            Some(chunk) => chunk.biome(x.rem_euclid(size) as usize, z.rem_euclid(size) as usize),
+            None => self.center().biome(
+                x.clamp(0, last as i32) as usize,
+                z.clamp(0, last as i32) as usize,
+            ),
+        }
     }
 
     /// One past the highest non-empty section of any loaded chunk in the area.
@@ -373,17 +401,19 @@ impl Mesh {
         indices.extend(order.map(|i| base + i));
     }
 
-    /// Adds an evenly colored and lit quad visible from both sides.
+    /// Adds an evenly lit quad visible from both sides, with a color per
+    /// corner.
     fn double_sided_quad(
         &mut self,
         corners: [[f32; 3]; 4],
         uv: [f32; 4],
-        color: [f32; 3],
+        colors: [[f32; 3]; 4],
         light: [f32; 2],
     ) {
         let [a, b, c, d] = corners;
-        self.quad(corners, uv, [color; 4], [light; 4]);
-        self.quad([b, a, d, c], uv, [color; 4], [light; 4]);
+        let [ca, cb, cc, cd] = colors;
+        self.quad(corners, uv, colors, [light; 4]);
+        self.quad([b, a, d, c], uv, [cb, ca, cd, cc], [light; 4]);
     }
 }
 
@@ -739,7 +769,7 @@ fn mesh_liquid(
     light: &ChunkLight,
     cell: [i32; 3],
     origin: [f32; 3],
-    biome: Biome,
+    tints: &Tints,
 ) {
     let [x, y, z] = cell;
     let Some(block) = area.get(x, y, z) else {
@@ -805,11 +835,11 @@ fn mesh_liquid(
                 })
             }
         };
-        let color = models
-            .tint_color(texture.tint, biome)
-            .map(|c| c * face.shade());
+        let tinted = tints
+            .corners(texture.tint, x, z, corners)
+            .map(|color| color.map(|c| c * face.shade()));
         let lit = smooth_face(models, area, light, cell, face);
-        let colors = lit.map(|(ao, _)| color.map(|c| c * ao));
+        let colors = [0, 1, 2, 3].map(|i| tinted[i].map(|c| c * lit[i].0));
         let lights = lit.map(|(_, l)| l);
         let corners = translate(corners, origin);
         mesh.quad_uvs(corners, uvs, colors, lights);
@@ -923,7 +953,7 @@ fn mesh_box(
     light: &ChunkLight,
     cell: [i32; 3],
     origin: [f32; 3],
-    biome: Biome,
+    tints: &Tints,
     block: BlockState,
     model: &BlockModel,
     b: Cuboid,
@@ -957,9 +987,9 @@ fn mesh_box(
                 [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]
             })
         };
-        let color = models
-            .tint_color(texture.tint, biome)
-            .map(|c| c * face.shade());
+        let tinted = tints
+            .corners(texture.tint, x, z, corners)
+            .map(|color| color.map(|c| c * face.shade()));
         let lit = smooth_face(models, area, light, cell, face);
         let full_corners = face_corners(face);
         let [a1, a2] = face_axes(face);
@@ -983,7 +1013,7 @@ fn mesh_box(
             (ao, l)
         };
         let blended = corners.map(at);
-        let colors = blended.map(|(ao, _)| color.map(|c| c * ao));
+        let colors = [0, 1, 2, 3].map(|i| tinted[i].map(|c| c * blended[i].0));
         let lights = blended.map(|(_, l)| l);
         mesh.quad_uvs(translate(corners, origin), uvs, colors, lights);
     }
@@ -997,7 +1027,7 @@ fn mesh_cactus(
     light: &ChunkLight,
     cell: [i32; 3],
     origin: [f32; 3],
-    biome: Biome,
+    tints: &Tints,
 ) {
     let [x, y, z] = cell;
     let Some(block) = area.get(x, y, z) else {
@@ -1024,11 +1054,11 @@ fn mesh_cactus(
             })
         });
         let texture = model.faces[face.index()];
-        let color = models
-            .tint_color(texture.tint, biome)
-            .map(|c| c * face.shade());
+        let tinted = tints
+            .corners(texture.tint, x, z, corners)
+            .map(|color| color.map(|c| c * face.shade()));
         let lit = smooth_face(models, area, light, cell, face);
-        let colors = lit.map(|(ao, _)| color.map(|c| c * ao));
+        let colors = [0, 1, 2, 3].map(|i| tinted[i].map(|c| c * lit[i].0));
         let lights = lit.map(|(_, l)| l);
         mesh.quad_uvs(
             translate(corners, origin),
@@ -1142,6 +1172,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
     let mut mesh = Mesh::default();
     let chunk = area.center();
     let (min_x, min_z) = chunk.pos.min_block();
+    let tints = Tints::new(&models.colors, area.blend, |x, z| area.biome(x, z));
     for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
         for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
             for z in 0..CHUNK_SIZE {
@@ -1157,9 +1188,10 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                     ];
                     let model = models.get_at(block, min_x + x as i32, y as i32, min_z + z as i32);
                     mesh.adding_translucent = model.translucent;
-                    let biome = chunk.biome(x, z);
                     let side = model.faces[Face::North.index()];
-                    let side_color = models.tint_color(side.tint, biome);
+                    let side_color = tints.flat(side.tint, x as i32, z as i32);
+                    let side_colors =
+                        |corners| tints.corners(side.tint, x as i32, z as i32, corners);
                     // Plants take the light of their own cell.
                     let own = light.get(x as i32, y as i32, z as i32);
                     let own_light = [own.0 as f32, own.1 as f32];
@@ -1170,7 +1202,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 mesh.double_sided_quad(
                                     translate(plane, origin),
                                     side.uv,
-                                    side_color,
+                                    side_colors(plane),
                                     own_light,
                                 );
                             }
@@ -1180,7 +1212,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 mesh.double_sided_quad(
                                     translate(plane, origin),
                                     side.uv,
-                                    side_color,
+                                    side_colors(plane),
                                     own_light,
                                 );
                             }
@@ -1240,14 +1272,14 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 mesh.double_sided_quad(
                                     translate(plane, origin),
                                     side.uv,
-                                    side_color,
+                                    side_colors(plane),
                                     own_light,
                                 );
                             }
                         }
                         Shape::Liquid => {
                             let cell = [x as i32, y as i32, z as i32];
-                            mesh_liquid(&mut mesh, models, area, light, cell, origin, biome);
+                            mesh_liquid(&mut mesh, models, area, light, cell, origin, &tints);
                         }
                         Shape::Cube => {
                             let cell = [x as i32, y as i32, z as i32];
@@ -1258,7 +1290,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 light,
                                 cell,
                                 origin,
-                                biome,
+                                &tints,
                                 block,
                                 model,
                                 Cuboid::FULL,
@@ -1266,28 +1298,28 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         }
                         Shape::Cactus => {
                             let cell = [x as i32, y as i32, z as i32];
-                            mesh_cactus(&mut mesh, models, area, light, cell, origin, biome);
+                            mesh_cactus(&mut mesh, models, area, light, cell, origin, &tints);
                         }
                         Shape::Rail => {
                             for (corners, uv) in rail_quads(block, side.uv) {
                                 mesh.double_sided_quad(
                                     translate(corners, origin),
                                     uv,
-                                    side_color,
+                                    side_colors(corners),
                                     own_light,
                                 );
                             }
                         }
                         Shape::Ladder | Shape::Vine | Shape::LilyPad | Shape::RedstoneWire => {
-                            let color = match model.shape {
-                                Shape::RedstoneWire => wire_color(block),
-                                _ => side_color,
-                            };
                             for corners in flat_quads(block) {
+                                let colors = match model.shape {
+                                    Shape::RedstoneWire => [wire_color(block); 4],
+                                    _ => side_colors(corners),
+                                };
                                 mesh.double_sided_quad(
                                     translate(corners, origin),
                                     side.uv,
-                                    color,
+                                    colors,
                                     own_light,
                                 );
                             }
@@ -1296,7 +1328,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             let cell = [x as i32, y as i32, z as i32];
                             for &b in model.boxes.iter().flatten() {
                                 mesh_box(
-                                    &mut mesh, models, area, light, cell, origin, biome, block,
+                                    &mut mesh, models, area, light, cell, origin, &tints, block,
                                     model, b,
                                 );
                             }
@@ -1807,7 +1839,9 @@ mod tests {
         chunk.set(0, 64, 0, BlockState::of(blocks::GRASS_BLOCK));
         chunk.set(5, 64, 0, BlockState::of(blocks::GRASS_BLOCK));
         chunk.set_biome(5, 0, Biome::Desert);
-        let area = ChunkArea::new(Arc::new(chunk), |_| None);
+        let mut area = ChunkArea::new(Arc::new(chunk), |_| None);
+        // Unblended, so each block shows its own biome's color.
+        area.blend = 0;
         let mesh = mesh_chunk(&models, &area, &light_chunk(&models, &area));
         let top_color = |x: f32| {
             mesh.vertices
@@ -1818,6 +1852,71 @@ mod tests {
         };
         assert_eq!(top_color(0.0), [0.0, 200.0 / 255.0, 0.0]);
         assert_eq!(top_color(5.0), [200.0 / 255.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn grass_and_leaves_fade_across_a_biome_border() {
+        let map =
+            image::RgbaImage::from_fn(256, 256, |x, y| image::Rgba([x as u8, y as u8, 90, 255]));
+        let colors = BiomeColors::from_colormaps(&map, &map);
+        let models = BlockModels::new(
+            crate::world::block::registry(),
+            |_| None,
+            [0.0; 4],
+            colors.clone(),
+        );
+        let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+        for z in 0..16 {
+            for x in 0..16 {
+                chunk.set(x, 64, z, BlockState::of(blocks::GRASS_BLOCK));
+                chunk.set(x, 70, z, LEAVES);
+                chunk.set(x, 72, z, BlockState::of(blocks::SPRUCE_LEAVES));
+                let biome = if x < 8 { Biome::Forest } else { Biome::Plains };
+                chunk.set_biome(x, z, biome);
+            }
+        }
+        let area = ChunkArea::new(Arc::new(chunk), |_| None);
+        assert_eq!(area.blend, config::BIOME_BLEND);
+        let mesh = mesh_chunk(&models, &area, &light_chunk(&models, &area));
+        // Vertex colors along z = 8 on the grass and leaf tops.
+        let row = |y: f32| -> Vec<[f32; 3]> {
+            (0..=16)
+                .map(|x| {
+                    mesh.vertices
+                        .iter()
+                        .find(|v| v.position == [x as f32, y, 8.0])
+                        .unwrap()
+                        .color
+                })
+                .collect()
+        };
+        let span = (2 * config::BIOME_BLEND + 1) as f32;
+        for (y, a, b) in [
+            (
+                65.0,
+                colors.grass(Biome::Forest),
+                colors.grass(Biome::Plains),
+            ),
+            (
+                71.0,
+                colors.foliage(Biome::Forest),
+                colors.foliage(Biome::Plains),
+            ),
+        ] {
+            let row = row(y);
+            for pair in row.windows(2) {
+                for c in 0..3 {
+                    let most = (a[c] - b[c]).abs() / span + 1e-4;
+                    assert!((pair[0][c] - pair[1][c]).abs() <= most, "y {y}: {pair:?}");
+                }
+            }
+            // The full change happens, just spread out.
+            let (first, last) = (row[0], row[16]);
+            assert!((first[0] - a[0]).abs() < 1e-4 && (last[0] - b[0]).abs() < 1e-4);
+        }
+        // Spruce leaves keep their fixed color on both sides.
+        let spruce = row(73.0);
+        assert!(spruce.iter().all(|&c| c == spruce[0]), "{spruce:?}");
     }
 
     const WATER: BlockState = BlockState::of(blocks::WATER);
