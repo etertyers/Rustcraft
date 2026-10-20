@@ -43,6 +43,15 @@ const SWAMP_SLIMES: std::ops::Range<i32> = 51..70;
 const MONSTERS_PER_256_CHUNKS: usize = 70;
 /// The cap on sea creatures (modern: 5 squid, 20 fish; one cap here).
 const WATER_MOBS_PER_256_CHUNKS: usize = 20;
+/// Besides blazes and wither skeletons, what spawns in fortresses: name,
+/// weight and group (modern: zombified piglins 5, skeletons 2, magma
+/// cubes 3), at block light 11 or less.
+const FORTRESS_EXTRAS: [(&str, u32, u8); 3] = [
+    ("zombified_piglin", 5, 4),
+    ("skeleton", 2, 5),
+    ("magma_cube", 3, 4),
+];
+const FORTRESS_LIGHT: u8 = 11;
 /// Striders near the player at most.
 const STRIDER_CAP: usize = 8;
 /// Despawning (1.0.0's `despawnEntity`): instantly this far away, at
@@ -661,6 +670,26 @@ impl Game {
         let seed = self.chunks.seed().unwrap_or(0);
         let mut options: Vec<(MobKind, u8, u8, u32)> = Vec::new();
         let nether = biome.is_nether();
+        // A fortress has its own list (modern `NetherFortressStructure`).
+        let fortress = nether
+            && self.chunks.nether().is_some_and(|n| {
+                crate::world::structure::nether::kind_at(n, cell)
+                    == Some(crate::world::structure::Kind::Fortress)
+            });
+        if fortress {
+            for (kind, def) in self.mob_defs.iter() {
+                let entry = match (&def.spawn, def.name.as_str()) {
+                    (Spawn::Fortress { weight, group }, _) => Some((*weight, *group)),
+                    (_, name) => FORTRESS_EXTRAS
+                        .iter()
+                        .find(|(n, _, _)| *n == name)
+                        .map(|&(_, weight, group)| (weight, group)),
+                };
+                if let Some((weight, group)) = entry {
+                    options.push((kind, FORTRESS_LIGHT, group, weight));
+                }
+            }
+        }
         for (kind, def) in self.mob_defs.iter() {
             match def.spawn {
                 // The Nether's biomes have their own lists.
@@ -672,12 +701,12 @@ impl Game {
                 | Spawn::Nether {
                     max_light,
                     biomes: ref spawns,
-                } if nether => {
+                } if nether && !fortress => {
                     if let Some(&(_, weight, group)) = spawns.iter().find(|s| s.0 == biome) {
                         options.push((kind, max_light, group, weight));
                     }
                 }
-                _ if nether => {}
+                _ if nether || fortress => {}
                 Spawn::Dark {
                     max_light,
                     group,

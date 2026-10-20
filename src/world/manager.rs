@@ -199,6 +199,14 @@ const LIGHT_REACH: i32 = 14;
 const MAX_RESULTS_PER_FRAME: usize = 64;
 
 impl ChunkManager {
+    /// The Nether's generator, in the Nether.
+    pub fn nether(&self) -> Option<&Nether> {
+        match &*self.source {
+            ChunkSource::Nether(nether) => Some(nether),
+            _ => None,
+        }
+    }
+
     /// The generator, for a generated world.
     pub fn terrain(&self) -> Option<&crate::world::worldgen::terrain::Terrain> {
         match &*self.source {

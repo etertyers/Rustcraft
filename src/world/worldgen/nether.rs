@@ -210,7 +210,43 @@ impl Nether {
                 }
             }
         }
+        // Fortresses, bastions and ruined portals over everything.
+        crate::world::structure::nether::place(self, &mut chunk);
         chunk
+    }
+}
+
+/// The bare Nether terrain for structures laying themselves out: solid
+/// blocks, floors and biomes, cached column by column.
+pub struct Probe<'a>(Land<'a>);
+
+impl<'a> Probe<'a> {
+    pub fn new(nether: &'a Nether) -> Self {
+        Self(Land::new(nether))
+    }
+
+    pub fn solid(&mut self, x: i32, y: i32, z: i32) -> bool {
+        self.0.solid(x, y, z)
+    }
+
+    /// Whether (x, y, z) is lava (open space at the lava sea's height).
+    pub fn lava(&mut self, x: i32, y: i32, z: i32) -> bool {
+        y <= LAVA_LEVEL && !self.0.solid(x, y, z)
+    }
+
+    /// The highest solid block at or below `y`, if any above the bedrock.
+    pub fn ground_below(&mut self, x: i32, y: i32, z: i32) -> Option<i32> {
+        let bits = self.0.column(x, z);
+        (1..=y.min(HEIGHT - 1)).rev().find(|&y| bits >> y & 1 == 1)
+    }
+
+    /// Floors (solid with open space above, over the lava) from the top.
+    pub fn floors(&mut self, x: i32, z: i32) -> Vec<i32> {
+        self.0.floors(x, z)
+    }
+
+    pub fn biome(&mut self, x: i32, z: i32) -> Biome {
+        self.0.biome(x, z)
     }
 }
 

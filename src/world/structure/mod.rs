@@ -1,5 +1,6 @@
 //! Structures: villages, desert and jungle temples, shipwrecks, ruined
-//! portals, dungeons, mineshafts and strongholds.
+//! portals, dungeons, mineshafts and strongholds; in the Nether (M25),
+//! fortresses, bastion remnants and ruined portals (see `nether`).
 //!
 //! Each kind decides from the world seed alone where it may start (one
 //! candidate per region of chunks, as modern `RandomSpreadStructurePlacement`
@@ -13,12 +14,15 @@
 //! (`assets/structures/**/*.ron`, see `template`) joined jigsaw-style;
 //! dungeons, mineshafts and strongholds are laid out in code.
 
+pub mod bastion;
 pub mod build;
 pub mod designs;
 pub mod dungeon;
+pub mod fortress;
 pub mod jigsaw;
 pub mod loot;
 pub mod mineshaft;
+pub mod nether;
 pub mod stronghold;
 pub mod surface;
 pub mod template;
@@ -47,6 +51,10 @@ pub enum Kind {
     Dungeon,
     Mineshaft,
     Stronghold,
+    /// The Nether's (M25), placed by `nether` rather than `near`.
+    Fortress,
+    Bastion,
+    NetherRuinedPortal,
 }
 
 impl Kind {
@@ -71,6 +79,9 @@ impl Kind {
             Kind::Dungeon => "dungeon",
             Kind::Mineshaft => "mineshaft",
             Kind::Stronghold => "stronghold",
+            Kind::Fortress => "nether fortress",
+            Kind::Bastion => "bastion remnant",
+            Kind::NetherRuinedPortal => "ruined portal (Nether)",
         }
     }
 
@@ -83,12 +94,18 @@ impl Kind {
             Kind::Dungeon => 1,
             Kind::Mineshaft => 6,
             Kind::Stronghold => 8,
+            Kind::Fortress => 8,
+            Kind::Bastion => 4,
+            Kind::NetherRuinedPortal => 2,
         }
     }
 
     /// Whether trees and plants keep out of it (it stands on the surface).
     fn on_surface(self) -> bool {
-        !matches!(self, Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold)
+        !matches!(
+            self,
+            Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold | Kind::Fortress | Kind::Bastion
+        )
     }
 
     fn salt(self) -> u64 {
@@ -101,6 +118,9 @@ impl Kind {
             Kind::Dungeon => 0xD0_6E07,
             Kind::Mineshaft => 0x313E,
             Kind::Stronghold => 0x57_0E06,
+            // Fortresses and bastions share modern's "nether complexes".
+            Kind::Fortress | Kind::Bastion => 30_084_232,
+            Kind::NetherRuinedPortal => 34_222_645,
         }
     }
 
@@ -115,6 +135,7 @@ impl Kind {
             Kind::Dungeon => dungeon::generate(terrain, start, &mut rng)?,
             Kind::Mineshaft => mineshaft::generate(terrain, start, &mut rng)?,
             Kind::Stronghold => stronghold::generate(terrain, start, &mut rng)?,
+            Kind::Fortress | Kind::Bastion | Kind::NetherRuinedPortal => return None,
         };
         Structure::new(self, start, pieces)
     }
@@ -163,12 +184,14 @@ impl Kind {
         }
     }
 
-    fn spread(self) -> Spread {
+    pub(super) fn spread(self) -> Spread {
         match self {
             Kind::Village => Spread::new(34, 8),
             Kind::DesertTemple | Kind::JungleTemple => Spread::new(32, 8),
             Kind::Shipwreck => Spread::new(24, 4),
             Kind::RuinedPortal => Spread::new(40, 15),
+            Kind::NetherRuinedPortal => Spread::new(25, 10),
+            Kind::Fortress | Kind::Bastion => Spread::new(27, 4),
             Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold => Spread::new(1, 0),
         }
     }
@@ -178,7 +201,7 @@ impl Kind {
 /// `spacing` × `spacing` chunks, kept `separation` chunks from the next
 /// region's.
 #[derive(Debug, Clone, Copy)]
-struct Spread {
+pub(super) struct Spread {
     spacing: i32,
     separation: i32,
 }
@@ -191,7 +214,7 @@ impl Spread {
         }
     }
 
-    fn candidate(self, seed: u64, salt: u64, rx: i32, rz: i32) -> ChunkPos {
+    pub(super) fn candidate(self, seed: u64, salt: u64, rx: i32, rz: i32) -> ChunkPos {
         let mut rng = Rng::for_chunk(seed, rx, rz, salt);
         let room = (self.spacing - self.separation).max(1) as u32;
         ChunkPos::new(
@@ -280,6 +303,8 @@ pub struct Piece {
     /// Spawners (already among the blocks) and what they make.
     pub spawners: Vec<(IVec3, String)>,
     pub mobs: Vec<MobSpawn>,
+    /// Pillars holding a piece up: not part of it for what spawns there.
+    pub support: bool,
 }
 
 impl Piece {
@@ -318,7 +343,7 @@ pub struct Structure {
 }
 
 impl Structure {
-    fn new(kind: Kind, start: ChunkPos, mut pieces: Vec<Piece>) -> Option<Self> {
+    pub(super) fn new(kind: Kind, start: ChunkPos, mut pieces: Vec<Piece>) -> Option<Self> {
         for piece in &mut pieces {
             if piece.bounds.is_none() {
                 piece.compute_bounds();
@@ -412,13 +437,19 @@ pub fn spawns_in(terrain: &Terrain, pos: ChunkPos) -> Vec<MobSpawn> {
 /// trees and plants must keep out of.
 pub fn place(terrain: &Terrain, chunk: &mut Chunk) -> Vec<Bounds> {
     let structures = near(terrain, chunk.pos);
+    write(&structures, terrain.seed(), chunk)
+}
+
+/// Writes the parts of `structures` inside `chunk` (loot rolled from
+/// `seed`), returning the boxes trees and plants must keep out of.
+pub(super) fn write(structures: &[Arc<Structure>], seed: u64, chunk: &mut Chunk) -> Vec<Bounds> {
     let mut keep_out = Vec::new();
     let pieces: Vec<&Piece> = structures
         .iter()
         .flat_map(|s| s.pieces.iter())
         .filter(|p| p.bounds.is_some_and(|b| b.touches_chunk(chunk.pos)))
         .collect();
-    for s in &structures {
+    for s in structures {
         if s.kind.on_surface() {
             keep_out.extend(s.pieces.iter().filter_map(|p| p.bounds));
         }
@@ -441,7 +472,7 @@ pub fn place(terrain: &Terrain, chunk: &mut Chunk) -> Vec<Bounds> {
         }
         for (at, table) in &piece.loot {
             if let Some(local) = writer.local(*at) {
-                let mut rng = Rng::for_chunk(terrain.seed(), at.x, at.z, at.y as u64 ^ 0x1007);
+                let mut rng = Rng::for_chunk(seed, at.x, at.z, at.y as u64 ^ 0x1007);
                 let slots = loot::fill(table, &mut rng);
                 let entity = if writer.get(*at).is_some_and(|b| b.is(blocks::DISPENSER)) {
                     let mut nine = slots;
