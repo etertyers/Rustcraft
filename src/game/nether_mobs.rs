@@ -76,13 +76,17 @@ impl Game {
             match ball.tick(block_hit, &self.mobs, player.as_ref()) {
                 None => true,
                 Some(hit) => {
-                    bursts.push((hit, ball.returned));
+                    bursts.push((hit, ball.returned, ball.small, ball.heading));
                     false
                 }
             }
         });
         self.fireballs = balls;
-        for (hit, returned) in bursts {
+        for (hit, returned, small, heading) in bursts {
+            if small {
+                self.small_fireball_hits(hit, heading);
+                continue;
+            }
             let at = match hit {
                 FireballHit::Spent => continue,
                 FireballHit::Block(at) => at,
@@ -116,11 +120,56 @@ impl Game {
         }
     }
 
+    /// A small fireball sets the player or mob it hits alight, or lights
+    /// a fire on the face of the block it hits.
+    fn small_fireball_hits(&mut self, hit: FireballHit, heading: DVec3) {
+        match hit {
+            FireballHit::Player(at) => {
+                if self.mode.is_vulnerable() {
+                    self.hurt_player(super::combat::Strike {
+                        amount: fireball::SMALL_HIT_DAMAGE,
+                        source: DamageSource::Fireball,
+                        from: Some(at),
+                        ranged: true,
+                        axe: false,
+                    });
+                    self.stats.fire = self.stats.fire.max(fireball::SMALL_FIRE_TICKS);
+                }
+            }
+            FireballHit::Mob { index, at } => {
+                let mob = &mut self.mobs[index];
+                if !mob.fire_immune {
+                    mob.hurt(fireball::SMALL_HIT_DAMAGE, Some(at), DamageSource::Fireball);
+                    mob.stats.fire = mob.stats.fire.max(fireball::SMALL_FIRE_TICKS);
+                }
+            }
+            FireballHit::Block(at) => {
+                let cell = (at - heading * 0.05).floor().as_ivec3();
+                let free = self
+                    .chunks
+                    .world()
+                    .block(cell.x, cell.y, cell.z)
+                    .is_some_and(|b| b.is_air());
+                if free {
+                    let fire = crate::world::block::BlockState::of(crate::world::blocks::FIRE);
+                    self.edit(&[(cell, fire)]);
+                }
+            }
+            FireballHit::Spent => {}
+        }
+    }
+
     /// A ghast's fireball loosed from `from` at `at`, starting a little
     /// ahead of it (modern: four blocks along its look).
     pub(super) fn loose_fireball(&mut self, from: DVec3, at: DVec3) {
         let ahead = from + (at - from).normalize_or_zero() * 2.5;
         self.fireballs.push(Fireball::toward(ahead, at));
+    }
+
+    /// A blaze's small fireball from `from` at `at`.
+    pub(super) fn loose_small_fireball(&mut self, from: DVec3, at: DVec3) {
+        let ahead = from + (at - from).normalize_or_zero() * 0.6;
+        self.fireballs.push(Fireball::small(ahead, at));
     }
 
     /// A left click at a fireball in reach sends it back where the player
@@ -131,6 +180,7 @@ impl Game {
             .fireballs
             .iter()
             .enumerate()
+            .filter(|(_, ball)| !ball.small)
             .filter_map(|(i, ball)| Some((i, ball.bounds().ray_hit(eye, dir, DEFLECT_REACH)?)))
             .min_by(|a, b| a.1.total_cmp(&b.1));
         let Some((index, _)) = nearest else {
@@ -355,6 +405,29 @@ mod tests {
             game.stats.last_source,
             Some(DamageSource::Fireball | DamageSource::Explosion)
         ));
+    }
+
+    #[test]
+    fn a_blaze_sets_a_player_in_sight_alight_with_small_fireballs() {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        game.summon("blaze", DVec3::new(0.5, 66.0, -10.5), 0.0);
+        let mut burnt = false;
+        for _ in 0..200 {
+            game.tick();
+            burnt |= game.stats.fire > 0;
+            if burnt {
+                break;
+            }
+        }
+        assert!(burnt, "set alight");
+        assert!(game.stats.health < 20.0);
+        // Blazes' fireballs can't be punched back.
+        game.loose_small_fireball(DVec3::new(0.5, 65.6, -3.0), DVec3::new(0.5, 65.6, 0.5));
+        game.camera.pitch = 0.0;
+        game.camera.yaw = 0.0;
+        let eye = game.body.position() + DVec3::Y * game.body.eye_height();
+        assert!(!game.deflect_fireball(eye));
     }
 
     #[test]

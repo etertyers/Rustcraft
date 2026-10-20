@@ -53,6 +53,14 @@ const GHAST_REST: i32 = 40;
 /// A ghast drifts to a spot this far off in each direction (modern
 /// `RandomFloatAroundGoal`).
 const GHAST_DRIFT: f64 = 16.0;
+/// Blazes notice the player within 48 blocks; burn up for 60 ticks, loose
+/// three small fireballs 6 ticks apart and rest 100 (modern
+/// `BlazeAttackGoal`), and strike 6 at arm's length.
+const BLAZE_RANGE: f64 = 48.0;
+const BLAZE_CHARGE: i32 = 60;
+const BLAZE_VOLLEY: i32 = 6;
+const BLAZE_REST: i32 = 100;
+const BLAZE_HIT: f32 = 6.0;
 /// Phantoms circle this far from the player and this high above.
 const ORBIT_RADIUS: f64 = 16.0;
 const ORBIT_HEIGHT: f64 = 15.0;
@@ -211,6 +219,8 @@ pub struct Intent {
     pub explode: Option<f32>,
     /// A ghast's fireball.
     pub fireball: Option<Shot>,
+    /// A blaze's small fireball.
+    pub small_fireball: Option<Shot>,
     /// The blow (`hit`) throws its victim up (hoglins).
     pub toss: bool,
     /// A spider's leap: velocity to set.
@@ -280,7 +290,12 @@ pub fn think<T: Terrain>(
     let was_hurt = std::mem::take(&mut state.hurt);
     if was_hurt {
         match def.ai {
-            Ai::Hostile { .. } | Ai::Creeper { .. } | Ai::Witch | Ai::Archer { .. } | Ai::Ghast => {
+            Ai::Hostile { .. }
+            | Ai::Creeper { .. }
+            | Ai::Witch
+            | Ai::Archer { .. }
+            | Ai::Ghast
+            | Ai::Blaze => {
                 state.chasing = view.player.is_some();
             }
             Ai::Passive
@@ -369,6 +384,7 @@ pub fn think<T: Terrain>(
             goal
         }
         Ai::Strider => Goal::Idle,
+        Ai::Blaze => blaze(mob, def, view, random, &mut intent),
     };
 
     steer(mob, def, view, goal, height, random, &mut intent);
@@ -810,6 +826,63 @@ fn ghast<T: Terrain>(
     mob.aggressive = mob.ai.charge > GHAST_CHARGE / 2;
     mob.data.variant = u8::from(mob.aggressive);
     goal
+}
+
+/// Blazes: with the player in sight within 48 blocks, strike them at
+/// arm's length or hang back and shoot: burn up for three seconds, then
+/// loose three small fireballs, a little scattered, and rest five seconds.
+/// They drift to just above the player's eyes.
+fn blaze<T: Terrain>(
+    mob: &mut Mob,
+    def: &MobDef,
+    view: &View<T>,
+    random: &mut impl FnMut() -> f32,
+    intent: &mut Intent,
+) -> Goal {
+    let (feet, eye, size) = (mob.feet(), mob.eye(), mob.size());
+    let Some(target) = view
+        .player
+        .filter(|t| t.visible && t.eye.distance(eye) < BLAZE_RANGE)
+    else {
+        mob.ai.chasing = false;
+        mob.ai.charge = mob.ai.charge.min(0);
+        return Goal::Idle;
+    };
+    let state = &mut mob.ai;
+    state.chasing = true;
+    let width = target.aabb.max.x - target.aabb.min.x;
+    if reaches(def, feet, size, target.feet, width) {
+        if state.attack_cooldown == 0 {
+            intent.hit = Some(Strike {
+                victim: Victim::Player,
+                damage: BLAZE_HIT,
+            });
+            state.attack_cooldown = ATTACK_COOLDOWN;
+        }
+        return Goal::Direct(target.feet);
+    }
+    state.charge += 1;
+    let volley = state.charge - BLAZE_CHARGE;
+    if volley >= 0 && volley % BLAZE_VOLLEY == 0 {
+        let distance = target.eye.distance(eye);
+        let spread = distance.sqrt() * 0.5;
+        let mut jitter = || f64::from(random() - random()) * spread * 0.2;
+        let middle = (target.aabb.min + target.aabb.max) / 2.0;
+        intent.small_fireball = Some(Shot {
+            from: feet + DVec3::Y * (size.1 / 2.0),
+            at: middle + DVec3::new(jitter(), 0.0, jitter()),
+        });
+        if volley >= BLAZE_VOLLEY * 2 {
+            state.charge = -BLAZE_REST;
+        }
+    }
+    mob.aggressive = mob.ai.charge > 0;
+    let above = target.eye + DVec3::Y;
+    if above.distance(eye) > 4.0 {
+        Goal::Direct(above)
+    } else {
+        Goal::Stand(Some(target.eye))
+    }
 }
 
 /// Piglins: while admiring gold they stand still; otherwise they go after

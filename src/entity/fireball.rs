@@ -1,7 +1,9 @@
 //! Ghast fireballs (modern `LargeFireball` and `AbstractHurtingProjectile`):
 //! pushed along a fixed heading a little harder each tick, with no gravity,
 //! until they hit something and burst into a small explosion that starts
-//! fires. A player's hit sends one back the way they look.
+//! fires. A player's hit sends one back the way they look. Blazes' small
+//! fireballs (M25, modern `SmallFireball`) fly the same way, but only set
+//! what they hit alight.
 
 use glam::DVec3;
 
@@ -16,6 +18,11 @@ const INERTIA: f64 = 0.95;
 const HALF: f64 = 0.5;
 /// Damage from a direct hit, before the burst (modern 6).
 pub const HIT_DAMAGE: f32 = 6.0;
+/// A small fireball's hit, and the burning it gives (modern 5 and 5 s).
+pub const SMALL_HIT_DAMAGE: f32 = 5.0;
+pub const SMALL_FIRE_TICKS: i32 = 100;
+/// Half a small fireball's size (modern 0.3125).
+const SMALL_HALF: f64 = 0.156_25;
 /// The burst's power (a ghast's `explosionPower` 1).
 pub const BURST_POWER: f32 = 1.0;
 /// Ticks one flies before burning out.
@@ -31,6 +38,8 @@ pub struct Fireball {
     /// Sent back by the player: it hurts mobs, the ghast included, and
     /// not the player.
     pub returned: bool,
+    /// A blaze's: sets alight instead of bursting.
+    pub small: bool,
     age: u32,
 }
 
@@ -57,14 +66,27 @@ impl Fireball {
             velocity: DVec3::ZERO,
             heading,
             returned: false,
+            small: false,
             age: 0,
         }
     }
 
+    /// A blaze's small fireball.
+    pub fn small(from: DVec3, at: DVec3) -> Self {
+        Self {
+            small: true,
+            ..Self::toward(from, at)
+        }
+    }
+
+    fn half(&self) -> f64 {
+        if self.small { SMALL_HALF } else { HALF }
+    }
+
     pub fn bounds(&self) -> Aabb {
         Aabb::new(
-            self.position - DVec3::splat(HALF),
-            self.position + DVec3::splat(HALF),
+            self.position - DVec3::splat(self.half()),
+            self.position + DVec3::splat(self.half()),
         )
     }
 
@@ -101,7 +123,7 @@ impl Fireball {
             let reach = wall.unwrap_or(speed);
             if !self.returned
                 && let Some(player) = player
-                && let Some(t) = player.grow(HALF).ray_hit(self.position, dir, reach)
+                && let Some(t) = player.grow(self.half()).ray_hit(self.position, dir, reach)
             {
                 return Some(FireballHit::Player(self.position + dir * t));
             }
@@ -111,11 +133,11 @@ impl Fireball {
                     .enumerate()
                     .filter(|(_, mob)| !mob.is_dead())
                     .filter_map(|(i, mob)| {
-                        let t = mob
-                            .body
-                            .aabb()
-                            .grow(HALF)
-                            .ray_hit(self.position, dir, reach)?;
+                        let t =
+                            mob.body
+                                .aabb()
+                                .grow(self.half())
+                                .ray_hit(self.position, dir, reach)?;
                         Some((i, t))
                     })
                     .min_by(|a, b| a.1.total_cmp(&b.1));

@@ -113,6 +113,9 @@ impl Game {
             if let Some(shot) = intent.fireball {
                 self.loose_fireball(shot.from, shot.at);
             }
+            if let Some(shot) = intent.small_fireball {
+                self.loose_small_fireball(shot.from, shot.at);
+            }
             if let Some(tp) = intent.teleport {
                 self.teleport_mob(&mut mobs[index], tp);
             }

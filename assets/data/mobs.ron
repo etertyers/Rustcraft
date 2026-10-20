@@ -9,7 +9,8 @@
 //                    Archer(interval:), Creeper(power:), Enderman(attack:), Slime,
 //                    Witch, Phantom(attack:), Swimmer, Wolf(attack:), Cat, Horse,
 //                    Rabbit, Bee(attack:), Fox(attack:), Villager, Ghast,
-//                    ZombifiedPiglin(attack:), Piglin(attack:), Hoglin(attack:), Strider
+//                    ZombifiedPiglin(attack:), Piglin(attack:), Hoglin(attack:), Strider,
+//                    Blaze
 //   burns_in_daylight, climbs, swims, flies, hurt_by_water, no_fall,
 //   fire_immune (no harm from fire or lava), walks_on_lava (striders)
 //   scale            the model is drawn this much bigger
@@ -25,6 +26,7 @@
 //                    near the player in the dark (biomes: the Overworld's, all
 //                    if empty; nether: [(biome, weight, group)]); Nether(max_light,
 //                    biomes: [(biome, weight, group)]); Lava(group, biomes);
+//                    Fortress(weight, group) only inside Nether fortresses;
 //                    Water(chance, group, biomes, min_depth); SlimeChunk(below);
 //                    Phantom
 //   model            texture_size and parts in Minecraft model coordinates (pixels,
@@ -1118,6 +1120,102 @@
                 (uv: (16, 33), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, -5, -8), rest_z: 0.87266463, mirror: true),
                 (uv: (16, 49), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, -1, -8), rest_z: 1.134464, mirror: true),
                 (uv: (16, 65), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, 4, -8), rest_z: 1.2217305, mirror: true),
+            ],
+        ),
+    ),
+    // M25: the fortresses' and bastions' mobs.
+    (
+        name: "blaze",
+        texture: "entity/blaze",
+        health: 20,
+        width: 0.6,
+        height: 1.8,
+        speed: 0.6,
+        ai: Blaze,
+        flies: true,
+        no_fall: true,
+        fire_immune: true,
+        hurt_by_water: true,
+        drops: [(item: "blaze_rod", min: 0, max: 1)],
+        spawn: Fortress(weight: 10, group: 3),
+        model: (
+            texture_size: (64, 32),
+            parts: [
+                (uv: (0, 0), from: (-4, -4, -4), size: (8, 8, 8), pivot: (0, 0, 0), role: Head),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (9.00, -1.00, 0.00)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (4.86, -1.12, 7.57)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-3.75, -1.46, 8.18)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-8.91, -1.93, 1.27)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (4.95, 1.58, 4.95)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-1.49, 1.20, 6.84)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-6.56, 1.01, 2.44)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-5.60, 1.06, -4.20)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (4.46, 10.35, 2.27)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (0.50, 10.79, 4.98)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-3.92, 11.28, 3.11)),
+                (uv: (0, 16), from: (0, 0, 0), size: (2, 8, 2), pivot: (-4.73, 11.71, -1.62)),
+            ],
+        ),
+    ),
+    (
+        name: "wither_skeleton",
+        texture: "entity/skeleton/wither_skeleton",
+        health: 20,
+        width: 0.7,
+        height: 2.4,
+        speed: 0.55,
+        ai: Hostile(attack: 8.0),
+        fire_immune: true,
+        scale: 1.2,
+        drops: [
+            (item: "coal", min: 0, max: 1, chance: 0.33),
+            (item: "bone", min: 0, max: 2),
+            (item: "wither_skeleton_skull", min: 1, max: 1, chance: 0.025),
+        ],
+        spawn: Fortress(weight: 8, group: 5),
+        model: (
+            texture_size: (64, 32),
+            parts: [
+                (uv: (0, 0), from: (-4, -8, -4), size: (8, 8, 8), pivot: (0, 0, 0), role: Head),
+                (uv: (16, 16), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0)),
+                (uv: (40, 16), from: (-1, -2, -1), size: (2, 12, 2), pivot: (-5, 2, 0), role: Reaching),
+                (uv: (40, 16), from: (-1, -2, -1), size: (2, 12, 2), pivot: (5, 2, 0), role: Reaching, mirror: true),
+                (uv: (0, 16), from: (-1, 0, -1), size: (2, 12, 2), pivot: (-2, 12, 0), role: LegA),
+                (uv: (0, 16), from: (-1, 0, -1), size: (2, 12, 2), pivot: (2, 12, 0), role: LegB, mirror: true),
+            ],
+        ),
+    ),
+    (
+        name: "piglin_brute",
+        texture: "entity/piglin/piglin_brute",
+        health: 50,
+        width: 0.6,
+        height: 1.95,
+        speed: 0.6,
+        ai: Hostile(attack: 10.0),
+        drops: [(item: "golden_axe", min: 1, max: 1, chance: 0.085)],
+        spawn: Never,
+        model: (
+            texture_size: (64, 64),
+            parts: [
+                (uv: (0, 0), from: (-5, -8, -4), size: (10, 8, 8), pivot: (0, 0, 0), role: Head,
+                    extra: [
+                        (uv: (31, 1), from: (-2, -4, -5), size: (4, 4, 1)),
+                        (uv: (2, 4), from: (2, -2, -5), size: (1, 2, 1)),
+                        (uv: (2, 0), from: (-3, -2, -5), size: (1, 2, 1)),
+                        (uv: (51, 6), from: (4.5, -6, -2), size: (1, 5, 4)),
+                        (uv: (39, 6), from: (-5.5, -6, -2), size: (1, 5, 4)),
+                    ]),
+                (uv: (16, 16), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0)),
+                (uv: (16, 32), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0), grow: 0.25),
+                (uv: (40, 16), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: ArmA),
+                (uv: (40, 32), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: ArmA, grow: 0.25),
+                (uv: (32, 48), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: ArmB),
+                (uv: (48, 48), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: ArmB, grow: 0.25),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA),
+                (uv: (0, 32), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA, grow: 0.25),
+                (uv: (16, 48), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB),
+                (uv: (0, 48), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB, grow: 0.25),
             ],
         ),
     ),

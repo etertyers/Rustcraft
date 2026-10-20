@@ -83,8 +83,13 @@ pub fn add_fireballs(
     };
     for ball in fireballs {
         let center = ball.position_between_ticks(alpha).as_vec3();
-        let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin()) * FIREBALL_HALF;
-        let up = Vec3::Y * FIREBALL_HALF;
+        let half = if ball.small {
+            SMALL_FIREBALL_HALF
+        } else {
+            FIREBALL_HALF
+        };
+        let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin()) * half;
+        let up = Vec3::Y * half;
         let corners = [
             center - right - up,
             center + right - up,
@@ -100,8 +105,9 @@ pub fn add_fireballs(
     }
 }
 
-/// Half a fireball's drawn width.
+/// Half a fireball's drawn width, and a blaze's small one's.
 const FIREBALL_HALF: f32 = 0.75;
+const SMALL_FIREBALL_HALF: f32 = 0.25;
 
 /// Adds falling blocks: whole blocks with their faces' textures, lit by
 /// the light where they are.
