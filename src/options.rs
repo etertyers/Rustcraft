@@ -1,6 +1,6 @@
 //! The player's settings (1.0.0's `GameSettings`), kept in `options.ron`
-//! beside the saves folder: render distance, field of view, mouse
-//! sensitivity, volume, vsync and the selected resource packs.
+//! beside the saves folder: render distance, biome blend, field of view,
+//! mouse sensitivity, volume, vsync and the selected resource packs.
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +12,8 @@ use crate::{config, level};
 
 /// Render distance range in chunks: 1.0.0's Tiny (2) to Far (16).
 pub const RENDER_DISTANCES: std::ops::RangeInclusive<i32> = 2..=16;
+/// Biome blend radius range: off to modern's 15 × 15.
+pub const BIOME_BLENDS: std::ops::RangeInclusive<i32> = 0..=7;
 /// Field of view range in degrees: 1.0.0's slider ran from 30 to "Quake
 /// Pro" at 110, with 70 as "Normal".
 pub const FOVS: std::ops::RangeInclusive<f32> = 30.0..=110.0;
@@ -23,6 +25,9 @@ pub const SENSITIVITIES: std::ops::RangeInclusive<f32> = 0.0..=2.0;
 pub struct Options {
     /// Chunks drawn in each direction.
     pub render_distance: i32,
+    /// Columns each way that grass and foliage colors average over (0 is
+    /// off).
+    pub biome_blend: i32,
     /// Vertical field of view in degrees.
     pub fov: f32,
     /// Mouse look speed, 1 for the default.
@@ -41,6 +46,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             render_distance: config::RENDER_DISTANCE,
+            biome_blend: config::BIOME_BLEND,
             fov: config::FOV_Y_DEGREES,
             sensitivity: 1.0,
             volume: 1.0,
@@ -91,6 +97,9 @@ impl Options {
             render_distance: self
                 .render_distance
                 .clamp(*RENDER_DISTANCES.start(), *RENDER_DISTANCES.end()),
+            biome_blend: self
+                .biome_blend
+                .clamp(*BIOME_BLENDS.start(), *BIOME_BLENDS.end()),
             fov: self.fov.clamp(*FOVS.start(), *FOVS.end()),
             sensitivity: self
                 .sensitivity
@@ -115,6 +124,7 @@ mod tests {
         assert_eq!(Options::load(&path), Options::default());
         let options = Options {
             render_distance: 12,
+            biome_blend: 5,
             fov: 90.0,
             sensitivity: 1.5,
             volume: 0.25,
@@ -129,6 +139,9 @@ mod tests {
         std::fs::write(&path, "(fov: 500.0)").unwrap();
         let loaded = Options::load(&path);
         assert_eq!(loaded.fov, 110.0);
+        assert_eq!(loaded.biome_blend, config::BIOME_BLEND);
+        std::fs::write(&path, "(biome_blend: 20)").unwrap();
+        assert_eq!(Options::load(&path).biome_blend, 7);
         assert_eq!(loaded.render_distance, config::RENDER_DISTANCE);
         std::fs::write(&path, "not ron").unwrap();
         assert_eq!(Options::load(&path), Options::default());

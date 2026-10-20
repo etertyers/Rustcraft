@@ -6,7 +6,7 @@
 use egui::{Align2, Button, Color32, RichText, Slider};
 
 use super::packs::PackScreen;
-use crate::options::{FOVS, Options, RENDER_DISTANCES, SENSITIVITIES};
+use crate::options::{BIOME_BLENDS, FOVS, Options, RENDER_DISTANCES, SENSITIVITIES};
 
 const BUTTON: [f32; 2] = [260.0, 32.0];
 
@@ -100,8 +100,8 @@ impl PauseMenu {
     }
 }
 
-/// The Options page: sliders for render distance, field of view, mouse
-/// sensitivity and volume, a vsync toggle, Resource Packs... and Done.
+/// The Options page: sliders for render distance, biome blend, field of
+/// view, mouse sensitivity and volume, a vsync toggle, Resource Packs... and Done.
 pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsAction> {
     heading(ui, "Options");
     let width = BUTTON[0];
@@ -114,6 +114,12 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
         format!("Render Distance: {} chunks", options.render_distance),
     );
     ui.add(Slider::new(&mut options.render_distance, RENDER_DISTANCES).show_value(false));
+    ui.add_space(8.0);
+    row(
+        ui,
+        format!("Biome Blend: {}", blend_name(options.biome_blend)),
+    );
+    ui.add(Slider::new(&mut options.biome_blend, BIOME_BLENDS).show_value(false));
     ui.add_space(8.0);
     row(ui, format!("FOV: {}", fov_name(options.fov)));
     ui.add(
@@ -173,6 +179,15 @@ fn fov_name(fov: f32) -> String {
     }
 }
 
+/// Modern's names for the biome blend sizes: "OFF", then "3x3" up to
+/// "15x15".
+fn blend_name(radius: i32) -> String {
+    match radius {
+        0 => "OFF".to_owned(),
+        r => format!("{0}x{0}", 2 * r + 1),
+    }
+}
+
 fn percent(fraction: f32) -> String {
     format!("{}%", (fraction * 100.0).round() as i32)
 }
@@ -208,5 +223,8 @@ mod tests {
         assert_eq!(fov_name(85.4), "85");
         assert_eq!(percent(1.0), "100%");
         assert_eq!(percent(0.25), "25%");
+        assert_eq!(blend_name(0), "OFF");
+        assert_eq!(blend_name(2), "5x5");
+        assert_eq!(blend_name(7), "15x15");
     }
 }

@@ -587,7 +587,9 @@ mod tests {
 
     #[test]
     fn ores_follow_the_modern_table() {
-        let (counts, emerald_biomes) = survey(21, 4);
+        // Seed 15 has hills and mountains round the origin, where coal and
+        // emeralds show.
+        let (counts, emerald_biomes) = survey(15, 4);
         let total =
             |ids: &[crate::world::block::BlockId], range: std::ops::Range<usize>| -> usize {
                 ids.iter()

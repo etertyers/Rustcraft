@@ -11,6 +11,7 @@ use super::{
     rng::Rng,
     terrain::{Area, Column, SAND, Terrain},
 };
+use crate::world::fast_hash::FastSet;
 use crate::{
     config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT},
     world::{
@@ -63,21 +64,38 @@ pub fn populate(terrain: &Terrain, area: &Area, chunk: &mut Chunk, keep_out: &[B
 
 /// Writes into `chunk` only, ignoring positions in other chunks.
 struct ChunkWriter<'a> {
-    chunk: &'a mut Chunk,
+    /// `None` for a dry run, which writes nothing and only records logs.
+    chunk: Option<&'a mut Chunk>,
     min_x: i32,
     min_z: i32,
     /// Columns nothing grows in (structures).
     keep_out: &'a [Bounds],
+    /// Every log a dry run would place, wherever it is.
+    logs: Vec<(i32, i32, i32)>,
 }
 
 impl<'a> ChunkWriter<'a> {
     fn new(chunk: &'a mut Chunk, keep_out: &'a [Bounds]) -> Self {
         let (min_x, min_z) = chunk.pos.min_block();
         Self {
-            chunk,
+            chunk: Some(chunk),
             min_x,
             min_z,
             keep_out,
+            logs: Vec::new(),
+        }
+    }
+
+    /// A writer that only records where a tree's logs would go. It sees no
+    /// blocks, so only what's below a tree's base (roots) can differ from
+    /// the real thing.
+    fn dry() -> Self {
+        Self {
+            chunk: None,
+            min_x: 0,
+            min_z: 0,
+            keep_out: &[],
+            logs: Vec::new(),
         }
     }
 
@@ -91,7 +109,8 @@ impl<'a> ChunkWriter<'a> {
     fn local(&self, x: i32, y: i32, z: i32) -> Option<(usize, usize, usize)> {
         let (lx, lz) = (x - self.min_x, z - self.min_z);
         let size = CHUNK_SIZE as i32;
-        ((0..size).contains(&lx)
+        (self.chunk.is_some()
+            && (0..size).contains(&lx)
             && (0..size).contains(&lz)
             && (0..WORLD_HEIGHT as i32).contains(&y))
         .then_some((lx as usize, y as usize, lz as usize))
@@ -99,7 +118,7 @@ impl<'a> ChunkWriter<'a> {
 
     fn get(&self, x: i32, y: i32, z: i32) -> Option<BlockState> {
         let (lx, ly, lz) = self.local(x, y, z)?;
-        Some(self.chunk.get(lx, ly, lz))
+        Some(self.chunk.as_ref()?.get(lx, ly, lz))
     }
 
     /// Sets the block if it's in this chunk and `replace` accepts what's there.
@@ -111,11 +130,13 @@ impl<'a> ChunkWriter<'a> {
         block: BlockState,
         replace: fn(BlockState) -> bool,
     ) {
+        let kept_out = self.kept_out(x, z);
         if let Some((lx, ly, lz)) = self.local(x, y, z)
-            && replace(self.chunk.get(lx, ly, lz))
-            && !self.kept_out(x, z)
+            && let Some(chunk) = self.chunk.as_mut()
+            && replace(chunk.get(lx, ly, lz))
+            && !kept_out
         {
-            self.chunk.set(lx, ly, lz, block);
+            chunk.set(lx, ly, lz, block);
         }
     }
 
@@ -124,6 +145,9 @@ impl<'a> ChunkWriter<'a> {
     }
 
     fn log(&mut self, x: i32, y: i32, z: i32, log: BlockState) {
+        if self.chunk.is_none() {
+            self.logs.push((x, y, z));
+        }
         self.set_if(x, y, z, log, log_replaceable);
     }
 }
@@ -174,6 +198,8 @@ enum Tree {
     Oak,
     FancyOak,
     Birch,
+    /// Vanilla's `super_birch`: a birch up to 13 tall.
+    TallBirch,
     Spruce,
     Pine,
     Jungle,
@@ -191,139 +217,352 @@ enum Tree {
     Iceberg,
 }
 
-/// The large features a biome grows: attempts per chunk, the chance each
-/// grows, and what it grows (chosen by a roll in 0..1).
-fn trees_for(biome: Biome) -> (u32, f64, fn(f64) -> Tree) {
-    use Tree::*;
-    match biome {
-        Biome::Forest => (10, 1.0, |r| match r {
-            r if r < 0.2 => Birch,
-            r if r < 0.3 => FancyOak,
-            _ => Oak,
-        }),
-        Biome::BirchForest => (10, 1.0, |_| Birch),
-        Biome::DarkForest => (16, 1.0, |r| match r {
-            r if r < 0.03 => BrownMushroom,
-            r if r < 0.06 => RedMushroom,
-            r if r < 0.2 => Oak,
-            r if r < 0.25 => Birch,
-            _ => DarkOak,
-        }),
-        Biome::Taiga => (10, 1.0, |r| if r < 0.33 { Pine } else { Spruce }),
-        Biome::SnowyTaiga => (8, 1.0, |r| if r < 0.33 { Pine } else { Spruce }),
-        Biome::Grove => (8, 0.9, |_| Spruce),
-        Biome::WindsweptHills => (3, 0.6, |r| if r < 0.5 { Spruce } else { Oak }),
-        Biome::Plains => (1, 0.1, |r| if r < 0.2 { FancyOak } else { Oak }),
-        Biome::Meadow => (1, 0.05, |r| if r < 0.5 { Birch } else { FancyOak }),
-        Biome::CherryGrove => (6, 0.7, |_| Cherry),
-        Biome::Jungle => (30, 1.0, |r| match r {
-            r if r < 0.1 => MegaJungle,
-            r if r < 0.2 => FancyOak,
-            r if r < 0.6 => JungleBush,
-            _ => Jungle,
-        }),
-        Biome::BambooJungle => (12, 1.0, |r| match r {
-            r if r < 0.05 => MegaJungle,
-            r if r < 0.15 => FancyOak,
-            _ => JungleBush,
-        }),
-        Biome::Savanna => (2, 0.7, |r| if r < 0.2 { Oak } else { Acacia }),
-        Biome::Swamp => (2, 0.8, |_| SwampOak),
-        Biome::MangroveSwamp => (25, 0.8, |_| Mangrove),
-        Biome::MushroomFields => (
-            1,
-            0.6,
-            |r| if r < 0.5 { BrownMushroom } else { RedMushroom },
-        ),
-        Biome::SnowyPlains => (1, 0.1, |_| Spruce),
-        Biome::IceSpikes => (3, 1.0, |_| IceSpike),
-        Biome::FrozenOcean | Biome::DeepFrozenOcean => (1, 0.06, |_| Iceberg),
-        _ => (0, 0.0, |_| Oak),
+impl Tree {
+    /// The columns its trunk stands on, from its (x, z).
+    fn trunk_width(self) -> i32 {
+        match self {
+            Tree::MegaJungle | Tree::DarkOak => 2,
+            _ => 1,
+        }
     }
 }
 
-/// Most large-feature attempts any biome makes in a chunk (jungles').
-const MAX_ATTEMPTS: u32 = 30;
+/// One biome's trees, after vanilla 1.21's placed tree features: `count`
+/// attempts in each chunk plus one more with chance `extra`, each at a
+/// random column of the chunk.
+struct TreeRow {
+    biome: Biome,
+    count: u32,
+    extra: f64,
+    /// Deepest water a trunk may stand in.
+    water: i32,
+    /// One attempt in each 4 × 4 cell instead of anywhere (dark forests).
+    grid: bool,
+    /// Vanilla's random selector: each (chance, tree) is rolled in turn,
+    /// and `default` grows if none comes up.
+    mix: &'static [(f64, Tree)],
+    default: Tree,
+}
 
-/// Replays the large features of chunk `source`, writing the parts inside
-/// `chunk`. Each attempt picks a column, and that column's biome says
-/// whether it grows and what: attempt `i` grows only if the biome makes
-/// more than `i` attempts. One more attempt grows an azalea if lush caves
-/// lie below.
-fn large(terrain: &Terrain, area: &Area, source: ChunkPos, chunk: &mut Chunk, keep_out: &[Bounds]) {
-    let mut rng = Rng::for_chunk(terrain.seed(), source.x, source.z, TREE_SALT);
-    let (min_x, min_z) = source.min_block();
-    let mut writer = ChunkWriter::new(chunk, keep_out);
-    for attempt in 0..=MAX_ATTEMPTS {
-        // One draw per attempt keeps every later attempt's numbers the same
-        // whether or not this one grows.
-        let mut tree_rng = Rng::new(rng.next_u64());
-        let x = min_x + tree_rng.below(CHUNK_SIZE as u32) as i32;
-        let z = min_z + tree_rng.below(CHUNK_SIZE as u32) as i32;
-        // Too far off to reach into this chunk.
-        let Some(&column) = area.try_get(x, z) else {
-            continue;
-        };
-        let roll = tree_rng.next_f64();
-        let kind = if attempt == MAX_ATTEMPTS {
-            if column.cave != Some(Biome::LushCaves) || roll > 0.4 {
-                continue;
-            }
-            Tree::Azalea
+const fn row(
+    biome: Biome,
+    count: u32,
+    extra: f64,
+    mix: &'static [(f64, Tree)],
+    default: Tree,
+) -> TreeRow {
+    TreeRow {
+        biome,
+        count,
+        extra,
+        water: 0,
+        grid: false,
+        mix,
+        default,
+    }
+}
+
+const JUNGLE_MIX: &[(f64, Tree)] = &[
+    (0.1, Tree::FancyOak),
+    (0.5, Tree::JungleBush),
+    (0.33, Tree::MegaJungle),
+];
+const TAIGA_MIX: &[(f64, Tree)] = &[(0.33, Tree::Pine)];
+
+/// Every biome's trees (and the ice spikes and icebergs that place like
+/// them). Biomes Rustcraft lacks generate as their fallbacks (see
+/// `docs/worldgen.md`), so they use the fallback's row; biomes not listed
+/// grow none.
+const TREES: &[TreeRow] = {
+    use Biome as B;
+    use Tree::*;
+    &[
+        row(B::Plains, 0, 0.05, &[(0.33, FancyOak)], Oak),
+        // Thirds: oak, fancy oak, tall birch.
+        row(
+            B::Meadow,
+            0,
+            0.01,
+            &[(1.0 / 3.0, Oak), (0.5, FancyOak)],
+            TallBirch,
+        ),
+        row(B::Forest, 10, 0.1, &[(0.2, Birch), (0.1, FancyOak)], Oak),
+        row(B::BirchForest, 10, 0.1, &[], Birch),
+        TreeRow {
+            grid: true,
+            ..row(
+                B::DarkForest,
+                16,
+                0.0,
+                &[
+                    (0.025, BrownMushroom),
+                    (0.05, RedMushroom),
+                    (2.0 / 3.0, DarkOak),
+                    (0.2, Birch),
+                    (0.1, FancyOak),
+                ],
+                Oak,
+            )
+        },
+        row(B::Taiga, 10, 0.1, TAIGA_MIX, Spruce),
+        row(B::SnowyTaiga, 10, 0.1, TAIGA_MIX, Spruce),
+        row(B::Grove, 10, 0.1, &[], Pine),
+        row(B::SnowyPlains, 0, 0.1, &[], Spruce),
+        row(B::WindsweptHills, 0, 0.1, &[(0.66, Spruce)], Oak),
+        row(B::Savanna, 1, 0.1, &[(0.8, Acacia)], Oak),
+        row(B::Jungle, 50, 0.1, JUNGLE_MIX, Jungle),
+        row(B::BambooJungle, 30, 0.1, JUNGLE_MIX, Jungle),
+        TreeRow {
+            water: 2,
+            ..row(B::Swamp, 2, 0.1, &[], SwampOak)
+        },
+        TreeRow {
+            water: 5,
+            ..row(B::MangroveSwamp, 25, 0.0, &[], Mangrove)
+        },
+        row(B::CherryGrove, 10, 0.1, &[], Cherry),
+        row(
+            B::MushroomFields,
+            1,
+            0.0,
+            &[(0.5, BrownMushroom)],
+            RedMushroom,
+        ),
+        row(B::IceSpikes, 3, 0.0, &[], IceSpike),
+        row(B::FrozenOcean, 0, 0.06, &[], Iceberg),
+        row(B::DeepFrozenOcean, 0, 0.06, &[], Iceberg),
+    ]
+};
+
+impl TreeRow {
+    fn pick(&self, rng: &mut Rng) -> Tree {
+        self.mix
+            .iter()
+            .find(|&&(chance, _)| rng.next_f64() < chance)
+            .map_or(self.default, |&(_, tree)| tree)
+    }
+}
+
+/// A large feature that passed every check, with the numbers it grows by.
+struct Planted {
+    kind: Tree,
+    x: i32,
+    z: i32,
+    base: i32,
+    column: Column,
+    rng: Rng,
+}
+
+/// Where a tree of `kind` would stand on `column`: the Y above its ground,
+/// or `None` if the ground or the water over it doesn't suit it.
+fn base_on(kind: Tree, column: &Column, water: i32) -> Option<i32> {
+    if matches!(kind, Tree::IceSpike | Tree::Iceberg) {
+        // These check their own ground when they grow.
+        return Some(column.height + 1);
+    }
+    // A swamp pool's top block is water over the filler `Terrain::layer`
+    // puts under it.
+    let (ground_y, ground) = if column.top == WATER {
+        let under = if column.biome == Biome::MangroveSwamp {
+            MUD
         } else {
-            let (attempts, chance, choose) = trees_for(column.biome);
-            if attempt >= attempts || roll >= chance {
+            DIRT
+        };
+        (column.height - 1, under)
+    } else {
+        (column.height, column.top)
+    };
+    let soil = match kind {
+        Tree::Mangrove => matches!(
+            ground.id(),
+            blocks::GRASS_BLOCK | blocks::DIRT | blocks::PODZOL | blocks::MUD
+        ),
+        Tree::BrownMushroom | Tree::RedMushroom => matches!(
+            ground.id(),
+            blocks::MYCELIUM | blocks::GRASS_BLOCK | blocks::PODZOL
+        ),
+        _ => matches!(
+            ground.id(),
+            blocks::GRASS_BLOCK | blocks::DIRT | blocks::PODZOL
+        ),
+    };
+    (soil && !column.entrance && SEA_LEVEL - ground_y <= water).then_some(ground_y + 1)
+}
+
+/// Farthest any large feature reaches from its trunk.
+const REACH: i32 = 12;
+
+/// Salt for the azalea attempt over lush caves.
+const AZALEA_SALT: u64 = 0xA2A;
+
+/// Decides chunk `source`'s large features. Each biome row makes its
+/// attempts at columns inside `source`; an attempt is dropped (not
+/// retried) if the column is another biome, its ground or water doesn't
+/// suit the tree, or the trunk would run into an earlier tree's logs or
+/// the ground. Columns outside `area` come from the terrain, so every
+/// chunk that replays `source` gets the same list.
+fn plan(terrain: &Terrain, area: Option<&Area>, source: ChunkPos) -> Vec<Planted> {
+    let near = |x: i32, z: i32| area.and_then(|area| area.try_get(x, z));
+    let column_at = |x: i32, z: i32| near(x, z).copied().unwrap_or_else(|| terrain.column(x, z));
+    let (min_x, min_z) = source.min_block();
+    // Surface biomes are per 4 × 4 quart, so the chunk's sixteen say where
+    // each biome is.
+    let quarts: [Biome; 16] = std::array::from_fn(|i| {
+        let (x, z) = (min_x + i as i32 % 4 * 4, min_z + i as i32 / 4 * 4);
+        near(x, z).map_or_else(|| terrain.biome_at(x, z), |c| c.biome)
+    });
+    let biome_at = |x: i32, z: i32| quarts[((z - min_z) / 4 * 4 + (x - min_x) / 4) as usize];
+    let mut dry = ChunkWriter::dry();
+    let mut logs: FastSet<(i32, i32, i32)> = FastSet::default();
+    let mut planted = Vec::new();
+    let mut attempt = |kind: Tree, x: i32, z: i32, water: i32, rng: Rng| {
+        let column = column_at(x, z);
+        let Some(base) = base_on(kind, &column, water) else {
+            return;
+        };
+        dry.logs.clear();
+        if !grow(&mut dry, &mut rng.clone(), kind, x, base, z, &column) {
+            return;
+        }
+        let width = kind.trunk_width();
+        let in_trunk = |&&(lx, ly, lz): &&(i32, i32, i32)| {
+            ly >= base && (x..x + width).contains(&lx) && (z..z + width).contains(&lz)
+        };
+        let blocked = dry.logs.iter().filter(in_trunk).any(|&(lx, ly, lz)| {
+            let under = if (lx, lz) == (x, z) {
+                base - 1
+            } else {
+                let c = column_at(lx, lz);
+                c.height - i32::from(c.top == WATER)
+            };
+            ly <= under || logs.contains(&(lx, ly, lz))
+        });
+        if blocked {
+            return;
+        }
+        // Roots below the base depend on the blocks there, which a dry run
+        // can't see; they don't block anything.
+        logs.extend(dry.logs.iter().filter(|p| p.1 >= base));
+        planted.push(Planted {
+            kind,
+            x,
+            z,
+            base,
+            column,
+            rng,
+        });
+    };
+    for row in TREES.iter().filter(|row| quarts.contains(&row.biome)) {
+        let salt = TREE_SALT ^ ((row.biome as u64) << 16);
+        let mut rng = Rng::for_chunk(terrain.seed(), source.x, source.z, salt);
+        let attempts = row.count + u32::from(rng.next_f64() < row.extra);
+        for i in 0..attempts as i32 {
+            // One draw per attempt keeps every later attempt's numbers the
+            // same whether or not this one grows.
+            let mut tree_rng = Rng::new(rng.next_u64());
+            let (x, z) = if row.grid {
+                (
+                    min_x + i % 4 * 4 + tree_rng.below(4) as i32,
+                    min_z + i / 4 * 4 + tree_rng.below(4) as i32,
+                )
+            } else {
+                (
+                    min_x + tree_rng.below(CHUNK_SIZE as u32) as i32,
+                    min_z + tree_rng.below(CHUNK_SIZE as u32) as i32,
+                )
+            };
+            if biome_at(x, z) != row.biome {
                 continue;
             }
-            choose(tree_rng.next_f64())
-        };
-        // A tree next to a building would grow through it.
-        if keep_out.iter().any(|b| b.grow(4).contains_column(x, z)) {
+            let kind = row.pick(&mut tree_rng);
+            attempt(kind, x, z, row.water, tree_rng);
+        }
+    }
+    // An azalea tree over lush caves.
+    let mut rng = Rng::for_chunk(terrain.seed(), source.x, source.z, AZALEA_SALT);
+    let x = min_x + rng.below(CHUNK_SIZE as u32) as i32;
+    let z = min_z + rng.below(CHUNK_SIZE as u32) as i32;
+    if rng.next_f64() < 0.4 && column_at(x, z).cave == Some(Biome::LushCaves) {
+        attempt(Tree::Azalea, x, z, 0, rng);
+    }
+    planted
+}
+
+/// Grows the large features of chunk `source`, writing the parts inside
+/// `chunk`.
+fn large(terrain: &Terrain, area: &Area, source: ChunkPos, chunk: &mut Chunk, keep_out: &[Bounds]) {
+    let mut writer = ChunkWriter::new(chunk, keep_out);
+    let (min_x, min_z) = writer.chunk.as_ref().map_or((0, 0), |c| c.pos.min_block());
+    let size = CHUNK_SIZE as i32;
+    for mut tree in plan(terrain, Some(area), source) {
+        let off = |v: i32, min: i32| (min - v).max(v - (min + size - 1));
+        if off(tree.x, min_x).max(off(tree.z, min_z)) > REACH {
             continue;
         }
-        grow(&mut writer, &mut tree_rng, kind, x, z, &column);
+        // A tree next to a building would grow through it.
+        if keep_out
+            .iter()
+            .any(|b| b.grow(4).contains_column(tree.x, tree.z))
+        {
+            continue;
+        }
+        grow(
+            &mut writer,
+            &mut tree.rng,
+            tree.kind,
+            tree.x,
+            tree.base,
+            tree.z,
+            &tree.column,
+        );
     }
 }
 
-/// Grows one large feature at column (x, z), if the ground suits it.
-fn grow(writer: &mut ChunkWriter, rng: &mut Rng, kind: Tree, x: i32, z: i32, column: &Column) {
-    let base = column.height + 1;
+/// Grows one large feature at column (x, z) from `base` up. Returns false
+/// if it doesn't fit (too near the top of the world, or an ice spike or
+/// iceberg on the wrong ground).
+fn grow(
+    writer: &mut ChunkWriter,
+    rng: &mut Rng,
+    kind: Tree,
+    x: i32,
+    base: i32,
+    z: i32,
+    column: &Column,
+) -> bool {
     let fits = |height: i32| base + height + 4 < WORLD_HEIGHT as i32;
     match kind {
         Tree::IceSpike => {
-            if column.top.id() == blocks::SNOW_BLOCK || column.top.id() == blocks::GRASS_BLOCK {
+            let ground =
+                column.top.id() == blocks::SNOW_BLOCK || column.top.id() == blocks::GRASS_BLOCK;
+            if ground {
                 ice_spike(writer, rng, x, base, z);
             }
-            return;
+            return ground;
         }
         Tree::Iceberg => {
-            if column.height < SEA_LEVEL - 4 {
+            let deep = column.height < SEA_LEVEL - 4;
+            if deep {
                 iceberg(writer, rng, x, z);
             }
-            return;
+            return deep;
         }
         Tree::Mangrove => {
-            // Mangroves stand in shallow water or on mud.
-            if (column.top == MUD || column.height >= SEA_LEVEL - 3) && !column.entrance && fits(12)
-            {
+            if fits(12) {
                 mangrove(writer, rng, x, base, z);
             }
-            return;
+            return fits(12);
         }
         Tree::BrownMushroom | Tree::RedMushroom => {
-            let ground = matches!(
-                column.top.id(),
-                blocks::MYCELIUM | blocks::GRASS_BLOCK | blocks::PODZOL
-            );
-            if ground && !column.entrance && column.height >= SEA_LEVEL && fits(8) {
+            if fits(8) {
                 huge_mushroom(writer, rng, x, base, z, kind == Tree::RedMushroom);
             }
-            return;
+            return fits(8);
         }
         _ => {}
     }
-    if !column.grassy() || column.height < SEA_LEVEL || !fits(26) {
-        return;
+    if !fits(26) {
+        return false;
     }
     match kind {
         Tree::Oak => {
@@ -342,6 +581,20 @@ fn grow(writer: &mut ChunkWriter, rng: &mut Rng, kind: Tree, x: i32, z: i32, col
         }
         Tree::Birch => {
             let height = 5 + rng.below(3) as i32;
+            small(
+                writer,
+                rng,
+                x,
+                base,
+                z,
+                height,
+                blocks::BIRCH_LOG,
+                of(blocks::BIRCH_LEAVES),
+                false,
+            );
+        }
+        Tree::TallBirch => {
+            let height = 5 + rng.below(3) as i32 + rng.below(7) as i32;
             small(
                 writer,
                 rng,
@@ -393,6 +646,7 @@ fn grow(writer: &mut ChunkWriter, rng: &mut Rng, kind: Tree, x: i32, z: i32, col
         Tree::Azalea => azalea(writer, rng, x, base, z),
         _ => {}
     }
+    true
 }
 
 /// Modern's small tree (`StraightTrunkPlacer` with blob foliage): a trunk
@@ -562,11 +816,25 @@ fn spruce(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32, pi
 
 /// Modern's mega jungle tree: a 2×2 trunk wrapped in vines, branches with
 /// leaf clusters, and a wide crown.
+/// Runs a 2 × 2 trunk down to the ground: a big tree's base is its first
+/// column's height, and on a slope the other three stand lower.
+fn root(writer: &mut ChunkWriter, x: i32, base: i32, z: i32, log: BlockState) {
+    for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+        for y in (base - 6..base).rev() {
+            match writer.get(x + dx, y, z + dz) {
+                Some(here) if is_replaceable(here) => writer.log(x + dx, y, z + dz, log),
+                _ => break,
+            }
+        }
+    }
+}
+
 fn mega_jungle(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
     let height = 10 + rng.below(15) as i32;
     let top = base + height;
     let log = of(blocks::JUNGLE_LOG);
     let leaves = of(blocks::JUNGLE_LEAVES);
+    root(writer, x, base, z, log);
     for (cx, cz, r) in [(0, 0, 4.0), (0, 0, 3.0)] {
         let dy = if r < 4.0 { 1 } else { 0 };
         for dx in -4..=5 {
@@ -668,7 +936,8 @@ fn acacia(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
     };
     crown(writer, tx, ty - 1, tz, 3);
     if rng.below(2) == 0 {
-        let (mut bx, mut by, mut bz) = (x, base + straight, z);
+        // From the trunk's last straight log, so the branch touches it.
+        let (mut bx, mut by, mut bz) = (x, base + straight - 1, z);
         for _ in 0..2 + rng.below(2) {
             bx -= dx;
             bz -= dz;
@@ -684,6 +953,7 @@ fn acacia(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
 fn dark_oak(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
     let log = of(blocks::DARK_OAK_LOG);
     let leaves = of(blocks::DARK_OAK_LEAVES);
+    root(writer, x, base, z, log);
     let height = 6 + rng.below(3) as i32;
     let top = base + height;
     for (dy, r) in [(-1, 3.5), (0, 3.5), (1, 2.5)] {
@@ -1278,8 +1548,8 @@ mod tests {
     use crate::world::worldgen::terrain::Terrain;
     use std::collections::HashMap;
 
-    /// A chunk whose center column and the centers of its eight neighbors
-    /// are all `biome`.
+    /// A chunk whose 3 × 3 chunks round it are all `biome` (every quart)
+    /// with no structure on the surface there, standing above the sea.
     fn find_biome(terrain: &Terrain, biome: Biome) -> ChunkPos {
         (0..120_000)
             .map(|i: i32| {
@@ -1292,15 +1562,34 @@ mod tests {
             })
             .find(|pos| {
                 let (x, z) = pos.min_block();
-                (-1..=1).all(|dx| {
-                    (-1..=1)
-                        .all(|dz| terrain.column(x + 8 + dx * 16, z + 8 + dz * 16).biome == biome)
-                })
+                let centers = (-1..=1).all(|dx| {
+                    (-1..=1).all(|dz| terrain.biome_at(x + 8 + dx * 16, z + 8 + dz * 16) == biome)
+                });
+                // Dry land, clear of the shore.
+                centers
+                    && terrain.height(x + 8, z + 8) > SEA_LEVEL + 3
+                    && (-16..32).step_by(4).all(|dx| {
+                        (-16..32)
+                            .step_by(4)
+                            .all(|dz| terrain.biome_at(x + dx, z + dz) == biome)
+                    })
+                    && (-1..=1).all(|dx| {
+                        (-1..=1).all(|dz| {
+                            crate::world::structure::near(terrain, pos.offset(dx, dz))
+                                .iter()
+                                .all(|s| {
+                                    use crate::world::structure::Kind;
+                                    matches!(
+                                        s.kind,
+                                        Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold
+                                    )
+                                })
+                        })
+                    })
             })
             .unwrap_or_else(|| panic!("no {biome:?} found"))
     }
 
-    /// Counts every block in the chunks around `center` by id.
     fn census(
         terrain: &Terrain,
         center: ChunkPos,
@@ -1372,12 +1661,7 @@ mod tests {
     #[test]
     fn open_biomes_have_few_or_no_trees() {
         let terrain = Terrain::new(20111118);
-        for biome in [
-            Biome::Desert,
-            Biome::Badlands,
-            Biome::IceSpikes,
-            Biome::Beach,
-        ] {
+        for biome in [Biome::Desert, Biome::Badlands, Biome::IceSpikes] {
             let (_, counts) = census(&terrain, find_biome(&terrain, biome), 1);
             let logs: usize = [
                 blocks::OAK_LOG,
@@ -1474,8 +1758,12 @@ mod tests {
                 for y in SEA_LEVEL as usize..WORLD_HEIGHT - 1 {
                     // The top log of a small oak on the east edge of the chunk.
                     let log = chunk.get(15, y, z);
+                    // (A trunk under it and leaves to the west: a small oak's
+                    // top, not a fancy oak's branch.)
                     if log.id() != blocks::OAK_LOG
                         || chunk.get(15, y + 1, z).id() != blocks::OAK_LEAVES
+                        || !is_leaves(chunk.get(14, y, z))
+                        || chunk.get(15, y - 1, z).id() != blocks::OAK_LOG
                     {
                         continue;
                     }
@@ -1491,5 +1779,363 @@ mod tests {
             }
         }
         assert!(checked > 0, "no border trees found to check");
+    }
+
+    /// The topmost block of each column that isn't air, a plant, snow
+    /// layer or leaves, with the column's biome.
+    fn grounds(chunk: &Chunk) -> Vec<(Biome, BlockId)> {
+        let mut out = Vec::new();
+        for z in 0..16 {
+            for x in 0..16 {
+                let ground = (1..WORLD_HEIGHT)
+                    .rev()
+                    .map(|y| chunk.get(x, y, z))
+                    .find(|b| {
+                        !b.is_air()
+                            && b.def().fluid.is_none()
+                            && !matches!(
+                                b.def().shape,
+                                Shape::Cross | Shape::Crop | Shape::SnowLayer | Shape::Vine
+                            )
+                            && !is_leaves(*b)
+                            && !b.def().name.ends_with("_log")
+                    });
+                if let Some(ground) = ground {
+                    out.push((chunk.biome(x, z), ground.id()));
+                }
+            }
+        }
+        out
+    }
+
+    /// The share of `biome`'s columns in the 3 × 3 chunks round `center`
+    /// whose ground (or, with `snow`, whose top) is one of `ids`.
+    fn ground_share(terrain: &Terrain, biome: Biome, ids: &[BlockId], snow: bool) -> f64 {
+        let center = find_biome(terrain, biome);
+        let (chunks, _) = census(terrain, center, 1);
+        let (mut hits, mut all) = (0, 0);
+        for chunk in chunks.values() {
+            if snow {
+                for z in 0..16 {
+                    for x in 0..16 {
+                        if chunk.biome(x, z) != biome {
+                            continue;
+                        }
+                        all += 1;
+                        let top = (1..WORLD_HEIGHT)
+                            .rev()
+                            .map(|y| chunk.get(x, y, z))
+                            .find(|b| !b.is_air());
+                        hits += top.is_some_and(|b| ids.contains(&b.id())) as usize;
+                    }
+                }
+                continue;
+            }
+            for (b, id) in grounds(chunk) {
+                if b == biome {
+                    all += 1;
+                    hits += ids.contains(&id) as usize;
+                }
+            }
+        }
+        hits as f64 / all.max(1) as f64
+    }
+
+    #[test]
+    fn each_biome_shows_its_own_ground() {
+        let terrain = Terrain::new(20111118);
+        let terracotta: Vec<BlockId> = blocks::NAMES
+            .iter()
+            .filter(|n| n.ends_with("terracotta"))
+            .filter_map(|n| blocks::by_name(n))
+            .chain([blocks::RED_SAND])
+            .collect();
+        for (biome, ids, snow, want) in [
+            (Biome::Desert, vec![blocks::SAND], false, 0.8),
+            (Biome::Badlands, terracotta, false, 0.8),
+            (Biome::MushroomFields, vec![blocks::MYCELIUM], false, 0.6),
+            (
+                Biome::SnowyPlains,
+                vec![blocks::SNOW, blocks::ICE],
+                true,
+                0.8,
+            ),
+            (Biome::Plains, vec![blocks::GRASS_BLOCK], false, 0.6),
+        ] {
+            let share = ground_share(&terrain, biome, &ids, snow);
+            println!("{biome:?}: {:.0}%", share * 100.0);
+            assert!(share >= want, "{biome:?}: {share:.2}");
+        }
+    }
+
+    #[test]
+    fn beaches_are_sand_over_sandstone() {
+        let terrain = Terrain::new(20111118);
+        let (x, z) = crate::world::worldgen::terrain::tests::find(&terrain, "beach", |c| {
+            c.biome == Biome::Beach && c.height >= SEA_LEVEL
+        });
+        let chunk = terrain.generate(ChunkPos::of_block(x, z));
+        let (mut sand, mut all) = (0, 0);
+        for (b, id) in grounds(&chunk) {
+            if b == Biome::Beach {
+                all += 1;
+                sand += (id == blocks::SAND) as usize;
+            }
+        }
+        let mut kinds: HashMap<&str, usize> = HashMap::new();
+        for (b, id) in grounds(&chunk) {
+            if b == Biome::Beach {
+                *kinds.entry(id.name()).or_default() += 1;
+            }
+        }
+        assert!(sand * 10 >= all * 7, "{sand} of {all}: {kinds:?}");
+        let column = terrain.column(x, z);
+        let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+        let h = column.height as usize;
+        assert_eq!(chunk.get(lx, h, lz).id(), blocks::SAND);
+        let sandstone = (h - 8..h).any(|y| chunk.get(lx, y, lz).id() == blocks::SANDSTONE);
+        assert!(sandstone, "sandstone under the beach");
+    }
+
+    #[test]
+    fn nothing_grows_on_air_or_water_and_decoration_repeats() {
+        let terrain = Terrain::new(20111118);
+        for biome in [
+            Biome::Forest,
+            Biome::Plains,
+            Biome::Taiga,
+            Biome::Jungle,
+            Biome::Desert,
+            Biome::Savanna,
+            Biome::DarkForest,
+            Biome::BirchForest,
+            Biome::SnowyTaiga,
+            Biome::CherryGrove,
+            Biome::Meadow,
+        ] {
+            let center = find_biome(&terrain, biome);
+            let (chunks, _) = census(&terrain, center, 1);
+            for chunk in chunks.values() {
+                for z in 0..16 {
+                    for x in 0..16 {
+                        for y in 2..WORLD_HEIGHT {
+                            let block = chunk.get(x, y, z);
+                            let below = chunk.get(x, y - 1, z);
+                            let plant = matches!(
+                                block.def().shape,
+                                Shape::Cross | Shape::Cactus | Shape::Bamboo
+                            );
+                            // An upright log with no log under it: a trunk's
+                            // foot (branches lie on their side).
+                            let trunk = block.def().name.ends_with("_log")
+                                && block.has(Prop::Axis)
+                                && block.get(Prop::Axis) == axis::Y
+                                && !below.def().name.ends_with("_log");
+                            if !(plant || trunk) || below.id() == block.id() {
+                                continue;
+                            }
+                            // Acacia trunks lean: the log below may be diagonal.
+                            let leans = trunk
+                                && (-1..=1).any(|dz: i32| {
+                                    (-1..=1).any(|dx: i32| {
+                                        let (nx, nz) = (x as i32 + dx, z as i32 + dz);
+                                        let pos =
+                                            chunk.pos.offset(nx.div_euclid(16), nz.div_euclid(16));
+                                        chunks.get(&pos).is_none_or(|c| {
+                                            let (lx, lz) = (
+                                                nx.rem_euclid(16) as usize,
+                                                nz.rem_euclid(16) as usize,
+                                            );
+                                            c.get(lx, y - 1, lz).id() == block.id()
+                                        })
+                                    })
+                                });
+                            if leans {
+                                continue;
+                            }
+                            // A log on leaves is a branch; mushrooms grow anywhere dark.
+                            // Cobwebs and dripstone hang in caves; surface
+                            // plants grow at sea level or higher.
+                            if is_leaves(below)
+                                || block.def().name.contains("mushroom")
+                                || block.is(blocks::COBWEB)
+                                || block.is(blocks::POINTED_DRIPSTONE)
+                                || (plant && y < SEA_LEVEL as usize)
+                            {
+                                continue;
+                            }
+                            assert!(
+                                below.def().solid && below.def().fluid.is_none(),
+                                "{biome:?}: {} on {} at {x} {y} {z} in {:?}; under: {:?}",
+                                block.def().name,
+                                below.def().name,
+                                chunk.pos,
+                                (y.saturating_sub(8)..y)
+                                    .rev()
+                                    .map(|yy| chunk.get(x, yy, z).def().name.clone())
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+            }
+            // The same seed decorates the same way.
+            let again = terrain.generate(center);
+            let first = &chunks[&center];
+            for y in 0..WORLD_HEIGHT {
+                for i in 0..256 {
+                    assert_eq!(again.get(i % 16, y, i / 16), first.get(i % 16, y, i / 16));
+                }
+            }
+        }
+    }
+
+    /// Up to `n` chunks whose center column is `biome`, two chunks apart
+    /// along a square spiral from the origin.
+    fn chunks_of(terrain: &Terrain, biome: Biome, n: usize) -> Vec<ChunkPos> {
+        let mut found = Vec::new();
+        let (mut x, mut z, mut dx, mut dz) = (0i32, 0i32, 0i32, -1i32);
+        for _ in 0..1_000_000 {
+            let pos = ChunkPos::new(x * 2, z * 2);
+            let (bx, bz) = pos.min_block();
+            if terrain.biome_at(bx + 8, bz + 8) == biome {
+                found.push(pos);
+                if found.len() == n {
+                    break;
+                }
+            }
+            if x == z || (x < 0 && x == -z) || (x > 0 && x == 1 - z) {
+                (dx, dz) = (-dz, dx);
+            }
+            (x, z) = (x + dx, z + dz);
+        }
+        found
+    }
+
+    #[test]
+    fn trees_per_chunk_stay_within_each_biomes_attempts() {
+        let terrain = Terrain::new(20111118);
+        let mut report = Vec::new();
+        // Ice spikes and icebergs place the same way but aren't trees.
+        for row in TREES
+            .iter()
+            .filter(|row| !matches!(row.default, Tree::IceSpike | Tree::Iceberg))
+        {
+            let chunks = chunks_of(&terrain, row.biome, 500);
+            assert_eq!(chunks.len(), 500, "{:?}: too few chunks", row.biome);
+            let trees: usize = chunks
+                .iter()
+                .map(|&pos| {
+                    plan(&terrain, None, pos)
+                        .iter()
+                        .filter(|t| t.kind != Tree::Azalea && t.column.biome == row.biome)
+                        .count()
+                })
+                .sum();
+            let average = trees as f64 / chunks.len() as f64;
+            let most = row.count as f64 + row.extra;
+            report.push(format!(
+                "{:?}: {average:.3} per chunk (at most {most})",
+                row.biome
+            ));
+            assert!(average <= most, "{:?}: {average} > {most}", row.biome);
+            if row.count > 0 {
+                assert!(average > 0.0, "{:?} grows nothing", row.biome);
+            }
+        }
+        println!("{}", report.join("\n"));
+    }
+
+    #[test]
+    fn a_chunks_trees_are_the_same_from_every_chunk_that_replays_them() {
+        let terrain = Terrain::new(20111118);
+        let key = |trees: Vec<Planted>| {
+            trees
+                .iter()
+                .map(|t| (t.kind as u8, t.x, t.z, t.base))
+                .collect::<Vec<_>>()
+        };
+        for biome in [Biome::Forest, Biome::Jungle, Biome::DarkForest] {
+            let source = find_biome(&terrain, biome);
+            let alone = key(plan(&terrain, None, source));
+            assert!(!alone.is_empty(), "{biome:?}: no trees to compare");
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let area = terrain.area(source.offset(dx, dz));
+                    assert_eq!(
+                        key(plan(&terrain, Some(&area), source)),
+                        alone,
+                        "{biome:?} replayed from {dx} {dz}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decoration_does_not_depend_on_which_neighbors_load_first() {
+        let center = find_biome(&Terrain::new(20111118), Biome::Forest);
+        let alone = Terrain::new(20111118).generate(center);
+        let offsets: Vec<(i32, i32)> = (-1..=1)
+            .flat_map(|dz| (-1..=1).map(move |dx| (dx, dz)))
+            .filter(|&o| o != (0, 0))
+            .collect();
+        for order in [offsets.clone(), offsets.iter().rev().copied().collect()] {
+            let terrain = Terrain::new(20111118);
+            for (dx, dz) in order {
+                terrain.generate(center.offset(dx, dz));
+            }
+            let after = terrain.generate(center);
+            for y in 0..WORLD_HEIGHT {
+                for i in 0..256 {
+                    assert_eq!(after.get(i % 16, y, i / 16), alone.get(i % 16, y, i / 16));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_trunk_stands_on_water_sand_stone_or_air() {
+        let terrain = Terrain::new(20111118);
+        let mut trunks = 0;
+        for row in TREES {
+            if matches!(row.default, Tree::IceSpike | Tree::Iceberg)
+                || row.biome == Biome::MushroomFields
+            {
+                continue;
+            }
+            for pos in chunks_of(&terrain, row.biome, 6) {
+                let chunk = terrain.generate(pos);
+                for y in 1..WORLD_HEIGHT {
+                    for i in 0..256 {
+                        let (x, z) = (i % 16, i / 16);
+                        let block = chunk.get(x, y, z);
+                        let below = chunk.get(x, y - 1, z);
+                        let upright =
+                            block.def().name.ends_with("_log") && block.get(Prop::Axis) == axis::Y;
+                        if !upright || below.def().name.ends_with("_log") || is_leaves(below) {
+                            continue;
+                        }
+                        trunks += 1;
+                        let bad = below.is_air()
+                            || below.def().fluid.is_some()
+                            || matches!(
+                                below.id(),
+                                blocks::SAND | blocks::RED_SAND | blocks::STONE | blocks::GRAVEL
+                            );
+                        // Acacia trunks lean, so the log below may be beside it.
+                        let acacia = block.id() == blocks::ACACIA_LOG && below.is_air();
+                        assert!(
+                            !bad || acacia,
+                            "{:?}: {} on {} at {x} {y} {z} in {pos:?}",
+                            row.biome,
+                            block.def().name,
+                            below.def().name
+                        );
+                    }
+                }
+            }
+        }
+        assert!(trunks > 100, "only {trunks} trunks checked");
     }
 }

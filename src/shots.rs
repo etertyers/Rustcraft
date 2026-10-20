@@ -212,6 +212,36 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: workstations,
     },
+    Shot {
+        name: "m21-badlands",
+        about: "badlands on seed 20111118: terracotta bands on the slopes, red sand on top",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([3336.5, 168.0, -39.5], std::f32::consts::PI, -0.35)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
+        name: "m21-peaks",
+        about: "jagged peaks on seed 20111118: snow blocks on the tops, bare stone on steep faces",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([370.5, 208.0, 1130.5], std::f32::consts::PI, -0.35)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
+        name: "m21-mushroom",
+        about: "a mushroom island on seed 20111118: mycelium and huge mushrooms",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([256.5, 88.0, -635.5], std::f32::consts::PI, -0.35)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
 ];
 
 /// Puts `item` in the hotbar's first slot and selects it, settling the

@@ -34,6 +34,8 @@ pub struct DebugStats {
     pub biome: Option<Biome>,
     /// World seed, for generated worlds.
     pub seed: Option<u64>,
+    /// The climate parameters where the player stands, in a generated world.
+    pub climate: Option<crate::world::worldgen::climate::Climate>,
     /// (sky, block) light where the player stands, once its chunk is drawn.
     pub light: Option<(u8, u8)>,
     pub mode: GameMode,
@@ -230,6 +232,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          Block: {} {} {}\n\
          Facing: {} ({:.1} / {:.1})\n\
          Biome: {}\n\
+         {}\n\
          Light: {}\n\
          Seed: {}\n\
          Mode: {}\n\
@@ -246,6 +249,18 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         camera.yaw.to_degrees(),
         camera.pitch.to_degrees(),
         stats.biome.map_or("-", Biome::name),
+        stats.climate.map_or_else(
+            || "Climate: -".to_owned(),
+            |c| format!(
+                "T {:.2} H {:.2} C {:.2} E {:.2} W {:.2} PV {:.2}",
+                c.temperature,
+                c.humidity,
+                c.continent,
+                c.erosion,
+                c.weirdness,
+                c.peaks()
+            )
+        ),
         stats.light.map_or_else(
             || "-".to_owned(),
             |(sky, block)| format!("{} ({sky} sky, {block} block)", sky.max(block))
@@ -379,6 +394,11 @@ mod tests {
             chunks_loaded: 81,
             biome: Some(Biome::Forest),
             seed: Some(42),
+            climate: Some(crate::world::worldgen::climate::Climate {
+                temperature: 0.5,
+                weirdness: 0.0,
+                ..Default::default()
+            }),
             light: Some((4, 11)),
             mode: GameMode::Creative,
             time: 6000,
@@ -395,6 +415,10 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Biome: Forest"), "{text}");
+        assert!(
+            text.contains("T 0.50 H 0.00 C 0.00 E 0.00 W 0.00 PV -1.00"),
+            "{text}"
+        );
         assert!(text.contains("Light: 11 (4 sky, 11 block)"), "{text}");
         assert!(text.contains("Seed: 42"), "{text}");
         assert!(text.contains("Mode: Creative"), "{text}");

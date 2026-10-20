@@ -12,6 +12,15 @@ fn main() -> Result<()> {
         println!("wrote {count} templates to {}", dir.display());
         return Ok(());
     }
+    // `--biome-map --seed <n> --size <pixels> --out <file>`: the surface
+    // biomes, one pixel per 4×4 column, and their statistics.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--biome-map") {
+        return biome_map(&args);
+    }
+    if args.iter().any(|arg| arg == "--height-map") {
+        return height_map(&args);
+    }
     let event_loop = EventLoop::new()?;
     let (world, bench, shot, view) = parse_args(std::env::args().skip(1))?;
     let mut app = app::App::new(world).with_bench(bench).with_view(view);
@@ -20,6 +29,64 @@ fn main() -> Result<()> {
     }
     event_loop.run_app(&mut app)?;
     app.into_result()
+}
+
+/// Writes the biome map and prints its statistics.
+fn biome_map(args: &[String]) -> Result<()> {
+    use rustcraft::world::worldgen::biome_map::{BiomeMap, render, stats, summary};
+    let value = |flag: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let seed = value("--seed")
+        .map_or(Ok(0), |s| s.parse())
+        .context("--seed needs a number")?;
+    let size = value("--size")
+        .map_or(Ok(4096), |s| s.parse())
+        .context("--size needs a number of pixels")?;
+    let out = value("--out").unwrap_or_else(|| "biome-map.png".into());
+    let started = std::time::Instant::now();
+    let map = BiomeMap::sample(seed, size);
+    let stats = stats(&map);
+    render(&map, &stats).save(&out)?;
+    println!(
+        "seed {seed}, {size} × {size} pixels ({} blocks across), {:.1} s → {out}",
+        size * 4,
+        started.elapsed().as_secs_f64()
+    );
+    print!("{}", summary(&stats));
+    Ok(())
+}
+
+/// `--height-map --seed <n> --size <pixels> --out <file>`: the surface
+/// hillshaded in biome colors, and min/mean/max surface Y per biome.
+fn height_map(args: &[String]) -> Result<()> {
+    use rustcraft::world::worldgen::biome_map::{HeightMap, height_summary};
+    let value = |flag: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let seed = value("--seed")
+        .map_or(Ok(0), |s| s.parse())
+        .context("--seed needs a number")?;
+    let size = value("--size")
+        .map_or(Ok(2048), |s| s.parse())
+        .context("--size needs a number of pixels")?;
+    let out = value("--out").unwrap_or_else(|| "docs/screenshots/m21-height-map.png".into());
+    let started = std::time::Instant::now();
+    let map = HeightMap::sample(seed, size);
+    map.render().save(&out)?;
+    println!(
+        "seed {seed}, {size} × {size} pixels ({} blocks across), {:.1} s → {out}",
+        size * 4,
+        started.elapsed().as_secs_f64()
+    );
+    print!("{}", height_summary(&map.stats()));
+    Ok(())
 }
 
 /// The scene to capture and where to save it.
