@@ -1,0 +1,30 @@
+(
+    size: (8, 7, 7),
+    weight: 1,
+    key: {
+        '#': "minecraft:netherrack",
+        'a': "minecraft:cracked_stone_bricks",
+        'b': "minecraft:stone_bricks",
+        'c': "minecraft:gold_block",
+        'd': "minecraft:obsidian",
+        'e': "minecraft:crying_obsidian",
+        'f': "minecraft:chest[facing=west,type=single,waterlogged=false]",
+    },
+    layers: [
+        ["#a  a###", " #a ### ", " ## a###", "# ##bb #", "##a#  b#", "## a  #b", " #b    #"],
+        ["        ", " cdd d  ", "  d  d  ", "  d  e  ", "  d  d  ", "  d e f ", "        "],
+        ["        ", "        ", "        ", "        ", "        ", "        ", "        "],
+        ["        ", "        ", "        ", "        ", "        ", "        ", "        "],
+        ["        ", "        ", "        ", "        ", "        ", "        ", "        "],
+        ["        ", "        ", "        ", "        ", "        ", "        ", "        "],
+        ["        ", "        ", "        ", "        ", "        ", "        ", "        "],
+    ],
+    chests: [
+        ((6, 1, 5), "ruined_portal"),
+    ],
+    spawners: [],
+    mobs: [],
+    jigsaws: [],
+    foundation: None,
+    on_surface: false,
+)

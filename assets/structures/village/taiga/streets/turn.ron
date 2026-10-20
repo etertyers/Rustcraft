@@ -1,0 +1,21 @@
+(
+    size: (5, 1, 5),
+    weight: 2,
+    key: {
+        '#': "minecraft:dirt_path",
+    },
+    layers: [
+        [" ### ", "#### ", "#### ", "#### ", "     "],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [],
+    jigsaws: [
+        (at: (2, 0, 0), facing: "north", pool: "village/taiga/streets"),
+        (at: (0, 0, 2), facing: "west", pool: "village/taiga/streets"),
+        (at: (4, 0, 2), facing: "east", pool: "village/taiga/houses"),
+        (at: (2, 0, 4), facing: "south", pool: "village/taiga/houses"),
+    ],
+    foundation: None,
+    on_surface: true,
+)

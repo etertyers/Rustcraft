@@ -587,6 +587,7 @@ impl App {
             Container::Furnace(_) => Screen::Furnace,
             Container::Dispenser(_, dropper) => Screen::Dispenser { dropper: *dropper },
             Container::Hopper(_) => Screen::Hopper,
+            Container::Merchant(_) => Screen::Merchant,
             Container::Bench(bench) => match bench.kind {
                 BenchKind::Enchanting => Screen::Enchanting,
                 BenchKind::Anvil => Screen::Anvil,
@@ -638,6 +639,9 @@ impl App {
                 game.enchant_item(button);
             }
             ScreenAction::AnvilName(name) => game.set_anvil_name(name),
+            ScreenAction::Trade(index) => {
+                game.trade(index);
+            }
             ScreenAction::Respawn => {
                 game.respawn();
                 self.set_cursor_grab(true);
@@ -968,6 +972,7 @@ impl App {
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
             bench: bench_view(game),
+            merchant: merchant_view(game, self.icons.as_deref()),
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();
@@ -1187,6 +1192,48 @@ impl ApplicationHandler for App {
 
 /// Every item, blocks first, for the creative inventory, with how it looks
 /// and its name.
+/// The trading screen's trades, if one is open.
+fn merchant_view(
+    game: &Game,
+    icons: Option<&ItemIcons>,
+) -> Option<crate::ui::screens::MerchantView> {
+    use crate::{
+        entity::villager::LEVEL_XP,
+        ui::screens::{MerchantView, TradeView},
+    };
+    let villager = game.merchant()?;
+    let icons = icons?;
+    let items = game.items();
+    let title = format!(
+        "{} - {}",
+        villager.profession.map_or("Villager", |p| p.name()),
+        villager.level_name()
+    );
+    let level = usize::from(villager.level.clamp(1, 5));
+    let progress = (level < 5).then(|| {
+        let (from, to) = (LEVEL_XP[level - 1], LEVEL_XP[level]);
+        (villager.xp.saturating_sub(from)) as f32 / (to - from) as f32
+    });
+    let trades = villager
+        .trades
+        .iter()
+        .enumerate()
+        .map(|(i, trade)| TradeView {
+            buy: SlotView::of(&trade.buy, icons, items),
+            buy_b: trade.buy_b.as_ref().map(|b| SlotView::of(b, icons, items)),
+            sell: SlotView::of(&trade.sell, icons, items),
+            name: items.tooltip(&trade.sell),
+            uses_left: trade.max_uses.saturating_sub(trade.uses),
+            affordable: game.can_trade(i),
+        })
+        .collect();
+    Some(MerchantView {
+        title,
+        progress,
+        trades,
+    })
+}
+
 /// What the enchanting table, anvil or grindstone screen shows besides
 /// its slots.
 fn bench_view(game: &Game) -> Option<BenchView> {

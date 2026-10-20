@@ -1,0 +1,40 @@
+(
+    size: (9, 7, 7),
+    weight: 2,
+    key: {
+        '#': "minecraft:smooth_sandstone",
+        '.': "minecraft:air",
+        'a': "minecraft:cut_sandstone",
+        'b': "minecraft:jungle_door[facing=north,half=lower,hinge=left,open=false,powered=false]",
+        'c': "minecraft:chest[facing=west,type=single,waterlogged=false]",
+        'd': "minecraft:red_bed[facing=south,part=foot,occupied=false]",
+        'e': "minecraft:red_bed[facing=south,part=head,occupied=false]",
+        'f': "minecraft:furnace[facing=north,lit=false]",
+        'g': "minecraft:crafting_table",
+        'h': "minecraft:jungle_door[facing=north,half=upper,hinge=left,open=false,powered=false]",
+        'i': "minecraft:wall_torch[facing=east]",
+    },
+    layers: [
+        ["#########", "#########", "#########", "#########", "#########", "#########", "#########"],
+        ["#aaabaaa#", "a......ca", "a.......a", "a.......a", "ad.d...da", "ae.e.fgea", "#aaaaaaa#"],
+        ["#aaahaaa#", "a.......a", "a.......a", ".........", "a.......a", "ai......a", "#aaa.aaa#"],
+        ["#aaaaaaa#", "a.......a", "a.......a", "a.......a", "a.......a", "a.......a", "#aaaaaaa#"],
+        ["#aaaaaaa#", "a.......a", "a.......a", "a.......a", "a.......a", "a.......a", "#aaaaaaa#"],
+        ["#########", "#########", "#########", "#########", "#########", "#########", "#########"],
+        ["a a a a a", "         ", "a       a", "         ", "a       a", "         ", "a a a a a"],
+    ],
+    chests: [
+        ((7, 1, 1), "village_house"),
+    ],
+    spawners: [],
+    mobs: [
+        ((2.5, 1.0, 2.5), "villager", None),
+        ((4.5, 1.0, 2.5), "villager", None),
+        ((6.5, 1.0, 2.5), "villager", None),
+    ],
+    jigsaws: [
+        (at: (4, 0, 0), facing: "north", pool: "village/desert/streets"),
+    ],
+    foundation: Some("minecraft:sandstone"),
+    on_surface: false,
+)

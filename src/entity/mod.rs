@@ -12,3 +12,4 @@ pub mod orb;
 pub mod particle;
 pub mod path;
 pub mod tnt;
+pub mod villager;

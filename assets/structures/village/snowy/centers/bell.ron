@@ -1,0 +1,35 @@
+(
+    size: (9, 6, 9),
+    weight: 1,
+    key: {
+        '#': "minecraft:packed_ice",
+        '.': "minecraft:air",
+        'a': "minecraft:stone_bricks",
+        'b': "minecraft:spruce_fence[north=false,east=false,south=false,west=false,waterlogged=false]",
+        'c': "minecraft:lantern",
+        'd': "minecraft:bell[facing=north]",
+    },
+    layers: [
+        ["#########", "#########", "#########", "#########", "####a####", "#########", "#########", "#########", "#########"],
+        [".........", ".b.....b.", ".........", ".........", "....a....", ".........", ".........", ".b.....b.", "........."],
+        [".........", ".c.....c.", ".........", ".........", "....d....", ".........", ".........", ".c.....c.", "........."],
+        [".........", ".........", ".........", ".........", ".........", ".........", ".........", ".........", "........."],
+        [".........", ".........", ".........", ".........", ".........", ".........", ".........", ".........", "........."],
+        [".........", ".........", ".........", ".........", ".........", ".........", ".........", ".........", "........."],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [
+        ((1.5, 1.0, 6.5), "iron_golem", None),
+        ((6.5, 1.0, 1.5), "villager", None),
+        ((1.5, 1.0, 1.5), "villager", None),
+    ],
+    jigsaws: [
+        (at: (4, 0, 0), facing: "north", pool: "village/snowy/streets"),
+        (at: (4, 0, 8), facing: "south", pool: "village/snowy/streets"),
+        (at: (0, 0, 4), facing: "west", pool: "village/snowy/streets"),
+        (at: (8, 0, 4), facing: "east", pool: "village/snowy/streets"),
+    ],
+    foundation: Some("minecraft:stone_bricks"),
+    on_surface: false,
+)

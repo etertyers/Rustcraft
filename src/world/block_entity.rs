@@ -37,6 +37,26 @@ pub enum BlockEntity {
     /// A dispenser's or dropper's nine slots.
     Dispenser(Vec<Option<ItemStack>>),
     Hopper(Hopper),
+    /// A monster spawner (added in M23, so it comes last for old saves).
+    Spawner(Spawner),
+}
+
+/// What a spawner makes, and the ticks until it next tries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Spawner {
+    /// The mob's name, as in `mobs.ron`.
+    pub mob: String,
+    pub delay: u32,
+}
+
+impl Spawner {
+    /// A new spawner waits 20 ticks before its first try (modern).
+    pub fn new(mob: &str) -> Self {
+        Self {
+            mob: mob.to_owned(),
+            delay: 20,
+        }
+    }
 }
 
 impl BlockEntity {
@@ -53,6 +73,7 @@ impl BlockEntity {
             Self::Chest(slots) | Self::Dispenser(slots) => slots,
             Self::Furnace(furnace) => &furnace.slots,
             Self::Hopper(hopper) => &hopper.slots,
+            Self::Spawner(_) => &[],
         }
     }
 
@@ -61,6 +82,7 @@ impl BlockEntity {
             Self::Chest(slots) | Self::Dispenser(slots) => slots,
             Self::Furnace(furnace) => &mut furnace.slots,
             Self::Hopper(hopper) => &mut hopper.slots,
+            Self::Spawner(_) => &mut [],
         }
     }
 

@@ -100,7 +100,17 @@ fn has_block_entity(state: BlockState) -> bool {
         Shape::Chest | Shape::Sign | Shape::Bed | Shape::BrewingStand | Shape::EnchantingTable
     ) || matches!(
         state.id().name(),
-        "furnace" | "dispenser" | "dropper" | "hopper" | "jukebox" | "beacon" | "spawner"
+        "furnace"
+            | "blast_furnace"
+            | "smoker"
+            | "barrel"
+            | "lectern"
+            | "dispenser"
+            | "dropper"
+            | "hopper"
+            | "jukebox"
+            | "beacon"
+            | "spawner"
     )
 }
 

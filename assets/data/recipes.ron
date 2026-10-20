@@ -170,6 +170,18 @@
         // M22
         (result: (item: "enchanting_table", count: 1), pattern: [" B ", "D#D", "###"], key: {'B': (item: "book"), 'D': (item: "diamond"), '#': (item: "obsidian")}),
         (result: (item: "grindstone", count: 1), pattern: ["I-I", "# #"], key: {'I': (item: "stick"), '-': (item: "smooth_stone_slab"), '#': (tag: "planks")}),
+        // M23: job sites and village blocks
+        (result: (item: "composter", count: 1), pattern: ["# #", "# #", "###"], key: {'#': (tag: "wooden_slabs")}),
+        (result: (item: "lectern", count: 1), pattern: ["SSS", " B ", " S "], key: {'S': (tag: "wooden_slabs"), 'B': (item: "bookshelf")}),
+        (result: (item: "blast_furnace", count: 1), pattern: ["III", "IFI", "###"], key: {'I': (item: "iron_ingot"), 'F': (item: "furnace"), '#': (item: "smooth_stone")}),
+        (result: (item: "smoker", count: 1), pattern: [" L ", "LFL", " L "], key: {'L': (tag: "logs"), 'F': (item: "furnace")}),
+        (result: (item: "smithing_table", count: 1), pattern: ["II", "##", "##"], key: {'I': (item: "iron_ingot"), '#': (tag: "planks")}),
+        (result: (item: "barrel", count: 1), pattern: ["PSP", "P P", "PSP"], key: {'P': (tag: "planks"), 'S': (tag: "wooden_slabs")}),
+        (result: (item: "hay_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "wheat")}),
+        (result: (item: "chiseled_sandstone", count: 1), pattern: ["#", "#"], key: {'#': (item: "sandstone_slab")}),
+        (result: (item: "cut_sandstone", count: 4), pattern: ["##", "##"], key: {'#': (item: "sandstone")}),
+        (result: (item: "sandstone_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "sandstone")}),
+        (result: (item: "chiseled_stone_bricks", count: 1), pattern: ["#", "#"], key: {'#': (item: "stone_brick_slab")}),
         // M21 (modern recipes)
         (result: (item: "oak_slab", count: 6), pattern: ["###"], key: {'#': (item: "oak_planks")}),
         (result: (item: "oak_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "oak_planks")}),
@@ -290,6 +302,7 @@
         (result: (item: "emerald_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "emerald")}),
     ],
     shapeless: [
+        (result: (item: "wheat", count: 9), ingredients: [(item: "hay_block")]),
         (result: (item: "redstone", count: 9), ingredients: [(item: "redstone_block")]),  // redstone from its block
         (result: (item: "stone_button", count: 1), ingredients: [(item: "stone")]),  // stone button
         (result: (item: "chest_minecart", count: 1), ingredients: [(item: "chest"), (item: "minecart")]),  // minecart with chest
@@ -412,6 +425,8 @@
         (input: (item: "deepslate_iron_ore"), result: (item: "iron_ingot", count: 1), xp: 0.7),
         (input: (item: "deepslate_gold_ore"), result: (item: "gold_ingot", count: 1), xp: 1.0),
         (input: (item: "deepslate_diamond_ore"), result: (item: "diamond", count: 1), xp: 1.0),
+        (input: (item: "sandstone"), result: (item: "smooth_sandstone", count: 1), xp: 0.1),
+        (input: (item: "stone"), result: (item: "smooth_stone", count: 1), xp: 0.1),
         (input: (item: "coal_ore"), result: (item: "coal", count: 1), xp: 0.1),
         (input: (item: "deepslate_coal_ore"), result: (item: "coal", count: 1), xp: 0.1),
         (input: (item: "lapis_ore"), result: (item: "lapis_lazuli", count: 1), xp: 0.2),

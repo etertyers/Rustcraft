@@ -1,0 +1,23 @@
+(
+    size: (1, 4, 1),
+    weight: 3,
+    key: {
+        '#': "minecraft:orange_terracotta",
+        'a': "minecraft:acacia_fence[north=false,east=false,south=false,west=false,waterlogged=false]",
+        'b': "minecraft:torch",
+    },
+    layers: [
+        ["#"],
+        ["a"],
+        ["a"],
+        ["b"],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [],
+    jigsaws: [
+        (at: (0, 0, 0), facing: "north", pool: "village/savanna/streets"),
+    ],
+    foundation: None,
+    on_surface: false,
+)

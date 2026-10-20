@@ -1,0 +1,35 @@
+(
+    size: (9, 6, 9),
+    weight: 1,
+    key: {
+        '#': "minecraft:cut_sandstone",
+        '.': "minecraft:air",
+        'a': "minecraft:water[level=0]",
+        'b': "minecraft:sandstone",
+        'c': "minecraft:oak_fence[north=false,east=false,south=false,west=false,waterlogged=false]",
+        'd': "minecraft:smooth_sandstone",
+    },
+    layers: [
+        ["#########", "#########", "#########", "#########", "####a####", "#########", "#########", "#########", "#########"],
+        [".........", ".........", ".........", "...bbb...", "...bab...", "...bbb...", ".........", ".........", "........."],
+        [".........", ".........", ".........", "...c.c...", ".........", "...c.c...", ".........", ".........", "........."],
+        [".........", ".........", ".........", "...c.c...", ".........", "...c.c...", ".........", ".........", "........."],
+        [".........", ".........", ".........", "...ddd...", "...ddd...", "...ddd...", ".........", ".........", "........."],
+        [".........", ".........", ".........", ".........", ".........", ".........", ".........", ".........", "........."],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [
+        ((1.5, 1.0, 6.5), "iron_golem", None),
+        ((6.5, 1.0, 1.5), "villager", None),
+        ((1.5, 1.0, 1.5), "villager", None),
+    ],
+    jigsaws: [
+        (at: (4, 0, 0), facing: "north", pool: "village/desert/streets"),
+        (at: (4, 0, 8), facing: "south", pool: "village/desert/streets"),
+        (at: (0, 0, 4), facing: "west", pool: "village/desert/streets"),
+        (at: (8, 0, 4), facing: "east", pool: "village/desert/streets"),
+    ],
+    foundation: Some("minecraft:sandstone"),
+    on_surface: false,
+)

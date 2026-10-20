@@ -176,6 +176,7 @@ impl Game {
             }
             "slime" | "magma_cube" => data.size = 1 << self.rng.below(3),
             "chicken" => data.timer = 6000 + self.rng.below(6000),
+            "villager" => data.villager = Self::new_villager_data(),
             _ => {}
         }
         if !matches!(def.name.as_str(), "wolf") && !def.variants.is_empty() {
@@ -298,6 +299,7 @@ impl Game {
                 others: &others,
                 owner: Some(player_feet),
                 threat,
+                errand: mob.data.villager.as_ref().and_then(|v| v.errand),
             };
             let mut random = || thinking.next_f64() as f32;
             let mut intent = if mob.ridden {
@@ -372,6 +374,7 @@ impl Game {
         mobs.append(&mut self.mobs);
         self.mobs = mobs;
         self.tick_animals();
+        self.tick_villagers();
         self.spawn_monsters();
         self.spawn_water_mobs();
         self.spawn_phantoms();
@@ -501,6 +504,7 @@ impl Game {
             }
             if self.populated.insert(pos) {
                 self.populate(pos);
+                self.spawn_structure_mobs(pos);
             }
         }
     }

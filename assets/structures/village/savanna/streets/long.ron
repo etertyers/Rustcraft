@@ -1,0 +1,23 @@
+(
+    size: (3, 1, 13),
+    weight: 3,
+    key: {
+        '#': "minecraft:dirt_path",
+    },
+    layers: [
+        ["###", "###", "###", "###", "###", "###", "###", "###", "###", "###", "###", "###", "###"],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [],
+    jigsaws: [
+        (at: (1, 0, 0), facing: "north", pool: "village/savanna/streets"),
+        (at: (1, 0, 12), facing: "south", pool: "village/savanna/streets"),
+        (at: (0, 0, 3), facing: "west", pool: "village/savanna/houses"),
+        (at: (2, 0, 3), facing: "east", pool: "village/savanna/houses"),
+        (at: (0, 0, 9), facing: "west", pool: "village/savanna/houses"),
+        (at: (2, 0, 9), facing: "east", pool: "village/savanna/houses"),
+    ],
+    foundation: None,
+    on_surface: true,
+)

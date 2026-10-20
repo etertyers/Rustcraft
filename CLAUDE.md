@@ -108,6 +108,10 @@ src/
   player/experience.rs, entity/orb.rs   # levels and the bar, experience orbs
   game/{experience,benches,gear}.rs   # orbs and where they come from, enchanting table / anvil / grindstone screens, what enchantments do in hand
   ui/glint.rs   # the enchantment glint on icons (held and dropped items glint in shader.wgsl)
+  world/structure/   # structure placement and per-chunk writing, templates (RON) and jigsaw joining, loot; designs/ draws the shipped templates (--write-structures)
+  entity/villager.rs, game/villagers.rs   # professions, levels and trades; job sites, beds, schedule, breeding, golems, trading
+  game/{spawners,capture}.rs   # spawners spawning, the creative capture tool (F8/F9 corners, F10 save)
+assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
@@ -372,7 +376,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Enchanting glint on enchanted items.
 - **Done when:** you can enchant a diamond pickaxe with Efficiency, combine two enchanted books on an anvil, and the effects match modern behavior.
 
-### - [ ] M23 — Structures and villages
+### - [x] M23 — Structures and villages
 - Structure system: templates stored as data files (e.g. `assets/structures/*.ron`), placement rules per biome, and randomized pieces joined jigsaw-style.
 - **Claude Code builds the village pieces** (houses, farms, paths, wells, job-site buildings) to look like vanilla villages, for plains, desert, savanna, taiga and snowy variants.
 - **Structure capture tool (creative only):** select two corners and save the region as a template, so Kenzo can replace any piece later.

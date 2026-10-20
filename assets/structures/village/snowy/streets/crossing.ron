@@ -1,0 +1,21 @@
+(
+    size: (7, 1, 7),
+    weight: 2,
+    key: {
+        '#': "minecraft:dirt_path",
+    },
+    layers: [
+        ["  ###  ", "  ###  ", "#######", "#######", "#######", "  ###  ", "  ###  "],
+    ],
+    chests: [],
+    spawners: [],
+    mobs: [],
+    jigsaws: [
+        (at: (3, 0, 0), facing: "north", pool: "village/snowy/streets"),
+        (at: (3, 0, 6), facing: "south", pool: "village/snowy/streets"),
+        (at: (0, 0, 3), facing: "west", pool: "village/snowy/streets"),
+        (at: (6, 0, 3), facing: "east", pool: "village/snowy/streets"),
+    ],
+    foundation: None,
+    on_surface: true,
+)
