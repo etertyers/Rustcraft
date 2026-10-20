@@ -193,4 +193,11 @@
     (name: "blue_dye", texture: "blue_dye"),
     // M22: holds enchantments on its stack, to be applied at an anvil.
     (name: "enchanted_book", texture: "enchanted_book", max_stack: 1),
+    // M24
+    (name: "quartz", texture: "quartz"),
+    (name: "nether_brick", texture: "nether_brick"),
+    (name: "iron_nugget", texture: "iron_nugget"),
+    // Lights fires and portals like flint and steel, used up instead of worn.
+    (name: "fire_charge", texture: "fire_charge"),
+    (name: "warped_fungus_on_a_stick", texture: "warped_fungus_on_a_stick", max_stack: 1, durability: 100),
 ]

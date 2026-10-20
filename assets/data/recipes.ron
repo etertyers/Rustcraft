@@ -17,8 +17,11 @@
 (
     tags: {
         "logs": ["oak_log", "oak_wood", "stripped_oak_log", "stripped_oak_wood", "spruce_log", "spruce_wood", "stripped_spruce_log", "stripped_spruce_wood", "birch_log", "birch_wood", "stripped_birch_log", "stripped_birch_wood", "jungle_log", "jungle_wood", "stripped_jungle_log", "stripped_jungle_wood", "acacia_log", "acacia_wood", "stripped_acacia_log", "stripped_acacia_wood", "dark_oak_log", "dark_oak_wood", "stripped_dark_oak_log", "stripped_dark_oak_wood", "mangrove_log", "mangrove_wood", "stripped_mangrove_log", "stripped_mangrove_wood", "cherry_log", "cherry_wood", "stripped_cherry_log", "stripped_cherry_wood"],
-        "planks": ["oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "bamboo_planks"],
-        "wooden_slabs": ["oak_slab", "spruce_slab", "birch_slab", "jungle_slab", "acacia_slab", "dark_oak_slab", "mangrove_slab", "cherry_slab", "bamboo_slab"],
+        "planks": ["oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "bamboo_planks", "crimson_planks", "warped_planks"],
+        // Nether wood doesn't burn, so it isn't fuel.
+        "burnable_planks": ["oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "bamboo_planks"],
+        "wooden_slabs": ["oak_slab", "spruce_slab", "birch_slab", "jungle_slab", "acacia_slab", "dark_oak_slab", "mangrove_slab", "cherry_slab", "bamboo_slab", "crimson_slab", "warped_slab"],
+        "burnable_slabs": ["oak_slab", "spruce_slab", "birch_slab", "jungle_slab", "acacia_slab", "dark_oak_slab", "mangrove_slab", "cherry_slab", "bamboo_slab"],
         "oak_logs": ["oak_log", "oak_wood", "stripped_oak_log", "stripped_oak_wood"],
         "spruce_logs": ["spruce_log", "spruce_wood", "stripped_spruce_log", "stripped_spruce_wood"],
         "birch_logs": ["birch_log", "birch_wood", "stripped_birch_log", "stripped_birch_wood"],
@@ -27,6 +30,9 @@
         "dark_oak_logs": ["dark_oak_log", "dark_oak_wood", "stripped_dark_oak_log", "stripped_dark_oak_wood"],
         "mangrove_logs": ["mangrove_log", "mangrove_wood", "stripped_mangrove_log", "stripped_mangrove_wood"],
         "cherry_logs": ["cherry_log", "cherry_wood", "stripped_cherry_log", "stripped_cherry_wood"],
+        "crimson_stems": ["crimson_stem", "crimson_hyphae", "stripped_crimson_stem", "stripped_crimson_hyphae"],
+        "warped_stems": ["warped_stem", "warped_hyphae", "stripped_warped_stem", "stripped_warped_hyphae"],
+        "soul_fire_base": ["soul_sand", "soul_soil"],
         "bamboo_blocks": ["bamboo_block", "stripped_bamboo_block"],
         "wool": ["white_wool", "orange_wool", "magenta_wool", "light_blue_wool", "yellow_wool", "lime_wool", "pink_wool", "gray_wool", "light_gray_wool", "cyan_wool", "purple_wool", "blue_wool", "brown_wool", "green_wool", "red_wool", "black_wool"],
     },
@@ -300,6 +306,40 @@
         (result: (item: "amethyst_block", count: 1), pattern: ["##", "##"], key: {'#': (item: "amethyst_shard")}),
         (result: (item: "copper_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "copper_ingot")}),
         (result: (item: "emerald_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "emerald")}),
+        // M24: the Nether
+        (result: (item: "crimson_slab", count: 6), pattern: ["###"], key: {'#': (item: "crimson_planks")}),
+        (result: (item: "crimson_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "crimson_planks")}),
+        (result: (item: "crimson_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "crimson_planks"), '#': (item: "stick")}),
+        (result: (item: "crimson_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "crimson_planks")}),
+        (result: (item: "crimson_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "crimson_planks")}),
+        (result: (item: "crimson_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "crimson_planks")}),
+        (result: (item: "crimson_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "crimson_planks")}),
+        (result: (item: "crimson_planks", count: 4), pattern: ["#"], key: {'#': (tag: "crimson_stems")}),
+        (result: (item: "crimson_hyphae", count: 3), pattern: ["##", "##"], key: {'#': (item: "crimson_stem")}),
+        (result: (item: "stripped_crimson_hyphae", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_crimson_stem")}),
+        (result: (item: "warped_slab", count: 6), pattern: ["###"], key: {'#': (item: "warped_planks")}),
+        (result: (item: "warped_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "warped_planks")}),
+        (result: (item: "warped_fence", count: 3), pattern: ["W#W", "W#W"], key: {'W': (item: "warped_planks"), '#': (item: "stick")}),
+        (result: (item: "warped_fence_gate", count: 1), pattern: ["#W#", "#W#"], key: {'#': (item: "stick"), 'W': (item: "warped_planks")}),
+        (result: (item: "warped_door", count: 3), pattern: ["##", "##", "##"], key: {'#': (item: "warped_planks")}),
+        (result: (item: "warped_trapdoor", count: 2), pattern: ["###", "###"], key: {'#': (item: "warped_planks")}),
+        (result: (item: "warped_pressure_plate", count: 1), pattern: ["##"], key: {'#': (item: "warped_planks")}),
+        (result: (item: "warped_planks", count: 4), pattern: ["#"], key: {'#': (tag: "warped_stems")}),
+        (result: (item: "warped_hyphae", count: 3), pattern: ["##", "##"], key: {'#': (item: "warped_stem")}),
+        (result: (item: "stripped_warped_hyphae", count: 3), pattern: ["##", "##"], key: {'#': (item: "stripped_warped_stem")}),
+        (result: (item: "quartz_block", count: 1), pattern: ["##", "##"], key: {'#': (item: "quartz")}),
+        (result: (item: "bone_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "bone_meal")}),
+        (result: (item: "polished_basalt", count: 4), pattern: ["##", "##"], key: {'#': (item: "basalt")}),
+        (result: (item: "nether_bricks", count: 1), pattern: ["##", "##"], key: {'#': (item: "nether_brick")}),
+        (result: (item: "nether_wart_block", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "nether_wart")}),
+        (result: (item: "soul_torch", count: 4), pattern: ["X", "#", "S"], key: {'X': (item: "coal"), '#': (item: "stick"), 'S': (tag: "soul_fire_base")}),
+        (result: (item: "soul_torch", count: 4), pattern: ["X", "#", "S"], key: {'X': (item: "charcoal"), '#': (item: "stick"), 'S': (tag: "soul_fire_base")}),
+        (result: (item: "iron_ingot", count: 1), pattern: ["###", "###", "###"], key: {'#': (item: "iron_nugget")}),
+        (result: (item: "lantern", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: "iron_nugget"), 'X': (item: "torch")}),
+        (result: (item: "soul_lantern", count: 1), pattern: ["###", "#X#", "###"], key: {'#': (item: "iron_nugget"), 'X': (item: "soul_torch")}),
+        // Fishing itself isn't in the game; the rod is for the strider's stick.
+        (result: (item: "fishing_rod", count: 1), pattern: ["  #", " #S", "# S"], key: {'#': (item: "stick"), 'S': (item: "string")}),
+        (result: (item: "warped_fungus_on_a_stick", count: 1), pattern: ["# ", " X"], key: {'#': (item: "fishing_rod"), 'X': (item: "warped_fungus")}),
     ],
     shapeless: [
         (result: (item: "wheat", count: 9), ingredients: [(item: "hay_block")]),
@@ -396,6 +436,14 @@
         (result: (item: "pink_dye", count: 2), ingredients: [(item: "peony")]),
         (result: (item: "white_wool", count: 1), ingredients: [(item: "white_dye"), (tag: "wool")]),
         (result: (item: "blue_wool", count: 1), ingredients: [(item: "blue_dye"), (item: "white_wool")]),
+        // M24
+        (result: (item: "crimson_button", count: 1), ingredients: [(item: "crimson_planks")]),
+        (result: (item: "warped_button", count: 1), ingredients: [(item: "warped_planks")]),
+        (result: (item: "bone_meal", count: 9), ingredients: [(item: "bone_block")]),
+        (result: (item: "quartz", count: 4), ingredients: [(item: "quartz_block")]),
+        (result: (item: "iron_nugget", count: 9), ingredients: [(item: "iron_ingot")]),
+        (result: (item: "fire_charge", count: 3), ingredients: [(item: "gunpowder"), (item: "blaze_powder"), (item: "coal")]),
+        (result: (item: "fire_charge", count: 3), ingredients: [(item: "gunpowder"), (item: "blaze_powder"), (item: "charcoal")]),
     ],
     smelting: [
         (input: (item: "iron_ore"), result: (item: "iron_ingot", count: 1), xp: 0.7),  // iron
@@ -433,10 +481,15 @@
         (input: (item: "deepslate_lapis_ore"), result: (item: "lapis_lazuli", count: 1), xp: 0.2),
         (input: (item: "redstone_ore"), result: (item: "redstone", count: 1), xp: 0.7),
         (input: (item: "deepslate_redstone_ore"), result: (item: "redstone", count: 1), xp: 0.7),
+        // M24
+        (input: (item: "netherrack"), result: (item: "nether_brick", count: 1), xp: 0.1),
+        (input: (item: "nether_quartz_ore"), result: (item: "quartz", count: 1), xp: 0.2),
+        (input: (item: "nether_gold_ore"), result: (item: "gold_ingot", count: 1), xp: 1.0),
+        (input: (item: "basalt"), result: (item: "smooth_basalt", count: 1), xp: 0.1),
     ],
     fuels: [
-        (tag: "planks", ticks: 300),  // planks
-        (tag: "wooden_slabs", ticks: 150),  // wooden slabs
+        (tag: "burnable_planks", ticks: 300),  // planks
+        (tag: "burnable_slabs", ticks: 150),  // wooden slabs
         (tag: "logs", ticks: 300),  // log
         (item: "bookshelf", ticks: 300),  // bookshelf
         (item: "chest", ticks: 300),  // chest
