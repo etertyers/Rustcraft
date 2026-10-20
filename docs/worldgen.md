@@ -262,3 +262,52 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 - **Overhangs and caves**: mountains with low erosion have 3D overhangs. Air pockets the 3D noise leaves under the surface stay dry, even below sea level (there are no aquifers).
 - **Valleys in mountains**: every valley dips to just under sea level, even where the biome table says mountain (Valleys E0–E1 Mid/Far). These are dry or water-filled gorges.
 - **Old chunks**: chunks generated before this change keep their old shape, so there's a seam where old meets new.
+
+## Session 3 summary (surfaces and decoration)
+
+**Surface rules** (`Terrain::top()` and `layer()` in `terrain.rs`, applied after the terrain shape, in this order):
+- **Bedrock floor**: unchanged.
+- **Under water** (not river or swamp):
+  - Beaches and deserts get sand.
+  - Elsewhere, clay patches (shallow only), then gravel where it's cold (temperature < 0.3), deep (more than 14 below sea level) or in a gravel patch, otherwise sand.
+  - Rivers use sand, gravel and clay along their beds.
+- **Wet biomes**: swamps and mangrove swamps get water patches at sea level. Mangrove ground is mud, with mud under its pools.
+- **Sand**: desert and beach get 3–4 blocks of sand over sandstone.
+- **Stony shore**: stone with gravel patches.
+- **Badlands**: terracotta bands keyed to Y on steep or high ground (over 100), red sand on top.
+- **Mushroom fields**: mycelium.
+- **Peaks**:
+  - Frozen peaks: snow blocks, with packed ice and ice on steep faces.
+  - Jagged peaks and snowy slopes: snow blocks, stone where steep.
+  - `stony_peaks` (generated as windswept hills, see DECISIONS): calcite and stone above Y 150, gravel patches lower down.
+- **Steep slopes** (rising 4+ blocks over 1) are stone instead of grass.
+- **Above Y 200**, grass becomes snow blocks in cold biomes and stone elsewhere.
+- **Snow and ice**: snowy biomes keep snow layers on the ground and ice on still water, from the existing temperature-based freezing.
+
+**Decoration**
+- Trees and plants read the biome at their column's quart and only grow on grass-type ground (`Column::grassy()`), so none land on the new stone, sand or ice slopes.
+- 2 × 2 trunks (mega jungle and dark oak) now push roots down up to 6 blocks to the ground (`root()` in `features.rs`). On slopes they used to hang one corner over air.
+- Ore and mob rules that depend on biome name the `Biome` enum (`ores.rs` emerald and badlands gold, `mobs.ron` spawn lists), filled from the new biome source, so they needed no change.
+
+**Surface shares** (topmost block in sampled chunks, seed 20111118; from the `each_biome_shows_its_own_ground` test):
+
+| Biome | Ground | Share |
+|---|---|---|
+| Desert | sand | 98% |
+| Badlands | terracotta or red sand | 99% |
+| Mushroom fields | mycelium | 90% |
+| Snowy plains | snow or ice | 100% |
+| Plains | grass | 100% |
+
+**Perf**: `cargo bench` "generate a chunk" 1.26 ms (M23 1.41 ms). The `--perf-test` gives 146 fps average and an 85 fps 1% low, with no frame over 33 ms. Full table in `docs/perf/m21.md`.
+
+**Tests added**
+- Each biome shows its own ground (the table above).
+- Beaches are at least 70% sand, with sandstone within 8 blocks below.
+- No plant or upright trunk foot stands on air or fluid, across 11 land biomes. This skips cobwebs and dripstone, which hang in caves, and allows for acacia's leaning trunks.
+- The same seed regenerates the same decorated chunk.
+
+**Known issues**
+- **Missing biomes**: `stony_peaks`, `snowy_beach` and `frozen_river` are still fallbacks (windswept hills, beach, river) with their surfaces approximated.
+- **Old chunks**: saved worlds show seams at the edge of explored land (DECISIONS).
+- **Badlands below Y 100**: gentle badlands land is plain red sand. Bands show only on slopes and higher ground.
