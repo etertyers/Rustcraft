@@ -944,7 +944,7 @@ pub(crate) mod tests {
             }
             let missing: Vec<_> = Biome::ALL
                 .iter()
-                .filter(|b| !b.is_cave() && !seen.contains(b))
+                .filter(|b| !b.is_cave() && !b.is_nether() && !seen.contains(b))
                 .collect();
             assert!(missing.is_empty(), "seed {seed} lacks {missing:?}");
         }

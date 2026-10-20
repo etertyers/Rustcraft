@@ -46,6 +46,11 @@ pub enum Biome {
     DeepLukewarmOcean,
     LushCaves,
     DripstoneCaves,
+    NetherWastes,
+    CrimsonForest,
+    WarpedForest,
+    SoulSandValley,
+    BasaltDeltas,
 }
 
 /// How a biome's grass and foliage colors are worked out.
@@ -135,10 +140,16 @@ const INFO: [Info; Biome::COUNT] = [
     info("Deep Lukewarm Ocean", 0.5, 0.5),
     info("Lush Caves", 0.5, 0.5),
     info("Dripstone Caves", 0.8, 0.4),
+    // Modern `NetherBiomes`: hot and dry, with no rain.
+    info("Nether Wastes", 2.0, 0.0),
+    info("Crimson Forest", 2.0, 0.0),
+    info("Warped Forest", 2.0, 0.0),
+    info("Soul Sand Valley", 2.0, 0.0),
+    info("Basalt Deltas", 2.0, 0.0),
 ];
 
 impl Biome {
-    pub const COUNT: usize = 37;
+    pub const COUNT: usize = 42;
 
     pub const ALL: [Biome; Biome::COUNT] = {
         use Biome::*;
@@ -180,8 +191,22 @@ impl Biome {
             DeepLukewarmOcean,
             LushCaves,
             DripstoneCaves,
+            NetherWastes,
+            CrimsonForest,
+            WarpedForest,
+            SoulSandValley,
+            BasaltDeltas,
         ]
     };
+
+    /// The Nether's biomes (M24).
+    pub const NETHER: [Biome; 5] = [
+        Biome::NetherWastes,
+        Biome::CrimsonForest,
+        Biome::WarpedForest,
+        Biome::SoulSandValley,
+        Biome::BasaltDeltas,
+    ];
 
     fn info(self) -> &'static Info {
         &INFO[self.index()]
@@ -228,6 +253,22 @@ impl Biome {
                 | Biome::DeepColdOcean
                 | Biome::DeepLukewarmOcean
         )
+    }
+
+    pub fn is_nether(self) -> bool {
+        Self::NETHER.contains(&self)
+    }
+
+    /// The fog color of a Nether biome (sRGB), from modern `NetherBiomes`.
+    pub fn nether_fog(self) -> Option<u32> {
+        Some(match self {
+            Biome::NetherWastes => 0x330808,
+            Biome::CrimsonForest => 0x330303,
+            Biome::WarpedForest => 0x1A051A,
+            Biome::SoulSandValley => 0x1B4745,
+            Biome::BasaltDeltas => 0x685F70,
+            _ => return None,
+        })
     }
 
     /// Lush and dripstone caves, which lie under other biomes.

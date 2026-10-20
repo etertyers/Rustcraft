@@ -215,6 +215,11 @@ pub fn color(biome: Biome) -> [u8; 3] {
         MushroomFields => [255, 0, 255],
         LushCaves => [40, 200, 40],
         DripstoneCaves => [120, 90, 60],
+        NetherWastes => [191, 59, 59],
+        CrimsonForest => [221, 8, 8],
+        WarpedForest => [73, 144, 123],
+        SoulSandValley => [94, 56, 48],
+        BasaltDeltas => [64, 54, 54],
     }
 }
 
@@ -385,7 +390,7 @@ mod tests {
         eprintln!("{}", summary(&stats));
         assert_eq!(stats.bad_neighbors, 0, "snowy beside hot");
         for biome in Biome::ALL {
-            if !matches!(biome, Biome::LushCaves | Biome::DripstoneCaves) {
+            if !biome.is_cave() && !biome.is_nether() {
                 assert!(stats.share.contains_key(biome.name()), "no {biome:?}");
             }
         }

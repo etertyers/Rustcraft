@@ -19,7 +19,7 @@ use rustcraft::world::{
     mesh::{BlockModels, ChunkArea, mesh_chunk},
     props::Prop,
     redstone::Redstone,
-    worldgen::terrain::Terrain,
+    worldgen::{nether::Nether, terrain::Terrain},
 };
 
 /// The seed `--perf-test` flies over.
@@ -53,6 +53,18 @@ fn generation(c: &mut Criterion) {
         b.iter(|| {
             x += 1;
             black_box(terrain.generate(ChunkPos::new(x, 3)))
+        })
+    });
+}
+
+/// Added in M24.
+fn nether_generation(c: &mut Criterion) {
+    let nether = Nether::new(SEED);
+    let mut x = 0;
+    c.bench_function("generate a nether chunk", |b| {
+        b.iter(|| {
+            x += 1;
+            black_box(nether.generate(ChunkPos::new(x, 3)))
         })
     });
 }
@@ -182,6 +194,6 @@ fn redstone(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(50);
-    targets = generation, lighting_and_meshing, fluids, redstone
+    targets = generation, nether_generation, lighting_and_meshing, fluids, redstone
 }
 criterion_main!(benches);
