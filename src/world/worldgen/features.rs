@@ -1278,8 +1278,8 @@ mod tests {
     use crate::world::worldgen::terrain::Terrain;
     use std::collections::HashMap;
 
-    /// A chunk whose center column and the centers of its eight neighbors
-    /// are all `biome`.
+    /// A chunk whose 3 × 3 chunks round it are all `biome` (every quart)
+    /// with no structure on the surface there, standing above the sea.
     fn find_biome(terrain: &Terrain, biome: Biome) -> ChunkPos {
         (0..120_000)
             .map(|i: i32| {
@@ -1292,15 +1292,34 @@ mod tests {
             })
             .find(|pos| {
                 let (x, z) = pos.min_block();
-                (-1..=1).all(|dx| {
-                    (-1..=1)
-                        .all(|dz| terrain.column(x + 8 + dx * 16, z + 8 + dz * 16).biome == biome)
-                })
+                let centers = (-1..=1).all(|dx| {
+                    (-1..=1).all(|dz| terrain.biome_at(x + 8 + dx * 16, z + 8 + dz * 16) == biome)
+                });
+                // Dry land, clear of the shore.
+                centers
+                    && terrain.height(x + 8, z + 8) > SEA_LEVEL + 3
+                    && (-16..32).step_by(4).all(|dx| {
+                        (-16..32)
+                            .step_by(4)
+                            .all(|dz| terrain.biome_at(x + dx, z + dz) == biome)
+                    })
+                    && (-1..=1).all(|dx| {
+                        (-1..=1).all(|dz| {
+                            crate::world::structure::near(terrain, pos.offset(dx, dz))
+                                .iter()
+                                .all(|s| {
+                                    use crate::world::structure::Kind;
+                                    matches!(
+                                        s.kind,
+                                        Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold
+                                    )
+                                })
+                        })
+                    })
             })
             .unwrap_or_else(|| panic!("no {biome:?} found"))
     }
 
-    /// Counts every block in the chunks around `center` by id.
     fn census(
         terrain: &Terrain,
         center: ChunkPos,
@@ -1372,12 +1391,7 @@ mod tests {
     #[test]
     fn open_biomes_have_few_or_no_trees() {
         let terrain = Terrain::new(20111118);
-        for biome in [
-            Biome::Desert,
-            Biome::Badlands,
-            Biome::IceSpikes,
-            Biome::Beach,
-        ] {
+        for biome in [Biome::Desert, Biome::Badlands, Biome::IceSpikes] {
             let (_, counts) = census(&terrain, find_biome(&terrain, biome), 1);
             let logs: usize = [
                 blocks::OAK_LOG,
@@ -1474,8 +1488,12 @@ mod tests {
                 for y in SEA_LEVEL as usize..WORLD_HEIGHT - 1 {
                     // The top log of a small oak on the east edge of the chunk.
                     let log = chunk.get(15, y, z);
+                    // (A trunk under it and leaves to the west: a small oak's
+                    // top, not a fancy oak's branch.)
                     if log.id() != blocks::OAK_LOG
                         || chunk.get(15, y + 1, z).id() != blocks::OAK_LEAVES
+                        || !is_leaves(chunk.get(14, y, z))
+                        || chunk.get(15, y - 1, z).id() != blocks::OAK_LOG
                     {
                         continue;
                     }

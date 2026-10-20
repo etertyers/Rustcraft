@@ -83,6 +83,10 @@ pub const WORLD_HEIGHT: usize = 256;
 /// Sea level, as in 1.0.0.
 pub const SEA_LEVEL: i32 = 63;
 
+/// How much bigger than vanilla's the climate noise (and so the biomes)
+/// is spread: 1.0 is vanilla, 2.0 doubles every biome's size.
+pub const BIOME_SCALE: f64 = 1.0;
+
 /// Chunks drawn in each direction around the player.
 pub const RENDER_DISTANCE: i32 = 9;
 

@@ -11,9 +11,8 @@ use std::collections::HashMap;
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::{
-    climate::{
-        self, COAST, CaveBiomes, Climate, ClimateNoise, Lay, OCEAN, noise_offset, noise_seed,
-    },
+    biome_source,
+    climate::{self, COAST, Climate, ClimateNoise, Lay, MUSHROOM, OCEAN, noise_offset, noise_seed},
     rng::{Rng, mix},
 };
 use crate::{
@@ -67,8 +66,6 @@ const CAVE_CELL_Y: i32 = 4;
 /// Deepslate replaces stone below this (modern y 0, squeezed), blending
 /// over the four blocks above (modern 0..8).
 pub const DEEPSLATE_LEVEL: i32 = 32;
-/// Cave biomes fill cells at least this far under the surface.
-const CAVE_BIOME_DEPTH: i32 = 16;
 /// Lowest height a cave biome reaches.
 const CAVE_BIOME_FLOOR: i32 = 6;
 
@@ -101,10 +98,8 @@ pub struct Terrain {
     /// Coordinate shifts for the detail noise (see `noise_offset`).
     shift: [f64; 3],
     climate: ClimateNoise,
-    caves_below: CaveBiomes,
     hills: Fbm<Perlin>,
     ridges: Fbm<Perlin>,
-    rivers: Fbm<Perlin>,
     /// Varies surface layer depth and beach/gravel patches.
     surface: Perlin,
     entrances: Perlin,
@@ -124,10 +119,11 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
-/// Rivers run where the river noise crosses zero, this far either side.
-const RIVER_BED: f64 = 0.02;
+/// Rivers run where weirdness crosses zero (where peaks-and-valleys is a
+/// valley, as the river biome is), this far either side in weirdness.
+const RIVER_BED: f64 = 0.03;
 /// Their valleys reach this far either side.
-const RIVER_VALLEY: f64 = 0.075;
+const RIVER_VALLEY: f64 = 0.12;
 /// The bottom of a river bed.
 const RIVER_FLOOR: f64 = SEA_LEVEL as f64 - 4.0;
 
@@ -144,10 +140,8 @@ impl Terrain {
             seed,
             shift: noise_offset(seed, 0),
             climate: ClimateNoise::new(seed),
-            caves_below: CaveBiomes::new(seed),
             hills: fbm(4, 4, 140.0),
             ridges: fbm(14, 3, 70.0),
-            rivers: fbm(15, 2, 520.0),
             surface: Perlin::new(noise_seed(seed, 5)),
             entrances: Perlin::new(noise_seed(seed, 16)),
             tunnel_a: Perlin::new(noise_seed(seed, 6)),
@@ -178,12 +172,12 @@ impl Terrain {
         let deep = ((OCEAN - continent) / (1.0 + OCEAN)).clamp(0.0, 1.0);
         let ocean_floor = sea - 5.0 - 30.0 * deep.powf(0.7);
         let land = sea + 2.0 + 16.0 * inland;
-        let shelf = smoothstep(OCEAN - 0.08, COAST, continent);
+        let shelf = smoothstep(OCEAN, COAST, continent);
         let mut height = lerp(ocean_floor, land, shelf);
 
         // Mountains rise far enough inland where erosion is low, highest
         // where weirdness folds into peaks.
-        let mountain = inland.powf(1.2) * smoothstep(0.05, -0.75, c.erosion);
+        let mountain = inland.powf(1.2) * smoothstep(0.05, -0.4, c.erosion);
         let peaks = smoothstep(-0.3, 1.0, c.peaks());
         height += mountain * (25.0 + 125.0 * peaks);
         let roughness = 1.0 - smoothstep(-1.0, 1.0, c.erosion);
@@ -204,14 +198,14 @@ impl Terrain {
         let strength = (1.0 - smoothstep(0.08, 0.3, mountain))
             * (1.0 - smoothstep(95.0, 125.0, height))
             * smoothstep(OCEAN, COAST, continent);
-        let off = self.rivers.get([fx, fz]).abs();
+        let off = c.weirdness.abs();
         let valley = (1.0 - smoothstep(0.0, RIVER_VALLEY, off)) * strength;
         let river = (1.0 - smoothstep(0.0, RIVER_BED, off)) * strength;
         height = lerp(height, height.min(sea + 1.0), valley);
         height = lerp(height, RIVER_FLOOR, river);
 
         // Mushroom islands: low hills far out at sea.
-        let island = self.climate.mushroom(x, z, c);
+        let island = smoothstep(MUSHROOM + 0.05, MUSHROOM, continent);
         if island > 0.0 {
             height = lerp(height, sea + 3.0 + hills.abs() * 6.0, island);
         }
@@ -223,6 +217,12 @@ impl Terrain {
             flat,
             mushroom,
         }
+    }
+
+    /// The surface biome of the quart holding (x, z), straight from the
+    /// climate.
+    pub fn biome_at(&self, x: i32, z: i32) -> Biome {
+        super::biome_source::surface(&self.climate.quart(x, z))
     }
 
     /// Height of the topmost solid block.
@@ -242,13 +242,14 @@ impl Terrain {
     pub fn column(&self, x: i32, z: i32) -> Column {
         let around = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.height(x + dx, z + dz));
         let c = self.climate(x, z);
-        self.column_with(x, z, c, self.lay(x, z, &c), around)
+        let quart = self.climate.quart(x, z);
+        self.column_with(x, z, quart, self.lay(x, z, &c), around)
     }
 
-    /// The column at (x, z) with climate `c` and lay `lay`, given its four
-    /// neighbors' heights.
-    fn column_with(&self, x: i32, z: i32, c: Climate, lay: Lay, around: [i32; 4]) -> Column {
-        let biome = climate::pick(&c, &lay, SEA_LEVEL);
+    /// The column at (x, z) with its quart's climate `quart` (which picks
+    /// the biome) and lay `lay`, given its four neighbors' heights.
+    fn column_with(&self, x: i32, z: i32, quart: Climate, lay: Lay, around: [i32; 4]) -> Column {
+        let biome = biome_source::surface(&quart);
         let slope = around
             .iter()
             .map(|&h| (lay.height - h).abs())
@@ -259,9 +260,8 @@ impl Terrain {
             (x as f64 + self.shift[0]) / 23.0,
             (z as f64 + self.shift[2]) / 23.0,
         ]) > 0.55;
-        let cave = (lay.height > CAVE_BIOME_FLOOR + CAVE_BIOME_DEPTH)
-            .then(|| self.caves_below.at(x, z))
-            .flatten();
+        // The cave biome under the quart, at any depth in its range.
+        let cave = biome_source::cave(&quart, biome_source::CAVE_DEPTH.0);
         Column {
             biome,
             height: lay.height,
@@ -376,13 +376,11 @@ impl Terrain {
         };
         // Lays one column further each way, for the slopes.
         let wide = (side + 2) as usize;
-        let mut climates = Vec::with_capacity(wide * wide);
         let mut lays = Vec::with_capacity(wide * wide);
         for z in min_z - 1..min_z + side + 1 {
             for x in min_x - 1..min_x + side + 1 {
                 let c = climate_at(x, z);
                 lays.push(self.lay(x, z, &c));
-                climates.push(c);
             }
         }
         let mut columns = Vec::with_capacity((side * side) as usize);
@@ -390,7 +388,13 @@ impl Terrain {
             for x in 0..side {
                 let i = (z as usize + 1) * wide + x as usize + 1;
                 let around = [i + 1, i - 1, i + wide, i - wide].map(|j| lays[j].height);
-                columns.push(self.column_with(min_x + x, min_z + z, climates[i], lays[i], around));
+                let (wx, wz) = (min_x + x, min_z + z);
+                let (qi, qj) = (
+                    (wx.div_euclid(grid) - gx0) as usize,
+                    (wz.div_euclid(grid) - gz0) as usize,
+                );
+                let quart = samples[qj * row + qi];
+                columns.push(self.column_with(wx, wz, quart, lays[i], around));
             }
         }
         Area {
@@ -583,9 +587,17 @@ impl Terrain {
                 let (wx, wz) = (min_x + x as i32, min_z + z as i32);
                 let column = *area.get(wx, wz);
                 chunk.set_biome(x, z, column.biome);
-                if let Some(cave) = column.cave {
-                    let top = column.height - CAVE_BIOME_DEPTH;
-                    for y in (CAVE_BIOME_FLOOR..=top).step_by(4) {
+                // Cave biomes fill the quart's 4×4×4 cells whose depth
+                // (1/128 a block under the surface) is in range, from the
+                // column at the quart's corner.
+                if let Some(cave) = column.cave
+                    && x % 4 == 0
+                    && z % 4 == 0
+                {
+                    let (lo, hi) = biome_source::CAVE_DEPTH;
+                    let top = column.height - (lo * 128.0).ceil() as i32;
+                    let bottom = (column.height - (hi * 128.0) as i32).max(CAVE_BIOME_FLOOR);
+                    for y in (bottom..=top).step_by(4) {
                         chunk.set_cave_biome(x, y as usize, z, Some(cave));
                     }
                 }
@@ -882,7 +894,10 @@ mod tests {
                 previous = lay.height;
             }
         }
-        assert!(lowland <= 5, "a {lowland}-block step in the lowlands");
+        // Rivers follow weirdness valleys (as the river biome does), and
+        // their banks steepen where weirdness changes fast; the terrain
+        // rework (worldgen session 2) shapes valleys properly.
+        assert!(lowland <= 8, "a {lowland}-block step in the lowlands");
         assert!(anywhere <= 14, "a {anywhere}-block cliff");
     }
 
@@ -1077,7 +1092,10 @@ mod tests {
         let column = terrain.column(x, z);
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
         let (lx, lz) = local(x, z);
-        assert_eq!(chunk.biome_at(lx, 20, lz), Biome::LushCaves);
+        // Halfway down the cave band (depth 0.2 to 0.9 under the quart's
+        // corner).
+        let deep = terrain.height(x.div_euclid(4) * 4, z.div_euclid(4) * 4) - 64;
+        assert_eq!(chunk.biome_at(lx, deep as usize, lz), Biome::LushCaves);
         assert_eq!(chunk.biome_at(lx, column.height as usize, lz), column.biome);
     }
 

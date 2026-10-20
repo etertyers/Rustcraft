@@ -917,6 +917,7 @@ impl App {
             chunks_loaded: chunks.world().len(),
             biome: chunks.world().biome_at_block(x, p.y.floor() as i32, z),
             seed: chunks.seed(),
+            climate: chunks.terrain().map(|t| t.climate(x, z)),
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
             time: game.time(),
