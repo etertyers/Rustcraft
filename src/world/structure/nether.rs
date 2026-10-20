@@ -183,3 +183,30 @@ pub fn find(nether: &Nether, kind: Kind, pos: ChunkPos, radius: i32) -> Option<A
     }
     best.map(|(_, s)| s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `cargo test --release nether_structure_spots -- --ignored --nocapture`:
+    /// where the nearest of each starts on seed 20111118, for screenshots.
+    #[test]
+    #[ignore]
+    fn nether_structure_spots() {
+        let nether = Nether::new(20111118);
+        for kind in KINDS {
+            let Some(found) = find(&nether, kind, ChunkPos::new(0, 0), 80) else {
+                eprintln!("{kind:?}: none");
+                continue;
+            };
+            let spawner = found
+                .pieces
+                .iter()
+                .find_map(|p| p.spawners.first().map(|s| s.0));
+            eprintln!(
+                "{kind:?}: start {:?}, bounds {:?}..{:?}, spawner {spawner:?}",
+                found.start, found.bounds.min, found.bounds.max
+            );
+        }
+    }
+}

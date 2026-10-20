@@ -210,18 +210,31 @@ pub fn generate(probe: &mut Probe, start: ChunkPos, rng: &mut Rng) -> Option<Vec
 pub fn ruined_portal(probe: &mut Probe, start: ChunkPos, rng: &mut Rng) -> Option<Vec<Piece>> {
     let (x, z) = start.min_block();
     let (x, z) = (x + 8, z + 8);
-    let floor = probe
-        .floors(x, z)
+    // The lowest floor with room for the frame above it, or the lava sea.
+    let lava = crate::world::worldgen::nether::LAVA_LEVEL;
+    let mut floors = probe.floors(x, z);
+    floors.reverse();
+    let floor = floors
         .into_iter()
-        .rev()
-        .find(|&y| y > crate::world::worldgen::nether::LAVA_LEVEL)
-        .unwrap_or(crate::world::worldgen::nether::LAVA_LEVEL);
+        .find(|&y| y > lava && (1..=6).all(|up| !probe.solid(x, y + up, z)))
+        .unwrap_or(lava);
     let base = IVec3::new(x, floor, z);
     let along_x = rng.below(2) == 0;
     let step = if along_x { IVec3::X } else { IVec3::Z };
     let across = IVec3::ONE - step - IVec3::Y;
     let mut build = Build::new();
-    // The platform: blackstone, netherrack and magma.
+    // Room round the frame, then the platform: blackstone, netherrack and
+    // magma.
+    for a in -3..=4 {
+        for b in -2..=2 {
+            for up in 1..=6 {
+                build.set(
+                    base + step * a + across * b + IVec3::Y * up,
+                    BlockState::AIR,
+                );
+            }
+        }
+    }
     for a in -3..=4 {
         for b in -2..=2 {
             let at = base + step * a + across * b;
