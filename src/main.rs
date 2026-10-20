@@ -24,6 +24,16 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let (world, bench, shot, view) = parse_args(std::env::args().skip(1))?;
     let mut app = app::App::new(world).with_bench(bench).with_view(view);
+    // `--pack <file or folder>` (repeatable): play or shoot with these
+    // resource packs instead of the chosen ones, leaving options.ron be.
+    let packs: Vec<String> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--pack")
+        .map(|pair| pair[1].clone())
+        .collect();
+    if !packs.is_empty() {
+        app = app.with_packs(packs);
+    }
     if let Some((shot, out)) = shot {
         app = app.with_shot(shot, out);
     }
@@ -108,7 +118,8 @@ type Parsed = (
 /// and prints frame timings (see `bench`), at `--distance <chunks>` if
 /// given. `--shot <name> [--out <file>]` captures a scene (see `shots`);
 /// `--shot list` lists them. `--view first|back|front` starts in that view
-/// (F5 cycles them).
+/// (F5 cycles them). `--nether` starts in the Nether of the seed, and
+/// `--pack <name>` uses that resource pack this once.
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     let mut args = args.peekable();
     let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
@@ -169,6 +180,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
                 };
             }
             "--gallery" => test_world = Some(app::WorldKind::Gallery),
+            // Read in `main`.
+            "--pack" => {
+                args.next().context("--pack needs a resource pack's name")?;
+            }
             "--flat" => test_world = Some(app::WorldKind::Flat),
             "--nether" => nether = true,
             "--world" => world = Some(args.next().context("--world needs a name")?),

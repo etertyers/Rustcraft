@@ -218,6 +218,12 @@ impl App {
         self
     }
 
+    /// Uses these resource packs this time, without saving them as chosen.
+    pub fn with_packs(mut self, packs: Vec<String>) -> Self {
+        self.options.resource_packs = packs;
+        self
+    }
+
     pub fn with_bench(mut self, bench: Option<Bench>) -> Self {
         if let Some(distance) = bench.as_ref().and_then(|bench| bench.distance) {
             self.options.render_distance = distance;
