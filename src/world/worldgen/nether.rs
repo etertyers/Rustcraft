@@ -457,6 +457,7 @@ type Feature = fn(&mut Land, &mut Out, ChunkPos, &mut Rng);
 const FEATURES: &[(u64, Feature)] = &[
     (0x0101, blobs),
     (0x0102, ores),
+    (0x010C, debris),
     (0x0103, springs),
     (0x0104, deltas),
     (0x0105, columns),
@@ -578,6 +579,39 @@ fn ores(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
             let r = radius * (0.6 + rng.next_f64() * 0.6);
             if out.near(x, z, 4) {
                 ball(out, rng, (x, y, z), r, is_ground, block);
+            }
+        }
+    }
+}
+
+/// Ancient debris, never touching open space: about two a chunk, as modern's
+/// `ore_ancient_debris_large` (y 8–24) and `ore_debris_small` (y 8–119)
+/// come to once air-exposed blocks are thrown away.
+fn debris(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
+    for (size, lo, hi) in [(2, 8, 24), (1, 8, 119)] {
+        let (x, z) = spot(rng, origin);
+        let y = between(rng, lo, hi);
+        if !out.near(x, z, 2) {
+            continue;
+        }
+        for _ in 0..size {
+            let (bx, by, bz) = (
+                x + between(rng, -1, 1),
+                y + between(rng, -1, 1),
+                z + between(rng, -1, 1),
+            );
+            let hidden = [
+                (1, 0, 0),
+                (-1, 0, 0),
+                (0, 1, 0),
+                (0, -1, 0),
+                (0, 0, 1),
+                (0, 0, -1),
+            ]
+            .iter()
+            .all(|(dx, dy, dz)| land.solid(bx + dx, by + dy, bz + dz));
+            if hidden {
+                out.replace(bx, by, bz, is_ground, of(blocks::ANCIENT_DEBRIS));
             }
         }
     }
@@ -1251,6 +1285,7 @@ mod tests {
                     ("quartz", blocks::NETHER_QUARTZ_ORE),
                     ("gold", blocks::NETHER_GOLD_ORE),
                     ("magma", blocks::MAGMA_BLOCK),
+                    ("ancient debris", blocks::ANCIENT_DEBRIS),
                     ("crimson stem", blocks::CRIMSON_STEM),
                     ("warped stem", blocks::WARPED_STEM),
                     ("shroomlight", blocks::SHROOMLIGHT),
