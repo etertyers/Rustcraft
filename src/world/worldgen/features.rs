@@ -562,11 +562,25 @@ fn spruce(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32, pi
 
 /// Modern's mega jungle tree: a 2×2 trunk wrapped in vines, branches with
 /// leaf clusters, and a wide crown.
+/// Runs a 2 × 2 trunk down to the ground: a big tree's base is its first
+/// column's height, and on a slope the other three stand lower.
+fn root(writer: &mut ChunkWriter, x: i32, base: i32, z: i32, log: BlockState) {
+    for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+        for y in (base - 6..base).rev() {
+            match writer.get(x + dx, y, z + dz) {
+                Some(here) if is_replaceable(here) => writer.log(x + dx, y, z + dz, log),
+                _ => break,
+            }
+        }
+    }
+}
+
 fn mega_jungle(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
     let height = 10 + rng.below(15) as i32;
     let top = base + height;
     let log = of(blocks::JUNGLE_LOG);
     let leaves = of(blocks::JUNGLE_LEAVES);
+    root(writer, x, base, z, log);
     for (cx, cz, r) in [(0, 0, 4.0), (0, 0, 3.0)] {
         let dy = if r < 4.0 { 1 } else { 0 };
         for dx in -4..=5 {
@@ -684,6 +698,7 @@ fn acacia(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
 fn dark_oak(writer: &mut ChunkWriter, rng: &mut Rng, x: i32, base: i32, z: i32) {
     let log = of(blocks::DARK_OAK_LOG);
     let leaves = of(blocks::DARK_OAK_LEAVES);
+    root(writer, x, base, z, log);
     let height = 6 + rng.below(3) as i32;
     let top = base + height;
     for (dy, r) in [(-1, 3.5), (0, 3.5), (1, 2.5)] {
@@ -1509,5 +1524,214 @@ mod tests {
             }
         }
         assert!(checked > 0, "no border trees found to check");
+    }
+
+    /// The topmost block of each column that isn't air, a plant, snow
+    /// layer or leaves, with the column's biome.
+    fn grounds(chunk: &Chunk) -> Vec<(Biome, BlockId)> {
+        let mut out = Vec::new();
+        for z in 0..16 {
+            for x in 0..16 {
+                let ground = (1..WORLD_HEIGHT)
+                    .rev()
+                    .map(|y| chunk.get(x, y, z))
+                    .find(|b| {
+                        !b.is_air()
+                            && b.def().fluid.is_none()
+                            && !matches!(
+                                b.def().shape,
+                                Shape::Cross | Shape::Crop | Shape::SnowLayer | Shape::Vine
+                            )
+                            && !is_leaves(*b)
+                            && !b.def().name.ends_with("_log")
+                    });
+                if let Some(ground) = ground {
+                    out.push((chunk.biome(x, z), ground.id()));
+                }
+            }
+        }
+        out
+    }
+
+    /// The share of `biome`'s columns in the 3 × 3 chunks round `center`
+    /// whose ground (or, with `snow`, whose top) is one of `ids`.
+    fn ground_share(terrain: &Terrain, biome: Biome, ids: &[BlockId], snow: bool) -> f64 {
+        let center = find_biome(terrain, biome);
+        let (chunks, _) = census(terrain, center, 1);
+        let (mut hits, mut all) = (0, 0);
+        for chunk in chunks.values() {
+            if snow {
+                for z in 0..16 {
+                    for x in 0..16 {
+                        if chunk.biome(x, z) != biome {
+                            continue;
+                        }
+                        all += 1;
+                        let top = (1..WORLD_HEIGHT)
+                            .rev()
+                            .map(|y| chunk.get(x, y, z))
+                            .find(|b| !b.is_air());
+                        hits += top.is_some_and(|b| ids.contains(&b.id())) as usize;
+                    }
+                }
+                continue;
+            }
+            for (b, id) in grounds(chunk) {
+                if b == biome {
+                    all += 1;
+                    hits += ids.contains(&id) as usize;
+                }
+            }
+        }
+        hits as f64 / all.max(1) as f64
+    }
+
+    #[test]
+    fn each_biome_shows_its_own_ground() {
+        let terrain = Terrain::new(20111118);
+        let terracotta: Vec<BlockId> = blocks::NAMES
+            .iter()
+            .filter(|n| n.ends_with("terracotta"))
+            .filter_map(|n| blocks::by_name(n))
+            .chain([blocks::RED_SAND])
+            .collect();
+        for (biome, ids, snow, want) in [
+            (Biome::Desert, vec![blocks::SAND], false, 0.8),
+            (Biome::Badlands, terracotta, false, 0.8),
+            (Biome::MushroomFields, vec![blocks::MYCELIUM], false, 0.6),
+            (
+                Biome::SnowyPlains,
+                vec![blocks::SNOW, blocks::ICE],
+                true,
+                0.8,
+            ),
+            (Biome::Plains, vec![blocks::GRASS_BLOCK], false, 0.6),
+        ] {
+            let share = ground_share(&terrain, biome, &ids, snow);
+            println!("{biome:?}: {:.0}%", share * 100.0);
+            assert!(share >= want, "{biome:?}: {share:.2}");
+        }
+    }
+
+    #[test]
+    fn beaches_are_sand_over_sandstone() {
+        let terrain = Terrain::new(20111118);
+        let (x, z) = crate::world::worldgen::terrain::tests::find(&terrain, "beach", |c| {
+            c.biome == Biome::Beach && c.height >= SEA_LEVEL
+        });
+        let chunk = terrain.generate(ChunkPos::of_block(x, z));
+        let (mut sand, mut all) = (0, 0);
+        for (b, id) in grounds(&chunk) {
+            if b == Biome::Beach {
+                all += 1;
+                sand += (id == blocks::SAND) as usize;
+            }
+        }
+        let mut kinds: HashMap<&str, usize> = HashMap::new();
+        for (b, id) in grounds(&chunk) {
+            if b == Biome::Beach {
+                *kinds.entry(id.name()).or_default() += 1;
+            }
+        }
+        assert!(sand * 10 >= all * 7, "{sand} of {all}: {kinds:?}");
+        let column = terrain.column(x, z);
+        let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+        let h = column.height as usize;
+        assert_eq!(chunk.get(lx, h, lz).id(), blocks::SAND);
+        let sandstone = (h - 8..h).any(|y| chunk.get(lx, y, lz).id() == blocks::SANDSTONE);
+        assert!(sandstone, "sandstone under the beach");
+    }
+
+    #[test]
+    fn nothing_grows_on_air_or_water_and_decoration_repeats() {
+        let terrain = Terrain::new(20111118);
+        for biome in [
+            Biome::Forest,
+            Biome::Plains,
+            Biome::Taiga,
+            Biome::Jungle,
+            Biome::Desert,
+            Biome::Savanna,
+            Biome::DarkForest,
+            Biome::BirchForest,
+            Biome::SnowyTaiga,
+            Biome::CherryGrove,
+            Biome::Meadow,
+        ] {
+            let center = find_biome(&terrain, biome);
+            let (chunks, _) = census(&terrain, center, 1);
+            for chunk in chunks.values() {
+                for z in 0..16 {
+                    for x in 0..16 {
+                        for y in 2..WORLD_HEIGHT {
+                            let block = chunk.get(x, y, z);
+                            let below = chunk.get(x, y - 1, z);
+                            let plant = matches!(
+                                block.def().shape,
+                                Shape::Cross | Shape::Cactus | Shape::Bamboo
+                            );
+                            // An upright log with no log under it: a trunk's
+                            // foot (branches lie on their side).
+                            let trunk = block.def().name.ends_with("_log")
+                                && block.has(Prop::Axis)
+                                && block.get(Prop::Axis) == axis::Y
+                                && !below.def().name.ends_with("_log");
+                            if !(plant || trunk) || below.id() == block.id() {
+                                continue;
+                            }
+                            // Acacia trunks lean: the log below may be diagonal.
+                            let leans = trunk
+                                && (-1..=1).any(|dz: i32| {
+                                    (-1..=1).any(|dx: i32| {
+                                        let (nx, nz) = (x as i32 + dx, z as i32 + dz);
+                                        let pos =
+                                            chunk.pos.offset(nx.div_euclid(16), nz.div_euclid(16));
+                                        chunks.get(&pos).is_none_or(|c| {
+                                            let (lx, lz) = (
+                                                nx.rem_euclid(16) as usize,
+                                                nz.rem_euclid(16) as usize,
+                                            );
+                                            c.get(lx, y - 1, lz).id() == block.id()
+                                        })
+                                    })
+                                });
+                            if leans {
+                                continue;
+                            }
+                            // A log on leaves is a branch; mushrooms grow anywhere dark.
+                            // Cobwebs and dripstone hang in caves; surface
+                            // plants grow at sea level or higher.
+                            if is_leaves(below)
+                                || block.def().name.contains("mushroom")
+                                || block.is(blocks::COBWEB)
+                                || block.is(blocks::POINTED_DRIPSTONE)
+                                || (plant && y < SEA_LEVEL as usize)
+                            {
+                                continue;
+                            }
+                            assert!(
+                                below.def().solid && below.def().fluid.is_none(),
+                                "{biome:?}: {} on {} at {x} {y} {z} in {:?}; under: {:?}",
+                                block.def().name,
+                                below.def().name,
+                                chunk.pos,
+                                (y.saturating_sub(8)..y)
+                                    .rev()
+                                    .map(|yy| chunk.get(x, yy, z).def().name.clone())
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+            }
+            // The same seed decorates the same way.
+            let again = terrain.generate(center);
+            let first = &chunks[&center];
+            for y in 0..WORLD_HEIGHT {
+                for i in 0..256 {
+                    assert_eq!(again.get(i % 16, y, i / 16), first.get(i % 16, y, i / 16));
+                }
+            }
+        }
     }
 }

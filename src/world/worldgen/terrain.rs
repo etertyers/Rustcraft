@@ -45,6 +45,10 @@ pub const SNOW_BLOCK: BlockState = BlockState::of(blocks::SNOW_BLOCK);
 pub const PACKED_ICE: BlockState = BlockState::of(blocks::PACKED_ICE);
 pub const TERRACOTTA: BlockState = BlockState::of(blocks::TERRACOTTA);
 pub const COARSE_DIRT: BlockState = BlockState::of(blocks::COARSE_DIRT);
+pub const CALCITE: BlockState = BlockState::of(blocks::CALCITE);
+pub const ICE: BlockState = BlockState::of(blocks::ICE);
+/// A rise of this many blocks to a neighbor bares the stone.
+const STEEP: i32 = 4;
 
 /// Caves are where two 3D noise fields are both near zero; this is the
 /// squared distance from zero that counts (wider = bigger tunnels).
@@ -387,42 +391,33 @@ impl Terrain {
         }
     }
 
-    /// The block on top of a column.
+    /// The block on top of a column: modern's surface rules, in order.
+    /// Under water: gravel where cold or deep, sand where warm, clay in
+    /// patches. Then each biome's own ground; steep slopes (4 blocks or
+    /// more to a neighbor) bare their stone, and above Y 200 grass gives
+    /// way to stone or snow.
     fn top(&self, x: i32, z: i32, biome: Biome, height: i32, slope: i32) -> BlockState {
         let patch = self.surface_noise(x, z, 12.0, 0.5);
-        let steep = slope >= 3;
-        let underwater = height < SEA_LEVEL - 1;
+        let steep = slope >= STEEP;
+        let underwater = height < SEA_LEVEL;
+        let wet = matches!(biome, Biome::River | Biome::Swamp | Biome::MangroveSwamp);
+        if underwater && !wet {
+            let deep = height < SEA_LEVEL - 14;
+            let cold = biome.climate().0 < 0.3;
+            return if matches!(biome, Biome::Beach | Biome::Desert) && !deep {
+                SAND
+            } else if patch < -0.6 && !deep {
+                CLAY
+            } else if cold || deep || patch > 0.45 {
+                GRAVEL
+            } else {
+                SAND
+            };
+        }
+        // Low, wet ground in swamps holds pools.
+        let pool = wet && patch > 0.45 && (SEA_LEVEL - 1..=SEA_LEVEL).contains(&height);
         match biome {
-            Biome::Desert | Biome::Beach => SAND,
-            Biome::StonyShore => STONE,
-            Biome::Badlands if steep || height > 100 => self.band(x, height, z),
-            Biome::Badlands => RED_SAND,
-            Biome::MushroomFields => MYCELIUM,
-            Biome::MangroveSwamp => MUD,
-            Biome::FrozenPeaks if steep => {
-                if patch > 0.0 {
-                    PACKED_ICE
-                } else {
-                    STONE
-                }
-            }
-            Biome::JaggedPeaks | Biome::SnowySlopes | Biome::FrozenPeaks if steep => STONE,
-            Biome::JaggedPeaks | Biome::SnowySlopes | Biome::FrozenPeaks => SNOW_BLOCK,
-            Biome::WindsweptHills if steep => STONE,
-            Biome::WindsweptHills if patch > 0.45 => GRAVEL,
-            Biome::DeepOcean
-            | Biome::DeepColdOcean
-            | Biome::DeepFrozenOcean
-            | Biome::ColdOcean
-            | Biome::FrozenOcean => GRAVEL,
-            Biome::DeepLukewarmOcean | Biome::LukewarmOcean | Biome::WarmOcean | Biome::Ocean => {
-                if patch > 0.4 {
-                    GRAVEL
-                } else {
-                    SAND
-                }
-            }
-            Biome::River => {
+            Biome::River if underwater => {
                 if patch > 0.3 {
                     GRAVEL
                 } else if patch < -0.45 {
@@ -431,19 +426,34 @@ impl Terrain {
                     SAND
                 }
             }
-            _ if underwater => {
-                if patch > 0.25 {
-                    GRAVEL
-                } else if patch > -0.35 {
-                    SAND
+            Biome::Swamp | Biome::MangroveSwamp if pool => WATER,
+            Biome::MangroveSwamp => MUD,
+            Biome::Desert | Biome::Beach => SAND,
+            Biome::StonyShore if patch > 0.3 => GRAVEL,
+            Biome::StonyShore => STONE,
+            Biome::Badlands if steep || height > 100 => self.band(x, height, z),
+            Biome::Badlands => RED_SAND,
+            Biome::MushroomFields => MYCELIUM,
+            Biome::FrozenPeaks if steep && patch > 0.0 => PACKED_ICE,
+            Biome::FrozenPeaks if patch > 0.55 => ICE,
+            Biome::FrozenPeaks | Biome::JaggedPeaks | Biome::SnowySlopes if !steep => SNOW_BLOCK,
+            Biome::FrozenPeaks | Biome::JaggedPeaks | Biome::SnowySlopes => STONE,
+            // Modern's stony peaks (here windswept hills up high): stone
+            // and calcite.
+            Biome::WindsweptHills if height > 150 && patch > 0.15 => CALCITE,
+            Biome::WindsweptHills if height > 150 || steep => STONE,
+            Biome::WindsweptHills if patch > 0.45 => GRAVEL,
+            _ if height > 200 => {
+                if biome.is_cold_at(height) {
+                    SNOW_BLOCK
                 } else {
-                    DIRT
+                    STONE
                 }
             }
-            _ if steep && height > 100 => STONE,
+            _ if steep => STONE,
             Biome::Taiga | Biome::SnowyTaiga | Biome::BambooJungle if patch > 0.4 => PODZOL,
             Biome::Savanna if patch > 0.55 => COARSE_DIRT,
-            _ if height <= SEA_LEVEL + 1 && patch > -0.2 && !matches!(biome, Biome::Swamp) => SAND,
+            _ if height <= SEA_LEVEL + 1 && patch > -0.2 && !wet => SAND,
             _ => GRASS,
         }
     }
@@ -735,9 +745,15 @@ impl Terrain {
             blocks::GRASS_BLOCK | blocks::PODZOL | blocks::MYCELIUM | blocks::COARSE_DIRT => {
                 Some((DIRT, depth))
             }
-            blocks::SAND => Some((SAND, depth)),
+            // Beaches and deserts: 3 or 4 sand, then sandstone.
+            blocks::SAND => Some((SAND, 3 + depth % 2)),
+            // Pools in swamps lie on their mud or dirt.
+            blocks::WATER if column.biome == Biome::MangroveSwamp => Some((MUD, depth)),
+            blocks::WATER => Some((DIRT, depth)),
             blocks::RED_SAND => Some((RED_SAND, 2)),
-            blocks::GRAVEL | blocks::CLAY | blocks::MUD | blocks::PACKED_ICE => Some((top, depth)),
+            blocks::GRAVEL | blocks::CLAY | blocks::MUD | blocks::PACKED_ICE | blocks::ICE => {
+                Some((top, depth.min(3)))
+            }
             blocks::SNOW_BLOCK => Some((SNOW_BLOCK, 2)),
             _ => None,
         };
@@ -849,7 +865,7 @@ impl Area {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
 
