@@ -300,6 +300,22 @@ impl Items {
     /// The name with a line for each enchantment ("Efficiency V"), as
     /// the tooltip shows it.
     pub fn tooltip(&self, stack: &ItemStack) -> String {
+        // A potion: its name, then each effect and how long it lasts.
+        if let Some(potion) = super::potion::of(stack) {
+            let mut text = stack
+                .custom_name()
+                .map(str::to_owned)
+                .or_else(|| super::potion::display_name(stack))
+                .unwrap_or_default();
+            for effect in super::potion::effects(potion) {
+                text.push('\n');
+                text.push_str(&effect.label());
+                if !effect.effect.instant() {
+                    text.push_str(&format!(" ({})", effect.timer()));
+                }
+            }
+            return text;
+        }
         let mut text = self.name(stack);
         for &(enchantment, level) in stack.enchantments() {
             text.push('\n');

@@ -30,15 +30,36 @@ impl Game {
         let p = self.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();
         let view = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
-        if self.dimension == Dimension::Nether {
-            return nether(
+        let mut environment = if self.dimension == Dimension::Nether {
+            nether(
                 self.time,
                 self.tick_alpha() as f32,
                 biome,
                 view,
                 self.eye_in(),
-            );
+            )
+        } else {
+            self.overworld_environment(biome, view)
+        };
+        // Night vision lights everything, flickering in its last 10 s
+        // (modern `GameRenderer.getNightVisionScale`).
+        if let Some(active) = self
+            .stats
+            .effects
+            .get(crate::player::effects::Effect::NightVision)
+        {
+            let d = active.duration as f32;
+            let strength = if d > 200.0 {
+                1.0
+            } else {
+                0.7 + 0.3 * (d * std::f32::consts::PI * 0.2).sin()
+            };
+            environment.ambient = environment.ambient.max(strength);
         }
+        environment
+    }
+
+    fn overworld_environment(&self, biome: Biome, view: f32) -> Environment {
         let mut environment = environment(
             self.time,
             self.tick_alpha() as f32,

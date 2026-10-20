@@ -948,7 +948,19 @@ impl App {
                 );
             }
             meshes.push((mob_kinds + 1, carts));
-            meshes.push((mob_kinds + 2, player.body));
+            // Invisible players aren't drawn (modern draws their armor).
+            let invisible = game
+                .stats
+                .effects
+                .has(crate::player::effects::Effect::Invisibility);
+            meshes.push((
+                mob_kinds + 2,
+                if invisible {
+                    Default::default()
+                } else {
+                    player.body
+                },
+            ));
             renderer.set_mobs(&meshes);
         }
 
@@ -1002,6 +1014,21 @@ impl App {
             message: game.message.as_ref().map(|(text, _)| text.clone()),
             portal: game.portal_swirl(),
             loading: game.is_arriving(),
+            effects: game
+                .stats
+                .effects
+                .0
+                .iter()
+                .map(|active| crate::ui::EffectView {
+                    index: crate::player::effects::Effect::ALL
+                        .iter()
+                        .position(|&e| e == active.effect)
+                        .unwrap_or(0),
+                    color: active.effect.color(),
+                    timer: active.timer(),
+                    blinked: active.duration < 200 && (active.duration / 5) % 2 == 1,
+                })
+                .collect(),
         };
         let view_of = |stack: &ItemStack| {
             let icons = self.icons.as_ref()?;
@@ -1330,7 +1357,7 @@ fn bench_view(game: &Game) -> Option<BenchView> {
 
 fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
     // Every item, then an enchanted book for each enchantment at each of
-    // its levels (the plain one would be useless).
+    // its levels (the plain one would be useless), then the potions.
     let books = crate::inventory::enchant::ALL
         .iter()
         .flat_map(|&enchantment| {
@@ -1340,12 +1367,25 @@ fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String
                 book
             })
         });
+    // Every potion, drunk and thrown, in place of the plain potion items.
+    use crate::inventory::{items as ids, potion};
+    let potions = [ids::POTION, ids::SPLASH_POTION]
+        .into_iter()
+        .flat_map(|item| {
+            (0..potion::POTIONS.len() as u16).map(move |n| ItemStack::with_damage(item, 1, n))
+        });
     items
         .items
         .iter()
-        .filter(|item| item.id != crate::inventory::items::ENCHANTED_BOOK)
+        .filter(|item| {
+            !matches!(
+                item.id,
+                ids::ENCHANTED_BOOK | ids::POTION | ids::SPLASH_POTION
+            )
+        })
         .map(|item| ItemStack::with_damage(item.id, 1, 0))
         .chain(books)
+        .chain(potions)
         .map(|stack| {
             let (view, name) = (SlotView::of(&stack, icons, items), items.tooltip(&stack));
             (stack, view, name)

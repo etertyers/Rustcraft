@@ -89,6 +89,7 @@ impl Look {
         let mut textures = blocks.texture_locations();
         textures.extend(items.texture_locations());
         textures.extend(crate::render::icons::BOW_PULLING.map(str::to_owned));
+        textures.extend(crate::render::icons::potion_textures());
         textures.extend(
             overrides
                 .textures()

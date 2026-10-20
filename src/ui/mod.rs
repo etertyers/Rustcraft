@@ -66,6 +66,19 @@ pub struct Hud {
     pub portal: f32,
     /// Set while the chunks around a player who changed dimension load.
     pub loading: bool,
+    /// The player's status effects (M26).
+    pub effects: Vec<EffectView>,
+}
+
+/// A status effect as the HUD shows it: its icon (by place in
+/// `Effect::ALL`), color and time left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectView {
+    pub index: usize,
+    pub color: u32,
+    pub timer: String,
+    /// In its last ten seconds the icon blinks: hidden this frame.
+    pub blinked: bool,
 }
 
 pub struct DebugUi {
@@ -180,6 +193,9 @@ impl DebugUi {
             }
             if hud.portal > 0.0 {
                 paint_portal(ui.ctx(), hud.portal);
+            }
+            if !hud.effects.is_empty() {
+                paint_effects(ui.painter(), full, &hud.effects, textures);
             }
             if let Some(message) = &hud.message {
                 paint_message(ui.painter(), full, message);
@@ -303,6 +319,55 @@ fn draw_crosshair(ui: &egui::Ui) {
                 center + egui::vec2(0.0, HALF),
             ],
             stroke,
+        );
+    }
+}
+
+/// Status effects in a row from the top-right corner, each its icon in a
+/// dark frame with the time left under it (modern draws the icons there;
+/// the inventory screen lists the times, shown here at once instead). An
+/// effect in its last ten seconds blinks.
+fn paint_effects(
+    painter: &egui::Painter,
+    full: egui::Rect,
+    effects: &[EffectView],
+    textures: &gui::GuiTextures,
+) {
+    let scale = gui::gui_scale(full);
+    for (i, effect) in effects.iter().enumerate() {
+        let corner = egui::pos2(
+            full.right() - (i as f32 + 1.0) * 26.0 * scale,
+            full.top() + 2.0 * scale,
+        );
+        let frame_rect = egui::Rect::from_min_size(corner, egui::vec2(24.0, 32.0) * scale);
+        painter.rect_filled(
+            frame_rect,
+            2.0 * scale,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+        );
+        let icon = egui::Rect::from_min_size(
+            corner + egui::vec2(3.0, 3.0) * scale,
+            egui::vec2(18.0, 18.0) * scale,
+        );
+        if !effect.blinked {
+            match textures.effects.get(effect.index).and_then(Option::as_ref) {
+                Some(texture) => {
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    painter.image(texture.id(), icon, uv, Color32::WHITE);
+                }
+                None => {
+                    let c = effect.color;
+                    let color = Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8);
+                    painter.rect_filled(icon.shrink(3.0 * scale), 2.0 * scale, color);
+                }
+            }
+        }
+        painter.text(
+            egui::pos2(frame_rect.center().x, icon.bottom() + 1.0 * scale),
+            Align2::CENTER_TOP,
+            &effect.timer,
+            egui::FontId::proportional(6.0 * scale),
+            Color32::WHITE,
         );
     }
 }

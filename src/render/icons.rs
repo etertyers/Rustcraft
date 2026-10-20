@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::atlas::{Atlas, MISSING_TILE};
 use crate::{
-    inventory::{item::ItemRegistry, stack::ItemStack},
+    inventory::{item::ItemRegistry, potion, stack::ItemStack},
     pack::model::ItemModels,
     world::{
         Face,
@@ -54,8 +54,28 @@ pub fn bow_stage(ticks: f32) -> usize {
     }
 }
 
+/// The pictures of every potion: Kenzo's 1.12 textures have a filled
+/// bottle in each effect's color (`potion_bottle_<effect>`), drunk and
+/// thrown.
+pub fn potion_textures() -> impl Iterator<Item = String> {
+    potion::POTIONS
+        .iter()
+        .flat_map(|p| [potion_texture(p, false), potion_texture(p, true)])
+}
+
+fn potion_texture(p: &potion::Potion, splash: bool) -> String {
+    match (p.icon, splash) {
+        ("drinkable", false) => "item/potion_bottle_drinkable".to_owned(),
+        ("drinkable", true) => "item/potion_bottle_splash".to_owned(),
+        (icon, false) => format!("item/potion_bottle_{icon}"),
+        (icon, true) => format!("item/potion_bottle_splash_{icon}"),
+    }
+}
+
 pub struct ItemIcons {
     models: Arc<BlockModels>,
+    /// Each potion's picture, drunk and thrown.
+    potions: Vec<[ItemIcon; 2]>,
     /// Each item's icon, by ID.
     icons: Vec<ItemIcon>,
     /// The bow's pictures while it's drawn.
@@ -82,6 +102,17 @@ impl ItemIcons {
                 })
             }),
             missing,
+            potions: potion::POTIONS
+                .iter()
+                .map(|p| {
+                    [false, true].map(|splash| {
+                        ItemIcon::Flat(IconFace {
+                            uv: atlas.uv_or_missing(&potion_texture(p, splash)),
+                            color: [1.0; 3],
+                        })
+                    })
+                })
+                .collect(),
         };
         for item in registry.iter() {
             let icon = match (&item.texture, item.places) {
@@ -110,6 +141,11 @@ impl ItemIcons {
     }
 
     pub fn icon(&self, stack: &ItemStack) -> ItemIcon {
+        if potion::is_potion(stack.id)
+            && let Some(icons) = self.potions.get(stack.damage as usize)
+        {
+            return icons[usize::from(stack.id == crate::inventory::items::SPLASH_POTION)];
+        }
         self.icons
             .get(stack.id.index())
             .copied()

@@ -504,6 +504,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn swiftness_speeds_walking_up_a_fifth_and_night_vision_lights_the_dark() {
+        let walk = |speed: bool| {
+            let mut game = flat_game(GameMode::Survival);
+            if speed {
+                game.stats
+                    .apply(Active::new(Effect::Speed, 0, 600), false, true);
+            }
+            game.camera.pitch = 0.0;
+            game.on_key(winit::keyboard::KeyCode::KeyW, true, false, true);
+            let start = game.body.position();
+            for _ in 0..60 {
+                game.tick();
+            }
+            (game.body.position() - start).length()
+        };
+        let ratio = walk(true) / walk(false);
+        assert!((ratio - 1.2).abs() < 0.03, "{ratio}");
+
+        let mut game = flat_game(GameMode::Survival);
+        game.time = 18000;
+        assert!(game.environment().ambient < 0.5);
+        game.stats
+            .apply(Active::new(Effect::NightVision, 0, 3600), false, true);
+        assert_eq!(game.environment().ambient, 1.0);
+    }
+
+    #[test]
+    fn a_wither_skeleton_withers_what_it_hits() {
+        let mut game = flat_game(GameMode::Survival);
+        game.mob_defs = mob_registry();
+        game.summon(
+            "wither_skeleton",
+            game.body.position() + DVec3::new(1.2, 0.0, 0.0),
+            0.0,
+        );
+        for _ in 0..60 {
+            game.tick();
+            if game.stats.effects.has(Effect::Wither) {
+                break;
+            }
+        }
+        assert!(game.stats.effects.has(Effect::Wither));
+    }
+
     fn drink_like_food(game: &mut Game, food: crate::inventory::item::ItemId) {
         drink(game, ItemStack::new(food, 1));
     }
