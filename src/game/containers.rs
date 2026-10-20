@@ -161,7 +161,7 @@ impl Game {
     }
 
     /// Opens the brewing stand at `at`, giving it its slots the first time.
-    pub(super) fn open_brewing(&mut self, at: IVec3) {
+    pub fn open_brewing(&mut self, at: IVec3) {
         if !matches!(
             self.chunks.block_entity(at),
             Some(BlockEntity::BrewingStand(_))
