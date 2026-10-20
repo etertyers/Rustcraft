@@ -188,6 +188,42 @@ pub fn find(nether: &Nether, kind: Kind, pos: ChunkPos, radius: i32) -> Option<A
 mod tests {
     use super::*;
 
+    /// `cargo test --release structure_chunk_time -- --ignored --nocapture`:
+    /// how long Nether chunks over a fortress and a bastion take.
+    #[test]
+    #[ignore]
+    fn structure_chunk_time() {
+        let nether = Nether::new(20111118);
+        for kind in [Kind::Fortress, Kind::Bastion] {
+            let found = find(&nether, kind, ChunkPos::new(0, 0), 80).unwrap();
+            let (lo, hi) = (
+                ChunkPos::of_block(found.bounds.min.x, found.bounds.min.z),
+                ChunkPos::of_block(found.bounds.max.x, found.bounds.max.z),
+            );
+            // A fresh thread, so the first chunk lays the structure out.
+            let n = nether.world_seed();
+            let took = std::thread::spawn(move || {
+                let nether = Nether::new(n);
+                let started = std::time::Instant::now();
+                let mut count = 0;
+                for z in lo.z..=hi.z {
+                    for x in lo.x..=hi.x {
+                        nether.generate(ChunkPos::new(x, z));
+                        count += 1;
+                    }
+                }
+                (count, started.elapsed())
+            })
+            .join()
+            .unwrap();
+            eprintln!(
+                "{kind:?}: {} chunks, {:.2} ms each",
+                took.0,
+                took.1.as_secs_f64() * 1000.0 / took.0 as f64
+            );
+        }
+    }
+
     /// `cargo test --release nether_structure_spots -- --ignored --nocapture`:
     /// where the nearest of each starts on seed 20111118, for screenshots.
     #[test]
