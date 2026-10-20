@@ -644,6 +644,7 @@ impl Game {
             Activate::Enchanting => self.open_bench(BenchKind::Enchanting, cell),
             Activate::Anvil => self.open_bench(BenchKind::Anvil, cell),
             Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
+            Activate::Smithing => self.open_bench(BenchKind::Smithing, cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }

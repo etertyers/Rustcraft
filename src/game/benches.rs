@@ -10,6 +10,7 @@ use crate::{
         enchant::{self, MAX_BOOKSHELF_POWER, Offer},
         grindstone, items,
         slots::{self, SlotRef},
+        smithing,
         stack::ItemStack,
     },
     player::stats::DamageSource,
@@ -42,7 +43,7 @@ impl Game {
         self.container = Some(Container::Bench(Bench {
             kind,
             at,
-            slots: vec![None; 2],
+            slots: vec![None; if kind == BenchKind::Smithing { 3 } else { 2 }],
             name: String::new(),
         }));
         self.release_input();
@@ -212,6 +213,10 @@ impl Game {
                 let bottom = bench.slots.get(1).and_then(Option::as_ref);
                 grindstone::grind(&self.items, top, bottom).map(|made| made.output)
             }
+            BenchKind::Smithing => {
+                let slot = |i: usize| bench.slots.get(i).and_then(Option::as_ref);
+                smithing::upgrade(&self.items, slot(0), slot(1), slot(2))
+            }
         }
     }
 
@@ -246,6 +251,12 @@ impl Game {
                 let xp = made.experience(&mut self.rng);
                 (made.output, 0, u8::MAX, xp)
             }
+            BenchKind::Smithing => {
+                let Some(output) = self.bench_result() else {
+                    return;
+                };
+                (output, 0, 1, 0)
+            }
         };
         if shift {
             if self
@@ -262,7 +273,20 @@ impl Game {
         } else if !slots::take_onto_cursor(output, &mut self.cursor, &items) {
             return;
         }
-        if let Some(Container::Bench(bench)) = &mut self.container {
+        if let Some(Container::Bench(bench)) = &mut self.container
+            && kind == BenchKind::Smithing
+        {
+            // One template and one ingot are used up with the base.
+            for i in [0, 2] {
+                if let Some(stack) = bench.slots[i].as_mut() {
+                    stack.count -= 1;
+                    if stack.count == 0 {
+                        bench.slots[i] = None;
+                    }
+                }
+            }
+            bench.slots[1] = None;
+        } else if let Some(Container::Bench(bench)) = &mut self.container {
             bench.slots[0] = None;
             if let Some(right) = bench.slots[1].as_mut() {
                 right.count = right.count.saturating_sub(right_used);
@@ -600,6 +624,40 @@ mod tests {
         // Efficiency V (41) and Mending (34) at least: 38 + up to 37 more.
         assert!((38..=75).contains(&paid), "{paid}");
         assert!(game.bench().unwrap().slots.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn a_smithing_table_upgrades_a_diamond_sword_to_netherite() {
+        let mut game = flat_game(GameMode::Survival);
+        let table = IVec3::new(4, 64, 3);
+        game.chunks
+            .set_blocks(&[(table, BlockState::of(blocks::SMITHING_TABLE))]);
+        game.open_bench(BenchKind::Smithing, table);
+        let mut sword = ItemStack::with_damage(items::DIAMOND_SWORD, 1, 40);
+        sword.enchant(Enchantment::Sharpness, 3);
+        if let Some(Container::Bench(bench)) = &mut game.container {
+            bench.slots[0] = Some(ItemStack::new(
+                items::NETHERITE_UPGRADE_SMITHING_TEMPLATE,
+                2,
+            ));
+            bench.slots[1] = Some(sword);
+            bench.slots[2] = Some(ItemStack::new(items::NETHERITE_INGOT, 1));
+        }
+        assert_eq!(
+            game.slot_stack(SlotRef::Result).map(|s| s.id),
+            Some(items::NETHERITE_SWORD)
+        );
+        game.click_slot(SlotRef::Result, Click::Left);
+        let made = game.cursor.clone().unwrap();
+        assert_eq!((made.id, made.damage), (items::NETHERITE_SWORD, 40));
+        assert_eq!(made.level_of(Enchantment::Sharpness), 3);
+        let slots = &game.bench().unwrap().slots;
+        assert_eq!(
+            slots[0].as_ref().map(|s| s.count),
+            Some(1),
+            "one template used"
+        );
+        assert!(slots[1].is_none() && slots[2].is_none());
     }
 
     #[test]

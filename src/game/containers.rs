@@ -48,6 +48,8 @@ pub enum BenchKind {
     Enchanting,
     Anvil,
     Grindstone,
+    /// Template, base and addition slots (M25).
+    Smithing,
 }
 
 /// The screen of an enchanting table, anvil or grindstone. Its input

@@ -34,6 +34,8 @@ pub enum Screen {
     Enchanting,
     Anvil,
     Grindstone,
+    /// A smithing table's template, base and addition (M25).
+    Smithing,
     /// Trading with a villager.
     Merchant,
 }
@@ -212,7 +214,8 @@ fn panel_size(screen: &Screen) -> [f32; 2] {
         | Screen::Dispenser { .. }
         | Screen::Enchanting
         | Screen::Anvil
-        | Screen::Grindstone => [176.0, 166.0],
+        | Screen::Grindstone
+        | Screen::Smithing => [176.0, 166.0],
         Screen::Hopper => [176.0, 133.0],
         Screen::Merchant => [176.0, 222.0],
         Screen::Creative { .. } => [195.0, 136.0],
@@ -305,6 +308,16 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         .into_iter()
         .chain(inventory)
         .collect(),
+        // Modern (1.20) layout.
+        Screen::Smithing => [
+            (SlotRef::Grid(0), [8.0, 48.0]),
+            (SlotRef::Grid(1), [26.0, 48.0]),
+            (SlotRef::Grid(2), [44.0, 48.0]),
+            (SlotRef::Result, [98.0, 48.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
         Screen::Chest => (0..CHEST_ROWS * 9)
             .map(|i| {
                 let (column, row) = ((i % 9) as f32, (i / 9) as f32);
@@ -336,6 +349,7 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
             ("Repair & Disenchant", [8.0, 6.0]),
             ("Inventory", [8.0, 73.0]),
         ],
+        Screen::Smithing => &[("Upgrade Gear", [44.0, 15.0]), ("Inventory", [8.0, 73.0])],
         Screen::Merchant => &[("Inventory", [8.0, 128.0])],
     }
 }
@@ -403,6 +417,7 @@ pub fn show(
         Screen::Enchanting => &textures.enchanting,
         Screen::Anvil => &textures.anvil,
         Screen::Grindstone => &textures.grindstone,
+        Screen::Smithing => &textures.smithing,
         Screen::Merchant => &textures.chest,
     };
     if *screen == Screen::Chest {

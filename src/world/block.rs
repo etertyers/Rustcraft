@@ -682,6 +682,8 @@ pub enum Activate {
     Anvil,
     /// Opens the grindstone screen.
     Grindstone,
+    /// Opens the smithing screen (M25).
+    Smithing,
     /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
     Redstone,
 }
