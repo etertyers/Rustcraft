@@ -465,6 +465,15 @@ impl Game {
         &self.items
     }
 
+    /// Puts a new mob of the kind called `name` at `feet`, for scripted
+    /// scenes; returns it to dress up.
+    pub fn summon(&mut self, name: &str, feet: DVec3, yaw: f32) -> Option<&mut Mob> {
+        let kind = self.mob_defs.find(name)?;
+        let mob = self.new_mob(kind, feet, yaw);
+        self.add_mob(mob);
+        self.mobs.last_mut()
+    }
+
     pub fn mob_defs(&self) -> &MobRegistry {
         &self.mob_defs
     }

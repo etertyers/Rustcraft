@@ -276,6 +276,67 @@ mod tests {
     }
 
     #[test]
+    fn a_world_left_in_the_nether_reopens_there_with_both_sides_kept() {
+        use crate::{
+            game::tests::{load_player_chunk, registries},
+            level::WorldDir,
+            world::{block::BlockState, save::TempDir},
+        };
+        use glam::IVec3;
+        let saves = TempDir::new("nether");
+        let (items, models) = registries();
+        let mut game = Game::create(
+            saves.path(),
+            "Nether Test",
+            42,
+            GameMode::Creative,
+            items.clone(),
+            models.clone(),
+        )
+        .unwrap()
+        .with_mobs(crate::game::tests::mob_registry());
+        load_player_chunk(&mut game);
+        let home = game.body.position();
+        let mark = home.floor().as_ivec3() + IVec3::new(0, 3, 0);
+        game.chunks
+            .set_blocks(&[(mark, BlockState::of(blocks::GOLD_BLOCK))]);
+        let pig = game
+            .summon("pig", home + DVec3::new(2.0, 0.0, 0.0), 0.0)
+            .unwrap()
+            .kind;
+        game.portals.push((Dimension::Overworld, [1, 2, 3]));
+
+        let there = DVec3::new(10.5, 70.0, 10.5);
+        game.change_dimension(Dimension::Nether, there);
+        load_player_chunk(&mut game);
+        let ember = IVec3::new(10, 75, 10);
+        game.chunks
+            .set_blocks(&[(ember, BlockState::of(blocks::GLOWSTONE))]);
+        game.save().unwrap();
+        drop(game);
+
+        let dir = WorldDir::new(saves.path().join("Nether Test"));
+        let mut game = Game::open(dir, items, models)
+            .unwrap()
+            .with_mobs(crate::game::tests::mob_registry());
+        assert_eq!(game.dimension(), Dimension::Nether);
+        assert_eq!(game.body.position(), there);
+        assert!(game.fluids.warm);
+        assert_eq!(game.portals, vec![(Dimension::Overworld, [1, 2, 3])]);
+        load_player_chunk(&mut game);
+        let block = |game: &Game, at: IVec3| game.chunks.world().block(at.x, at.y, at.z);
+        assert_eq!(block(&game, ember), Some(BlockState::of(blocks::GLOWSTONE)));
+        assert!(game.saved_mobs().is_empty(), "the pig stayed home");
+
+        game.change_dimension(Dimension::Overworld, home);
+        load_player_chunk(&mut game);
+        assert_eq!(block(&game, mark), Some(BlockState::of(blocks::GOLD_BLOCK)));
+        let mobs = game.saved_mobs();
+        assert_eq!(mobs.len(), 1);
+        assert_eq!(game.mob_defs.find(&mobs[0].name), Some(pig));
+    }
+
+    #[test]
     fn animals_stay_in_their_dimension() {
         let mut game = flat_game(GameMode::Creative);
         game.mob_defs = crate::game::tests::mob_registry();
