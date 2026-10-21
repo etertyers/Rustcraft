@@ -619,6 +619,7 @@ impl App {
                 BenchKind::Enchanting => Screen::Enchanting,
                 BenchKind::Anvil => Screen::Anvil,
                 BenchKind::Grindstone => Screen::Grindstone,
+                BenchKind::Smithing => Screen::Smithing,
             },
             Container::Cart(index) => match self.game.as_ref().and_then(|g| g.carts.get(*index)) {
                 Some(cart) if cart.kind == crate::entity::minecart::CartKind::Hopper => {
@@ -1320,7 +1321,7 @@ fn bench_view(game: &Game) -> Option<BenchView> {
                 _ => AnvilStatus::Nothing,
             };
         }
-        BenchKind::Grindstone => {}
+        BenchKind::Grindstone | BenchKind::Smithing => {}
     }
     Some(view)
 }

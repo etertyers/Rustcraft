@@ -485,10 +485,13 @@ impl Game {
     /// Puts what the structures in a newly seen chunk hold: villagers,
     /// golems, penned animals and chest minecarts.
     pub(super) fn spawn_structure_mobs(&mut self, pos: crate::world::chunk::ChunkPos) {
-        let Some(terrain) = self.chunks.terrain() else {
+        let spawns = if let Some(terrain) = self.chunks.terrain() {
+            crate::world::structure::spawns_in(terrain, pos)
+        } else if let Some(nether) = self.chunks.nether() {
+            crate::world::structure::nether::spawns_in(nether, pos)
+        } else {
             return;
         };
-        let spawns = crate::world::structure::spawns_in(terrain, pos);
         for spawn in spawns {
             if spawn.mob == "chest_minecart" {
                 let loot = spawn.tag.as_deref().unwrap_or("abandoned_mineshaft");

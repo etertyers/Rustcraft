@@ -41,6 +41,9 @@ const fn ench(item: &'static str, weight: u32, level: i32) -> Entry {
     }
 }
 
+/// Nine parts in ten of a pool giving nothing.
+const NOTHING_9: Entry = e("", 9, 1, 1);
+
 /// Rolls `rolls` times (a range) into `entries`.
 pub struct Pool {
     pub rolls: (u32, u32),
@@ -377,6 +380,141 @@ pub fn table(name: &str) -> Option<Vec<Pool>> {
                 e("coal", 3, 1, 3),
             ],
         )],
+        // M25: modern's Nether tables, less horse armor, crossbows,
+        // spectral arrows, golden carrots and lodestones (not in yet).
+        "nether_bridge" => vec![pool(
+            2,
+            4,
+            vec![
+                e("diamond", 5, 1, 3),
+                e("iron_ingot", 5, 1, 5),
+                e("gold_ingot", 15, 1, 3),
+                e("golden_sword", 5, 1, 1),
+                e("golden_chestplate", 5, 1, 1),
+                e("flint_and_steel", 5, 1, 1),
+                e("nether_wart", 5, 3, 7),
+                e("saddle", 10, 1, 1),
+                e("obsidian", 2, 2, 4),
+            ],
+        )],
+        "bastion_treasure" => vec![
+            pool(
+                3,
+                3,
+                vec![
+                    e("netherite_ingot", 15, 1, 1),
+                    e("ancient_debris", 10, 1, 1),
+                    e("netherite_scrap", 8, 1, 1),
+                    e("ancient_debris", 4, 2, 2),
+                    ench("diamond_sword", 6, 30),
+                    ench("diamond_chestplate", 6, 30),
+                    ench("diamond_helmet", 6, 30),
+                    ench("diamond_leggings", 6, 30),
+                    ench("diamond_boots", 6, 30),
+                    e("diamond", 5, 2, 6),
+                    e("golden_apple", 2, 1, 1),
+                ],
+            ),
+            pool(
+                3,
+                4,
+                vec![
+                    e("diamond", 1, 1, 1),
+                    e("gold_block", 1, 2, 5),
+                    e("gold_ingot", 1, 3, 9),
+                    e("iron_ingot", 1, 3, 9),
+                    e("crying_obsidian", 1, 3, 5),
+                    e("quartz", 1, 8, 23),
+                    e("gilded_blackstone", 1, 5, 15),
+                    e("magma_cream", 1, 3, 8),
+                ],
+            ),
+            pool(
+                1,
+                1,
+                vec![e("netherite_upgrade_smithing_template", 1, 1, 1)],
+            ),
+        ],
+        "bastion_other" => vec![
+            pool(
+                1,
+                1,
+                vec![
+                    ench("diamond_pickaxe", 6, 30),
+                    ench("diamond_shovel", 6, 30),
+                    e("netherite_scrap", 4, 1, 1),
+                    e("ancient_debris", 12, 1, 1),
+                    e("golden_apple", 5, 1, 1),
+                    e("golden_boots", 6, 1, 1),
+                    e("golden_sword", 6, 1, 1),
+                    e("golden_axe", 6, 1, 1),
+                    ench("book", 5, 10),
+                ],
+            ),
+            pool(
+                2,
+                2,
+                vec![
+                    e("iron_nugget", 1, 2, 6),
+                    e("gold_nugget", 1, 2, 6),
+                    e("gilded_blackstone", 1, 1, 5),
+                    e("string", 1, 3, 6),
+                    e("leather", 1, 1, 3),
+                    e("arrow", 1, 5, 17),
+                    e("iron_ingot", 1, 2, 6),
+                    e("gold_ingot", 1, 2, 6),
+                    e("chain", 1, 2, 10),
+                    e("cooked_porkchop", 1, 2, 6),
+                    e("magma_cream", 1, 2, 6),
+                    e("crying_obsidian", 1, 1, 5),
+                    e("obsidian", 1, 4, 6),
+                ],
+            ),
+            // One time in ten (the treasure room's always has one).
+            pool(
+                1,
+                1,
+                vec![e("netherite_upgrade_smithing_template", 1, 1, 1), NOTHING_9],
+            ),
+        ],
+        "bastion_hoglin_stable" => vec![
+            pool(
+                1,
+                1,
+                vec![
+                    ench("diamond_shovel", 15, 30),
+                    ench("diamond_pickaxe", 12, 30),
+                    e("netherite_scrap", 8, 1, 1),
+                    e("ancient_debris", 12, 1, 1),
+                    e("ancient_debris", 5, 2, 2),
+                    e("saddle", 12, 1, 1),
+                    e("gold_block", 16, 2, 4),
+                    e("golden_axe", 10, 1, 1),
+                ],
+            ),
+            pool(
+                3,
+                4,
+                vec![
+                    e("glowstone", 3, 2, 5),
+                    e("gold_ingot", 2, 3, 6),
+                    e("soul_sand", 2, 2, 7),
+                    e("crimson_nylium", 2, 2, 7),
+                    e("porkchop", 2, 2, 5),
+                    e("cooked_porkchop", 2, 2, 7),
+                    e("crimson_fungus", 2, 2, 7),
+                    e("leather", 1, 1, 3),
+                    e("arrow", 1, 5, 17),
+                    e("string", 1, 3, 8),
+                ],
+            ),
+            // One time in ten (the treasure room's always has one).
+            pool(
+                1,
+                1,
+                vec![e("netherite_upgrade_smithing_template", 1, 1, 1), NOTHING_9],
+            ),
+        ],
         _ => return None,
     })
 }
@@ -446,6 +584,10 @@ pub const TABLES: &[&str] = &[
     "shipwreck_treasure",
     "shipwreck_map",
     "ruined_portal",
+    "nether_bridge",
+    "bastion_treasure",
+    "bastion_other",
+    "bastion_hoglin_stable",
     "village_house",
     "village_weaponsmith",
     "village_toolsmith",
@@ -462,7 +604,11 @@ mod tests {
     fn every_item_in_every_table_exists() {
         for name in TABLES {
             for pool in table(name).unwrap() {
-                for entry in pool.entries {
+                for entry in pool
+                    .entries
+                    .into_iter()
+                    .filter(|entry| !entry.item.is_empty())
+                {
                     assert!(
                         items::by_name(entry.item).is_some(),
                         "{name}: no item {}",

@@ -293,6 +293,46 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m25-fortress",
+        about: "a Nether fortress on seed 20111118: bridges on pillars into the lava, a blaze throne, the castle",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([-399.5, 63.0, -489.5], 0.0, -0.15)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m25-bastion",
+        about: "a bastion remnant on seed 20111118: the blackstone keep with its ramparts and the hoglin stable",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([-136.5, 50.0, 135.5], 0.0, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m25-ruined-portal",
+        about: "a ruined portal in the Nether on seed 20111118: broken obsidian frame, crying obsidian, a chest",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([56.5, 59.0, -162.5], 0.0, -0.1)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m25-mobs",
+        about: "a blaze, a wither skeleton and a piglin brute",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 7.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: fortress_mobs,
+    },
+    Shot {
         name: "m24-mobs",
         about: "the Nether's mobs: a ghast, a big magma cube, a zombified piglin, a piglin, a hoglin and a saddled strider on lava",
         world: Some(WorldKind::Flat),
@@ -406,6 +446,15 @@ fn third_sneak(game: &mut Game) {
     hold_sword(game);
     game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
     game.sneak_for_shot();
+}
+
+/// The fortresses' and bastions' mobs.
+fn fortress_mobs(game: &mut Game) {
+    let south = std::f32::consts::PI;
+    game.summon("blaze", glam::DVec3::new(-2.5, 65.0, 2.5), south);
+    game.summon("wither_skeleton", glam::DVec3::new(0.5, 64.0, 2.5), south);
+    game.summon("piglin_brute", glam::DVec3::new(3.0, 64.0, 2.5), south);
+    game.run_ticks(2);
 }
 
 /// The six Nether mobs in a row, the strider on a pool of lava.

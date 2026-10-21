@@ -112,7 +112,8 @@ src/
   entity/villager.rs, game/villagers.rs   # professions, levels and trades; job sites, beds, schedule, breeding, golems, trading
   game/{spawners,capture}.rs   # spawners spawning, the creative capture tool (F8/F9 corners, F10 save)
   world/{dimension,portal}.rs, world/worldgen/nether.rs   # dimensions, portal frames, the Nether's terrain, biomes and features
-  game/{dimensions,portals,nether_mobs}.rs, entity/fireball.rs   # switching dimensions, lighting and travelling through portals, ghasts' fireballs, bartering, striders
+  game/{dimensions,portals,nether_mobs}.rs, entity/fireball.rs   # switching dimensions, lighting and travelling through portals, ghasts' and blazes' fireballs, bartering, striders
+  world/structure/{nether,fortress,bastion}.rs, inventory/smithing.rs   # the Nether's structures (placement, fortresses, bastions and its ruined portals), the netherite upgrade
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
@@ -396,7 +397,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Beds explode in the Nether, and water evaporates.
 - **Done when:** you can build a portal, visit each Nether biome, and return to the Overworld through the linked portal.
 
-### - [ ] M25 — Nether structures
+### - [x] M25 — Nether structures
 - Nether fortress (blazes, wither skeletons, nether wart), bastion remnants (piglins, piglin brutes, loot), ruined portals in the Nether.
 - Items: blaze rods and powder, nether wart, wither skeleton skulls, gold, and netherite (ancient debris, smithing table upgrade with templates).
 - **Done when:** you can find a fortress, kill blazes for blaze rods, and upgrade a diamond tool to netherite.

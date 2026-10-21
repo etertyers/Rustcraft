@@ -753,6 +753,60 @@ fn new_biomes_bring_their_own_monsters_and_mushroom_fields_none() {
 }
 
 #[test]
+fn fortresses_spawn_blazes_and_wither_skeletons_and_nowhere_else() {
+    use crate::world::{
+        chunk::ChunkPos,
+        manager::{ChunkManager, ChunkSource},
+        structure::{Kind, nether},
+        worldgen::nether::Nether,
+    };
+    let (items, models) = crate::game::tests::registries();
+    let world = Nether::new(20111118);
+    let fortress = (0..20)
+        .find_map(|i| nether::find(&world, Kind::Fortress, ChunkPos::new(i * 40, 0), 60))
+        .unwrap();
+    let inside = fortress
+        .pieces
+        .iter()
+        .find(|p| !p.support && !p.spawners.is_empty())
+        .and_then(|p| p.bounds)
+        .unwrap()
+        .center();
+    let chunks = ChunkManager::new(ChunkSource::Nether(Box::new(world)), models, 1, 1);
+    let feet = DVec3::new(0.5, 64.0, 0.5);
+    let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0)
+        .starting_in(crate::world::dimension::Dimension::Nether);
+    game.mob_defs = crate::game::tests::mob_registry();
+    let chunk = ChunkPos::of_block(inside.x, inside.z);
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..2000 {
+        if let Some((kind, _, _)) = game.pick_dark_kind(Biome::NetherWastes, inside, chunk) {
+            seen.insert(game.mob_defs.get(kind).name.clone());
+        }
+    }
+    let expected: std::collections::BTreeSet<String> = [
+        "blaze",
+        "magma_cube",
+        "skeleton",
+        "wither_skeleton",
+        "zombified_piglin",
+    ]
+    .map(String::from)
+    .into();
+    assert_eq!(seen, expected);
+    // Outside it, never.
+    let far = inside + IVec3::new(2000, 0, 2000);
+    for _ in 0..500 {
+        if let Some((kind, _, _)) =
+            game.pick_dark_kind(Biome::NetherWastes, far, ChunkPos::of_block(far.x, far.z))
+        {
+            let name = &game.mob_defs.get(kind).name;
+            assert!(name != "blaze" && name != "wither_skeleton", "{name}");
+        }
+    }
+}
+
+#[test]
 fn the_nether_spawns_its_own_monsters_and_the_overworld_none_of_them() {
     let mut game = night_game(GameMode::Survival);
     let chunk = crate::world::chunk::ChunkPos::new(0, 0);

@@ -445,6 +445,8 @@ mod tests {
         assert_eq!(missing, expected.into());
         let items = crate::inventory::item::registry();
         let missing = items.missing_textures(|name| res.texture(name).is_some());
-        assert!(missing.is_empty(), "{missing:?}");
+        // Modern draws the skull item from its head's entity texture.
+        let expected = ["item/wither_skeleton_skull"].map(str::to_owned);
+        assert_eq!(missing, expected.into());
     }
 }

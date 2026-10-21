@@ -169,6 +169,7 @@ impl Gear {
                 _ if material("iron") => 9,
                 _ if material("golden") => 25,
                 _ if material("diamond") => 10,
+                _ if material("netherite") => 15,
                 _ => 0,
             },
             _ => match items.tool(id).and_then(|tool| tool.tier) {
@@ -176,6 +177,7 @@ impl Gear {
                 Some(super::item::Tier::Stone) => 5,
                 Some(super::item::Tier::Iron) => 14,
                 Some(super::item::Tier::Diamond) => 10,
+                Some(super::item::Tier::Netherite) => 15,
                 Some(super::item::Tier::Gold) => 22,
                 None => 0,
             },

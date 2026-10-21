@@ -153,6 +153,9 @@ pub enum Ai {
     /// Walks the lava; rideable once saddled, steered with a warped
     /// fungus on a stick.
     Strider,
+    /// Hovers near the player, burns up and shoots three small fireballs
+    /// (M25).
+    Blaze,
 }
 
 impl Ai {
@@ -178,6 +181,7 @@ impl Ai {
                 | Ai::ZombifiedPiglin { .. }
                 | Ai::Piglin { .. }
                 | Ai::Hoglin { .. }
+                | Ai::Blaze
         )
     }
 }
@@ -235,6 +239,9 @@ pub enum Spawn {
     },
     /// On the lava sea near the player, in these biomes (striders).
     Lava { group: u8, biomes: Vec<Biome> },
+    /// Only inside Nether fortresses, by weight (blazes, wither
+    /// skeletons; M25).
+    Fortress { weight: u32, group: u8 },
     /// In water at generation and near the player, in these biomes.
     Water {
         chance: f32,
@@ -407,7 +414,7 @@ mod tests {
 
     /// Mobs whose textures Kenzo's 1.12-era textures don't have; a resource
     /// pack brings them.
-    const NO_BASE_TEXTURE: [&str; 9] = [
+    const NO_BASE_TEXTURE: [&str; 10] = [
         "bee",
         "fox",
         "cod",
@@ -417,6 +424,7 @@ mod tests {
         "piglin",
         "hoglin",
         "strider",
+        "piglin_brute",
     ];
 
     #[test]

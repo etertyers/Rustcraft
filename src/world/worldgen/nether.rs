@@ -210,7 +210,43 @@ impl Nether {
                 }
             }
         }
+        // Fortresses, bastions and ruined portals over everything.
+        crate::world::structure::nether::place(self, &mut chunk);
         chunk
+    }
+}
+
+/// The bare Nether terrain for structures laying themselves out: solid
+/// blocks, floors and biomes, cached column by column.
+pub struct Probe<'a>(Land<'a>);
+
+impl<'a> Probe<'a> {
+    pub fn new(nether: &'a Nether) -> Self {
+        Self(Land::new(nether))
+    }
+
+    pub fn solid(&mut self, x: i32, y: i32, z: i32) -> bool {
+        self.0.solid(x, y, z)
+    }
+
+    /// Whether (x, y, z) is lava (open space at the lava sea's height).
+    pub fn lava(&mut self, x: i32, y: i32, z: i32) -> bool {
+        y <= LAVA_LEVEL && !self.0.solid(x, y, z)
+    }
+
+    /// The highest solid block at or below `y`, if any above the bedrock.
+    pub fn ground_below(&mut self, x: i32, y: i32, z: i32) -> Option<i32> {
+        let bits = self.0.column(x, z);
+        (1..=y.min(HEIGHT - 1)).rev().find(|&y| bits >> y & 1 == 1)
+    }
+
+    /// Floors (solid with open space above, over the lava) from the top.
+    pub fn floors(&mut self, x: i32, z: i32) -> Vec<i32> {
+        self.0.floors(x, z)
+    }
+
+    pub fn biome(&mut self, x: i32, z: i32) -> Biome {
+        self.0.biome(x, z)
     }
 }
 
@@ -457,6 +493,7 @@ type Feature = fn(&mut Land, &mut Out, ChunkPos, &mut Rng);
 const FEATURES: &[(u64, Feature)] = &[
     (0x0101, blobs),
     (0x0102, ores),
+    (0x010C, debris),
     (0x0103, springs),
     (0x0104, deltas),
     (0x0105, columns),
@@ -578,6 +615,39 @@ fn ores(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
             let r = radius * (0.6 + rng.next_f64() * 0.6);
             if out.near(x, z, 4) {
                 ball(out, rng, (x, y, z), r, is_ground, block);
+            }
+        }
+    }
+}
+
+/// Ancient debris, never touching open space: about two a chunk, as modern's
+/// `ore_ancient_debris_large` (y 8–24) and `ore_debris_small` (y 8–119)
+/// come to once air-exposed blocks are thrown away.
+fn debris(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
+    for (size, lo, hi) in [(2, 8, 24), (1, 8, 119)] {
+        let (x, z) = spot(rng, origin);
+        let y = between(rng, lo, hi);
+        if !out.near(x, z, 2) {
+            continue;
+        }
+        for _ in 0..size {
+            let (bx, by, bz) = (
+                x + between(rng, -1, 1),
+                y + between(rng, -1, 1),
+                z + between(rng, -1, 1),
+            );
+            let hidden = [
+                (1, 0, 0),
+                (-1, 0, 0),
+                (0, 1, 0),
+                (0, -1, 0),
+                (0, 0, 1),
+                (0, 0, -1),
+            ]
+            .iter()
+            .all(|(dx, dy, dz)| land.solid(bx + dx, by + dy, bz + dz));
+            if hidden {
+                out.replace(bx, by, bz, is_ground, of(blocks::ANCIENT_DEBRIS));
             }
         }
     }
@@ -1251,6 +1321,7 @@ mod tests {
                     ("quartz", blocks::NETHER_QUARTZ_ORE),
                     ("gold", blocks::NETHER_GOLD_ORE),
                     ("magma", blocks::MAGMA_BLOCK),
+                    ("ancient debris", blocks::ANCIENT_DEBRIS),
                     ("crimson stem", blocks::CRIMSON_STEM),
                     ("warped stem", blocks::WARPED_STEM),
                     ("shroomlight", blocks::SHROOMLIGHT),

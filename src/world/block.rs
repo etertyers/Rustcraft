@@ -682,6 +682,8 @@ pub enum Activate {
     Anvil,
     /// Opens the grindstone screen.
     Grindstone,
+    /// Opens the smithing screen (M25).
+    Smithing,
     /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
     Redstone,
 }
@@ -1543,6 +1545,22 @@ mod tests {
             "stripped_spruce_log",
             "stripped_spruce_log_top",
             "tuff",
+        ] {
+            expected.push(format!("block/{name}"));
+        }
+        // M25's fortress, bastion and netherite blocks.
+        for name in [
+            "ancient_debris_side",
+            "ancient_debris_top",
+            "chain",
+            "chiseled_nether_bricks",
+            "chiseled_polished_blackstone",
+            "cracked_nether_bricks",
+            "cracked_polished_blackstone_bricks",
+            "gilded_blackstone",
+            "netherite_block",
+            "polished_blackstone",
+            "polished_blackstone_bricks",
         ] {
             expected.push(format!("block/{name}"));
         }
