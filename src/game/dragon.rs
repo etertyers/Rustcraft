@@ -410,6 +410,18 @@ impl Game {
         }
     }
 
+    /// Where the End gateways that have opened stand, while the player is
+    /// in the End.
+    pub fn gateways(&self) -> Vec<IVec3> {
+        if self.dimension != Dimension::End {
+            return Vec::new();
+        }
+        let seed = self.chunks.seed().unwrap_or(0);
+        (0..self.end.gateways as usize)
+            .map(|i| end::gateway_position(seed, i))
+            .collect()
+    }
+
     /// The dragon's health as the boss bar shows it: a fraction, while one
     /// fights the player.
     pub fn dragon_bar(&self) -> Option<f32> {

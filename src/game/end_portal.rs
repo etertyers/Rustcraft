@@ -202,6 +202,11 @@ impl Game {
         }
     }
 
+    /// Starts the credits `ticks` in, for a `--shot` scene.
+    pub fn stage_credits(&mut self, ticks: u32) {
+        self.credits = Some(ticks);
+    }
+
     /// Ticks the credits are on screen for, or `None` when they aren't.
     pub fn credits_ticks(&self) -> Option<u32> {
         self.credits

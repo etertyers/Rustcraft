@@ -802,9 +802,20 @@ impl Game {
             if self.mode.is_vulnerable() {
                 self.stats.damage(VOID_DAMAGE, DamageSource::Fall);
             } else {
-                // Creative players can't die, so the void sends them home.
-                self.body = Body::new(self.spawn);
-                self.prev_feet = self.spawn;
+                // Creative players can't die, so the void sends them home:
+                // to the world's spawn, or in the End to the island's middle.
+                let home = if self.dimension == crate::world::dimension::Dimension::End {
+                    let podium = crate::world::worldgen::end::PODIUM;
+                    DVec3::new(
+                        f64::from(podium.x) + 5.5,
+                        f64::from(podium.y) + 1.0,
+                        f64::from(podium.z) + 0.5,
+                    )
+                } else {
+                    self.spawn
+                };
+                self.body = Body::new(home);
+                self.prev_feet = home;
             }
         }
     }
