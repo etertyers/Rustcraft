@@ -19,7 +19,7 @@ use rustcraft::world::{
     mesh::{BlockModels, ChunkArea, mesh_chunk},
     props::Prop,
     redstone::Redstone,
-    worldgen::{nether::Nether, terrain::Terrain},
+    worldgen::{end::End, nether::Nether, terrain::Terrain},
 };
 
 /// The seed `--perf-test` flies over.
@@ -65,6 +65,18 @@ fn nether_generation(c: &mut Criterion) {
         b.iter(|| {
             x += 1;
             black_box(nether.generate(ChunkPos::new(x, 3)))
+        })
+    });
+}
+
+/// Added in M27: chunks on the main island, where the pillars are.
+fn end_generation(c: &mut Criterion) {
+    let end = End::new(SEED);
+    let mut x = -4;
+    c.bench_function("generate an end chunk", |b| {
+        b.iter(|| {
+            x = if x >= 4 { -4 } else { x + 1 };
+            black_box(end.generate(ChunkPos::new(x, 2)))
         })
     });
 }
@@ -194,6 +206,6 @@ fn redstone(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(50);
-    targets = generation, nether_generation, lighting_and_meshing, fluids, redstone
+    targets = generation, nether_generation, end_generation, lighting_and_meshing, fluids, redstone
 }
 criterion_main!(benches);
