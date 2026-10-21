@@ -192,7 +192,11 @@ impl Game {
             && self.place_clicked
             && self.held().is_some_and(|s| s.id == items::ENDER_EYE)
         {
-            self.use_eye(hit);
+            // A block with something to do (a chest, a door) takes the click.
+            let used = hit.is_some_and(|hit| self.activate(hit.block, true));
+            if !used {
+                self.use_eye(hit);
+            }
             self.break_clicked = false;
             self.place_clicked = false;
             return;

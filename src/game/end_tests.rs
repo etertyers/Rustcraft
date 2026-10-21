@@ -675,3 +675,19 @@ fn end_crystals_and_eyes_have_their_recipes() {
     );
     assert_eq!(crystal, stack(items::END_CRYSTAL));
 }
+
+#[test]
+fn a_chest_under_the_crosshair_takes_the_eyes_right_click_instead_of_a_throw() {
+    let mut game = flat_game(GameMode::Survival);
+    game.set_blocks(&[(IVec3::new(0, 63, 0), BlockState::of(blocks::CHEST))]);
+    game.inventory
+        .set(0, Some(ItemStack::new(items::ENDER_EYE, 2)));
+    game.inventory.selected = 0;
+    game.advance(0.0);
+    game.placing = true;
+    game.place_clicked = true;
+    game.use_hands();
+    assert!(game.container.is_some(), "the chest opened");
+    assert!(game.eyes.is_empty());
+    assert_eq!(game.inventory.slot(0).unwrap().count, 2);
+}
