@@ -8,6 +8,10 @@ mod capture;
 mod combat;
 mod containers;
 mod dimensions;
+mod dragon;
+mod end_portal;
+#[cfg(test)]
+mod end_tests;
 pub mod environment;
 mod experience;
 mod explosion;
@@ -234,6 +238,18 @@ pub struct Game {
     portals: Vec<(crate::world::dimension::Dimension, [i32; 3])>,
     /// Standing in a portal.
     portal: portals::PortalState,
+    /// Eyes of ender in flight.
+    pub eyes: Vec<crate::entity::eye::EyeOfEnder>,
+    /// How the End stands (the dragon fight, the credits seen).
+    end: crate::level::EndData,
+    /// The ender dragon, while there is one, and what it left: crystals,
+    /// its fireballs and clouds of its breath.
+    pub dragon: Option<crate::entity::dragon::EnderDragon>,
+    pub crystals: Vec<crate::entity::crystal::EndCrystal>,
+    pub dragon_fireballs: Vec<crate::entity::breath::DragonFireball>,
+    pub breath: Vec<crate::entity::breath::BreathCloud>,
+    /// Ticks the poem and credits have rolled, while they do.
+    credits: Option<u32>,
 }
 
 /// A world's folder and its level data, kept for the next save.
@@ -329,6 +345,13 @@ impl Game {
             arriving: None,
             portals: Vec::new(),
             portal: Default::default(),
+            eyes: Vec::new(),
+            end: Default::default(),
+            dragon: None,
+            crystals: Vec::new(),
+            dragon_fireballs: Vec::new(),
+            breath: Vec::new(),
+            credits: None,
         }
     }
 
@@ -376,6 +399,8 @@ impl Game {
         game.dimension = level.dimension;
         game.fluids.warm = level.dimension == crate::world::dimension::Dimension::Nether;
         game.portals = level.portals.clone();
+        game.end = level.end.clone();
+        game.restore_fight(level.end.dragon);
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -419,6 +444,8 @@ impl Game {
         let mobs = self.saved_mobs();
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
         let (away_mobs, away_populated) = self.away_for_saving();
+        let crystals = self.fight_for_saving();
+        let dragon = self.dragon.as_ref().map(|d| d.save());
         if self.saved.is_none() {
             return Ok(());
         }
@@ -460,6 +487,9 @@ impl Game {
         saved.level.away_populated = away_populated;
         saved.level.dimension = self.dimension;
         saved.level.portals = self.portals.clone();
+        saved.level.end = self.end.clone();
+        saved.level.end.crystals = crystals;
+        saved.level.end.dragon = dragon;
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -678,6 +708,11 @@ impl Game {
         if self.is_arriving() {
             return;
         }
+        // The poem and credits stop the world while they roll.
+        if self.credits.is_some() {
+            self.tick_credits();
+            return;
+        }
         if !self.stats.is_dead() {
             if self.is_sleeping() {
                 self.tick_sleep();
@@ -698,6 +733,7 @@ impl Game {
                 self.use_hands();
             }
             self.tick_portal();
+            self.tick_end_portal();
         }
         self.tick_view();
         if !self.is_sleeping() {
@@ -717,6 +753,8 @@ impl Game {
         self.tick_arrows();
         self.tick_fireballs();
         self.tick_thrown();
+        self.tick_eyes();
+        self.tick_end();
         self.swirl_effects();
         self.tick_mobs();
         self.tick_spawners();

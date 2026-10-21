@@ -53,6 +53,9 @@ impl Game {
     pub fn starting_in(mut self, dimension: Dimension) -> Self {
         self.dimension = dimension;
         self.fluids.warm = dimension == Dimension::Nether;
+        if dimension == Dimension::End {
+            self.start_fight();
+        }
         self
     }
 
@@ -108,6 +111,9 @@ impl Game {
         self.arrows.clear();
         self.fireballs.clear();
         self.thrown.clear();
+        self.eyes.clear();
+        self.dragon_fireballs.clear();
+        self.breath.clear();
         self.particles.clear();
         self.effects.clear();
         self.falling.clear();

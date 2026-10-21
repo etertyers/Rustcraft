@@ -46,9 +46,9 @@ const RAGGED: f64 = 9.0;
 const DEPTH: f64 = 38.0;
 /// How far from the middle the pillars stand.
 const SPIKE_RING: f64 = 42.0;
-/// Where a player arriving from the Overworld stands: modern's obsidian
-/// platform.
-pub const PLATFORM: IVec3 = IVec3::new(100, 48, 0);
+/// Where a player arriving from the Overworld stands (modern
+/// `END_SPAWN_POINT`), on a 5 × 5 obsidian platform one block down.
+pub const PLATFORM: IVec3 = IVec3::new(100, 50, 0);
 /// Where the dragon's gateways stand (modern: 96 out, y 75).
 const GATEWAY_RING: f64 = 96.0;
 const GATEWAY_Y: i32 = 75;
@@ -324,6 +324,21 @@ pub fn podium(origin: IVec3, active: bool) -> Vec<(IVec3, BlockState)> {
     out
 }
 
+/// The obsidian platform arrivals stand on and the air cleared over it
+/// (modern `ServerLevel.makeObsidianPlatform`).
+pub fn platform() -> Vec<(IVec3, BlockState)> {
+    let mut out = Vec::new();
+    for dz in -2..=2 {
+        for dx in -2..=2 {
+            for dy in -1..=2 {
+                let block = if dy < 0 { OBSIDIAN } else { BlockState::AIR };
+                out.push((PLATFORM + IVec3::new(dx, dy, dz), block));
+            }
+        }
+    }
+    out
+}
+
 /// The towers of bedrock round an End gateway at `at`: the gateway between
 /// two bedrock blocks above and two below.
 pub fn gateway(at: IVec3) -> Vec<(IVec3, BlockState)> {
@@ -497,6 +512,19 @@ mod tests {
             active
                 .iter()
                 .all(|(at, b)| !b.is(blocks::END_PORTAL) || at.y == origin.y)
+        );
+    }
+
+    #[test]
+    fn the_arrival_platform_is_obsidian_with_room_over_it() {
+        let platform = platform();
+        assert_eq!(platform.len(), 100);
+        let obsidian = platform.iter().filter(|(_, b)| *b == OBSIDIAN).count();
+        assert_eq!(obsidian, 25);
+        assert!(
+            platform
+                .iter()
+                .all(|(at, b)| (b.is_air()) == (at.y >= PLATFORM.y))
         );
     }
 

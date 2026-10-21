@@ -62,6 +62,27 @@ pub struct Level {
     /// The Nether portals there are, by dimension, for linking (M24).
     #[serde(default)]
     pub portals: Vec<(Dimension, [i32; 3])>,
+    /// How the dragon fight stands (added in M27).
+    #[serde(default)]
+    pub end: EndData,
+}
+
+/// The End as the world remembers it (added in M27).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EndData {
+    /// The crystals and the dragon have been made (on the first arrival).
+    pub fight_started: bool,
+    /// The dragon has died at least once.
+    pub dragon_killed: bool,
+    /// The poem and credits have played.
+    pub credits_seen: bool,
+    /// How many End gateways have opened.
+    pub gateways: u32,
+    /// Where the End's crystals are, and whether each has its own plate
+    /// of bedrock.
+    pub crystals: Vec<([f64; 3], bool)>,
+    /// The dragon, if it's alive.
+    pub dragon: Option<crate::entity::dragon::SavedDragon>,
 }
 
 /// A mob as saved in level.ron.
@@ -124,6 +145,7 @@ impl Level {
             dimension: Dimension::Overworld,
             away_populated: Vec::new(),
             portals: Vec::new(),
+            end: EndData::default(),
         }
     }
 }

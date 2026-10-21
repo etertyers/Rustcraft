@@ -82,7 +82,10 @@ impl Game {
             return true;
         }
         if Self::is_drink(stack.id)
-            || matches!(stack.id, items::SPLASH_POTION | items::GLASS_BOTTLE)
+            || matches!(
+                stack.id,
+                items::SPLASH_POTION | items::GLASS_BOTTLE | items::ENDER_EYE
+            )
         {
             return true;
         }
@@ -90,8 +93,10 @@ impl Game {
             return self.mode.is_vulnerable() && (food.always_edible || self.stats.can_eat());
         }
         hit.is_some()
-            && (matches!(stack.id, items::FLINT_AND_STEEL | items::FIRE_CHARGE)
-                || self.items.places(stack).is_some())
+            && (matches!(
+                stack.id,
+                items::FLINT_AND_STEEL | items::FIRE_CHARGE | items::END_CRYSTAL
+            ) || self.items.places(stack).is_some())
     }
 
     /// Whether `hand` holds something that shoots.
@@ -182,6 +187,16 @@ impl Game {
             self.place_clicked = false;
             return;
         }
+        // An eye of ender is set in a frame or thrown, once per click.
+        if hand.is_some()
+            && self.place_clicked
+            && self.held().is_some_and(|s| s.id == items::ENDER_EYE)
+        {
+            self.use_eye(hit);
+            self.break_clicked = false;
+            self.place_clicked = false;
+            return;
+        }
         self.eating = None;
         if let Some(h) = hand {
             self.use_hand = h;
@@ -208,6 +223,12 @@ impl Game {
         // A punched fireball flies back.
         if clicked && self.deflect_fireball(eye) {
             self.mining = None;
+            return;
+        }
+        // A crystal or the dragon in front of the targeted block is hit.
+        if clicked && let Some(target) = self.target_end(eye, hit.as_ref()) {
+            self.mining = None;
+            self.attack_end(target);
             return;
         }
         // A mob in front of the targeted block is hit instead, once per click.
@@ -289,6 +310,10 @@ impl Game {
                     matches!(stack.id, items::FLINT_AND_STEEL | items::FIRE_CHARGE)
                 }) {
                     self.strike_flint(&hit);
+                } else if self.holding_crystal() {
+                    if self.place_crystal(&hit) {
+                        self.place_cooldown = PLACE_REPEAT_TICKS;
+                    }
                 } else if let Some(kind) = self
                     .held()
                     .and_then(|stack| super::minecarts::kind_of(stack.id))
@@ -503,6 +528,7 @@ impl Game {
         let mut arrows = std::mem::take(&mut self.arrows);
         let player = self.body.aabb();
         let mut hits = Vec::new();
+        let mut end_hits = Vec::new();
         for arrow in &mut arrows {
             let world = self.chunks.world();
             let blocks = self.items.blocks;
@@ -518,9 +544,25 @@ impl Game {
                     .ray_hit(from, dir, reach)
             };
             let in_water = self.fluid_at(arrow.position) == Some(Fluid::Water);
+            // One loosed from the bow that meets a crystal or the dragon
+            // before any block hits it.
+            let end_hit = (!arrow.hostile && !arrow.stuck)
+                .then(|| {
+                    let speed = arrow.velocity.length();
+                    let wall = (speed > 1e-9)
+                        .then(|| block_hit(arrow.position, arrow.velocity / speed, speed))
+                        .flatten();
+                    self.arrow_hits_end(arrow.position, arrow.velocity, wall)
+                })
+                .flatten();
             let rng = &mut self.rng;
             let mut random = || rng.next_f64() as f32;
             let from = arrow.position;
+            if let Some(target) = end_hit {
+                let damage = arrow.hit_other(&mut random);
+                end_hits.push((target, damage));
+                continue;
+            }
             let at_player = (arrow.hostile && !self.stats.is_dead()).then_some(&player);
             match arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random) {
                 Some(ArrowEvent::HitMob {
@@ -549,6 +591,9 @@ impl Game {
                 Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from)),
                 None => {}
             }
+        }
+        for (target, damage) in end_hits {
+            self.arrow_strikes_end(target, damage);
         }
         for (damage, from) in hits {
             if self.mode.is_vulnerable() {

@@ -118,7 +118,8 @@ type Parsed = (
 /// and prints frame timings (see `bench`), at `--distance <chunks>` if
 /// given. `--shot <name> [--out <file>]` captures a scene (see `shots`);
 /// `--shot list` lists them. `--view first|back|front` starts in that view
-/// (F5 cycles them). `--nether` starts in the Nether of the seed, and
+/// (F5 cycles them). `--nether` and `--end` start in the Nether or the End
+/// of the seed, and
 /// `--pack <name>` uses that resource pack this once.
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     let mut args = args.peekable();
@@ -127,6 +128,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     let (mut shot, mut out) = (None, None);
     let mut test_world = None;
     let mut nether = false;
+    let mut end = false;
     let mut view = ViewMode::First;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -186,6 +188,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
             }
             "--flat" => test_world = Some(app::WorldKind::Flat),
             "--nether" => nether = true,
+            "--end" => end = true,
             "--world" => world = Some(args.next().context("--world needs a name")?),
             "--creative" => mode = player::mode::GameMode::Creative,
             "--seed" => {
@@ -197,7 +200,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
                 );
             }
             other => anyhow::bail!(
-                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --nether, --bench [seconds], --distance <chunks> or --shot <name>)"
+                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --nether, --end, --bench [seconds], --distance <chunks> or --shot <name>)"
             ),
         }
     }
@@ -211,6 +214,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     }
     let world = match (world, seed) {
         _ if nether => Some(app::WorldKind::Nether {
+            seed: seed.unwrap_or(bench::SEED),
+        }),
+        _ if end => Some(app::WorldKind::End {
             seed: seed.unwrap_or(bench::SEED),
         }),
         _ if test_world.is_some() => test_world,

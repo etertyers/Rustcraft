@@ -68,7 +68,7 @@ use crate::{
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
         shape::Cuboid,
-        worldgen::{gallery, nether::Nether, terrain::Terrain},
+        worldgen::{end::End, gallery, nether::Nether, terrain::Terrain},
     },
 };
 
@@ -90,6 +90,9 @@ pub enum WorldKind {
     Gallery,
     /// The Nether of a seed, starting there (`--nether`).
     Nether { seed: u64 },
+    /// The End of a seed, starting there with the dragon circling
+    /// (`--end`).
+    End { seed: u64 },
 }
 
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
@@ -349,6 +352,24 @@ impl App {
                 );
                 let game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0);
                 return Ok(game.starting_in(crate::world::dimension::Dimension::Nether));
+            }
+            // On the island, a little way from its middle.
+            WorldKind::End { seed } => {
+                let end = End::new(seed);
+                let top = end
+                    .top(24, 6)
+                    .unwrap_or(crate::world::worldgen::end::SURFACE_Y);
+                let spawn = DVec3::new(24.5, top as f64 + 1.0, 6.5);
+                let chunks = ChunkManager::new(
+                    ChunkSource::End(Box::new(end)),
+                    models,
+                    config::RENDER_DISTANCE,
+                    chunk_workers(),
+                );
+                let mut game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0)
+                    .starting_in(crate::world::dimension::Dimension::End);
+                game.camera.yaw = -std::f32::consts::FRAC_PI_2;
+                return Ok(game);
             }
             // On the grass at the origin.
             WorldKind::Flat => (ChunkSource::Flat, DVec3::new(0.5, ground, 0.5), 0.0, 0.0),
