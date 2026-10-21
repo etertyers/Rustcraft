@@ -376,7 +376,7 @@ pub static SHOTS: &[Shot] = &[
         name: "m27-island",
         about: "the End's main island from its edge: end stone, the obsidian pillars with their crystals (two caged), the fountain, and the dragon",
         world: Some(WorldKind::End { seed: 20111118 }),
-        view: Some(([40.5, 64.0, 30.5], -1.3, 0.12)),
+        view: Some(([0.5, 64.0, 12.5], 0.0, 0.3)),
         time: Some(6000),
         mode: Some(GameMode::Creative),
         overlay: false,
@@ -616,11 +616,12 @@ fn portals(game: &mut Game) {
 /// The island with the dragon circling over it, high up and near.
 fn end_island(game: &mut Game) {
     if let Some(dragon) = game.dragon.as_mut() {
-        let spot = glam::DVec3::new(-10.0, 96.0, -5.0);
+        // Over the north of the island, coming back toward the fountain.
+        let spot = glam::DVec3::new(0.5, 84.0, -18.0);
         dragon.position = spot;
         dragon.prev_position = spot;
-        dragon.yaw = 1.0;
-        dragon.prev_yaw = 1.0;
+        dragon.yaw = std::f32::consts::PI;
+        dragon.prev_yaw = std::f32::consts::PI;
     }
     game.run_ticks(2);
 }
