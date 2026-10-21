@@ -257,9 +257,10 @@ impl Nether {
                 let (x, z) = (x0 + lx as i32, z0 + lz as i32);
                 let biome = land.biome(x, z);
                 let bits = land.column(x, z);
+                let cut = land.cut(x, z);
                 chunk.set_biome(lx, lz, biome);
                 for y in 0..HEIGHT {
-                    let block = self.base(bits, biome, x, y, z);
+                    let block = self.base(bits, cut, biome, x, y, z);
                     if block != AIR {
                         chunk.set(lx, y as usize, lz, block);
                     }
@@ -299,7 +300,9 @@ impl<'a> Probe<'a> {
 
     /// Whether (x, y, z) is lava (open space at the lava sea's height).
     pub fn lava(&mut self, x: i32, y: i32, z: i32) -> bool {
-        y <= LAVA_LEVEL && !self.0.solid(x, y, z)
+        y <= LAVA_LEVEL
+            && !self.0.solid(x, y, z)
+            && (y < carver::LAVA_BELOW || self.0.cut(x, z) >> y & 1 == 0)
     }
 
     /// The highest solid block at or below `y`, if any above the bedrock.
@@ -325,6 +328,8 @@ struct Land<'a> {
     corners: FastMap<(i32, i32), Levels>,
     /// Bit y set where the block at y is solid.
     columns: FastMap<(i32, i32), u128>,
+    /// Bit y set where a cave cut the block.
+    cuts: FastMap<(i32, i32), u128>,
     /// By quart.
     biomes: FastMap<(i32, i32), Biome>,
     masks: FastMap<(i32, i32), Arc<carver::Mask>>,
@@ -336,6 +341,7 @@ impl<'a> Land<'a> {
             nether,
             corners: FastMap::default(),
             columns: FastMap::default(),
+            cuts: FastMap::default(),
             biomes: FastMap::default(),
             masks: FastMap::default(),
         }
@@ -394,8 +400,15 @@ impl<'a> Land<'a> {
             }
             bits &= !cut;
         }
+        self.cuts.insert((x, z), cut);
         self.columns.insert((x, z), bits);
         bits
+    }
+
+    /// Which blocks of the column the caves cut, as bits.
+    fn cut(&mut self, x: i32, z: i32) -> u128 {
+        self.column(x, z);
+        self.cuts[&(x, z)]
     }
 
     fn solid(&mut self, x: i32, y: i32, z: i32) -> bool {
@@ -464,19 +477,27 @@ impl<'a> Land<'a> {
     /// netherrack, lava or air.
     fn base(&mut self, x: i32, y: i32, z: i32) -> BlockState {
         let bits = self.column(x, z);
+        let cut = self.cut(x, z);
         let biome = self.biome(x, z);
-        self.nether.base(bits, biome, x, y, z)
+        self.nether.base(bits, cut, biome, x, y, z)
     }
 }
 
 impl Nether {
     /// The block at (x, y, z) in a column with solid `bits` and `biome`.
-    fn base(&self, bits: u128, biome: Biome, x: i32, y: i32, z: i32) -> BlockState {
+    fn base(&self, bits: u128, cut: u128, biome: Biome, x: i32, y: i32, z: i32) -> BlockState {
         if bedrock(self.seed, x, y, z) {
             return BEDROCK;
         }
         if bits >> y & 1 == 0 {
-            return if y <= LAVA_LEVEL { LAVA } else { AIR };
+            // Caves are air, or lava low down; the rest of the sea is lava.
+            return if cut >> y & 1 == 1 {
+                if y < carver::LAVA_BELOW { LAVA } else { AIR }
+            } else if y <= LAVA_LEVEL {
+                LAVA
+            } else {
+                AIR
+            };
         }
         if y > ROOF_ROCK {
             return NETHERRACK;
@@ -1318,9 +1339,10 @@ mod tests {
                     for y in 128..256 {
                         assert_eq!(chunk.get(x, y, z), AIR, "above the roof");
                     }
-                    for y in 1..=LAVA_LEVEL as usize {
+                    // Caves are air above y 10 even under the sea, lava below.
+                    for y in 1..carver::LAVA_BELOW as usize {
                         let block = chunk.get(x, y, z);
-                        assert!(block != AIR, "air at y {y} under the lava level");
+                        assert!(block != AIR, "air at y {y}");
                     }
                     for y in 0..128 {
                         assert!(!chunk.get(x, y, z).is(blocks::WATER));

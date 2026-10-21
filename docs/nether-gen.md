@@ -32,8 +32,9 @@ Structure placement is not covered here (a later session).
    finest 6 of 16 octaves (together 0.1% of their weight).
 2. **Caves** (`carver.rs`): `nether_cave`: chance 0.2 a chunk, y 0-126, room yScale 0.5,
    floor -0.7, tunnels five times as tall as wide, sources within 8 chunks. Only rock is cut,
-   never bedrock. Cut space at or under the lava sea is lava with the rest of it (vanilla keeps
-   air in carved pockets between y 10 and 31; the lava-everywhere rule wins here).
+   never bedrock. Cut space is air except below y 10, where it is lava (modern's `lava_level`), so
+   caves under the lava sea stay as dry air pockets above y 10, as in vanilla. The rest of the
+   sea (uncut space at or under y 31) is lava.
 3. **Bedrock**: y 0 always, then chance 0.8 down to 0.2 at y 4, mirrored at the roof (checked,
    unchanged). Nothing above y 127, nothing generated or decorated in y 123-127 by the basalt features.
 4. **Biomes** (`climate::TemperatureHumidity`): the Overworld's normal noises (temperature
