@@ -10,9 +10,9 @@
 //!
 //! Only the rock is ever cut (netherrack, soul sand and soul soil,
 //! basalt, blackstone, nylium, wart blocks, magma, gravel: everything the
-//! terrain has before features), never the bedrock. Cut space is air, as in
-//! modern, except below `LAVA_BELOW` (the carver's `lava_level`), where it
-//! is lava; so caves under the lava sea stay dry pockets above y 10.
+//! terrain has before features), never the bedrock. Cut space at or under
+//! the lava sea becomes lava with the rest of the sea, which covers the
+//! carver's own lava below y 10.
 
 use std::f64::consts::PI;
 
@@ -29,8 +29,6 @@ const FLOOR: f64 = -0.7;
 const ROOM_Y_SCALE: f64 = 0.5;
 /// Tunnels are five times as tall as they are wide.
 const TUNNEL_Y_SCALE: f64 = 5.0;
-/// Carved space under this y fills with lava.
-pub const LAVA_BELOW: i32 = 10;
 const MIN_Y: i32 = 1;
 const MAX_Y: i32 = 126;
 
