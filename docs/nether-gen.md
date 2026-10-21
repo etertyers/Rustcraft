@@ -1,7 +1,7 @@
 # Nether generation (terrain, biomes, basalt)
 
 Code: `src/world/worldgen/nether.rs` and `nether/{blended,carver,basalt,map}.rs`.
-Structure placement is not covered here (a later session).
+Structure placement is the last section.
 
 ## Step 0: what was wrong (measured before any change, seed 20111118)
 
@@ -92,3 +92,39 @@ One pixel per quart column (legend, top left, in order: wastes, crimson, warped,
 Prints the share, patch count, median and by-area patch size per biome, patches under 32 x 32,
 and, for a 64 x 64 grid of chunks, cavern heights, tallest basalt column and pillar, lowest pillar y and
 the highest non-air, non-bedrock y. Tests: `cargo test nether`.
+
+## Structures (placement)
+
+Code: `src/world/structure/nether.rs` (tables, choice, survey), `fossil.rs`. Pieces and loot are unchanged.
+
+**Step 0, why they seemed rare.** Placement was already vanilla's grid: one candidate chunk per
+27 x 27 chunk region (432 blocks), 94 of 100 regions got a structure. That is about one complex
+per 186,000 blocks², so an area flown through at 100 blocks wide holds one every 1,900 blocks.
+Nothing in placement explains 1 bastion and 0 fortresses; what it did get wrong was small: a
+bastion rolled in basalt deltas was dropped instead of falling back to a fortress (6% of regions
+had nothing), a fortress's start was 8 blocks into its chunk (modern: 2), and the ruined portal
+spacing was 25/10 (modern's shared `ruined_portals` set is 40/15). The playtest was on the old
+terrain, so what the player saw may also have been structures buried in rock or hidden by
+the open caverns; that is not verified.
+
+Now (all numbers in the tables at the top of `structure/nether.rs`):
+
+| Set | Spacing | Separation | Salt | Where | Weight |
+|---|---|---|---|---|---|
+| `nether_complexes` | 27 | 4 | 30084232 | fortress: every Nether biome; bastion remnant: not basalt deltas | 2, 3 |
+| `ruined_portals` | 40 | 15 | 34222645 | every Nether biome | |
+| `nether_fossil` | 2 | 1 | 14357921 | soul sand valley, y 32-125 | |
+
+- A region's candidate is `region * spacing + [0, spacing - separation)` on each axis, drawn from
+  (world seed, region, salt), so any chunk can ask which starts are near it (fortresses reach 8
+  chunks) with no dependence on load order.
+- A complex candidate picks fortress or bastion by weight from (seed, chunk); if the biome at its
+  start refuses the pick, the other is tried, so every region has exactly one complex. Fortress
+  share therefore depends on how much of the area is deltas (39-88% over seeds 1-59 in 100 regions,
+  about 55% with a quarter of the land in deltas).
+- Fortress: start piece 2 blocks into its chunk at y 48-70, pieces within 112 blocks. Bastion: start at
+  y 33. The bastion is still the single keep, not a jigsaw of four types (pieces were out of scope).
+- Fossils are new: a bone-block spine with ribs, one skeleton instead of modern's fourteen templates.
+
+Tests: `cargo test structure::nether`. `--nether-map --structures` draws fortresses (white), bastions
+(yellow) and ruined portals (magenta) and prints totals and the ten nearest to 0,0 (fossils are only counted).

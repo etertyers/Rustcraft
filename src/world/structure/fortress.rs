@@ -485,11 +485,19 @@ impl Layout<'_, '_> {
     }
 }
 
+/// The start piece stands this far into its chunk (modern: x * 16 + 2).
+pub const START_OFFSET: i32 = 2;
+
+/// The y of the start piece, which shifts the whole fortress to sit between
+/// y 48 and y 70 (modern starts at 64 and shifts it into that band).
+pub fn deck(rng: &mut Rng) -> i32 {
+    48 + rng.below(23) as i32
+}
+
 /// Lays out the fortress starting in chunk `start`.
 pub fn generate(probe: &mut Probe, start: ChunkPos, rng: &mut Rng) -> Option<Vec<Piece>> {
     let (x, z) = start.min_block();
-    let deck = 48 + rng.below(23) as i32;
-    let center = IVec3::new(x + 8, deck, z + 8);
+    let center = IVec3::new(x + START_OFFSET, deck(rng), z + START_OFFSET);
     let facing = [Face::North, Face::East, Face::South, Face::West][rng.below(4) as usize];
     let mut layout = Layout {
         probe,

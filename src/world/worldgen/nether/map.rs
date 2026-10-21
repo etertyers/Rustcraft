@@ -4,7 +4,10 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::world::chunk::Chunk;
+use crate::world::{
+    chunk::Chunk,
+    structure::{Kind, nether as structures},
+};
 
 /// Biomes in a fixed order, each with its map color.
 pub const BIOMES: [(Biome, [u8; 3]); 5] = [
@@ -390,4 +393,83 @@ pub fn shares(stats: &BiomeStats) -> HashMap<Biome, f64> {
         .iter()
         .map(|&(b, _)| (b, stats.share[index(b)]))
         .collect()
+}
+
+/// Marker colors of the structures drawn on the map.
+fn marker(kind: Kind) -> Option<[u8; 3]> {
+    match kind {
+        Kind::Fortress => Some([255, 255, 255]),
+        Kind::Bastion => Some([255, 220, 40]),
+        Kind::NetherRuinedPortal => Some([255, 0, 255]),
+        _ => None,
+    }
+}
+
+/// Draws a square on the map for each fortress (white), bastion (yellow)
+/// and ruined portal (magenta), ringed in black.
+pub fn draw_structures(image: &mut image::RgbaImage, found: &[structures::Found]) {
+    let n = image.width() as i32;
+    for f in found {
+        let Some([r, g, b]) = marker(f.kind) else {
+            continue;
+        };
+        let (cx, cz) = (f.at.x.div_euclid(4) + n / 2, f.at.z.div_euclid(4) + n / 2);
+        for dz in -5..=5i32 {
+            for dx in -5..=5i32 {
+                let (x, z) = (cx + dx, cz + dz);
+                if x < 0 || z < 0 || x >= n || z >= n {
+                    continue;
+                }
+                let edge = dx.abs() == 5 || dz.abs() == 5;
+                let c = if edge { [0, 0, 0] } else { [r, g, b] };
+                image.put_pixel(x as u32, z as u32, image::Rgba([c[0], c[1], c[2], 255]));
+            }
+        }
+    }
+}
+
+/// The structures over the map's `size` quart columns (every kind, fossils
+/// counted but not drawn), and the printed list: totals and the ten nearest
+/// the origin.
+pub fn survey_structures(seed: u64, size: usize) -> (Vec<structures::Found>, String) {
+    let nether = Nether::new(seed);
+    let half_chunks = size as i32 / 4 / 2;
+    let found = structures::survey(
+        &nether,
+        &[
+            Kind::Fortress,
+            Kind::Bastion,
+            Kind::NetherRuinedPortal,
+            Kind::NetherFossil,
+        ],
+        ChunkPos::new(-half_chunks, -half_chunks),
+        ChunkPos::new(half_chunks - 1, half_chunks - 1),
+    );
+    let count = |k: Kind| found.iter().filter(|f| f.kind == k).count();
+    let complexes = count(Kind::Fortress) + count(Kind::Bastion);
+    let mut text = format!(
+        "structures: {} fortresses, {} bastion remnants ({:.0}% fortresses of {complexes}), {} ruined portals, {} fossils\n",
+        count(Kind::Fortress),
+        count(Kind::Bastion),
+        count(Kind::Fortress) as f64 * 100.0 / complexes.max(1) as f64,
+        count(Kind::NetherRuinedPortal),
+        count(Kind::NetherFossil),
+    );
+    let mut near: Vec<_> = found
+        .iter()
+        .filter(|f| f.kind != Kind::NetherFossil)
+        .collect();
+    near.sort_by_key(|f| i64::from(f.at.x).pow(2) + i64::from(f.at.z).pow(2));
+    text += "nearest 10 to 0,0:\n";
+    for f in near.iter().take(10) {
+        text += &format!(
+            "  {:<24} x {:>6} y {:>3} z {:>6}  ({:.0} blocks away)\n",
+            f.kind.name(),
+            f.at.x,
+            f.at.y,
+            f.at.z,
+            f64::from(f.at.x).hypot(f64::from(f.at.z)),
+        );
+    }
+    (found, text)
 }

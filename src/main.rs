@@ -73,8 +73,8 @@ fn biome_map(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `--nether-map --seed <n> --size <pixels> --out <file>`: the Nether's
-/// biomes at one pixel per quart column, patch statistics, and the basalt
+/// `--nether-map --seed <n> --size <pixels> --out <file> [--structures]`: the
+/// Nether's biomes at one pixel per quart column, patch statistics, and the basalt
 /// and caverns found in a 64 × 64 chunk sample.
 fn nether_map(args: &[String]) -> Result<()> {
     use rustcraft::world::worldgen::nether::map;
@@ -92,7 +92,12 @@ fn nether_map(args: &[String]) -> Result<()> {
         .context("--size needs a number of pixels")?;
     let out = value("--out").unwrap_or_else(|| "docs/screenshots/nether-biome-map.png".into());
     let started = std::time::Instant::now();
-    let (image, text) = map::report(seed, size, 32);
+    let (mut image, mut text) = map::report(seed, size, 32);
+    if args.iter().any(|arg| arg == "--structures") {
+        let (found, list) = map::survey_structures(seed, size);
+        map::draw_structures(&mut image, &found);
+        text += &list;
+    }
     image.save(&out)?;
     println!(
         "seed {seed}, {size} × {size} pixels ({} blocks across), {:.1} s → {out}",

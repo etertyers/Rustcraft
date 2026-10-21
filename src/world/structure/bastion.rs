@@ -20,7 +20,7 @@ use crate::world::{
 };
 
 /// The keep's floor (modern bastions start at y 33).
-const BASE: i32 = 33;
+pub const BASE: i32 = 33;
 /// Its footprint, half across, and storey height.
 const HALF: i32 = 11;
 const STOREY: i32 = 7;

@@ -19,6 +19,7 @@ pub mod build;
 pub mod designs;
 pub mod dungeon;
 pub mod fortress;
+pub mod fossil;
 pub mod jigsaw;
 pub mod loot;
 pub mod mineshaft;
@@ -55,6 +56,7 @@ pub enum Kind {
     Fortress,
     Bastion,
     NetherRuinedPortal,
+    NetherFossil,
 }
 
 impl Kind {
@@ -82,6 +84,7 @@ impl Kind {
             Kind::Fortress => "nether fortress",
             Kind::Bastion => "bastion remnant",
             Kind::NetherRuinedPortal => "ruined portal (Nether)",
+            Kind::NetherFossil => "nether fossil",
         }
     }
 
@@ -97,6 +100,7 @@ impl Kind {
             Kind::Fortress => 8,
             Kind::Bastion => 4,
             Kind::NetherRuinedPortal => 2,
+            Kind::NetherFossil => 1,
         }
     }
 
@@ -104,7 +108,12 @@ impl Kind {
     fn on_surface(self) -> bool {
         !matches!(
             self,
-            Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold | Kind::Fortress | Kind::Bastion
+            Kind::Dungeon
+                | Kind::Mineshaft
+                | Kind::Stronghold
+                | Kind::Fortress
+                | Kind::Bastion
+                | Kind::NetherFossil
         )
     }
 
@@ -118,9 +127,9 @@ impl Kind {
             Kind::Dungeon => 0xD0_6E07,
             Kind::Mineshaft => 0x313E,
             Kind::Stronghold => 0x57_0E06,
-            // Fortresses and bastions share modern's "nether complexes".
-            Kind::Fortress | Kind::Bastion => 30_084_232,
-            Kind::NetherRuinedPortal => 34_222_645,
+            Kind::Fortress | Kind::Bastion => nether::COMPLEXES.salt,
+            Kind::NetherRuinedPortal => nether::RUINED_PORTALS.salt,
+            Kind::NetherFossil => nether::FOSSILS.salt,
         }
     }
 
@@ -135,7 +144,9 @@ impl Kind {
             Kind::Dungeon => dungeon::generate(terrain, start, &mut rng)?,
             Kind::Mineshaft => mineshaft::generate(terrain, start, &mut rng)?,
             Kind::Stronghold => stronghold::generate(terrain, start, &mut rng)?,
-            Kind::Fortress | Kind::Bastion | Kind::NetherRuinedPortal => return None,
+            Kind::Fortress | Kind::Bastion | Kind::NetherRuinedPortal | Kind::NetherFossil => {
+                return None;
+            }
         };
         Structure::new(self, start, pieces)
     }
@@ -190,8 +201,9 @@ impl Kind {
             Kind::DesertTemple | Kind::JungleTemple => Spread::new(32, 8),
             Kind::Shipwreck => Spread::new(24, 4),
             Kind::RuinedPortal => Spread::new(40, 15),
-            Kind::NetherRuinedPortal => Spread::new(25, 10),
-            Kind::Fortress | Kind::Bastion => Spread::new(27, 4),
+            Kind::NetherRuinedPortal => nether::RUINED_PORTALS.spread(),
+            Kind::Fortress | Kind::Bastion => nether::COMPLEXES.spread(),
+            Kind::NetherFossil => nether::FOSSILS.spread(),
             Kind::Dungeon | Kind::Mineshaft | Kind::Stronghold => Spread::new(1, 0),
         }
     }
