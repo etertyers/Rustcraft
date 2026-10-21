@@ -1,13 +1,14 @@
 //! The Nether's generator (M24), after modern Minecraft's `nether` noise
 //! settings and `NetherBiomes`.
 //!
-//! - **Shape**: 3D noise on 4 × 8 × 4 cells, slid toward solid at the
-//!   bottom (bedrock floor) and the top (bedrock roof), leaving caverns
-//!   between. Everything is in y 0..128; the world above the roof is air.
+//! - **Shape**: classic blended noise on 4 × 8 × 4 cells, slid toward solid
+//!   at the bottom (bedrock floor) and the top (bedrock roof), leaving
+//!   caverns between, then cut by the cave carver. Everything is in y
+//!   0..128; the world above the roof is air.
 //! - **Lava sea**: open space at y 31 and below is lava (modern sea level 32).
-//! - **Biomes**: modern's multi-noise points on temperature and humidity:
-//!   nether wastes, crimson forest, warped forest, soul sand valley and
-//!   basalt deltas, picked per column.
+//! - **Biomes**: modern's multi-noise points on temperature and humidity
+//!   (the Overworld's noises, 2D, per 4 × 4 quart): nether wastes, crimson
+//!   forest, warped forest, soul sand valley and basalt deltas.
 //! - **Surfaces**: nylium on forest floors, soul sand and soul soil in the
 //!   valleys, basalt and blackstone in the deltas, gravel and soul sand by
 //!   the lava shore in the wastes.
@@ -20,10 +21,17 @@
 //! decide where they go from the bare terrain (`Land`), which any chunk
 //! works out the same way, so they come out whole on both sides of a border.
 
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
+use std::sync::{Arc, Mutex};
+
+use noise::{NoiseFn, Perlin};
+
+mod basalt;
+mod blended;
+mod carver;
+pub mod map;
 
 use super::{
-    climate::{noise_offset, noise_seed},
+    climate::{TemperatureHumidity, noise_offset, noise_seed},
     rng::{Rng, mix},
 };
 use crate::{
@@ -49,18 +57,26 @@ const CELL_XZ: i32 = 4;
 const CELL_Y: i32 = 8;
 const LEVELS: usize = (HEIGHT / CELL_Y) as usize + 1;
 
-/// Wavelengths of the shaping noise, in blocks.
-const SHAPE_XZ: f64 = 56.0;
-const SHAPE_Y: f64 = 34.0;
-/// Pulls the noise toward open space between the floor and roof slides.
-const SHAPE_BIAS: f64 = -0.08;
-/// Modern `slideNetherLike`: toward 0.9375 over the top 24 blocks and
-/// toward 2.5 from y 24 down.
-const TOP_SLIDE: (f64, f64) = (24.0, 0.9375);
-const BOTTOM_SLIDE: (f64, f64) = (24.0, 2.5);
+/// Modern `slideNetherLike`: toward 0.9375 from y 104 up to the roof, and
+/// toward 2.5 from y 24 down to y -8.
+const TOP_SLIDE: (f64, f64) = (HEIGHT as f64 - 24.0, 0.9375);
+const BOTTOM_SLIDE: (f64, f64, f64) = (24.0, -8.0, 2.5);
+/// Netherrack alone from this height up (the roof's skin).
+const ROOF_ROCK: i32 = 122;
 
-/// Wavelength of the biome noise, in blocks.
-const BIOME_SCALE: f64 = 260.0;
+/// Gravel and soul sand patches by the shore, floors only.
+const SHORE: std::ops::RangeInclusive<i32> = LAVA_LEVEL - 1..=LAVA_LEVEL + 4;
+
+/// Modern's `squeeze`: soft-clamps the scaled density.
+fn squeeze(value: f64) -> f64 {
+    let c = value.clamp(-1.0, 1.0);
+    c / 2.0 - c * c * c / 24.0
+}
+
+/// Solid where the squeezed density is above zero.
+fn dense(value: f64) -> bool {
+    squeeze(0.64 * value) > 0.0
+}
 
 const fn of(id: crate::world::block::BlockId) -> BlockState {
     BlockState::of(id)
@@ -90,14 +106,29 @@ pub struct Nether {
     world_seed: u64,
     seed: u64,
     shift: [f64; 3],
-    shape: Fbm<Perlin>,
-    temperature: Fbm<Perlin>,
-    humidity: Fbm<Perlin>,
-    /// Soul sand against soul soil, basalt against blackstone.
-    patches: Perlin,
+    shape: blended::BlendedNoise,
+    climate: TemperatureHumidity,
+    /// Gravel patches, and soul sand against soul soil, basalt against
+    /// blackstone.
+    patch: Perlin,
+    selector: Perlin,
     /// Gravel and soul sand by the lava shore in the wastes.
     shore: Perlin,
+    /// Density columns and carved caves, shared by every chunk worked on
+    /// (each is the same whoever asks); cleared when they pile up.
+    corners: Mutex<FastMap<(i32, i32), Arc<Levels>>>,
+    sources: Mutex<FastMap<(i32, i32), carver::Source>>,
+    masks: Mutex<FastMap<(i32, i32), Arc<carver::Mask>>>,
 }
+
+/// How far the Overworld's small shift noise moves a biome sample, in
+/// quarter-blocks. The Overworld's 4 splinters every Nether border into
+/// islands of a quart or two (about three in four patches; see
+/// `docs/nether-gen.md`), so the Nether uses half of it.
+const CLIMATE_SHIFT: f64 = 2.0;
+
+/// Cached entries before a cache starts over.
+const CACHE_LIMIT: usize = 60_000;
 
 /// Modern `MultiNoiseBiomeSourceParameterList.NETHER`: (temperature,
 /// humidity, offset) for each biome.
@@ -114,30 +145,25 @@ impl Nether {
         // Its own noises, unlike the Overworld's.
         let world_seed = seed;
         let seed = mix(seed ^ 0x0000_4E45_5448_4552);
-        let fbm = |index, octaves| Fbm::<Perlin>::new(noise_seed(seed, index)).set_octaves(octaves);
         Self {
             world_seed,
             seed,
             shift: noise_offset(seed, 0),
-            shape: fbm(1, 4),
-            temperature: fbm(2, 2),
-            humidity: fbm(3, 2),
-            patches: Perlin::new(noise_seed(seed, 4)),
-            shore: Perlin::new(noise_seed(seed, 5)),
+            shape: blended::BlendedNoise::new(mix(seed ^ 1)),
+            climate: TemperatureHumidity::new(mix(seed ^ 2), CLIMATE_SHIFT),
+            patch: Perlin::new(noise_seed(seed, 4)),
+            selector: Perlin::new(noise_seed(seed, 5)),
+            shore: Perlin::new(noise_seed(seed, 6)),
+            corners: Mutex::default(),
+            sources: Mutex::default(),
+            masks: Mutex::default(),
         }
     }
 
-    /// The biome of the column at (x, z): the nearest point to its climate,
-    /// sampled at the middle of its 4 × 4 quart as modern biomes are.
+    /// The biome of the column at (x, z): the nearest point to the climate
+    /// at its 4 × 4 quart's corner.
     pub fn biome(&self, x: i32, z: i32) -> Biome {
-        let (qx, qz) = (x.div_euclid(4) * 4 + 2, z.div_euclid(4) * 4 + 2);
-        let p = [
-            qx as f64 / BIOME_SCALE + self.shift[0],
-            qz as f64 / BIOME_SCALE + self.shift[2],
-        ];
-        // Two octaves stay within about ±0.75; stretch them to modern's range.
-        let t = self.temperature.get(p) * 1.4;
-        let h = self.humidity.get([p[1], p[0]]) * 1.4;
+        let (t, h) = self.climate.quart(x, z);
         POINTS
             .iter()
             .map(|&(biome, pt, ph, offset)| {
@@ -148,23 +174,56 @@ impl Nether {
             .map_or(Biome::NetherWastes, |(biome, _)| biome)
     }
 
-    /// The density levels of the corner column at grid point (gx, gz).
+    /// The density levels of the corner column at grid point (gx, gz): the
+    /// blended noise with both slides applied.
     fn corner(&self, gx: i32, gz: i32) -> Levels {
         let (x, z) = ((gx * CELL_XZ) as f64, (gz * CELL_XZ) as f64);
         std::array::from_fn(|k| {
             let y = (k as i32 * CELL_Y) as f64;
-            let noise = self.shape.get([
-                x / SHAPE_XZ + self.shift[0],
-                y / SHAPE_Y + self.shift[1],
-                z / SHAPE_XZ + self.shift[2],
-            ]);
-            let mut density = noise + SHAPE_BIAS;
-            let top = ((y - (HEIGHT as f64 - TOP_SLIDE.0)) / TOP_SLIDE.0).clamp(0.0, 1.0);
-            density += (TOP_SLIDE.1 - density) * top;
-            let bottom = ((BOTTOM_SLIDE.0 - y) / BOTTOM_SLIDE.0).clamp(0.0, 1.0);
-            density += (BOTTOM_SLIDE.1 - density) * bottom;
-            density
+            let mut value = self.shape.get(x, y, z);
+            let top = ((y - TOP_SLIDE.0) / (HEIGHT as f64 - TOP_SLIDE.0)).clamp(0.0, 1.0);
+            value += (TOP_SLIDE.1 - value) * top;
+            let bottom = ((BOTTOM_SLIDE.0 - y) / (BOTTOM_SLIDE.0 - BOTTOM_SLIDE.1)).clamp(0.0, 1.0);
+            value += (BOTTOM_SLIDE.2 - value) * bottom;
+            value
         })
+    }
+
+    fn shared_corner(&self, gx: i32, gz: i32) -> Levels {
+        if let Some(levels) = self.corners.lock().unwrap().get(&(gx, gz)) {
+            return **levels;
+        }
+        let levels = self.corner(gx, gz);
+        let mut cache = self.corners.lock().unwrap();
+        if cache.len() > CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert((gx, gz), Arc::new(levels));
+        levels
+    }
+
+    /// The caves cut from chunk (cx, cz).
+    fn carve_mask(&self, cx: i32, cz: i32) -> Arc<carver::Mask> {
+        if let Some(mask) = self.masks.lock().unwrap().get(&(cx, cz)) {
+            return mask.clone();
+        }
+        let mut sources = self.sources.lock().unwrap();
+        if sources.len() > CACHE_LIMIT {
+            sources.clear();
+        }
+        let mask = Arc::new(carver::mask(cx, cz, |sx, sz| {
+            sources
+                .entry((sx, sz))
+                .or_insert_with(|| Arc::new(carver::source(self.seed, sx, sz)))
+                .clone()
+        }));
+        drop(sources);
+        let mut cache = self.masks.lock().unwrap();
+        if cache.len() > 4_000 {
+            cache.clear();
+        }
+        cache.insert((cx, cz), mask.clone());
+        mask
     }
 
     pub fn world_seed(&self) -> u64 {
@@ -183,6 +242,13 @@ impl Nether {
     }
 
     pub fn generate(&self, pos: ChunkPos) -> Chunk {
+        let salts: Vec<u64> = FEATURES.iter().map(|&(salt, _)| salt).collect();
+        self.generate_with(pos, &salts, true)
+    }
+
+    /// A chunk with only the features of the given `salts` (and the
+    /// structures, if asked for): for studying one feature at a time.
+    pub fn generate_with(&self, pos: ChunkPos, salts: &[u64], structures: bool) -> Chunk {
         let mut land = Land::new(self);
         let mut chunk = Chunk::new(pos);
         let (x0, z0) = pos.min_block();
@@ -201,7 +267,7 @@ impl Nether {
             }
         }
         let mut out = Out { chunk: &mut chunk };
-        for (salt, feature) in FEATURES {
+        for (salt, feature) in FEATURES.iter().filter(|(salt, _)| salts.contains(salt)) {
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     let origin = pos.offset(dx, dz);
@@ -211,7 +277,9 @@ impl Nether {
             }
         }
         // Fortresses, bastions and ruined portals over everything.
-        crate::world::structure::nether::place(self, &mut chunk);
+        if structures {
+            crate::world::structure::nether::place(self, &mut chunk);
+        }
         chunk
     }
 }
@@ -257,7 +325,9 @@ struct Land<'a> {
     corners: FastMap<(i32, i32), Levels>,
     /// Bit y set where the block at y is solid.
     columns: FastMap<(i32, i32), u128>,
+    /// By quart.
     biomes: FastMap<(i32, i32), Biome>,
+    masks: FastMap<(i32, i32), Arc<carver::Mask>>,
 }
 
 impl<'a> Land<'a> {
@@ -267,6 +337,7 @@ impl<'a> Land<'a> {
             corners: FastMap::default(),
             columns: FastMap::default(),
             biomes: FastMap::default(),
+            masks: FastMap::default(),
         }
     }
 
@@ -275,7 +346,7 @@ impl<'a> Land<'a> {
         *self
             .corners
             .entry((gx, gz))
-            .or_insert_with(|| nether.corner(gx, gz))
+            .or_insert_with(|| nether.shared_corner(gx, gz))
     }
 
     /// Which blocks of the column are solid, as bits.
@@ -301,12 +372,28 @@ impl<'a> Land<'a> {
         for y in 0..HEIGHT {
             let k = (y / CELL_Y) as usize;
             let t = (y % CELL_Y) as f64 / CELL_Y as f64;
-            if levels[k] + (levels[k + 1] - levels[k]) * t > 0.0 {
+            if dense(levels[k] + (levels[k + 1] - levels[k]) * t) {
                 bits |= 1 << y;
             }
         }
         // The bedrock floor and roof are always there.
         bits |= 1 | 1 << (HEIGHT - 1);
+        // Caves cut the rock, but never the bedrock.
+        let (cx, cz) = (x.div_euclid(16), z.div_euclid(16));
+        let nether = self.nether;
+        let mask = self
+            .masks
+            .entry((cx, cz))
+            .or_insert_with(|| nether.carve_mask(cx, cz));
+        let mut cut = mask.column(x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
+        if cut != 0 {
+            for y in (1..BEDROCK_LAYERS).chain(HEIGHT - BEDROCK_LAYERS..HEIGHT - 1) {
+                if bedrock(self.nether.seed, x, y, z) {
+                    cut &= !(1 << y);
+                }
+            }
+            bits &= !cut;
+        }
         self.columns.insert((x, z), bits);
         bits
     }
@@ -327,7 +414,7 @@ impl<'a> Land<'a> {
         let nether = self.nether;
         *self
             .biomes
-            .entry((x, z))
+            .entry((x.div_euclid(4), z.div_euclid(4)))
             .or_insert_with(|| nether.biome(x, z))
     }
 
@@ -338,6 +425,30 @@ impl<'a> Land<'a> {
             .rev()
             .filter(|&y| bits >> y & 1 == 1 && bits >> (y + 1) & 1 == 0 && y + 1 > LAVA_LEVEL)
             .collect()
+    }
+
+    /// The y of the `layer`th floor from the top (0 is the topmost): a
+    /// solid block that isn't bedrock with air or lava just above it, as
+    /// modern's `count_on_every_layer` counts them.
+    fn layer(&mut self, x: i32, z: i32, layer: u32) -> Option<i32> {
+        let bits = self.column(x, z);
+        let mut floors = bits & !(bits >> 1) & ((1u128 << (HEIGHT - BEDROCK_LAYERS)) - 1);
+        floors &= !((1u128 << BEDROCK_LAYERS) - 1);
+        let mut top = None;
+        for _ in 0..=layer {
+            let y = 127 - floors.leading_zeros() as i32;
+            if floors == 0 {
+                return None;
+            }
+            top = Some(y);
+            floors &= !(1 << y);
+        }
+        top
+    }
+
+    /// Air above the lava sea, where things stand and grow.
+    fn air(&mut self, x: i32, y: i32, z: i32) -> bool {
+        y <= ROOF_ROCK && self.open(x, y, z)
     }
 
     /// Solid blocks with open space just below, from the top down.
@@ -367,56 +478,64 @@ impl Nether {
         if bits >> y & 1 == 0 {
             return if y <= LAVA_LEVEL { LAVA } else { AIR };
         }
-        // How deep the block lies under the floor above it, and how far
-        // above the open space below it (0 = touching it).
-        let above = (bits >> (y + 1)).trailing_ones() as i32;
-        let below = if y == 0 {
-            HEIGHT
-        } else {
-            (!(bits << (127 - (y - 1)) as u32)).leading_zeros() as i32
-        };
-        self.surface(biome, x, y, z, above, below)
+        if y > ROOF_ROCK {
+            return NETHERRACK;
+        }
+        // The top block of a floor, or the bottom block of a ceiling.
+        let floor = bits >> (y + 1) & 1 == 0;
+        let ceiling = bits >> (y - 1) & 1 == 0;
+        if !floor && !ceiling {
+            return NETHERRACK;
+        }
+        self.surface(biome, (x, y, z), floor, ceiling)
     }
 
-    fn surface(&self, biome: Biome, x: i32, y: i32, z: i32, above: i32, below: i32) -> BlockState {
-        let floor = above < HEIGHT - 1 - y;
-        let nether = self;
-        let patch = |scale: f64| {
-            nether.patches.get([
-                x as f64 / scale + nether.shift[0],
+    /// Modern's Nether surface rules, after bedrock and the roof's
+    /// netherrack: by biome, on floors and under ceilings.
+    fn surface(
+        &self,
+        biome: Biome,
+        (x, y, z): (i32, i32, i32),
+        floor: bool,
+        ceiling: bool,
+    ) -> BlockState {
+        let at = |noise: &Perlin, scale: f64| {
+            noise.get([
+                x as f64 / scale + self.shift[0],
                 y as f64 / scale,
-                z as f64 / scale + nether.shift[2],
+                z as f64 / scale + self.shift[2],
             ])
         };
-        let under_lava = y + above < LAVA_LEVEL;
+        // Gravel patches on shores (modern `patch`, wavelength 32).
+        let gravel = floor && SHORE.contains(&y) && at(&self.patch, 32.0) >= -0.012;
+        // Soul sand against soul soil, basalt against blackstone (modern
+        // `nether_state_selector`, wavelength 16).
+        let first = |this: &Self| at(&this.selector, 16.0) >= 0.0;
         match biome {
-            Biome::CrimsonForest if floor && above == 0 && !under_lava => {
-                of(blocks::CRIMSON_NYLIUM)
+            Biome::BasaltDeltas if ceiling => upright(blocks::BASALT),
+            Biome::BasaltDeltas if gravel => GRAVEL,
+            Biome::BasaltDeltas => {
+                if first(self) {
+                    upright(blocks::BASALT)
+                } else {
+                    BLACKSTONE
+                }
             }
-            Biome::WarpedForest if floor && above == 0 && !under_lava => of(blocks::WARPED_NYLIUM),
-            Biome::SoulSandValley if (floor && above < 3) || below < 2 => {
-                if patch(12.0) > 0.0 {
+            Biome::SoulSandValley if gravel => GRAVEL,
+            Biome::SoulSandValley => {
+                if first(self) {
                     SOUL_SAND
                 } else {
                     SOUL_SOIL
                 }
             }
-            Biome::BasaltDeltas if (floor && above < 4) || below < 2 => {
-                if patch(8.0) > 0.25 {
-                    BLACKSTONE
-                } else {
-                    upright(blocks::BASALT)
-                }
-            }
-            Biome::NetherWastes
-                if floor
-                    && above < 3
-                    && (LAVA_LEVEL - 1..=LAVA_LEVEL + 3).contains(&(y + above)) =>
-            {
-                let shore = nether.shore.get([x as f64 / 16.0, z as f64 / 16.0]);
+            Biome::CrimsonForest if floor && y >= LAVA_LEVEL => of(blocks::CRIMSON_NYLIUM),
+            Biome::WarpedForest if floor && y >= LAVA_LEVEL => of(blocks::WARPED_NYLIUM),
+            Biome::NetherWastes if floor && SHORE.contains(&y) => {
+                let shore = self.shore.get([x as f64 / 16.0, z as f64 / 16.0]);
                 if shore > 0.25 {
                     SOUL_SAND
-                } else if shore < -0.3 {
+                } else if gravel && shore < -0.3 {
                     GRAVEL
                 } else {
                     NETHERRACK
@@ -456,6 +575,13 @@ impl Out<'_> {
             .then_some((lx as usize, y as usize, lz as usize))
     }
 
+    /// The block at (x, y, z) as the features before left it, if it's in
+    /// this chunk.
+    fn get(&self, x: i32, y: i32, z: i32) -> Option<BlockState> {
+        self.local(x, y, z)
+            .map(|(lx, ly, lz)| self.chunk.get(lx, ly, lz))
+    }
+
     /// Whether a feature `reach` blocks around (x, z) could touch the chunk.
     fn near(&self, x: i32, z: i32, reach: i32) -> bool {
         let (x0, z0) = self.chunk.pos.min_block();
@@ -489,15 +615,21 @@ impl Out<'_> {
 
 type Feature = fn(&mut Land, &mut Out, ChunkPos, &mut Rng);
 
+/// The features that make the basalt columns, and the one for pillars.
+pub const COLUMN_SALTS: [u64; 2] = [0x0105, 0x0115];
+pub const PILLAR_SALT: u64 = 0x0106;
+
 /// Every feature in the order they're placed, each with its salt.
 const FEATURES: &[(u64, Feature)] = &[
-    (0x0101, blobs),
+    (0x0101, basalt::basalt_blobs),
+    (0x0111, basalt::blackstone_blobs),
     (0x0102, ores),
     (0x010C, debris),
     (0x0103, springs),
-    (0x0104, deltas),
-    (0x0105, columns),
-    (0x0106, pillars),
+    (0x0104, basalt::deltas),
+    (0x0105, basalt::small_columns),
+    (0x0115, basalt::large_columns),
+    (0x0106, basalt::pillars),
     (0x0107, glowstone),
     (0x0108, fires),
     (0x0109, ceiling_vines),
@@ -562,25 +694,6 @@ fn ball(
                 }
             }
         }
-    }
-}
-
-/// Basalt and blackstone blobs through the deltas' netherrack (modern
-/// `basalt_blobs` and `blackstone_blobs`).
-fn blobs(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
-    for n in 0..16 {
-        let (x, z) = spot(rng, origin);
-        let y = between(rng, 2, HEIGHT - 3);
-        let radius = 3.0 + rng.next_f64() * 3.0;
-        if !out.near(x, z, 7) || land.biome(x, z) != Biome::BasaltDeltas {
-            continue;
-        }
-        let block = if n < 12 {
-            upright(blocks::BASALT)
-        } else {
-            BLACKSTONE
-        };
-        ball(out, rng, (x, y, z), radius, is_netherrack, block);
     }
 }
 
@@ -683,108 +796,6 @@ fn springs(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
         let open_ok = n < if deltas { 8 } else { 4 } && open == 1 && land.solid(x, y + 1, z);
         if open == 0 || open_ok {
             out.replace(x, y, z, is_ground, LAVA);
-        }
-    }
-}
-
-/// Lava pools rimmed with magma on the deltas' floors (modern `delta`).
-fn deltas(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
-    for _ in 0..6 {
-        let (x, z) = spot(rng, origin);
-        let radius = between(rng, 2, 5);
-        let rim = between(rng, 0, 1);
-        if !out.near(x, z, radius + rim) || land.biome(x, z) != Biome::BasaltDeltas {
-            continue;
-        }
-        let Some(&y) = land.floors(x, z).first() else {
-            continue;
-        };
-        let reach = radius + rim;
-        for dz in -reach..=reach {
-            for dx in -reach..=reach {
-                let (bx, bz) = (x + dx, z + dz);
-                let d = dx * dx + dz * dz;
-                if d > reach * reach || !land.solid(bx, y, bz) || land.solid(bx, y + 1, bz) {
-                    continue;
-                }
-                // Lava needs ground under it and on every side to stay put.
-                let held = land.solid(bx, y - 1, bz)
-                    && [(1, 0), (-1, 0), (0, 1), (0, -1)]
-                        .iter()
-                        .all(|(sx, sz)| land.solid(bx + sx, y, bz + sz));
-                if d <= radius * radius && held {
-                    out.set(bx, y, bz, LAVA);
-                } else if rim > 0 {
-                    out.set(bx, y, bz, MAGMA);
-                }
-            }
-        }
-    }
-}
-
-/// Clusters of basalt columns rising from the deltas' floors and lava
-/// (modern `small_basalt_columns` and `large_basalt_columns`).
-fn columns(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
-    for n in 0..5 {
-        let (x, z) = spot(rng, origin);
-        let large = n < 2;
-        let (reach, height) = if large {
-            (between(rng, 2, 3), between(rng, 5, 10))
-        } else {
-            (between(rng, 0, 1), between(rng, 1, 4))
-        };
-        if !out.near(x, z, reach) || land.biome(x, z) != Biome::BasaltDeltas {
-            continue;
-        }
-        let base = land.floors(x, z).first().copied().unwrap_or(LAVA_LEVEL);
-        let base = base.max(LAVA_LEVEL);
-        let seed = rng.next_u64();
-        for dz in -reach..=reach {
-            for dx in -reach..=reach {
-                let (bx, bz) = (x + dx, z + dz);
-                let mut col = Rng::for_chunk(seed, bx, bz, 0);
-                let falloff = dx.abs() + dz.abs();
-                let h = height - falloff * height / (reach * 2 + 2) - col.below(2) as i32;
-                if h <= 0 || col.below(4) == 0 && falloff > 0 {
-                    continue;
-                }
-                for y in base + 1..=(base + h).min(HEIGHT - 6) {
-                    if land.solid(bx, y, bz) {
-                        break;
-                    }
-                    out.set(bx, y, bz, upright(blocks::BASALT));
-                }
-            }
-        }
-    }
-}
-
-/// Basalt pillars from floor to ceiling in the soul sand valleys (modern
-/// `basalt_pillar`).
-fn pillars(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
-    for _ in 0..3 {
-        let (x, z) = spot(rng, origin);
-        if !out.near(x, z, 1) || land.biome(x, z) != Biome::SoulSandValley {
-            continue;
-        }
-        let ceilings = land.ceilings(x, z);
-        if ceilings.is_empty() {
-            continue;
-        }
-        let top = ceilings[rng.below(ceilings.len() as u32) as usize] - 1;
-        let seed = rng.next_u64();
-        let mut y = top;
-        while y > LAVA_LEVEL && !land.solid(x, y, z) {
-            out.set(x, y, z, upright(blocks::BASALT));
-            // A few blocks beside the pillar, near its ends.
-            for (i, (dx, dz)) in [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().enumerate() {
-                if Rng::for_chunk(seed, x, z, (y * 4 + i as i32) as u64).below(6) == 0
-                    && !land.solid(x + dx, y, z + dz)
-                {
-                    out.set(x + dx, y, z + dz, upright(blocks::BASALT));
-                }
-            }
-            y -= 1;
         }
     }
 }
@@ -1257,22 +1268,168 @@ mod tests {
     }
 
     #[test]
-    fn every_nether_biome_takes_a_fair_share() {
+    fn different_seeds_make_different_biome_grids() {
+        let (a, b) = (Nether::new(1), Nether::new(2));
+        let differ = (0..64)
+            .flat_map(|i| (0..64).map(move |j| (i * 256 - 8192, j * 256 - 8192)))
+            .filter(|&(x, z)| a.biome(x, z) != b.biome(x, z))
+            .count();
+        assert!(differ > 500, "{differ}");
+    }
+
+    #[test]
+    fn biomes_come_in_big_blobs_with_the_wastes_largest() {
+        // 4096 × 4096 quart columns: 16384 blocks across.
+        let map = map::BiomeMap::sample(20111118, 4096);
+        let stats = map::stats(&map);
+        eprint!("{}", map::summary(&stats));
+        let share = map::shares(&stats);
+        for biome in Biome::NETHER {
+            assert!(share[&biome] > 0.0, "no {biome:?}");
+            // The patch a typical block lies in is at least 128 × 128.
+            assert!(stats.typical_patch(biome) >= 128 * 128, "{biome:?}");
+        }
+        assert!(
+            Biome::NETHER
+                .iter()
+                .all(|b| share[&Biome::NetherWastes] >= share[b])
+        );
+        // No confetti: next to nothing of the land is in patches under
+        // 32 × 32 (counting patches instead would count the odd one-quart
+        // sliver along a border, which nearest-point biomes always leave).
+        assert!(stats.small_area_share(32 * 32) < 0.05);
+        assert!(stats.small_share(32 * 32) < 0.5);
+    }
+
+    /// Chunks spread over the Nether.
+    fn spread() -> impl Iterator<Item = ChunkPos> {
+        (0..200).map(|i| ChunkPos::new(i % 14 * 37 - 250, i / 14 * 41 - 250))
+    }
+
+    #[test]
+    fn the_shape_is_bedrock_lava_and_air_between_with_no_water() {
         let nether = Nether::new(20111118);
-        let mut share: HashMap<Biome, usize> = HashMap::new();
-        let mut total = 0;
-        for z in (-4096..4096).step_by(32) {
-            for x in (-4096..4096).step_by(32) {
-                *share.entry(nether.biome(x, z)).or_default() += 1;
-                total += 1;
+        for pos in spread() {
+            let chunk = nether.generate(pos);
+            for z in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    assert!(chunk.get(x, 0, z).is(blocks::BEDROCK));
+                    assert!(chunk.get(x, 127, z).is(blocks::BEDROCK));
+                    for y in 128..256 {
+                        assert_eq!(chunk.get(x, y, z), AIR, "above the roof");
+                    }
+                    for y in 1..=LAVA_LEVEL as usize {
+                        let block = chunk.get(x, y, z);
+                        assert!(block != AIR, "air at y {y} under the lava level");
+                    }
+                    for y in 0..128 {
+                        assert!(!chunk.get(x, y, z).is(blocks::WATER));
+                    }
+                }
             }
         }
-        for biome in Biome::NETHER {
-            let s = share.get(&biome).copied().unwrap_or(0) as f64 / total as f64;
-            eprintln!("{biome:?}: {:.1}%", s * 100.0);
-            assert!(s > 0.06, "{biome:?} only {s}");
+    }
+
+    #[test]
+    fn features_never_eat_the_bedrock() {
+        let nether = Nether::new(20111118);
+        for pos in spread().take(60) {
+            let bare = nether.generate_with(pos, &[], false);
+            let full = nether.generate(pos);
+            for z in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    for y in 0..128 {
+                        if bare.get(x, y, z).is(blocks::BEDROCK) {
+                            assert!(full.get(x, y, z).is(blocks::BEDROCK), "{x} {y} {z}");
+                        }
+                    }
+                }
+            }
         }
-        assert!(share.keys().all(|b| b.is_nether()));
+    }
+
+    #[test]
+    fn basalt_stays_in_its_biome_and_inside_the_roof() {
+        let nether = Nether::new(20111118);
+        let new_basalt = |pos: ChunkPos, salts: &[u64]| {
+            let bare = nether.generate_with(pos, &[], false);
+            let with = nether.generate_with(pos, salts, false);
+            let mut found = Vec::new();
+            for z in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    for y in 0..128 {
+                        if with.get(x, y, z).is(blocks::BASALT)
+                            && !bare.get(x, y, z).is(blocks::BASALT)
+                        {
+                            found.push(y);
+                        }
+                    }
+                }
+            }
+            found
+        };
+        // No biome within 48 blocks of the chunk means no placements.
+        let far_from = |pos: ChunkPos, biome: Biome| {
+            let (x0, z0) = pos.min_block();
+            (-48..64).step_by(4).all(|dx| {
+                (-48..64)
+                    .step_by(4)
+                    .all(|dz| nether.biome(x0 + dx, z0 + dz) != biome)
+            })
+        };
+        let (mut no_deltas, mut no_valley, mut with_both) = (0, 0, 0);
+        for pos in spread() {
+            if far_from(pos, Biome::BasaltDeltas) {
+                no_deltas += 1;
+                assert!(
+                    new_basalt(pos, &COLUMN_SALTS).is_empty(),
+                    "columns at {pos:?}"
+                );
+            }
+            if far_from(pos, Biome::SoulSandValley) {
+                no_valley += 1;
+                assert!(
+                    new_basalt(pos, &[PILLAR_SALT]).is_empty(),
+                    "pillars at {pos:?}"
+                );
+            }
+            // Placed basalt never reaches the roof's skin or the bedrock.
+            for y in new_basalt(pos, &[COLUMN_SALTS[0], COLUMN_SALTS[1], PILLAR_SALT]) {
+                with_both += 1;
+                assert!(
+                    (BEDROCK_LAYERS..HEIGHT - BEDROCK_LAYERS).contains(&(y as i32)),
+                    "basalt at y {y}"
+                );
+            }
+        }
+        eprintln!(
+            "{no_deltas} chunks far from deltas, {no_valley} from valleys, {with_both} blocks"
+        );
+        assert!(no_deltas > 10 && no_valley > 10 && with_both > 100);
+    }
+
+    #[test]
+    fn columns_and_pillars_are_the_right_size_in_a_64_by_64_chunk_sample() {
+        let nether = Nether::new(20111118);
+        let stats = map::sample_chunks(&nether, 32);
+        eprint!("{}", map::sample_summary(&stats));
+        assert_eq!(stats.chunks, 64 * 64);
+        let tallest = |v: &[u8]| v.iter().copied().max().unwrap_or(0);
+        assert!(tallest(&stats.columns) > 0, "columns grew");
+        assert!(
+            tallest(&stats.columns) <= 10,
+            "a column of {}",
+            tallest(&stats.columns)
+        );
+        assert!(!stats.pillars.is_empty(), "pillars hung");
+        assert!(
+            stats.lowest_pillar >= 32,
+            "a pillar down to {}",
+            stats.lowest_pillar
+        );
+        assert!(stats.median_pillar() < 60);
+        assert!(stats.median_cavern() < 50);
+        assert!(stats.highest < HEIGHT - 1);
     }
 
     /// A chunk of `biome` near the origin of seed 20111118.
@@ -1313,9 +1470,9 @@ mod tests {
     fn fungi_glowstone_and_ores_turn_up() {
         let nether = Nether::new(20111118);
         let mut totals: HashMap<&str, usize> = HashMap::new();
-        for cz in -6..6 {
-            for cx in -6..6 {
-                let chunk = nether.generate(ChunkPos::new(cx * 3, cz * 3));
+        {
+            for pos in spread() {
+                let chunk = nether.generate(pos);
                 for (name, id) in [
                     ("glowstone", blocks::GLOWSTONE),
                     ("quartz", blocks::NETHER_QUARTZ_ORE),
@@ -1337,7 +1494,7 @@ mod tests {
             assert!(*n > 0, "no {name}");
         }
         // About 16 quartz veins a chunk.
-        assert!(totals["quartz"] > 144 * 30);
+        assert!(totals["quartz"] > 200 * 30);
     }
 
     #[test]

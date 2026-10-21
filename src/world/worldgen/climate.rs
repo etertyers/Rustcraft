@@ -127,7 +127,7 @@ impl Octaves {
 
 /// Vanilla `NormalNoise`: two `Octaves` (the second at 1.0181… the scale)
 /// summed and scaled by `(1/6) / expectedDeviation`.
-struct NormalNoise {
+pub struct NormalNoise {
     first: Octaves,
     second: Octaves,
     factor: f64,
@@ -137,7 +137,7 @@ struct NormalNoise {
 const INPUT_FACTOR: f64 = 1.018_126_888_217_522_7;
 
 impl NormalNoise {
-    fn new(seed: u64, index: u64, first: i32, amplitudes: &[f64]) -> Self {
+    pub fn new(seed: u64, index: u64, first: i32, amplitudes: &[f64]) -> Self {
         let lo = amplitudes.iter().position(|&a| a != 0.0).unwrap_or(0);
         let hi = amplitudes.iter().rposition(|&a| a != 0.0).unwrap_or(0);
         let span = (hi - lo) as f64;
@@ -149,7 +149,7 @@ impl NormalNoise {
         }
     }
 
-    fn get(&self, x: f64, z: f64) -> f64 {
+    pub fn get(&self, x: f64, z: f64) -> f64 {
         (self.first.get(x, z) + self.second.get(x * INPUT_FACTOR, z * INPUT_FACTOR)) * self.factor
     }
 }
@@ -222,6 +222,47 @@ impl ClimateNoise {
             tx,
             tz,
         )
+    }
+}
+
+/// Temperature and humidity alone, for a dimension with a seed of its own
+/// (the Nether): vanilla's Overworld settings for both, sampled at
+/// quarter-block coordinates after the same small shift, with no
+/// `BIOME_SCALE` and no blending.
+pub struct TemperatureHumidity {
+    /// How far the shift noise moves a sample, in quarter-blocks (the
+    /// Overworld's is 4).
+    shift: f64,
+    temperature: NormalNoise,
+    humidity: NormalNoise,
+    shift_x: NormalNoise,
+    shift_z: NormalNoise,
+}
+
+impl TemperatureHumidity {
+    pub fn new(seed: u64, shift: f64) -> Self {
+        Self {
+            shift,
+            temperature: NormalNoise::new(seed, 101, -10, &[1.5, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            humidity: NormalNoise::new(seed, 102, -8, &[1.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            shift_x: NormalNoise::new(seed, 106, -3, &[1.0, 1.0, 1.0, 0.0]),
+            shift_z: NormalNoise::new(seed, 107, -3, &[1.0, 1.0, 1.0, 0.0]),
+        }
+    }
+
+    /// (temperature, humidity) exactly at block (x, z).
+    pub fn sample(&self, x: i32, z: i32) -> (f64, f64) {
+        let (qx, qz) = (x as f64 * 0.25, z as f64 * 0.25);
+        let (sx, sz) = (
+            qx + self.shift_x.get(qx, qz) * self.shift,
+            qz + self.shift_z.get(qx, qz) * self.shift,
+        );
+        (self.temperature.get(sx, sz), self.humidity.get(sx, sz))
+    }
+
+    /// The pair at the corner of the quart holding (x, z).
+    pub fn quart(&self, x: i32, z: i32) -> (f64, f64) {
+        self.sample(x.div_euclid(GRID) * GRID, z.div_euclid(GRID) * GRID)
     }
 }
 

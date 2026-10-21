@@ -377,9 +377,8 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 
 `world/worldgen/nether.rs`. The Nether is y 0–127 (air above the roof), with its own noises mixed from the world seed.
 
-- **Shape**: 3D noise (`Fbm<Perlin>`, 4 octaves, 56 blocks across and 34 up, −0.08 toward open) at the corners of 4 × 8 × 4 cells, blended in between. Over the bottom 24 blocks the density slides toward 2.5 and over the top 24 toward 0.9375 (modern `slideNetherLike`), so floors and roofs close the caverns. Bedrock always at y 0 and 127, and at y 1–4 / 123–126 with chance 4/5 … 1/5.
+- **Shape, caves, biomes, surfaces and basalt**: see `docs/nether-gen.md` (blended noise, the cave carver, Overworld climate noises, modern's surface rules). Bedrock always at y 0 and 127, and at y 1–4 / 123–126 with chance 4/5 … 1/5.
 - **Lava sea**: open space at y 31 and below is lava.
-- **Biomes**: modern's Nether multi-noise points on temperature and humidity (offsets for warped forest and basalt deltas), from 2-octave noise 260 blocks across, picked at the middle of each 4 × 4 quart.
 - **Surfaces** (bare terrain only, so every chunk agrees): crimson and warped nylium on forest floors above the lava; soul sand or soul soil (patch noise) three deep on valley floors and two under their ceilings; basalt or blackstone four deep on delta floors and two under ceilings; soul sand and gravel patches on the wastes' shores (y 30–34); netherrack elsewhere.
 - **Features**, per chunk, in order (each chunk replays its eight neighbors' and keeps what lands in it; features read only the bare terrain, except vines, which stay in one column and stop at anything already there):
 
