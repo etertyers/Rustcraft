@@ -6,6 +6,7 @@ pub mod app;
 pub mod assets;
 pub mod bench;
 pub mod config;
+pub mod credits;
 pub mod entity;
 pub mod figure;
 pub mod game;

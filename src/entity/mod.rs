@@ -2,7 +2,11 @@
 
 pub mod ai;
 pub mod arrow;
+pub mod breath;
+pub mod crystal;
+pub mod dragon;
 pub mod effects;
+pub mod eye;
 pub mod falling;
 pub mod fireball;
 pub mod item;
