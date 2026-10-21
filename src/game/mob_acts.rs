@@ -24,6 +24,8 @@ use crate::{
     world::block::BlockState,
 };
 
+/// A wither skeleton's blow withers for this long.
+const WITHER_TICKS: u32 = 200;
 /// Arrows from skeletons fly at this share of a full bow's speed (modern
 /// 1.6 blocks a tick against a bow's 3).
 const MOB_ARROW_POWER: f32 = 1.6 / 3.0;
@@ -146,6 +148,15 @@ impl Game {
         match self.hurt_player(strike) {
             Outcome::Hurt { fresh: true } => {
                 knock_back(&mut self.body, mob.feet());
+                // A wither skeleton's blow withers (modern: 10 s).
+                if self.mob_defs.get(mob.kind).name == "wither_skeleton" {
+                    let wither = crate::player::effects::Active::new(
+                        crate::player::effects::Effect::Wither,
+                        0,
+                        WITHER_TICKS,
+                    );
+                    self.stats.apply(wither, false, true);
+                }
                 if toss {
                     let lift = 0.25 + self.rng.next_f64() * 0.25;
                     self.body.velocity.y = self.body.velocity.y.max(0.0) + lift;

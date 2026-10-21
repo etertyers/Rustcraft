@@ -18,7 +18,8 @@ pub enum Kind {
 /// The kind of mob called `name`.
 pub fn kind_of(name: &str) -> Kind {
     match name {
-        "zombie" | "husk" | "drowned" | "skeleton" | "stray" | "phantom" => Kind::Undead,
+        "zombie" | "husk" | "drowned" | "skeleton" | "stray" | "phantom" | "wither_skeleton"
+        | "zombified_piglin" => Kind::Undead,
         "spider" | "cave_spider" | "bee" | "silverfish" | "endermite" => Kind::Arthropod,
         _ => Kind::Other,
     }

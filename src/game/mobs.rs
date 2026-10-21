@@ -64,6 +64,9 @@ const DESPAWN_CHANCE: f32 = 1.0 / 800.0;
 const PUSH_REACH: f64 = 0.2;
 /// Strength of that push.
 const PUSH: f64 = 0.05;
+/// An invisible player is seen only this close (modern scales follow
+/// range by 0.07).
+const INVISIBLE_SIGHT: f64 = 2.8;
 /// A mob looks for the player only this close.
 const SIGHT_RANGE: f64 = 40.0;
 /// Mobs farther than this from the player aren't drawn or thought about
@@ -255,7 +258,17 @@ impl Game {
                     | Ai::Strider
                     | Ai::Fox { .. }
             );
-            let near_player = eye.distance(player_eye) < SIGHT_RANGE;
+            // An invisible player is noticed only up close.
+            let sight = if self
+                .stats
+                .effects
+                .has(crate::player::effects::Effect::Invisibility)
+            {
+                INVISIBLE_SIGHT
+            } else {
+                SIGHT_RANGE
+            };
+            let near_player = eye.distance(player_eye) < sight;
             let visible = attackable && hunts && near_player && self.sees(eye, player_eye);
             let stares = matches!(def.ai, Ai::Enderman { .. }) && {
                 let to = eye - player_eye;
@@ -337,6 +350,7 @@ impl Game {
             if !mob.body.free_flight {
                 mob.body.may_fly = false;
             }
+            super::effects_move(&mut mob.body, &mob.stats.effects);
             if def.walks_on_lava {
                 mob.tick(&intent.input, &LavaFloor(&collider), eyes);
             } else {

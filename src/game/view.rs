@@ -404,6 +404,10 @@ impl Game {
         self.view.mode = mode;
     }
 
+    pub fn view_mode(&self) -> ViewMode {
+        self.view.mode
+    }
+
     /// Starts a swing and runs `ticks` of it (for `--shot` scenes).
     pub fn swing_for_shot(&mut self, ticks: u32) {
         self.view.swing();

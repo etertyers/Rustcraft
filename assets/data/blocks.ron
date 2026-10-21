@@ -295,7 +295,7 @@
             ("age=3", (textures: (all: "nether_wart_stage2"))),
         ]),
     (name: "enchanting_table", hardness: 5.0, activate: Enchanting, tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: EnchantingTable, textures: (top: "enchanting_table_top", bottom: "enchanting_table_bottom", side: "enchanting_table_side")),
-    (name: "brewing_stand", hardness: 0.5, props: [HasBottle0, HasBottle1, HasBottle2], item_texture: "brewing_stand", tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: BrewingStand, layer: Cutout, light: 1, textures: (all: "brewing_stand")),
+    (name: "brewing_stand", hardness: 0.5, props: [HasBottle0, HasBottle1, HasBottle2], activate: Brewing, item_texture: "brewing_stand", tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: BrewingStand, layer: Cutout, light: 1, textures: (all: "brewing_stand")),
     (name: "cauldron", hardness: 2.0, item_texture: "cauldron", tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Cauldron, layer: Cutout, textures: (top: "cauldron_top", bottom: "cauldron_bottom", side: "cauldron_side")),
     (name: "water_cauldron", hardness: 2.0, props: [LevelCauldron], item: false, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: "cauldron")]), shape: Cauldron, layer: Cutout, textures: (top: "cauldron_top", bottom: "cauldron_bottom", side: "cauldron_side")),
     // Drawn with a special starfield effect in Minecraft (entity/end_portal.png); not planned yet.

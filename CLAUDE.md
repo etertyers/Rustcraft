@@ -114,6 +114,7 @@ src/
   world/{dimension,portal}.rs, world/worldgen/nether.rs   # dimensions, portal frames, the Nether's terrain, biomes and features
   game/{dimensions,portals,nether_mobs}.rs, entity/fireball.rs   # switching dimensions, lighting and travelling through portals, ghasts' and blazes' fireballs, bartering, striders
   world/structure/{nether,fortress,bastion}.rs, inventory/smithing.rs   # the Nether's structures (placement, fortresses, bastions and its ruined portals), the netherite upgrade
+  player/effects.rs, inventory/{potion,brewing}.rs, entity/thrown.rs, game/potions.rs   # status effects, potions and the brewing tree, the brewing stand, splash potions, drinking/cauldrons/food effects
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
@@ -402,7 +403,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Items: blaze rods and powder, nether wart, wither skeleton skulls, gold, and netherite (ancient debris, smithing table upgrade with templates).
 - **Done when:** you can find a fortress, kill blazes for blaze rods, and upgrade a diamond tool to netherite.
 
-### - [ ] M26 — Brewing
+### - [x] M26 — Brewing
 - Brewing stand with blaze powder fuel, water bottles, cauldrons, and the modern potion tree: awkward base, then healing, regeneration, strength, swiftness, fire resistance, night vision, invisibility, water breathing, leaping, slow falling, poison, weakness, slowness, harming, and turtle master if turtles exist.
 - Redstone extends duration, glowstone raises potency, and gunpowder makes splash potions (lingering optional).
 - Status effect system with HUD icons, timers and particles, also used by golden apples and food.

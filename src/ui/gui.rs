@@ -56,12 +56,16 @@ pub struct GuiTextures {
     pub enchanting: TextureHandle,
     pub anvil: TextureHandle,
     pub grindstone: TextureHandle,
+    pub brewing: TextureHandle,
     /// Falls back to the anvil's sheet: Kenzo's 1.12 GUI has no smithing
     /// table, so the slots then sit over the wrong outlines.
     pub smithing: TextureHandle,
     pub creative: TextureHandle,
     pub tabs: TextureHandle,
     pub icons: TextureHandle,
+    /// Each status effect's icon, in `Effect::ALL`'s order, if any layer
+    /// has one (M26).
+    pub effects: Vec<Option<TextureHandle>>,
 }
 
 /// GUI images are 256×256 sheets.
@@ -149,16 +153,36 @@ impl GuiTextures {
             enchanting: sheet("gui/container/enchanting_table", &[])?,
             anvil: sheet("gui/container/anvil", &[])?,
             grindstone: sheet("gui/container/grindstone", &[])?,
+            brewing: sheet("gui/container/brewing_stand", &[])?,
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
             icons: sheet("gui/icons", ICONS)?,
+            effects: crate::player::effects::Effect::ALL
+                .iter()
+                .map(|&effect| effect_icon(res, effect).map(|image| load(effect.id(), &image)))
+                .collect(),
         };
         super::glint::install(ctx, atlas, res.image(crate::render::GLINT_TEXTURE));
         log::info!("GUI sheets (px wide): {}", widths.borrow().join(", "));
         Ok(textures)
     }
+}
+
+/// A status effect's 18 × 18 icon: modern's `mob_effect/<effect>`, or its
+/// cell of the old inventory sheet's grid at (0, 198).
+fn effect_icon(res: &Resources, effect: crate::player::effects::Effect) -> Option<RgbaImage> {
+    if let Some(image) = res.image(&format!("mob_effect/{}", effect.id())) {
+        return Some(image);
+    }
+    let (column, row) = effect.legacy_icon()?;
+    let sheet = res.image("gui/container/inventory")?;
+    let scale = (sheet.width() / 256).max(1);
+    let (x, y) = ((column * 18) * scale, (198 + row * 18) * scale);
+    let size = 18 * scale;
+    (x + size <= sheet.width() && y + size <= sheet.height())
+        .then(|| image::imageops::crop_imm(&sheet, x, y, size, size).to_image())
 }
 
 /// One of the old 256×256 GUI sheets, built up from the bottom layer:

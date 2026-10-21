@@ -293,6 +293,26 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m26-brewing",
+        about: "a brewing stand mid-brew: three awkward potions becoming fire resistance with magma cream, blaze powder burning",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 2.5], 0.0, -0.4)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: brewing_scene,
+    },
+    Shot {
+        name: "m26-effects",
+        about: "fire resistance, swiftness, strength and night vision on the HUD with their timers, standing in lava unhurt",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, -0.3)),
+        time: Some(18000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: effects_scene,
+    },
+    Shot {
         name: "m25-fortress",
         about: "a Nether fortress on seed 20111118: bridges on pillars into the lava, a blaze throne, the castle",
         world: Some(WorldKind::Nether { seed: 20111118 }),
@@ -446,6 +466,58 @@ fn third_sneak(game: &mut Game) {
     hold_sword(game);
     game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
     game.sneak_for_shot();
+}
+
+/// A brewing stand by a cauldron, opened mid-brew.
+fn brewing_scene(game: &mut Game) {
+    use crate::inventory::{brewing, items, potion, stack::ItemStack};
+    let stand = at(0, 64, 0);
+    game.set_blocks(&[
+        (stand, BlockState::of(BREWING_STAND)),
+        (
+            at(1, 64, 0),
+            BlockState::of(WATER_CAULDRON).with_number(Prop::LevelCauldron, 2),
+        ),
+    ]);
+    game.open_brewing(stand);
+    if let Some(crate::world::block_entity::BlockEntity::BrewingStand(s)) =
+        game.chunks.block_entity_mut(stand)
+    {
+        for i in brewing::BOTTLES {
+            s.slots[i] = Some(potion::stack(items::POTION, "awkward"));
+        }
+        s.slots[brewing::INGREDIENT] = Some(ItemStack::new(items::MAGMA_CREAM, 3));
+        s.slots[brewing::FUEL] = Some(ItemStack::new(items::BLAZE_POWDER, 4));
+    }
+    game.inventory
+        .set(0, Some(potion::stack(items::POTION, "fire_resistance")));
+    game.inventory
+        .set(1, Some(potion::stack(items::SPLASH_POTION, "healing")));
+    game.inventory
+        .set(2, Some(potion::stack(items::POTION, "water")));
+    game.run_ticks(180);
+}
+
+/// Four effects running, in a pool of lava.
+fn effects_scene(game: &mut Game) {
+    use crate::player::effects::{Active, Effect};
+    for (effect, amplifier, ticks) in [
+        (Effect::FireResistance, 0, 3600),
+        (Effect::Speed, 1, 1800),
+        (Effect::Strength, 0, 2400),
+        (Effect::NightVision, 0, 9600),
+    ] {
+        game.stats
+            .apply(Active::new(effect, amplifier, ticks), false, true);
+    }
+    let mut lava = Vec::new();
+    for x in -2..=2 {
+        for z in -4..=0 {
+            lava.push((at(x, 63, z), BlockState::of(LAVA)));
+        }
+    }
+    game.set_blocks(&lava);
+    game.run_ticks(40);
 }
 
 /// The fortresses' and bastions' mobs.

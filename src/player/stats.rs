@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::effects::{Active, Effect, Effects};
+
 pub const MAX_HEALTH: f32 = 20.0;
 pub const MAX_FOOD: i32 = 20;
 /// Saturation of a fresh player (1.0.0).
@@ -71,6 +73,10 @@ pub enum DamageSource {
     HotFloor,
     /// A ghast's fireball (M24).
     Fireball,
+    /// Poison and harming (M26).
+    Magic,
+    /// The Wither effect (M26).
+    Wither,
 }
 
 impl DamageSource {
@@ -89,6 +95,8 @@ impl DamageSource {
             DamageSource::Anvil => "was squashed by a falling anvil",
             DamageSource::HotFloor => "discovered the floor was lava",
             DamageSource::Fireball => "was fireballed by Ghast",
+            DamageSource::Magic => "was killed by magic",
+            DamageSource::Wither => "withered away",
         }
     }
 
@@ -106,6 +114,8 @@ impl DamageSource {
             DamageSource::Fall
             | DamageSource::Drowning
             | DamageSource::Fire
+            | DamageSource::Magic
+            | DamageSource::Wither
             | DamageSource::Starving => 0.0,
         }
     }
@@ -161,6 +171,12 @@ pub struct Stats {
     /// enchants something (modern `EnchantmentSeed`).
     #[serde(default)]
     pub enchant_seed: u32,
+    /// Status effects (added in M26).
+    #[serde(default)]
+    pub effects: Effects,
+    /// Extra health from Absorption, used up before health (M26).
+    #[serde(default)]
+    pub absorption: f32,
 }
 
 impl Default for Stats {
@@ -180,6 +196,8 @@ impl Default for Stats {
             awake: 0,
             experience: Default::default(),
             enchant_seed: 0,
+            effects: Effects::default(),
+            absorption: 0.0,
         }
     }
 }
@@ -231,6 +249,23 @@ impl Stats {
         if self.is_dead() || amount <= 0.0 {
             return false;
         }
+        let fiery = matches!(
+            source,
+            DamageSource::Lava | DamageSource::InFire | DamageSource::Fire | DamageSource::HotFloor
+        );
+        if fiery && self.effects.has(Effect::FireResistance) {
+            return false;
+        }
+        // Resistance takes its share, then absorption soaks up the rest
+        // first (modern `getDamageAfterMagicAbsorb`, `actuallyHurt`).
+        let mut amount = amount * (1.0 - self.effects.resistance());
+        let soaked = amount.min(self.absorption);
+        self.absorption -= soaked;
+        amount -= soaked;
+        if amount <= 0.0 {
+            self.hurt_cooldown = HURT_COOLDOWN;
+            return true;
+        }
         let fresh = if self.hurt_cooldown > HURT_COOLDOWN / 2 {
             if amount <= self.last_damage {
                 return false;
@@ -252,8 +287,10 @@ impl Stats {
     /// creative: nothing hurts. Mobs use this too; hunger is `tick_food`.
     pub fn tick(&mut self, around: &Surroundings, vulnerable: bool) {
         self.hurt_cooldown = self.hurt_cooldown.saturating_sub(1);
+        self.tick_effects(vulnerable);
         self.tick_fall(around, vulnerable);
-        if around.eyes_in_water && vulnerable {
+        let breathes = self.effects.has(Effect::WaterBreathing);
+        if around.eyes_in_water && vulnerable && !breathes {
             self.air -= 1;
             if self.air <= DROWNING_AIR {
                 self.air = 0;
@@ -288,16 +325,70 @@ impl Stats {
         }
     }
 
+    /// Status effects' tick: regeneration heals, poison hurts (never below
+    /// a heart), wither hurts, hunger tires; and every effect runs down.
+    fn tick_effects(&mut self, vulnerable: bool) {
+        if self.effects.is_empty() {
+            return;
+        }
+        let tick = self.effects.tick();
+        if tick.heal > 0.0 {
+            self.heal(tick.heal);
+        }
+        if vulnerable && tick.poison > 0.0 && self.health > 1.0 {
+            self.health = (self.health - tick.poison).max(1.0);
+            self.last_source = Some(DamageSource::Magic);
+        }
+        if vulnerable && tick.wither > 0.0 {
+            self.health -= tick.wither;
+            self.last_source = Some(DamageSource::Wither);
+        }
+        self.add_exhaustion(tick.exhaustion);
+        if !self.effects.has(Effect::Absorption) {
+            self.absorption = 0.0;
+        }
+    }
+
+    /// Gives an effect: an instant one acts now (healing heals 4 a level,
+    /// harming hurts 6, the other way round for the `undead`), the rest
+    /// start (Absorption filling 4 a level).
+    pub fn apply(&mut self, effect: Active, undead: bool, vulnerable: bool) {
+        let level = f32::from(1u8 << effect.amplifier.min(4));
+        let heals = match effect.effect {
+            Effect::InstantHealth => !undead,
+            Effect::InstantDamage => undead,
+            _ => {
+                if effect.effect == Effect::Absorption {
+                    self.absorption = self
+                        .absorption
+                        .max(4.0 * (f32::from(effect.amplifier) + 1.0));
+                }
+                self.effects.add(effect);
+                return;
+            }
+        };
+        if heals {
+            self.heal(4.0 * level);
+        } else if vulnerable {
+            self.hurt_cooldown = 0;
+            self.damage(6.0 * level, DamageSource::Magic);
+        }
+    }
+
     /// 1.0.0's `updateFallState`: a fall hurts on landing; water, ladders,
-    /// slime and flight cancel it, lava halves it.
+    /// slime and flight cancel it, lava halves it. Jump Boost forgives a
+    /// block a level and Slow Falling the whole fall.
     fn tick_fall(&mut self, around: &Surroundings, vulnerable: bool) {
+        if self.effects.has(Effect::SlowFalling) {
+            self.fall_distance = 0.0;
+        }
         if around.in_water || around.flying || around.no_fall {
             self.fall_distance = 0.0;
         } else if around.in_lava {
             self.fall_distance *= 0.5;
         }
         if around.on_ground {
-            let damage = (self.fall_distance - SAFE_FALL).ceil();
+            let damage = (self.fall_distance - SAFE_FALL - self.effects.jump_boost().1).ceil();
             if damage > 0.0 && vulnerable {
                 self.damage(damage, DamageSource::Fall);
             }

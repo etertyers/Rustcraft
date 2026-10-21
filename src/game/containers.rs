@@ -31,6 +31,8 @@ pub enum Container {
     Chest(IVec3),
     /// The furnace at this block.
     Furnace(IVec3),
+    /// The brewing stand at this block (M26).
+    Brewing(IVec3),
     /// The dispenser or dropper at this block (`true` for a dropper).
     Dispenser(IVec3, bool),
     /// The hopper at this block.
@@ -69,9 +71,11 @@ impl Container {
     pub fn block(&self) -> Option<IVec3> {
         match *self {
             Self::Crafting { .. } | Self::Cart(_) | Self::Bench(_) | Self::Merchant(_) => None,
-            Self::Chest(at) | Self::Furnace(at) | Self::Dispenser(at, _) | Self::Hopper(at) => {
-                Some(at)
-            }
+            Self::Chest(at)
+            | Self::Furnace(at)
+            | Self::Brewing(at)
+            | Self::Dispenser(at, _)
+            | Self::Hopper(at) => Some(at),
         }
     }
 
@@ -154,6 +158,67 @@ impl Game {
         }
         self.container = Some(Container::Furnace(at));
         self.release_input();
+    }
+
+    /// Opens the brewing stand at `at`, giving it its slots the first time.
+    pub fn open_brewing(&mut self, at: IVec3) {
+        if !matches!(
+            self.chunks.block_entity(at),
+            Some(BlockEntity::BrewingStand(_))
+        ) {
+            let stand = BlockEntity::BrewingStand(Default::default());
+            self.chunks.set_block_entity(at, Some(stand));
+        }
+        self.container = Some(Container::Brewing(at));
+        self.release_input();
+    }
+
+    /// The open brewing stand's progress and fuel left (each 0–1).
+    pub fn brewing_progress(&self) -> Option<(f32, f32)> {
+        let Some(Container::Brewing(at)) = self.container else {
+            return None;
+        };
+        match self.chunks.block_entity(at)? {
+            BlockEntity::BrewingStand(stand) => Some(stand.progress()),
+            _ => None,
+        }
+    }
+
+    /// Runs a tick of every brewing stand in the loaded chunks with a brew
+    /// under way or ready, and shows its bottles on the block.
+    pub(super) fn tick_brewing(&mut self) {
+        let world = self.chunks.world();
+        let mut stands = Vec::new();
+        for pos in world.positions() {
+            let Some(chunk) = world.get(pos) else {
+                continue;
+            };
+            let (min_x, min_z) = pos.min_block();
+            for ([x, y, z], entity) in chunk.block_entities() {
+                if let BlockEntity::BrewingStand(_) = entity {
+                    stands.push(IVec3::new(min_x + x as i32, y as i32, min_z + z as i32));
+                }
+            }
+        }
+        for at in stands {
+            let Some(BlockEntity::BrewingStand(stand)) = self.chunks.block_entity_mut(at) else {
+                continue;
+            };
+            if !stand.is_idle() {
+                stand.tick();
+            }
+            let bottles = stand.bottles();
+            let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
+                continue;
+            };
+            let shown = [Prop::HasBottle0, Prop::HasBottle1, Prop::HasBottle2]
+                .iter()
+                .zip(bottles)
+                .fold(block, |b, (&prop, has)| b.with_bool(prop, has));
+            if shown != block && block.is(blocks::BREWING_STAND) {
+                self.chunks.set_blocks_later(&[(at, shown)]);
+            }
+        }
     }
 
     /// The open furnace's fuel left and cooking progress (each 0–1).
@@ -310,7 +375,7 @@ impl Game {
         }
     }
 
-    fn block_slots(&self) -> Option<&[Option<ItemStack>]> {
+    pub(super) fn block_slots(&self) -> Option<&[Option<ItemStack>]> {
         if let Some(Container::Cart(index)) = self.container {
             return self.carts.get(index).map(|cart| cart.slots.as_slice());
         }
@@ -318,7 +383,7 @@ impl Game {
         self.chunks.block_entity(at).map(BlockEntity::slots)
     }
 
-    fn block_slots_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
+    pub(super) fn block_slots_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
         if let Some(Container::Cart(index)) = self.container {
             return self
                 .carts
@@ -576,6 +641,7 @@ impl Game {
             Some(
                 Container::Chest(_)
                 | Container::Furnace(_)
+                | Container::Brewing(_)
                 | Container::Dispenser(..)
                 | Container::Hopper(_)
                 | Container::Cart(_),

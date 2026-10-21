@@ -216,4 +216,10 @@
     // The skull can't be placed yet (no head model); it's for the Wither,
     // which isn't in v1.1.
     (name: "wither_skeleton_skull", texture: "wither_skeleton_skull"),
+    // M26: thrown potions, and brewing ingredients that had no item yet.
+    // A potion's kind is its stack's damage (see inventory::potion).
+    (name: "splash_potion", texture: "splash_potion", max_stack: 1),
+    (name: "carrot", texture: "carrot", food: (hunger: 3, saturation: 0.6)),
+    (name: "golden_carrot", texture: "golden_carrot", food: (hunger: 6, saturation: 1.2)),
+    (name: "pufferfish", texture: "pufferfish", food: (hunger: 1, saturation: 0.1)),
 ]

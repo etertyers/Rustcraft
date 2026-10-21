@@ -684,6 +684,8 @@ pub enum Activate {
     Grindstone,
     /// Opens the smithing screen (M25).
     Smithing,
+    /// Opens the brewing stand (M26).
+    Brewing,
     /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
     Redstone,
 }
