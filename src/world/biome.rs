@@ -51,6 +51,7 @@ pub enum Biome {
     WarpedForest,
     SoulSandValley,
     BasaltDeltas,
+    TheEnd,
 }
 
 /// How a biome's grass and foliage colors are worked out.
@@ -146,10 +147,11 @@ const INFO: [Info; Biome::COUNT] = [
     info("Warped Forest", 2.0, 0.0),
     info("Soul Sand Valley", 2.0, 0.0),
     info("Basalt Deltas", 2.0, 0.0),
+    info("The End", 0.5, 0.5),
 ];
 
 impl Biome {
-    pub const COUNT: usize = 42;
+    pub const COUNT: usize = 43;
 
     pub const ALL: [Biome; Biome::COUNT] = {
         use Biome::*;
@@ -196,6 +198,7 @@ impl Biome {
             WarpedForest,
             SoulSandValley,
             BasaltDeltas,
+            TheEnd,
         ]
     };
 
@@ -253,6 +256,10 @@ impl Biome {
                 | Biome::DeepColdOcean
                 | Biome::DeepLukewarmOcean
         )
+    }
+
+    pub fn is_end(self) -> bool {
+        self == Biome::TheEnd
     }
 
     pub fn is_nether(self) -> bool {

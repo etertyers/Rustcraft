@@ -1403,7 +1403,7 @@ mod tests {
     fn only_known_block_textures_are_missing() {
         let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
         let missing = registry().missing_textures(|name| base.texture(name).is_some());
-        let mut expected = vec!["block/end_portal".to_owned(), "block/sign".to_owned()];
+        let mut expected = vec!["block/sign".to_owned()];
         // Concrete isn't in Kenzo's textures; a resource pack brings it.
         for color in [
             "white",

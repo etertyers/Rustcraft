@@ -440,8 +440,8 @@ mod tests {
         let res = Resources::load(&assets, vec![ashen, prime]).unwrap();
         let blocks = crate::world::block::registry();
         let missing = blocks.missing_textures(|name| res.texture(name).is_some());
-        // Drawn as entities in modern Minecraft; v1.0 never had them either.
-        let expected = ["block/end_portal", "block/sign"].map(str::to_owned);
+        // Drawn as an entity in modern Minecraft; v1.0 never had it either.
+        let expected = ["block/sign"].map(str::to_owned);
         assert_eq!(missing, expected.into());
         let items = crate::inventory::item::registry();
         let missing = items.missing_textures(|name| res.texture(name).is_some());

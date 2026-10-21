@@ -220,6 +220,7 @@ pub fn color(biome: Biome) -> [u8; 3] {
         WarpedForest => [73, 144, 123],
         SoulSandValley => [94, 56, 48],
         BasaltDeltas => [64, 54, 54],
+        TheEnd => [128, 122, 140],
     }
 }
 
@@ -390,7 +391,7 @@ mod tests {
         eprintln!("{}", summary(&stats));
         assert_eq!(stats.bad_neighbors, 0, "snowy beside hot");
         for biome in Biome::ALL {
-            if !biome.is_cave() && !biome.is_nether() {
+            if !biome.is_cave() && !biome.is_nether() && !biome.is_end() {
                 assert!(stats.share.contains_key(biome.name()), "no {biome:?}");
             }
         }
