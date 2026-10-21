@@ -67,6 +67,42 @@ pub fn item_mesh(
     mesh
 }
 
+/// Adds ghasts' fireballs: the fire charge's picture facing the camera,
+/// three times an item's size and fully lit (modern renders large
+/// fireballs as their item, scaled up).
+pub fn add_fireballs(
+    mesh: &mut Mesh,
+    fireballs: &[crate::entity::fireball::Fireball],
+    icons: &ItemIcons,
+    camera: &Camera,
+    alpha: f64,
+) {
+    let stack = crate::inventory::stack::ItemStack::new(crate::inventory::items::FIRE_CHARGE, 1);
+    let ItemIcon::Flat(face) = icons.icon(&stack) else {
+        return;
+    };
+    for ball in fireballs {
+        let center = ball.position_between_ticks(alpha).as_vec3();
+        let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin()) * FIREBALL_HALF;
+        let up = Vec3::Y * FIREBALL_HALF;
+        let corners = [
+            center - right - up,
+            center + right - up,
+            center + right + up,
+            center - right + up,
+        ];
+        mesh.quad(
+            corners.map(|p| p.to_array()),
+            face.uv,
+            [face.color; 4],
+            [[15.0, 15.0]; 4],
+        );
+    }
+}
+
+/// Half a fireball's drawn width.
+const FIREBALL_HALF: f32 = 0.75;
+
 /// Adds falling blocks: whole blocks with their faces' textures, lit by
 /// the light where they are.
 pub fn add_falling_blocks(

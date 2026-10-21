@@ -160,6 +160,61 @@ pub trait Collider {
     }
 }
 
+/// A world in which lava holds a body up like ground and doesn't count as
+/// a liquid around it: what a strider walks on.
+pub struct LavaFloor<'a, C: Collider>(pub &'a C);
+
+impl<C: Collider> Collider for LavaFloor<'_, C> {
+    fn boxes(&self, region: &Aabb, out: &mut Vec<Aabb>) {
+        self.0.boxes(region, out);
+        let min = region.min.floor().as_ivec3();
+        let max = region.max.floor().as_ivec3();
+        for y in min.y - 1..=max.y {
+            for z in min.z..=max.z {
+                for x in min.x..=max.x {
+                    let center = DVec3::new(x as f64 + 0.5, y as f64 + 0.5, z as f64 + 0.5);
+                    if self.0.fluid_at(center) == Some(Fluid::Lava) {
+                        let cell = DVec3::new(x as f64, y as f64, z as f64);
+                        out.push(Aabb::new(cell, cell + DVec3::ONE));
+                    }
+                }
+            }
+        }
+    }
+
+    fn slipperiness(&self, x: i32, y: i32, z: i32) -> f32 {
+        self.0.slipperiness(x, y, z)
+    }
+
+    fn speed_factor(&self, x: i32, y: i32, z: i32) -> f32 {
+        self.0.speed_factor(x, y, z)
+    }
+
+    fn liquid(&self, region: &Aabb) -> Option<Fluid> {
+        self.0.liquid(region).filter(|&f| f != Fluid::Lava)
+    }
+
+    fn fluid_depth(&self, region: &Aabb, fluid: Fluid) -> f64 {
+        if fluid == Fluid::Lava {
+            0.0
+        } else {
+            self.0.fluid_depth(region, fluid)
+        }
+    }
+
+    fn fluid_at(&self, point: DVec3) -> Option<Fluid> {
+        self.0.fluid_at(point).filter(|&f| f != Fluid::Lava)
+    }
+
+    fn current(&self, region: &Aabb) -> DVec3 {
+        self.0.current(region)
+    }
+
+    fn in_fire(&self, region: &Aabb) -> bool {
+        self.0.in_fire(region)
+    }
+}
+
 /// The loaded world's solid blocks. Unloaded chunks are walls, so nothing
 /// walks or falls into them.
 pub struct WorldCollider<'a> {
@@ -309,7 +364,9 @@ impl Collider for WorldCollider<'_> {
     }
 
     fn in_fire(&self, region: &Aabb) -> bool {
-        self.any_cell(region, |block| block.is(blocks::FIRE))
+        self.any_cell(region, |block| {
+            block.is(blocks::FIRE) || block.is(blocks::SOUL_FIRE)
+        })
     }
 
     fn in_lava(&self, region: &Aabb) -> bool {

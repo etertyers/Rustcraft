@@ -24,6 +24,16 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let (world, bench, shot, view) = parse_args(std::env::args().skip(1))?;
     let mut app = app::App::new(world).with_bench(bench).with_view(view);
+    // `--pack <file or folder>` (repeatable): play or shoot with these
+    // resource packs instead of the chosen ones, leaving options.ron be.
+    let packs: Vec<String> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--pack")
+        .map(|pair| pair[1].clone())
+        .collect();
+    if !packs.is_empty() {
+        app = app.with_packs(packs);
+    }
     if let Some((shot, out)) = shot {
         app = app.with_shot(shot, out);
     }
@@ -108,13 +118,15 @@ type Parsed = (
 /// and prints frame timings (see `bench`), at `--distance <chunks>` if
 /// given. `--shot <name> [--out <file>]` captures a scene (see `shots`);
 /// `--shot list` lists them. `--view first|back|front` starts in that view
-/// (F5 cycles them).
+/// (F5 cycles them). `--nether` starts in the Nether of the seed, and
+/// `--pack <name>` uses that resource pack this once.
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
     let mut args = args.peekable();
     let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
     let mut bench = None;
     let (mut shot, mut out) = (None, None);
     let mut test_world = None;
+    let mut nether = false;
     let mut view = ViewMode::First;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -168,7 +180,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
                 };
             }
             "--gallery" => test_world = Some(app::WorldKind::Gallery),
+            // Read in `main`.
+            "--pack" => {
+                args.next().context("--pack needs a resource pack's name")?;
+            }
             "--flat" => test_world = Some(app::WorldKind::Flat),
+            "--nether" => nether = true,
             "--world" => world = Some(args.next().context("--world needs a name")?),
             "--creative" => mode = player::mode::GameMode::Creative,
             "--seed" => {
@@ -180,7 +197,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
                 );
             }
             other => anyhow::bail!(
-                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --bench [seconds], --distance <chunks> or --shot <name>)"
+                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --nether, --bench [seconds], --distance <chunks> or --shot <name>)"
             ),
         }
     }
@@ -193,6 +210,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
         return Ok((Some(app::WorldKind::Generated { seed }), bench, None, view));
     }
     let world = match (world, seed) {
+        _ if nether => Some(app::WorldKind::Nether {
+            seed: seed.unwrap_or(bench::SEED),
+        }),
         _ if test_world.is_some() => test_world,
         (Some(name), seed) => Some(app::WorldKind::Saved { name, seed, mode }),
         (None, Some(seed)) => Some(app::WorldKind::Generated { seed }),

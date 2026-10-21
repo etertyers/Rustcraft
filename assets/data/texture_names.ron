@@ -8,6 +8,8 @@
 {
     "misc/enchanted_glint_item": ["misc/enchanted_item_glint"],
     "item/mutton": ["items/mutton_raw"],
+    "item/fire_charge": ["items/fireball"],
+    "block/nether_quartz_ore": ["blocks/quartz_ore"],
     "item/cooked_mutton": ["items/mutton_cooked"],
     "item/rabbit": ["items/rabbit_raw"],
     "item/cooked_rabbit": ["items/rabbit_cooked"],

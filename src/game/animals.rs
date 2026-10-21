@@ -158,6 +158,7 @@ impl Game {
             }
             "wolf" | "cat" => self.use_pet(index, held, survival),
             "horse" => self.use_horse(index, held, survival),
+            "strider" => self.use_strider(index, held),
             _ => false,
         }
     }
@@ -255,7 +256,7 @@ impl Game {
     }
 
     /// The mob the player sits on.
-    fn mount_index(&self) -> Option<usize> {
+    pub(super) fn mount_index(&self) -> Option<usize> {
         let id = self.mounted?;
         self.mobs.iter().position(|m| m.id == id)
     }
@@ -332,7 +333,15 @@ impl Game {
             return MoveInput::default();
         }
         let keys = self.keys.move_input();
-        let speed = self.mob_defs.get(mob.kind).speed;
+        let def = self.mob_defs.get(mob.kind);
+        let speed = def.speed;
+        // A strider walks where its rider looks, keys or not.
+        if matches!(def.ai, crate::entity::mobs::Ai::Strider) {
+            return MoveInput {
+                forward: speed,
+                ..MoveInput::default()
+            };
+        }
         MoveInput {
             forward: keys.forward * speed,
             strafe: keys.strafe * speed * 0.5,

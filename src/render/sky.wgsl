@@ -81,6 +81,11 @@ fn fs_main(in: SkyOutput) -> @location(0) vec4<f32> {
     let far = globals.inverse_sky_view_proj * vec4<f32>(in.ndc, 0.999, 1.0);
     let dir = normalize(far.xyz / far.w - near.xyz / near.w);
 
+    // Without a sky (the Nether) it's fog all round.
+    if globals.extra.z > 0.5 {
+        return vec4<f32>(srgb_to_linear(globals.fog_color.rgb), 1.0);
+    }
+
     // Sky color overhead, fog toward and below the horizon.
     var color = globals.fog_color.rgb;
     if dir.y > 0.0 {

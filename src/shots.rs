@@ -242,6 +242,76 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: nothing,
     },
+    Shot {
+        name: "m24-wastes",
+        about: "nether wastes on seed 20111118: netherrack caverns over the lava sea, glowstone under the ceiling",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([-96.5, 45.0, 96.5], std::f32::consts::PI, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m24-crimson",
+        about: "crimson forest on seed 20111118: crimson nylium, huge crimson fungi with shroomlight and weeping vines",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([176.5, 54.0, 176.5], std::f32::consts::PI, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m24-warped",
+        about: "warped forest on seed 20111118: warped nylium, huge warped fungi, roots, sprouts and twisting vines",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([0.5, 68.0, 208.5], std::f32::consts::PI, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m24-valley",
+        about: "soul sand valley on seed 20111118: soul sand and soul soil, basalt pillars and soul fire, in blue fog",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([-176.5, 54.0, -176.5], std::f32::consts::PI, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m24-deltas",
+        about: "basalt deltas on seed 20111118: basalt and blackstone, basalt columns and lava pools rimmed with magma",
+        world: Some(WorldKind::Nether { seed: 20111118 }),
+        view: Some(([-16.5, 84.0, 16.5], std::f32::consts::PI, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: true,
+        stage: nothing,
+    },
+    Shot {
+        name: "m24-mobs",
+        about: "the Nether's mobs: a ghast, a big magma cube, a zombified piglin, a piglin, a hoglin and a saddled strider on lava",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 9.5], 0.0, -0.05)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nether_mobs,
+    },
+    Shot {
+        name: "m24-portal",
+        about: "a lit Nether portal in a frame of obsidian, and a larger 4 × 5 one beside it",
+        world: Some(WorldKind::Flat),
+        view: Some(([2.5, 64.0, 9.5], 0.0, -0.1)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: portals,
+    },
 ];
 
 /// Puts `item` in the hotbar's first slot and selects it, settling the
@@ -336,6 +406,50 @@ fn third_sneak(game: &mut Game) {
     hold_sword(game);
     game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
     game.sneak_for_shot();
+}
+
+/// The six Nether mobs in a row, the strider on a pool of lava.
+fn nether_mobs(game: &mut Game) {
+    let mut pool = Vec::new();
+    for x in 4..=7 {
+        for z in -1..=2 {
+            pool.push((at(x, 63, z), BlockState::of(LAVA)));
+        }
+    }
+    game.set_blocks(&pool);
+    let south = std::f32::consts::PI;
+    game.summon("ghast", glam::DVec3::new(0.5, 70.0, -6.0), south);
+    if let Some(cube) = game.summon("magma_cube", glam::DVec3::new(-5.5, 64.0, 1.5), south) {
+        cube.data.size = 4;
+    }
+    game.summon("zombified_piglin", glam::DVec3::new(-3.0, 64.0, 2.5), south);
+    game.summon("piglin", glam::DVec3::new(-1.0, 64.0, 2.5), south);
+    game.summon("hoglin", glam::DVec3::new(2.0, 64.0, 1.5), south);
+    if let Some(strider) = game.summon("strider", glam::DVec3::new(5.5, 64.0, 1.0), south) {
+        strider.data.saddled = true;
+    }
+    game.run_ticks(2);
+}
+
+/// Two portals: 2 × 3 inside, and 4 × 5 beside it.
+fn portals(game: &mut Game) {
+    let mut edits = Vec::new();
+    for (x0, width, height) in [(-2, 2, 3), (3, 4, 5)] {
+        for x in x0 - 1..=x0 + width {
+            for y in 63..=64 + height {
+                let side = x == x0 - 1 || x == x0 + width;
+                let end = y == 63 || y == 64 + height;
+                let block = match (side, end) {
+                    (true, true) => continue,
+                    (false, false) => BlockState::of(NETHER_PORTAL),
+                    _ => BlockState::of(OBSIDIAN),
+                };
+                edits.push((at(x, y, 0), block));
+            }
+        }
+    }
+    game.set_blocks(&edits);
+    game.run_ticks(5);
 }
 
 fn at(x: i32, y: i32, z: i32) -> IVec3 {

@@ -565,7 +565,7 @@ mod tests {
         }
         // Every surface biome Rustcraft has comes up somewhere.
         for biome in Biome::ALL {
-            if !matches!(biome, Biome::LushCaves | Biome::DripstoneCaves) {
+            if !biome.is_cave() && !biome.is_nether() {
                 assert!(seen.contains(&biome), "{biome:?} never picked");
             }
         }

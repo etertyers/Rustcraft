@@ -6,6 +6,7 @@ pub mod climate;
 pub mod features;
 pub mod flat;
 pub mod gallery;
+pub mod nether;
 pub mod ores;
 pub mod rng;
 pub mod terrain;

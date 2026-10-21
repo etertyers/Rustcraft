@@ -44,6 +44,15 @@ const FOLLOW_START: f64 = 10.0;
 const FOLLOW_STOP: f64 = 2.0;
 /// Hostile mobs a golem or wolf goes after from this far.
 const THREAT_RANGE: f64 = 16.0;
+/// Ghasts notice the player this far off, charge a fireball this long
+/// (showing the shooting face from halfway), and wait this long after
+/// (modern `GhastShootFireballGoal`: 64 blocks, 20 ticks, −40).
+const GHAST_RANGE: f64 = 64.0;
+const GHAST_CHARGE: i32 = 20;
+const GHAST_REST: i32 = 40;
+/// A ghast drifts to a spot this far off in each direction (modern
+/// `RandomFloatAroundGoal`).
+const GHAST_DRIFT: f64 = 16.0;
 /// Phantoms circle this far from the player and this high above.
 const ORBIT_RADIUS: f64 = 16.0;
 const ORBIT_HEIGHT: f64 = 15.0;
@@ -76,6 +85,8 @@ pub struct AiState {
     dive: u32,
     /// Flyers and swimmers: where they're headed.
     destination: Option<DVec3>,
+    /// Ghasts: ticks charging a fireball (negative while resting after).
+    charge: i32,
 }
 
 impl AiState {
@@ -198,6 +209,10 @@ pub struct Intent {
     pub shot: Option<Shot>,
     /// A creeper going off, with its power.
     pub explode: Option<f32>,
+    /// A ghast's fireball.
+    pub fireball: Option<Shot>,
+    /// The blow (`hit`) throws its victim up (hoglins).
+    pub toss: bool,
     /// A spider's leap: velocity to set.
     pub leap: Option<DVec3>,
     pub teleport: Option<Teleport>,
@@ -265,7 +280,7 @@ pub fn think<T: Terrain>(
     let was_hurt = std::mem::take(&mut state.hurt);
     if was_hurt {
         match def.ai {
-            Ai::Hostile { .. } | Ai::Creeper { .. } | Ai::Witch | Ai::Archer { .. } => {
+            Ai::Hostile { .. } | Ai::Creeper { .. } | Ai::Witch | Ai::Archer { .. } | Ai::Ghast => {
                 state.chasing = view.player.is_some();
             }
             Ai::Passive
@@ -274,6 +289,7 @@ pub fn think<T: Terrain>(
             | Ai::Swimmer
             | Ai::Villager
             | Ai::Cat
+            | Ai::Strider
             | Ai::Fox { .. } => {
                 state.fleeing = FLEE_TICKS;
                 state.path.clear();
@@ -284,6 +300,9 @@ pub fn think<T: Terrain>(
             | Ai::Bee { .. }
             | Ai::Enderman { .. }
             | Ai::Phantom { .. }
+            | Ai::ZombifiedPiglin { .. }
+            | Ai::Piglin { .. }
+            | Ai::Hoglin { .. }
             | Ai::Slime => {
                 state.angry = ANGER_TICKS;
                 state.chasing = view.player.is_some();
@@ -334,6 +353,22 @@ pub fn think<T: Terrain>(
         Ai::Cat => cat(mob, view),
         Ai::Bee { attack } => bee(mob, def, view, attack, random, &mut intent),
         Ai::Fox { attack } => fox(mob, def, view, attack, &mut intent),
+        Ai::Ghast => ghast(mob, view, random, &mut intent),
+        Ai::ZombifiedPiglin { attack } => {
+            if mob.ai.angry > 0 {
+                melee(mob, def, view, attack, true, &mut intent)
+            } else {
+                mob.ai.chasing = false;
+                Goal::Idle
+            }
+        }
+        Ai::Piglin { attack } => piglin(mob, def, view, attack, &mut intent),
+        Ai::Hoglin { attack } => {
+            let goal = melee(mob, def, view, attack, true, &mut intent);
+            intent.toss = intent.hit.is_some();
+            goal
+        }
+        Ai::Strider => Goal::Idle,
     };
 
     steer(mob, def, view, goal, height, random, &mut intent);
@@ -728,6 +763,70 @@ fn phantom<T: Terrain>(
             angle.sin() * ORBIT_RADIUS,
         );
     Goal::Direct(around)
+}
+
+/// Ghasts: with the player in sight within 64 blocks, hover facing them,
+/// charge for a second (showing the shooting face from halfway) and loose
+/// a fireball, then rest two seconds; otherwise drift to a random spot up
+/// to 16 blocks off now and then.
+fn ghast<T: Terrain>(
+    mob: &mut Mob,
+    view: &View<T>,
+    random: &mut impl FnMut() -> f32,
+    intent: &mut Intent,
+) -> Goal {
+    let feet = mob.feet();
+    let eye = mob.eye();
+    let target = view
+        .player
+        .filter(|t| t.visible && t.eye.distance(eye) < GHAST_RANGE);
+    let state = &mut mob.ai;
+    let goal = if let Some(target) = target {
+        state.chasing = true;
+        state.charge += 1;
+        if state.charge >= GHAST_CHARGE {
+            let middle = (target.aabb.min + target.aabb.max) / 2.0;
+            intent.fireball = Some(Shot {
+                from: eye,
+                at: middle,
+            });
+            state.charge = -GHAST_REST;
+        }
+        Goal::Stand(Some(target.eye))
+    } else {
+        state.chasing = false;
+        if state.charge > 0 {
+            state.charge -= 1;
+        }
+        let arrived = state
+            .destination
+            .is_none_or(|to| to.distance(feet) < 1.0 || to.distance(feet) > 60.0);
+        if arrived || random() < 0.01 {
+            let mut offset = || f64::from(random() * 2.0 - 1.0) * GHAST_DRIFT;
+            state.destination = Some(feet + DVec3::new(offset(), offset(), offset()));
+        }
+        state.destination.map_or(Goal::Idle, Goal::Direct)
+    };
+    mob.aggressive = mob.ai.charge > GHAST_CHARGE / 2;
+    mob.data.variant = u8::from(mob.aggressive);
+    goal
+}
+
+/// Piglins: while admiring gold they stand still; otherwise they go after
+/// the player (modern `PiglinAi` spares players wearing gold, but armor
+/// can't be worn here yet).
+fn piglin<T: Terrain>(
+    mob: &mut Mob,
+    def: &MobDef,
+    view: &View<T>,
+    attack: f32,
+    intent: &mut Intent,
+) -> Goal {
+    if mob.data.timer > 0 {
+        mob.ai.chasing = false;
+        return Goal::Stand(view.player.map(|t| t.eye));
+    }
+    melee(mob, def, view, attack, true, intent)
 }
 
 /// Squid and fish swim about the water they're in; out of it they flop.

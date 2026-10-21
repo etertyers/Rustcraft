@@ -19,6 +19,7 @@ pub mod light;
 pub mod manager;
 pub mod mesh;
 pub mod piston;
+pub mod portal;
 pub mod props;
 pub mod rails;
 pub mod redstone;

@@ -4,6 +4,7 @@ pub mod ai;
 pub mod arrow;
 pub mod effects;
 pub mod falling;
+pub mod fireball;
 pub mod item;
 pub mod minecart;
 pub mod mob;

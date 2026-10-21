@@ -17,7 +17,11 @@ use crate::{
         path::Terrain,
     },
     level::SavedMob,
-    player::{collision::WorldCollider, raycast, stats::DamageSource},
+    player::{
+        collision::{Collider, LavaFloor, WorldCollider},
+        raycast,
+        stats::DamageSource,
+    },
     world::{
         World,
         biome::Biome,
@@ -39,6 +43,8 @@ const SWAMP_SLIMES: std::ops::Range<i32> = 51..70;
 const MONSTERS_PER_256_CHUNKS: usize = 70;
 /// The cap on sea creatures (modern: 5 squid, 20 fish; one cap here).
 const WATER_MOBS_PER_256_CHUNKS: usize = 20;
+/// Striders near the player at most.
+const STRIDER_CAP: usize = 8;
 /// Despawning (1.0.0's `despawnEntity`): instantly this far away, at
 /// random after this many ticks when farther than `NEAR`.
 const DESPAWN_FAR: f64 = 128.0;
@@ -220,8 +226,10 @@ impl Game {
         let mut pending = Vec::new();
         for (index, mob) in mobs.iter_mut().enumerate() {
             let def = defs.get(mob.kind);
-            if mob.ridden {
-                // A ridden horse is steered by the player.
+            // A ridden horse is steered by the player; a strider only with
+            // a warped fungus on a stick.
+            let steered = mob.ridden && self.steers_mount(def.ai);
+            if steered {
                 self.steer_ridden(mob);
             }
             let eye = mob.eye();
@@ -235,6 +243,7 @@ impl Game {
                     | Ai::Rabbit
                     | Ai::Swimmer
                     | Ai::Cat
+                    | Ai::Strider
                     | Ai::Fox { .. }
             );
             let near_player = eye.distance(player_eye) < SIGHT_RANGE;
@@ -302,12 +311,12 @@ impl Game {
                 errand: mob.data.villager.as_ref().and_then(|v| v.errand),
             };
             let mut random = || thinking.next_f64() as f32;
-            let mut intent = if mob.ridden {
+            let mut intent = if steered {
                 Default::default()
             } else {
                 ai::think(mob, def, &view, &mut random)
             };
-            if mob.ridden {
+            if steered {
                 intent.input = ridden_input;
             }
             let collider = WorldCollider {
@@ -319,7 +328,11 @@ impl Game {
             if !mob.body.free_flight {
                 mob.body.may_fly = false;
             }
-            mob.tick(&intent.input, &collider, eyes);
+            if def.walks_on_lava {
+                mob.tick(&intent.input, &LavaFloor(&collider), eyes);
+            } else {
+                mob.tick(&intent.input, &collider, eyes);
+            }
             if def.climbs && mob.body.collided_horizontally() && intent.input.forward > 0.0 {
                 mob.body.velocity.y = 0.2;
                 mob.stats.fall_distance = 0.0;
@@ -374,9 +387,11 @@ impl Game {
         mobs.append(&mut self.mobs);
         self.mobs = mobs;
         self.tick_animals();
+        self.tick_nether_mobs();
         self.tick_villagers();
         self.spawn_monsters();
         self.spawn_water_mobs();
+        self.spawn_striders();
         self.spawn_phantoms();
     }
 
@@ -386,6 +401,7 @@ impl Game {
     /// to 34 blocks up.
     pub(super) fn spawn_phantoms(&mut self) {
         if !self.time.is_multiple_of(60)
+            || self.dimension() != crate::world::dimension::Dimension::Overworld
             || self.stats.is_dead()
             || !self.mode.is_vulnerable()
             || daytime::is_daytime(self.celestial_angle())
@@ -471,6 +487,7 @@ impl Game {
         let below = self.chunks.world().block(cell.x, cell.y - 1, cell.z);
         let liked = match &def.spawn {
             Spawn::Ground { blocks, .. } => below.is_some_and(|b| blocks.contains(&b.id())),
+            Spawn::Lava { .. } => below.is_some_and(|b| b.is(crate::world::blocks::LAVA)),
             _ => false,
         };
         if liked { 10.0 } else { brightness - 0.5 }
@@ -619,7 +636,7 @@ impl Game {
                         (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
                     cell.z +=
                         (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
-                    if self.can_monster_spawn(cell, max_light) {
+                    if self.can_monster_spawn(cell, max_light) && self.has_room(kind, cell) {
                         let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
                         let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
                         let mob = self.new_mob(kind, feet, yaw);
@@ -643,13 +660,30 @@ impl Game {
         }
         let seed = self.chunks.seed().unwrap_or(0);
         let mut options: Vec<(MobKind, u8, u8, u32)> = Vec::new();
+        let nether = biome.is_nether();
         for (kind, def) in self.mob_defs.iter() {
             match def.spawn {
+                // The Nether's biomes have their own lists.
+                Spawn::Dark {
+                    max_light,
+                    nether: ref spawns,
+                    ..
+                }
+                | Spawn::Nether {
+                    max_light,
+                    biomes: ref spawns,
+                } if nether => {
+                    if let Some(&(_, weight, group)) = spawns.iter().find(|s| s.0 == biome) {
+                        options.push((kind, max_light, group, weight));
+                    }
+                }
+                _ if nether => {}
                 Spawn::Dark {
                     max_light,
                     group,
                     ref biomes,
                     weight,
+                    ..
                 } if biomes.is_empty() || biomes.contains(&biome) => {
                     options.push((kind, max_light, group, weight));
                 }
@@ -709,6 +743,94 @@ impl Game {
         }
         let level = sky.max(block);
         level <= max_light && (level as f64) <= self.rng.next_f64() * 8.0
+    }
+
+    /// Whether a mob of `kind` standing in `cell` touches nothing solid
+    /// (a ghast needs a 4-block cube of air).
+    fn has_room(&self, kind: MobKind, cell: IVec3) -> bool {
+        let def = self.mob_defs.get(kind);
+        if def.width <= 1.0 && def.height <= 2.0 {
+            return true;
+        }
+        let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+        let half = def.width / 2.0;
+        let region = crate::player::collision::Aabb::new(
+            feet - DVec3::new(half, 0.0, half),
+            feet + DVec3::new(half, def.height, half),
+        );
+        let collider = WorldCollider {
+            world: self.chunks.world(),
+            blocks: self.items.blocks,
+        };
+        let mut boxes = Vec::new();
+        crate::player::collision::Collider::boxes(&collider, &region, &mut boxes);
+        !boxes.iter().any(|b| b.intersects(&region)) && collider.liquid(&region).is_none()
+    }
+
+    /// Striders: now and then, in each chunk near the player, a spot on
+    /// the lava sea with air above (modern spawns them as creatures on
+    /// lava), up to a few at a time.
+    fn spawn_striders(&mut self) {
+        if !self.time.is_multiple_of(20)
+            || self.dimension() != crate::world::dimension::Dimension::Nether
+        {
+            return;
+        }
+        let Some((kind, group, biomes)) =
+            self.mob_defs
+                .iter()
+                .find_map(|(kind, def)| match &def.spawn {
+                    Spawn::Lava { group, biomes } => Some((kind, *group, biomes.clone())),
+                    _ => None,
+                })
+        else {
+            return;
+        };
+        let count = self
+            .mobs
+            .iter()
+            .filter(|m| m.kind == kind && !m.is_dead())
+            .count();
+        if count >= STRIDER_CAP {
+            return;
+        }
+        let player = self.body.position();
+        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        let reach = SPAWN_CHUNK_RADIUS as u32 * 2 + 1;
+        let pos = center.offset(
+            self.rng.below(reach) as i32 - SPAWN_CHUNK_RADIUS,
+            self.rng.below(reach) as i32 - SPAWN_CHUNK_RADIUS,
+        );
+        if self.chunks.world().get(pos).is_none() {
+            return;
+        }
+        let (min_x, min_z) = pos.min_block();
+        let x = min_x + self.rng.below(16) as i32;
+        let z = min_z + self.rng.below(16) as i32;
+        if !biomes.contains(&self.biome_at(x, z)) {
+            return;
+        }
+        let world = self.chunks.world();
+        let is_lava = |y: i32| {
+            world
+                .block(x, y, z)
+                .is_some_and(|b| b.is(crate::world::blocks::LAVA))
+        };
+        let Some(surface) = (1..crate::world::worldgen::nether::HEIGHT)
+            .find(|&y| is_lava(y) && world.block(x, y + 1, z).is_some_and(|b| b.is_air()))
+        else {
+            return;
+        };
+        let feet = DVec3::new(x as f64 + 0.5, (surface + 1) as f64, z as f64 + 0.5);
+        if feet.distance(player) < MIN_SPAWN_DISTANCE {
+            return;
+        }
+        for i in 0..1 + self.rng.below(u32::from(group)) {
+            let at = feet + DVec3::new(f64::from(i), 0.0, 0.0);
+            let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
+            let mob = self.new_mob(kind, at, yaw);
+            self.add_mob(mob);
+        }
     }
 
     /// Squid and fish: in each chunk near the player, a random spot in deep
@@ -804,6 +926,7 @@ impl Game {
                 yaw: mob.yaw,
                 health: mob.stats.health,
                 data: mob.data.clone(),
+                dimension: self.dimension,
             })
             .collect()
     }

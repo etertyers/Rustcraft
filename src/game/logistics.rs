@@ -235,7 +235,9 @@ impl Game {
                     {
                         return self.throw_out(front, facing, one).then_some(Used::Gone);
                     }
-                    self.edit(&[(front, fluid::at_level(fluid, 0))]);
+                    if !self.evaporates(fluid) {
+                        self.edit(&[(front, fluid::at_level(fluid, 0))]);
+                    }
                     self.items.bucket_item(Bucket::Empty).map(Used::Became)
                 }
                 Bucket::Empty => {

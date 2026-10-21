@@ -41,6 +41,7 @@ pub struct DebugStats {
     pub mode: GameMode,
     /// Game time in ticks.
     pub time: u64,
+    pub dimension: crate::world::dimension::Dimension,
 }
 
 /// Always-on HUD pieces.
@@ -61,6 +62,10 @@ pub struct Hud {
     pub sleep: Option<f32>,
     /// A notice shown above the hotbar.
     pub message: Option<String>,
+    /// How strongly a portal's swirl covers the screen, 0–1.
+    pub portal: f32,
+    /// Set while the chunks around a player who changed dimension load.
+    pub loading: bool,
 }
 
 pub struct DebugUi {
@@ -173,8 +178,14 @@ impl DebugUi {
             if let Some((screen, view)) = &mut screen {
                 actions = screens::show(ui.ctx(), screen, view, textures);
             }
+            if hud.portal > 0.0 {
+                paint_portal(ui.ctx(), hud.portal);
+            }
             if let Some(message) = &hud.message {
                 paint_message(ui.painter(), full, message);
+            }
+            if hud.loading {
+                show_loading_screen(ui.ctx());
             }
             if let Some(message) = &hud.death
                 && show_death_screen(ui.ctx(), message)
@@ -231,7 +242,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          XYZ: {:.3} / {:.3} / {:.3}\n\
          Block: {} {} {}\n\
          Facing: {} ({:.1} / {:.1})\n\
-         Biome: {}\n\
+         Biome: {} ({})\n\
          {}\n\
          Light: {}\n\
          Seed: {}\n\
@@ -249,6 +260,7 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         camera.yaw.to_degrees(),
         camera.pitch.to_degrees(),
         stats.biome.map_or("-", Biome::name),
+        stats.dimension.name(),
         stats.climate.map_or_else(
             || "Climate: -".to_owned(),
             |c| format!(
@@ -293,6 +305,43 @@ fn draw_crosshair(ui: &egui::Ui) {
             stroke,
         );
     }
+}
+
+/// The swirl over the screen while standing in a Nether portal: modern
+/// draws the portal texture over everything, fading in as the wait goes
+/// on; this tints the screen its purple.
+fn paint_portal(ctx: &egui::Context, strength: f32) {
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::unique("portal"),
+    ));
+    // Modern squares the strength so it starts faint.
+    let alpha = (strength * strength * 0.8 + 0.2 * strength) * 200.0;
+    painter.rect_filled(
+        full,
+        0.0,
+        Color32::from_rgba_unmultiplied(110, 30, 170, alpha as u8),
+    );
+}
+
+/// Shown while the chunks around a player who just went through a portal
+/// load (modern "Loading terrain...").
+fn show_loading_screen(ctx: &egui::Context) {
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::unique("loading"),
+    ));
+    painter.rect_filled(full, 0.0, Color32::from_rgb(40, 28, 20));
+    let scale = gui::gui_scale(full);
+    painter.text(
+        full.center(),
+        Align2::CENTER_CENTER,
+        "Loading terrain...",
+        egui::FontId::proportional(10.0 * scale),
+        Color32::WHITE,
+    );
 }
 
 /// 1.0.0's death screen: the world tinted red, "You died!" and a Respawn
@@ -402,6 +451,7 @@ mod tests {
             light: Some((4, 11)),
             mode: GameMode::Creative,
             time: 6000,
+            dimension: Default::default(),
         };
         let text = debug_text(59.6, &camera, &stats);
         assert!(

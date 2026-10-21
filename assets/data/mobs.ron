@@ -8,20 +8,25 @@
 //   ai               Passive, Hostile(attack:), Neutral(attack:), Spider(attack:),
 //                    Archer(interval:), Creeper(power:), Enderman(attack:), Slime,
 //                    Witch, Phantom(attack:), Swimmer, Wolf(attack:), Cat, Horse,
-//                    Rabbit, Bee(attack:), Fox(attack:), Villager
-//   burns_in_daylight, climbs, swims, flies, hurt_by_water, no_fall
+//                    Rabbit, Bee(attack:), Fox(attack:), Villager, Ghast,
+//                    ZombifiedPiglin(attack:), Piglin(attack:), Hoglin(attack:), Strider
+//   burns_in_daylight, climbs, swims, flies, hurt_by_water, no_fall,
+//   fire_immune (no harm from fire or lava), walks_on_lava (striders)
 //   scale            the model is drawn this much bigger
 //   eye              eye height as a fraction of the height (default 0.85)
 //   variants         other textures a mob may wear (picked by its variant)
 //   layers           more models drawn over it, each with a texture: dyed (takes
 //                    the mob's color), wool (hidden once sheared), glow (full
-//                    bright), only_variant
+//                    bright), only_variant, saddle (shown once saddled)
 //   drops            (item, min, max, cooked: item dropped instead while burning,
 //                    chance: 0-1)
 //   spawn            Never; Ground(blocks, min_light, chance, group, biomes) at world
-//                    generation; Dark(max_light, group, biomes, weight) near the
-//                    player in the dark; Water(chance, group, biomes, min_depth);
-//                    SlimeChunk(below); Phantom
+//                    generation; Dark(max_light, group, biomes, weight, nether)
+//                    near the player in the dark (biomes: the Overworld's, all
+//                    if empty; nether: [(biome, weight, group)]); Nether(max_light,
+//                    biomes: [(biome, weight, group)]); Lava(group, biomes);
+//                    Water(chance, group, biomes, min_depth); SlimeChunk(below);
+//                    Phantom
 //   model            texture_size and parts in Minecraft model coordinates (pixels,
 //                    y down, feet at 24): uv offset, box from and size, pivot,
 //                    rest rotation (rest, rest_y, rest_z in radians), grow, and
@@ -602,7 +607,7 @@
             (item: "bone", min: 0, max: 2),
             (item: "arrow", min: 0, max: 2),
         ],
-        spawn: Dark(max_light: 7, group: 4, weight: 100),
+        spawn: Dark(max_light: 7, group: 4, weight: 100, nether: [(SoulSandValley, 20, 5)]),
         model: (
             texture_size: (64, 32),
             parts: [
@@ -755,7 +760,7 @@
         hurt_by_water: true,
         eye: 0.95,
         drops: [(item: "ender_pearl", min: 0, max: 1)],
-        spawn: Dark(max_light: 7, group: 4, weight: 10),
+        spawn: Dark(max_light: 7, group: 4, weight: 10, nether: [(NetherWastes, 1, 4), (SoulSandValley, 1, 4), (WarpedForest, 1, 4)]),
         layers: [
             (
                 texture: "entity/enderman/enderman_eyes",
@@ -896,6 +901,223 @@
                 (uv: (20, 0), from: (-5, 0, -1.5), size: (10, 8, 3), pivot: (0, 16, 1.0)),
                 (uv: (20, 11), from: (-3, 0, -1.5), size: (6, 4, 3), pivot: (0, 20, 7.0)),
                 (uv: (20, 18), from: (-3, 0, -1), size: (6, 5, 2), pivot: (0, 19, -1.5)),
+            ],
+        ),
+    ),
+    // M24: the Nether's mobs. Models follow modern's (GhastModel,
+    // PiglinModel, HoglinModel, StriderModel, MagmaCubeModel); sub-parts
+    // that turn on their own pivots in vanilla (piglin and hoglin ears)
+    // are drawn unturned. Kenzo's 1.12 textures have the ghast and the
+    // magma cube; piglins, hoglins and striders need a resource pack.
+    (
+        name: "ghast",
+        texture: "entity/ghast/ghast",
+        variants: ["entity/ghast/ghast_shooting"],
+        health: 10,
+        width: 4.0,
+        height: 4.0,
+        speed: 0.6,
+        ai: Ghast,
+        flies: true,
+        no_fall: true,
+        fire_immune: true,
+        scale: 4.5,
+        eye: 0.65,
+        drops: [
+            (item: "ghast_tear", min: 0, max: 1),
+            (item: "gunpowder", min: 0, max: 2),
+        ],
+        spawn: Nether(max_light: 15, biomes: [(NetherWastes, 50, 1), (SoulSandValley, 50, 1), (BasaltDeltas, 40, 1)]),
+        model: (
+            texture_size: (64, 32),
+            parts: [
+                (uv: (0, 0), from: (-8, -8, -8), size: (16, 16, 16), pivot: (0, 17.6, 0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 13, 2), pivot: (-3.75, 24.6, -5.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 11, 2), pivot: (1.25, 24.6, -5.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 9, 2), pivot: (6.25, 24.6, -5.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 9, 2), pivot: (-6.25, 24.6, 0.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 11, 2), pivot: (-1.25, 24.6, 0.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 10, 2), pivot: (3.75, 24.6, 0.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 12, 2), pivot: (-3.75, 24.6, 5.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 9, 2), pivot: (1.25, 24.6, 5.0)),
+                (uv: (0, 0), from: (-1, 0, -1), size: (2, 12, 2), pivot: (6.25, 24.6, 5.0)),
+            ],
+        ),
+    ),
+    (
+        name: "magma_cube",
+        texture: "entity/slime/magmacube",
+        health: 1,
+        width: 0.52,
+        height: 0.52,
+        speed: 0.6,
+        ai: Slime,
+        eye: 0.5,
+        fire_immune: true,
+        drops: [(item: "magma_cream", min: 1, max: 1, chance: 0.25)],
+        spawn: Nether(max_light: 15, biomes: [(NetherWastes, 2, 4), (BasaltDeltas, 100, 4)]),
+        model: (
+            texture_size: (64, 32),
+            parts: [
+                (uv: (0, 0), from: (-4, 16, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (0, 1), from: (-4, 17, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (24, 10), from: (-4, 18, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (24, 19), from: (-4, 19, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (0, 4), from: (-4, 20, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (0, 5), from: (-4, 21, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (0, 6), from: (-4, 22, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (0, 7), from: (-4, 23, -4), size: (8, 1, 8), pivot: (0, 0, 0)),
+                (uv: (0, 16), from: (-2, 18, -2), size: (4, 4, 4), pivot: (0, 0, 0)),
+            ],
+        ),
+    ),
+    (
+        name: "zombified_piglin",
+        texture: "entity/piglin/zombified_piglin",
+        health: 20,
+        width: 0.6,
+        height: 1.95,
+        speed: 0.5,
+        ai: ZombifiedPiglin(attack: 8.0),
+        fire_immune: true,
+        drops: [
+            (item: "rotten_flesh", min: 0, max: 1),
+            (item: "gold_nugget", min: 0, max: 1),
+            (item: "gold_ingot", min: 1, max: 1, chance: 0.025),
+        ],
+        spawn: Nether(max_light: 11, biomes: [(NetherWastes, 100, 4), (CrimsonForest, 1, 4)]),
+        model: (
+            texture_size: (64, 64),
+            parts: [
+                (uv: (0, 0), from: (-5, -8, -4), size: (10, 8, 8), pivot: (0, 0, 0), role: Head,
+                    extra: [
+                        (uv: (31, 1), from: (-2, -4, -5), size: (4, 4, 1)),
+                        (uv: (2, 4), from: (2, -2, -5), size: (1, 2, 1)),
+                        (uv: (2, 0), from: (-3, -2, -5), size: (1, 2, 1)),
+                        (uv: (51, 6), from: (4.5, -6, -2), size: (1, 5, 4)),
+                        (uv: (39, 6), from: (-5.5, -6, -2), size: (1, 5, 4)),
+                    ]),
+                (uv: (16, 16), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0)),
+                (uv: (16, 32), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0), grow: 0.25),
+                (uv: (40, 16), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: Reaching),
+                (uv: (40, 32), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: Reaching, grow: 0.25),
+                (uv: (32, 48), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: Reaching),
+                (uv: (48, 48), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: Reaching, grow: 0.25),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA),
+                (uv: (0, 32), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA, grow: 0.25),
+                (uv: (16, 48), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB),
+                (uv: (0, 48), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB, grow: 0.25),
+            ],
+        ),
+    ),
+    (
+        name: "piglin",
+        texture: "entity/piglin/piglin",
+        health: 16,
+        width: 0.6,
+        height: 1.95,
+        speed: 0.6,
+        ai: Piglin(attack: 7.0),
+        drops: [(item: "golden_sword", min: 1, max: 1, chance: 0.085)],
+        spawn: Nether(max_light: 11, biomes: [(NetherWastes, 15, 4), (CrimsonForest, 5, 4)]),
+        model: (
+            texture_size: (64, 64),
+            parts: [
+                (uv: (0, 0), from: (-5, -8, -4), size: (10, 8, 8), pivot: (0, 0, 0), role: Head,
+                    extra: [
+                        (uv: (31, 1), from: (-2, -4, -5), size: (4, 4, 1)),
+                        (uv: (2, 4), from: (2, -2, -5), size: (1, 2, 1)),
+                        (uv: (2, 0), from: (-3, -2, -5), size: (1, 2, 1)),
+                        (uv: (51, 6), from: (4.5, -6, -2), size: (1, 5, 4)),
+                        (uv: (39, 6), from: (-5.5, -6, -2), size: (1, 5, 4)),
+                    ]),
+                (uv: (16, 16), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0)),
+                (uv: (16, 32), from: (-4, 0, -2), size: (8, 12, 4), pivot: (0, 0, 0), grow: 0.25),
+                (uv: (40, 16), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: ArmA),
+                (uv: (40, 32), from: (-3, -2, -2), size: (4, 12, 4), pivot: (-5, 2, 0), role: ArmA, grow: 0.25),
+                (uv: (32, 48), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: ArmB),
+                (uv: (48, 48), from: (-1, -2, -2), size: (4, 12, 4), pivot: (5, 2, 0), role: ArmB, grow: 0.25),
+                (uv: (0, 16), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA),
+                (uv: (0, 32), from: (-2, 0, -2), size: (4, 12, 4), pivot: (-1.9, 12, 0), role: LegA, grow: 0.25),
+                (uv: (16, 48), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB),
+                (uv: (0, 48), from: (-2, 0, -2), size: (4, 12, 4), pivot: (1.9, 12, 0), role: LegB, grow: 0.25),
+            ],
+        ),
+    ),
+    (
+        name: "hoglin",
+        texture: "entity/hoglin/hoglin",
+        health: 40,
+        width: 1.3965,
+        height: 1.4,
+        speed: 0.6,
+        ai: Hoglin(attack: 6.0),
+        drops: [
+            (item: "porkchop", min: 2, max: 4, cooked: "cooked_porkchop"),
+            (item: "leather", min: 0, max: 1),
+        ],
+        spawn: Nether(max_light: 11, biomes: [(CrimsonForest, 9, 4)]),
+        model: (
+            texture_size: (128, 64),
+            parts: [
+                (uv: (1, 1), from: (-8, -7, -13), size: (16, 14, 26), pivot: (0, 7, 0),
+                    extra: [(uv: (90, 33), from: (0, -14, -14), size: (0, 10, 19))]),
+                (uv: (61, 1), from: (-7, -3, -19), size: (14, 6, 19), pivot: (0, 2, -12), rest: 0.87266463, role: Head,
+                    extra: [
+                        (uv: (1, 1), from: (-12, -3, -5), size: (6, 1, 4)),
+                        (uv: (1, 6), from: (6, -3, -5), size: (6, 1, 4)),
+                        (uv: (10, 13), from: (-8, -9, -13), size: (2, 11, 2)),
+                        (uv: (1, 13), from: (6, -9, -13), size: (2, 11, 2)),
+                    ]),
+                (uv: (66, 42), from: (-3, 0, -3), size: (6, 14, 6), pivot: (-4, 10, -8.5), role: LegA),
+                (uv: (41, 42), from: (-3, 0, -3), size: (6, 14, 6), pivot: (4, 10, -8.5), role: LegB),
+                (uv: (21, 45), from: (-2.5, 0, -2.5), size: (5, 11, 5), pivot: (-5, 13, 10), role: LegB),
+                (uv: (0, 45), from: (-2.5, 0, -2.5), size: (5, 11, 5), pivot: (5, 13, 10), role: LegA),
+            ],
+        ),
+    ),
+    (
+        name: "strider",
+        texture: "entity/strider/strider",
+        variants: ["entity/strider/strider_cold"],
+        health: 20,
+        width: 0.9,
+        height: 1.7,
+        speed: 0.5,
+        ai: Strider,
+        fire_immune: true,
+        walks_on_lava: true,
+        hurt_by_water: true,
+        drops: [(item: "string", min: 2, max: 5)],
+        spawn: Lava(group: 2, biomes: [NetherWastes, CrimsonForest, WarpedForest, SoulSandValley, BasaltDeltas]),
+        layers: [
+            (texture: "entity/strider/strider_saddle", saddle: true, model: (
+                texture_size: (64, 128),
+                parts: [
+                (uv: (0, 32), from: (-2, 0, -2), size: (4, 16, 4), pivot: (-4, 8, 0), role: LegA),
+                (uv: (0, 55), from: (-2, 0, -2), size: (4, 16, 4), pivot: (4, 8, 0), role: LegB),
+                (uv: (0, 0), from: (-8, -6, -8), size: (16, 14, 16), pivot: (0, 1, 0)),
+                (uv: (16, 65), from: (-12, 0, 0), size: (12, 0, 16), pivot: (-8, 5, -8), rest_z: -1.2217305),
+                (uv: (16, 49), from: (-12, 0, 0), size: (12, 0, 16), pivot: (-8, 0, -8), rest_z: -1.134464),
+                (uv: (16, 33), from: (-12, 0, 0), size: (12, 0, 16), pivot: (-8, -4, -8), rest_z: -0.87266463),
+                (uv: (16, 33), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, -5, -8), rest_z: 0.87266463, mirror: true),
+                (uv: (16, 49), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, -1, -8), rest_z: 1.134464, mirror: true),
+                (uv: (16, 65), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, 4, -8), rest_z: 1.2217305, mirror: true),
+                ],
+            )),
+        ],
+        model: (
+            texture_size: (64, 128),
+            parts: [
+                (uv: (0, 32), from: (-2, 0, -2), size: (4, 16, 4), pivot: (-4, 8, 0), role: LegA),
+                (uv: (0, 55), from: (-2, 0, -2), size: (4, 16, 4), pivot: (4, 8, 0), role: LegB),
+                (uv: (0, 0), from: (-8, -6, -8), size: (16, 14, 16), pivot: (0, 1, 0)),
+                (uv: (16, 65), from: (-12, 0, 0), size: (12, 0, 16), pivot: (-8, 5, -8), rest_z: -1.2217305),
+                (uv: (16, 49), from: (-12, 0, 0), size: (12, 0, 16), pivot: (-8, 0, -8), rest_z: -1.134464),
+                (uv: (16, 33), from: (-12, 0, 0), size: (12, 0, 16), pivot: (-8, -4, -8), rest_z: -0.87266463),
+                (uv: (16, 33), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, -5, -8), rest_z: 0.87266463, mirror: true),
+                (uv: (16, 49), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, -1, -8), rest_z: 1.134464, mirror: true),
+                (uv: (16, 65), from: (0, 0, 0), size: (12, 0, 16), pivot: (8, 4, -8), rest_z: 1.2217305, mirror: true),
             ],
         ),
     ),

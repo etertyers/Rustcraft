@@ -46,8 +46,8 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_orbs, add_particles,
-            add_primed_tnt, item_mesh,
+            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_fireballs, add_orbs,
+            add_particles, add_primed_tnt, item_mesh,
         },
         held::HeldCache,
         icons::ItemIcons,
@@ -68,7 +68,7 @@ use crate::{
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
         shape::Cuboid,
-        worldgen::{gallery, terrain::Terrain},
+        worldgen::{gallery, nether::Nether, terrain::Terrain},
     },
 };
 
@@ -88,6 +88,8 @@ pub enum WorldKind {
     Flat,
     /// Every block and variant on display (`--gallery`).
     Gallery,
+    /// The Nether of a seed, starting there (`--nether`).
+    Nether { seed: u64 },
 }
 
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
@@ -216,6 +218,12 @@ impl App {
         self
     }
 
+    /// Uses these resource packs this time, without saving them as chosen.
+    pub fn with_packs(mut self, packs: Vec<String>) -> Self {
+        self.options.resource_packs = packs;
+        self
+    }
+
     pub fn with_bench(mut self, bench: Option<Bench>) -> Self {
         if let Some(distance) = bench.as_ref().and_then(|bench| bench.distance) {
             self.options.render_distance = distance;
@@ -322,6 +330,25 @@ impl App {
                 let (x, y, z) = terrain.spawn_point();
                 let spawn = DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
                 (ChunkSource::Terrain(Box::new(terrain)), spawn, 0.0, 0.0)
+            }
+            // On the floor nearest the origin.
+            WorldKind::Nether { seed } => {
+                let nether = Nether::new(seed);
+                let spawn = (0..64)
+                    .flat_map(|r| [(r, 0), (0, r), (-r, 0), (0, -r)])
+                    .find_map(|(x, z)| {
+                        let y = nether.standing_height(x, z)?;
+                        Some(DVec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5))
+                    })
+                    .unwrap_or(DVec3::new(0.5, 64.0, 0.5));
+                let chunks = ChunkManager::new(
+                    ChunkSource::Nether(Box::new(nether)),
+                    models,
+                    config::RENDER_DISTANCE,
+                    chunk_workers(),
+                );
+                let game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0);
+                return Ok(game.starting_in(crate::world::dimension::Dimension::Nether));
             }
             // On the grass at the origin.
             WorldKind::Flat => (ChunkSource::Flat, DVec3::new(0.5, ground, 0.5), 0.0, 0.0),
@@ -722,6 +749,10 @@ impl App {
         // scene being captured stands still.
         let frozen = self.pause.is_some() || self.shot.is_some();
         game.advance(if frozen { 0.0 } else { dt });
+        // Another dimension's chunks replace this one's.
+        if game.take_dimension_change() {
+            renderer.clear_world();
+        }
         let ticked = Instant::now();
 
         let p = game.camera.position;
@@ -799,6 +830,13 @@ impl App {
                 );
                 add_cart_blocks(&mut mesh, &game.carts, models, game.tick_alpha(), light_at);
                 add_primed_tnt(&mut mesh, &game.primed, models, game.tick_alpha(), light_at);
+                add_fireballs(
+                    &mut mesh,
+                    &game.fireballs,
+                    icons,
+                    &view_camera,
+                    game.tick_alpha(),
+                );
                 add_particles(
                     &mut mesh,
                     &game.particles,
@@ -867,6 +905,7 @@ impl App {
                 add_mob(&mut meshes[index].1, mob, def, alpha, light);
                 for (i, layer) in def.layers.iter().enumerate() {
                     if (layer.wool && mob.data.sheared)
+                        || (layer.saddle && !mob.data.saddled)
                         || layer.only_variant.is_some_and(|v| v != mob.data.variant)
                     {
                         continue;
@@ -921,6 +960,7 @@ impl App {
             light: chunks.light_at(x, p.y.floor() as i32, z),
             mode: game.mode,
             time: game.time(),
+            dimension: game.dimension(),
         };
         let hud = Hud {
             crosshair: self.cursor_grabbed,
@@ -958,6 +998,8 @@ impl App {
             }),
             sleep: game.sleep_fade(),
             message: game.message.as_ref().map(|(text, _)| text.clone()),
+            portal: game.portal_swirl(),
+            loading: game.is_arriving(),
         };
         let view_of = |stack: &ItemStack| {
             let icons = self.icons.as_ref()?;

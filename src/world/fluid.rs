@@ -62,27 +62,33 @@ pub fn level(block: BlockState) -> u8 {
     block.number(Prop::Level)
 }
 
-/// Game ticks between a flowing block's updates.
-fn tick_rate(fluid: Fluid) -> u64 {
+/// Game ticks between a flowing block's updates; lava is three times
+/// quicker in the Nether (`warm`, modern `ultraWarm`).
+fn tick_rate(fluid: Fluid, warm: bool) -> u64 {
     match fluid {
         Fluid::Water => 5,
+        Fluid::Lava if warm => 10,
         Fluid::Lava => 30,
     }
 }
 
 /// How far ahead a flow looks for a way down: 1.0.0's `calculateFlowCost`
-/// gives up past 4 blocks, modern lava in the Overworld past 2.
-fn search_depth(fluid: Fluid) -> i32 {
+/// gives up past 4 blocks, modern lava in the Overworld past 2 (4 in the
+/// Nether).
+fn search_depth(fluid: Fluid, warm: bool) -> i32 {
     match fluid {
         Fluid::Water => 4,
+        Fluid::Lava if warm => 4,
         Fluid::Lava => 2,
     }
 }
 
-/// Levels lost per block of spreading: lava reaches 3 blocks, water 7.
-fn level_step(fluid: Fluid) -> i32 {
+/// Levels lost per block of spreading: lava reaches 3 blocks (7 in the
+/// Nether), water 7.
+fn level_step(fluid: Fluid, warm: bool) -> i32 {
     match fluid {
         Fluid::Water => 1,
+        Fluid::Lava if warm => 1,
         Fluid::Lava => 2,
     }
 }
@@ -211,6 +217,8 @@ pub struct Fluids {
     scheduled: FastSet<(IVec3, BlockId)>,
     next: u64,
     changed: Vec<IVec3>,
+    /// In the Nether, where lava runs further and faster (M24).
+    pub warm: bool,
 }
 
 /// Whether fluid at local (x, y, z) could flow into a cell beside or below
@@ -271,7 +279,7 @@ impl Fluids {
                             continue;
                         }
                         let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
-                        self.schedule(at, block.id(), time + tick_rate(fluid));
+                        self.schedule(at, block.id(), time + tick_rate(fluid, self.warm));
                     }
                 }
             }
@@ -409,8 +417,11 @@ impl Step<'_> {
         };
         self.harden(at);
         if self.fluid(at) == Some(fluid) {
-            self.fluids
-                .schedule(at, block(fluid), self.time + tick_rate(fluid));
+            self.fluids.schedule(
+                at,
+                block(fluid),
+                self.time + tick_rate(fluid, self.fluids.warm),
+            );
         }
     }
 
@@ -435,8 +446,11 @@ impl Step<'_> {
         };
         self.harden(at);
         if self.fluid(at) == Some(fluid) {
-            self.fluids
-                .schedule(at, block(fluid), self.time + tick_rate(fluid));
+            self.fluids.schedule(
+                at,
+                block(fluid),
+                self.time + tick_rate(fluid, self.fluids.warm),
+            );
         }
     }
 
@@ -472,7 +486,7 @@ impl Step<'_> {
         let Some(fluid) = self.fluid(at) else {
             return;
         };
-        let step = level_step(fluid);
+        let step = level_step(fluid, self.fluids.warm);
         let mut level = self.level(at, fluid);
         // 1.0.0 turned a flow still when nothing changed; here it just
         // isn't scheduled again, but lava that waited its turn does
@@ -521,8 +535,11 @@ impl Step<'_> {
                     return;
                 }
                 self.set(at, at_level(fluid, level as u8));
-                self.fluids
-                    .schedule(at, block(fluid), self.time + tick_rate(fluid));
+                self.fluids.schedule(
+                    at,
+                    block(fluid),
+                    self.time + tick_rate(fluid, self.fluids.warm),
+                );
                 self.notify_neighbors(at);
             } else if settle {
                 self.harden(at);
@@ -657,7 +674,7 @@ impl Step<'_> {
             if !self.stops(next - IVec3::Y) {
                 return steps;
             }
-            if steps < search_depth(fluid) {
+            if steps < search_depth(fluid, self.fluids.warm) {
                 best = best.min(self.flow_cost(next, fluid, steps + 1, i));
             }
         }
@@ -792,6 +809,18 @@ mod tests {
         assert_eq!(pond.level(3, 0), Some(6));
         assert_eq!(pond.level(4, 0), None);
         assert_eq!(pond.get(3, 64, 0).id(), blocks::LAVA);
+    }
+
+    #[test]
+    fn nether_lava_runs_7_blocks_three_times_as_fast() {
+        let mut pond = Pond::new();
+        pond.fluids.warm = true;
+        pond.pour(0, 64, 0, Fluid::Lava);
+        pond.run(60);
+        assert_eq!(pond.level(3, 0), Some(3), "three blocks in 3 s");
+        pond.run(3000);
+        assert_eq!(pond.level(7, 0), Some(7));
+        assert_eq!(pond.level(8, 0), None);
     }
 
     #[test]

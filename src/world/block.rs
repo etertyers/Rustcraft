@@ -795,6 +795,9 @@ pub struct BlockDef {
     /// pressure plates, redstone, snow layers, standing signs).
     #[serde(default)]
     pub needs_ground: bool,
+    /// Pops off without a block above to hang from (weeping vines).
+    #[serde(default)]
+    pub hangs: bool,
     #[serde(default)]
     pub placement: Placement,
     /// What right-clicking it does, if anything.
@@ -940,6 +943,7 @@ impl BlockDef {
                     },
                 )
             }
+            _ if self.hangs => Some(IVec3::Y),
             _ => self.needs_ground.then_some(IVec3::NEG_Y),
         }
     }
@@ -1539,6 +1543,53 @@ mod tests {
             "stripped_spruce_log",
             "stripped_spruce_log_top",
             "tuff",
+        ] {
+            expected.push(format!("block/{name}"));
+        }
+        // M24's Nether blocks from 1.16 on.
+        for name in [
+            "basalt_side",
+            "basalt_top",
+            "blackstone",
+            "blackstone_top",
+            "crimson_door_bottom",
+            "crimson_door_top",
+            "crimson_fungus",
+            "crimson_nylium",
+            "crimson_nylium_side",
+            "crimson_planks",
+            "crimson_roots",
+            "crimson_stem",
+            "crimson_stem_top",
+            "crimson_trapdoor",
+            "nether_gold_ore",
+            "nether_sprouts",
+            "polished_basalt_side",
+            "polished_basalt_top",
+            "shroomlight",
+            "soul_fire_0",
+            "soul_lantern",
+            "soul_soil",
+            "soul_torch",
+            "stripped_crimson_stem",
+            "stripped_crimson_stem_top",
+            "stripped_warped_stem",
+            "stripped_warped_stem_top",
+            "twisting_vines",
+            "twisting_vines_plant",
+            "warped_door_bottom",
+            "warped_door_top",
+            "warped_fungus",
+            "warped_nylium",
+            "warped_nylium_side",
+            "warped_planks",
+            "warped_roots",
+            "warped_stem",
+            "warped_stem_top",
+            "warped_trapdoor",
+            "warped_wart_block",
+            "weeping_vines",
+            "weeping_vines_plant",
         ] {
             expected.push(format!("block/{name}"));
         }

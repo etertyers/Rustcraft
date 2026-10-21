@@ -227,6 +227,7 @@ impl Game {
         let target = self.mobs[index].body.aabb();
         let hit = self.mobs[index].hurt(blow.damage, Some(from), DamageSource::Mob);
         self.mobs[index].hit_by_player();
+        self.rally(index);
         if hit {
             let knockback = self.held_level(Enchantment::Knockback);
             if knockback > 0 {
