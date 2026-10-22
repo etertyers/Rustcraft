@@ -413,6 +413,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m29-advancements",
+        about: "the advancements screen on the Minecraft tab part-way through a playthrough: made ones framed and lit, the next ones open, the rest dim",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: advancements,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -664,6 +674,26 @@ fn end_portal(game: &mut Game) {
     }
     game.set_blocks(&edits);
     game.run_ticks(2);
+}
+
+/// The advancements screen with the first goals of the story made.
+fn advancements(game: &mut Game) {
+    use crate::advancements::Event;
+    game.run_ticks(2);
+    for name in [
+        "cobblestone",
+        "stone_pickaxe",
+        "iron_ingot",
+        "iron_pickaxe",
+        "diamond",
+        "obsidian",
+        "iron_chestplate",
+        "lava_bucket",
+    ] {
+        game.note(Event::Have(name.to_owned()));
+    }
+    game.note(Event::Dimension("the_nether".to_owned()));
+    game.stage_advancements(0);
 }
 
 /// Part-way through the credits.

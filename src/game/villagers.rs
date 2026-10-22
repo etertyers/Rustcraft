@@ -479,6 +479,7 @@ impl Game {
         }
         let at = self.mobs[m].feet() + DVec3::Y;
         self.spawn_xp(points, at);
+        self.note(crate::advancements::Event::Used("trade".to_owned()));
         true
     }
 

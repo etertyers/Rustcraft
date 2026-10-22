@@ -2,6 +2,7 @@
 //! game so benchmarks (`benches/`) can reach it; `main.rs` only parses the
 //! command line and runs the app.
 
+pub mod advancements;
 pub mod app;
 pub mod assets;
 pub mod bench;

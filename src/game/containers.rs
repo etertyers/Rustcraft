@@ -204,12 +204,13 @@ impl Game {
                 }
             }
         }
+        let mut brewed = false;
         for at in stands {
             let Some(BlockEntity::BrewingStand(stand)) = self.chunks.block_entity_mut(at) else {
                 continue;
             };
-            if !stand.is_idle() {
-                stand.tick();
+            if !stand.is_idle() && stand.tick() {
+                brewed = true;
             }
             let bottles = stand.bottles();
             let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
@@ -222,6 +223,11 @@ impl Game {
             if shown != block && block.is(blocks::BREWING_STAND) {
                 self.chunks.set_blocks_later(&[(at, shown)]);
             }
+        }
+        // A brew finished in a stand near enough for the player to have
+        // brewed it (the stands are the loaded ones).
+        if brewed {
+            self.note(crate::advancements::Event::Used("brew".to_owned()));
         }
     }
 

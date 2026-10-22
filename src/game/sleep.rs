@@ -116,6 +116,7 @@ impl Game {
         let head = sleep.head;
         self.time = (self.time + DAY_TICKS) / DAY_TICKS * DAY_TICKS;
         self.bed = Some(head);
+        self.note(crate::advancements::Event::Used("sleep".to_owned()));
         self.wake();
     }
 

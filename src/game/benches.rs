@@ -211,6 +211,7 @@ impl Game {
             self.stats.experience.spend_levels(price);
         }
         self.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
+        self.note(crate::advancements::Event::Used("enchant".to_owned()));
         true
     }
 

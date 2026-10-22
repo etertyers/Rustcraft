@@ -79,6 +79,8 @@ pub enum ScreenAction {
     Trade(usize),
     /// Chose the stonecutter's cut with this number.
     Choose(usize),
+    /// Clicked this tab of the advancements screen.
+    AdvTab(usize),
 }
 
 /// One of a villager's trades, ready to draw.

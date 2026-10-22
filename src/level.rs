@@ -65,6 +65,9 @@ pub struct Level {
     /// How the dragon fight stands (added in M27).
     #[serde(default)]
     pub end: EndData,
+    /// What the world has done (added in M29).
+    #[serde(default)]
+    pub advancements: crate::advancements::Progress,
 }
 
 /// The End as the world remembers it (added in M27).
@@ -146,6 +149,7 @@ impl Level {
             away_populated: Vec::new(),
             portals: Vec::new(),
             end: EndData::default(),
+            advancements: Default::default(),
         }
     }
 }

@@ -97,6 +97,7 @@ impl Game {
             return;
         };
         self.place_player(feet);
+        self.note(crate::advancements::Event::Used("gateway".to_owned()));
         self.gateway_cooldown = COOLDOWN;
         // Wait for the chunks around the new spot to load.
         self.arriving = Some(0);

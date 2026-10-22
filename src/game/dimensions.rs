@@ -168,6 +168,7 @@ impl Game {
         self.place_player(feet);
         self.dimension_changed = true;
         self.arriving = Some(0);
+        self.note_dimension(to);
     }
 
     /// Puts the player's feet at `feet`, standing still.
