@@ -208,6 +208,14 @@ impl Game {
             self.dismount(&cart);
             return;
         }
+        let speed = cart.velocity.length();
+        if speed > 0.05 && self.time.is_multiple_of(8) {
+            crate::audio::play_here_with(
+                "entity.minecart.riding",
+                (speed * 2.0).min(0.9) as f32,
+                1.0,
+            );
+        }
         self.body.set_position(cart.position);
         self.body.velocity = DVec3::ZERO;
     }

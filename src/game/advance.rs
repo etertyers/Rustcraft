@@ -56,6 +56,13 @@ impl Game {
                     index,
                     ticks: TOAST_TICKS,
                 });
+                crate::audio::play_here(
+                    if registry.defs[index].frame == crate::advancements::Frame::Challenge {
+                        "ui.toast.challenge_complete"
+                    } else {
+                        "ui.toast.in"
+                    },
+                );
                 log::info!("advancement: {}", registry.defs[index].title);
             }
         }
@@ -76,6 +83,9 @@ impl Game {
     pub(super) fn tick_advancements(&mut self) {
         for toast in &mut self.toasts {
             toast.ticks = toast.ticks.saturating_sub(1);
+        }
+        if self.toasts.iter().any(|t| t.ticks == 0) {
+            crate::audio::play_here("ui.toast.out");
         }
         self.toasts.retain(|t| t.ticks > 0);
         if self.time == 0 {

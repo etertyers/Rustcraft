@@ -23,6 +23,21 @@ use fps::FpsCounter;
 use gui::{GuiTextures, SlotView, SurvivalHud};
 use menu::{Menu, MenuAction};
 
+/// A click on an interface button, with the click sound.
+pub trait ClickSound {
+    fn clicked_with_sound(&self) -> bool;
+}
+
+impl ClickSound for egui::Response {
+    fn clicked_with_sound(&self) -> bool {
+        let clicked = self.clicked();
+        if clicked {
+            crate::audio::play_here("ui.button.click");
+        }
+        clicked
+    }
+}
+
 /// World and renderer numbers shown in the F3 overlay.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DebugStats {
@@ -836,7 +851,7 @@ fn show_death_screen(ctx: &egui::Context, message: &str) -> bool {
                 ui.add_space(16.0 * scale);
                 let button = egui::Button::new(RichText::new("Respawn").size(8.0 * scale))
                     .min_size(egui::vec2(200.0, 20.0) * scale);
-                respawn = ui.add(button).clicked();
+                respawn = ui.add(button).clicked_with_sound();
             });
         });
     respawn
@@ -863,7 +878,7 @@ fn show_sleep_screen(ctx: &egui::Context, asleep: f32) -> bool {
         .show(ctx, |ui| {
             let button = egui::Button::new(RichText::new("Leave Bed").size(8.0 * scale))
                 .min_size(egui::vec2(200.0, 20.0) * scale);
-            leave = ui.add(button).clicked();
+            leave = ui.add(button).clicked_with_sound();
         });
     leave
 }

@@ -3,3 +3,5 @@
 .DS_Store
 /options.ron
 /resourcepacks
+/.claude/settings.local.json
+/assets/vanilla/

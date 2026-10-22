@@ -77,9 +77,20 @@ impl Look {
     /// Builds the look from Kenzo's textures in `assets` with `packs` over
     /// them (highest priority first).
     pub fn build(assets: &Path, packs: Vec<Pack>, mobs: &MobRegistry) -> Result<Self> {
+        Self::build_with(assets, packs, mobs, true)
+    }
+
+    /// Like `build`; `vanilla` says whether the downloaded vanilla assets
+    /// are the lowest layer.
+    pub fn build_with(
+        assets: &Path,
+        packs: Vec<Pack>,
+        mobs: &MobRegistry,
+        vanilla: bool,
+    ) -> Result<Self> {
         let started = Instant::now();
         let names: Vec<String> = packs.iter().map(|p| p.name().to_owned()).collect();
-        let res = Resources::load(assets, packs)?;
+        let res = Resources::load_with(assets, packs, vanilla)?;
         let blocks = block::registry();
         let items = item::registry();
 
@@ -139,21 +150,20 @@ impl Look {
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);
         let mut mob_textures: Vec<RgbaImage> = mobs
-            .textures()
+            .textures_sized()
             .into_iter()
-            .chain([
-                ARROW_TEXTURE,
-                MINECART_TEXTURE,
-                DRAGON_TEXTURE,
-                CRYSTAL_TEXTURE,
-                ELYTRA_TEXTURE,
-            ])
-            .map(|name| {
-                res.image(name).unwrap_or_else(|| {
-                    warn!("no layer has {name}");
-                    missing_image()
-                })
-            })
+            .map(|(name, size)| (name, Some(size)))
+            .chain(
+                [
+                    ARROW_TEXTURE,
+                    MINECART_TEXTURE,
+                    DRAGON_TEXTURE,
+                    CRYSTAL_TEXTURE,
+                    ELYTRA_TEXTURE,
+                ]
+                .map(|name| (name, None)),
+            )
+            .map(|(name, size)| mob_image(&res, name, size))
             .collect();
         mob_textures.push(skin);
         info!(
@@ -211,6 +221,34 @@ pub fn load_skin(res: &Resources, assets: &Path) -> (RgbaImage, bool) {
     (missing_image(), false)
 }
 
+/// A mob's texture from the highest layer that has it. One from the vanilla
+/// fallback must be the size the hand-built model is laid out for (newer
+/// versions change some layouts, and a different size means different
+/// UVs), else it is skipped with a log line, and `None` is returned.
+pub fn mob_texture(res: &Resources, name: &str, size: Option<(u32, u32)>) -> Option<RgbaImage> {
+    let Some(texture) = res.texture(name) else {
+        warn!("no layer has {name}");
+        return None;
+    };
+    let dims = texture.image.dimensions();
+    if texture.vanilla && size.is_some_and(|size| size != dims) {
+        warn!(
+            "skipping vanilla {name}: it is {}×{} but the model wants {}×{}",
+            dims.0,
+            dims.1,
+            size.map_or(0, |s| s.0),
+            size.map_or(0, |s| s.1)
+        );
+        return None;
+    }
+    Some(texture.first_frame())
+}
+
+/// `mob_texture`, or the checkerboard.
+fn mob_image(res: &Resources, name: &str, size: Option<(u32, u32)>) -> RgbaImage {
+    mob_texture(res, name, size).unwrap_or_else(missing_image)
+}
+
 /// A small magenta and black checkerboard for a missing mob texture.
 fn missing_image() -> RgbaImage {
     RgbaImage::from_fn(16, 16, |x, y| {
@@ -235,9 +273,44 @@ mod tests {
     }
 
     #[test]
+    fn a_vanilla_mob_texture_of_the_wrong_size_is_skipped() {
+        let dir = crate::world::save::TempDir::new("vanilla-mobs");
+        let root = dir.path().join("vanilla/assets/minecraft/textures/entity");
+        std::fs::create_dir_all(&root).unwrap();
+        for (name, w, h) in [("pig", 64, 32), ("horse", 128, 128)] {
+            RgbaImage::from_pixel(w, h, image::Rgba([9, 9, 9, 255]))
+                .save(root.join(format!("{name}.png")))
+                .unwrap();
+        }
+        let res = Resources::new(
+            Pack::base(dir.path()),
+            Vec::new(),
+            std::collections::HashMap::new(),
+        )
+        .with_vanilla(Pack::vanilla(&dir.path().join("vanilla")).unwrap());
+        // The model is laid out for 64×32: that size is taken, another isn't.
+        assert_eq!(
+            mob_image(&res, "entity/pig", Some((64, 32))).dimensions(),
+            (64, 32)
+        );
+        assert_eq!(
+            mob_image(&res, "entity/pig", Some((64, 64))),
+            missing_image()
+        );
+        assert_eq!(
+            mob_image(&res, "entity/horse", None).dimensions(),
+            (128, 128)
+        );
+        assert_eq!(
+            mob_image(&res, "entity/cow", Some((64, 32))),
+            missing_image()
+        );
+    }
+
+    #[test]
     fn kenzos_textures_alone_give_the_v1_look() {
         let assets = crate::assets::dir();
-        let look = Look::build(&assets, Vec::new(), &mobs()).unwrap();
+        let look = Look::build_with(&assets, Vec::new(), &mobs(), false).unwrap();
         assert_eq!(look.atlas.tile_size(), 16);
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());

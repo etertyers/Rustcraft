@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use super::ClickSound;
 use egui::{Button, Color32, RichText, TextureHandle, vec2};
 use log::warn;
 
@@ -198,13 +199,13 @@ impl PackScreen {
             ui.add_space(((ui.available_width() - 2.0 * BUTTON[0] - 8.0) / 2.0).max(0.0));
             if ui
                 .add(Button::new("Open Pack Folder").min_size(BUTTON.into()))
-                .clicked()
+                .clicked_with_sound()
             {
                 self.open_folder();
             }
             done = ui
                 .add(Button::new("Done").min_size(BUTTON.into()))
-                .clicked();
+                .clicked_with_sound();
         });
         done.then(|| self.selection())
     }
@@ -280,7 +281,7 @@ fn row(ui: &mut egui::Ui, entry: &mut Entry, buttons: &[(&str, Click)], click: &
             }
             ui.horizontal(|ui| {
                 for &(text, action) in buttons {
-                    if ui.small_button(text).clicked() {
+                    if ui.small_button(text).clicked_with_sound() {
                         *click = Some(action);
                     }
                 }

@@ -27,6 +27,9 @@ const NAMESPACE_ROOT: &str = "assets/minecraft/";
 /// The base layer's id in the list of layers.
 pub const BASE_ID: &str = "default";
 
+/// The vanilla fallback's id.
+pub const VANILLA_ID: &str = "vanilla";
+
 /// What `pack.mcmeta` says about a pack.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PackInfo {
@@ -206,6 +209,21 @@ impl Pack {
             files: Files::Dir(assets.to_owned()),
             root: "",
         }
+    }
+
+    /// The downloaded vanilla assets (`assets/vanilla/assets/minecraft`),
+    /// if the folder exists: the layer under every other.
+    pub fn vanilla(dir: &Path) -> Option<Self> {
+        dir.join(NAMESPACE_ROOT).is_dir().then(|| Self {
+            id: VANILLA_ID.to_owned(),
+            info: PackInfo {
+                description: "Minecraft's own assets, as the lowest fallback".to_owned(),
+                formats: None,
+            },
+            icon: None,
+            files: Files::Dir(dir.to_owned()),
+            root: NAMESPACE_ROOT,
+        })
     }
 
     /// The name shown for the pack: its file name without `.zip`.

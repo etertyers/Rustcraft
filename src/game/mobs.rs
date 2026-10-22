@@ -356,6 +356,9 @@ impl Game {
             } else {
                 mob.tick(&intent.input, &collider, eyes);
             }
+            let near_ears = mob.feet().distance(player_feet) < 32.0;
+            let mut chance = || thinking.next_f64() as f32;
+            super::sounds::mob_sounds(mob, &def.name, near_ears, &mut chance);
             if def.climbs && mob.body.collided_horizontally() && intent.input.forward > 0.0 {
                 mob.body.velocity.y = 0.2;
                 mob.stats.fall_distance = 0.0;

@@ -29,10 +29,34 @@ const PLATE_HEIGHT: f64 = 0.25;
 /// Most notes kept for the sound code to play.
 const NOTE_LOG: usize = 64;
 
+/// The sound event of note block instrument number `instrument` (the order
+/// of `world::redstone::instrument_over`).
+fn note_event(instrument: u8) -> &'static str {
+    match instrument {
+        1 => "block.note_block.basedrum",
+        2 => "block.note_block.snare",
+        3 => "block.note_block.hat",
+        4 => "block.note_block.bass",
+        5 => "block.note_block.flute",
+        6 => "block.note_block.bell",
+        7 => "block.note_block.guitar",
+        8 => "block.note_block.chime",
+        9 => "block.note_block.xylophone",
+        10 => "block.note_block.iron_xylophone",
+        11 => "block.note_block.cow_bell",
+        12 => "block.note_block.didgeridoo",
+        13 => "block.note_block.bit",
+        14 => "block.note_block.banjo",
+        15 => "block.note_block.pling",
+        _ => "block.note_block.harp",
+    }
+}
+
 impl Game {
     /// Sets blocks the engine changed. They were already settled there, so
     /// the engine isn't told again; everything else is.
     fn apply_redstone(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.edit_sounds(edits);
         self.chunks.set_blocks_later(edits);
         for &(at, _) in edits {
             self.fluids.changed(at);
@@ -132,6 +156,14 @@ impl Game {
 
     /// Records a note for the sound code.
     fn play_note(&mut self, at: IVec3, instrument: u8, note: u8) {
+        // Two to the power of the note's distance from the middle, in octaves.
+        let pitch = 2f32.powf((f32::from(note) - 12.0) / 12.0);
+        crate::audio::play_at(
+            note_event(instrument),
+            at.as_dvec3() + DVec3::splat(0.5),
+            3.0,
+            pitch,
+        );
         if self.played_notes.len() >= NOTE_LOG {
             self.played_notes.remove(0);
         }
@@ -265,6 +297,16 @@ impl Game {
                     .push(ItemEntity::from_block(stack, cell, &mut random));
             }
         }
+        crate::audio::play_at(
+            if extend {
+                "block.piston.extend"
+            } else {
+                "block.piston.contract"
+            },
+            at.as_dvec3() + DVec3::splat(0.5),
+            0.5,
+            0.6 + self.rng.next_f64() as f32 * 0.25,
+        );
         self.edit(&edits);
         self.shove_entities(&shove, direction);
     }

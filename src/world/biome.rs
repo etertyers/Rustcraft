@@ -426,7 +426,8 @@ mod tests {
 
     #[test]
     fn real_colormaps_load() {
-        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let base =
+            crate::pack::Resources::load_with(&crate::assets::dir(), Vec::new(), false).unwrap();
         let colors = BiomeColors::load(&base).unwrap();
         // Forest grass is a different green from desert grass.
         assert_ne!(colors.grass(Biome::Forest), colors.grass(Biome::Desert));

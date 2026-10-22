@@ -104,6 +104,20 @@ pub struct Mob {
     pub player_hit: u32,
     /// Fire and lava don't hurt it (from its kind).
     pub fire_immune: bool,
+    /// What the sound code has already heard of it.
+    pub heard: Heard,
+}
+
+/// The health, death and stride of a mob as the sound code last saw them,
+/// to tell what happened since.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Heard {
+    pub health: f32,
+    pub dead: bool,
+    pub stride: f32,
+    /// A creeper's swelling and an enderman's anger.
+    pub swell: i32,
+    pub aggressive: bool,
 }
 
 impl Mob {
@@ -152,6 +166,10 @@ impl Mob {
             ridden: false,
             player_hit: 0,
             fire_immune: def.fire_immune,
+            heard: Heard {
+                health: health as f32,
+                ..Heard::default()
+            },
         }
     }
 

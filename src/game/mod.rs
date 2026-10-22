@@ -40,6 +40,7 @@ mod progression;
 mod redstone;
 mod shulkers;
 mod sleep;
+mod sounds;
 mod spawners;
 mod updates;
 pub mod view;
@@ -122,6 +123,8 @@ pub struct Game {
     /// How the player looks to the camera: swinging, bobbing, F5.
     view: view::ViewState,
     body: Body,
+    /// What the player sounded like last tick, for the sounds that changed.
+    sounds: sounds::Memory,
     /// Feet position at the previous tick, for interpolating the camera.
     prev_feet: DVec3,
     spawn: DVec3,
@@ -296,6 +299,7 @@ impl Game {
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
             view: view::ViewState::new(yaw, pitch, None),
             body,
+            sounds: Default::default(),
             prev_feet: feet,
             spawn,
             keys: MoveKeys::default(),
@@ -806,6 +810,7 @@ impl Game {
         self.post_process();
         self.tick_furnaces();
         self.tick_brewing();
+        self.tick_sounds();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS

@@ -93,6 +93,18 @@ impl Game {
             let feet = mobs[index].feet();
             if let Some(leap) = intent.leap {
                 mobs[index].body.velocity = leap;
+                let name = self.mob_defs.get(mobs[index].kind).name.as_str();
+                let small = mobs[index].data.size == 1;
+                let jump = match (name, small) {
+                    ("slime", false) => Some("entity.slime.jump"),
+                    ("slime", true) => Some("entity.slime.jump_small"),
+                    ("magma_cube", _) => Some("entity.magma_cube.jump"),
+                    ("rabbit", _) => Some("entity.rabbit.jump"),
+                    _ => None,
+                };
+                if let Some(jump) = jump {
+                    crate::audio::play(jump, feet);
+                }
             }
             if let Some(hit) = intent.hit {
                 match hit.victim {
@@ -113,18 +125,23 @@ impl Game {
                 self.mob_shoots(&mobs[index], shot.from, shot.at);
             }
             if let Some(shot) = intent.fireball {
+                crate::audio::play_at("entity.ghast.shoot", shot.from, 10.0, 1.0);
                 self.loose_fireball(shot.from, shot.at);
             }
             if let Some(shot) = intent.bullet {
+                crate::audio::play("entity.shulker.shoot", shot.from);
                 self.bullets.push(crate::entity::bullet::ShulkerBullet::new(
                     shot.from, shot.at,
                 ));
             }
             if let Some(shot) = intent.small_fireball {
+                crate::audio::play("entity.blaze.shoot", shot.from);
                 self.loose_small_fireball(shot.from, shot.at);
             }
             if let Some(tp) = intent.teleport {
+                crate::audio::play("entity.enderman.teleport", feet);
                 self.teleport_mob(&mut mobs[index], tp);
+                crate::audio::play("entity.enderman.teleport", mobs[index].feet());
             }
             if let Some(action) = intent.block {
                 self.enderman_block(&mut mobs[index], action);
@@ -195,6 +212,14 @@ impl Game {
         let rng = &mut self.rng;
         let mut random = || rng.next_f64();
         let mut arrow = Arrow::shoot(from, aim, power, DVec3::ZERO, false, &mut random);
+        crate::audio::play(
+            if matches!(self.mob_defs.get(mob.kind).ai, Ai::Witch) {
+                "entity.witch.throw"
+            } else {
+                "entity.skeleton.shoot"
+            },
+            from,
+        );
         arrow.hostile = true;
         arrow.critical = false;
         self.arrows.push(arrow);

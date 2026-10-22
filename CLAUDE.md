@@ -18,7 +18,7 @@ v1.1 keeps everything from v1.0 and moves the game toward **modern Minecraft Jav
 
 - **Faithfulness from M14 on:** match modern Java Edition behavior and values, not 1.0.0. Where 1.0.0 and modern differ (sprinting, hitboxes, combat, recipes), modern wins. Record each switch in `docs/DECISIONS.md`.
 - **New content gets added with its recipes.** Each milestone adds crafting/smelting recipes for the blocks and items it introduces. M29 does a final sweep for anything still missing.
-- **Mojang's files:** don't download or bundle Minecraft's own assets. Textures come from Kenzo's assets or resource packs Kenzo provides (M15). Mob models and structure layouts are hand-built in code/data to match vanilla shapes.
+- **Mojang's files:** vanilla textures, models, sounds and language files are downloaded from InventivetalentDev/minecraft-assets (branch 26.3) by scripts/fetch-vanilla-assets.sh into the git-ignored assets/vanilla/ folder, and used only as the lowest fallback layer, below Kenzo's assets and any resource pack. Never commit them. They are bundled into the local .app build.
 - **Still out of scope in v1.1:** multiplayer, commands/cheats, mods, Windows/Linux, comparators and observers, the Wither, and ocean monuments.
 
 ## 2. Tech stack
@@ -121,15 +121,18 @@ src/
   inventory/armor.rs, game/{armor,elytra,gateways,shulkers}.rs, entity/bullet.rs, world/structure/end.rs   # armor slots and protection, elytra gliding and rockets, End gateways, shulkers' bullets and shulker boxes, End cities and ships
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
-  audio/
+  audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
+  placeholders.rs    # generates the placeholder blocks and items from vanilla's data (--gen-placeholders)
+  game/sounds.rs     # the player's, mobs' and surroundings' sounds, queued as events
 assets/
   textures/          # Kenzo's PNGs (the base resource layer, 1.12 layout) → packed into an atlas at startup
-  sounds/            # Kenzo's sound files, named per docs/sounds.md
-  data/              # blocks.ron, items.ron, recipes.ron
+  sounds/, sounds.json   # Kenzo's sound files and events, laid out like a pack's assets/minecraft (they win over vanilla's)
+  vanilla/           # git-ignored: vanilla 26.3 assets, the lowest layer (scripts/fetch-vanilla-assets.sh)
+  data/              # blocks.ron, items.ron, recipes.ron, placeholder_blocks.ron, placeholder_items.ron
 resourcepacks/       # beside saves/: Minecraft resource packs, picked in the Resource Packs screen
 docs/
   blocks-and-items.md
-  sounds.md
+  placeholders.md    # every placeholder block and item (generated)
   DECISIONS.md
   screenshots/
 ```
@@ -137,7 +140,7 @@ docs/
 **Key conventions**
 - **World size:** Y is up. Chunks are 16×16 columns made of vertical 16³ sections. World height is **256** (Y 0..255, 16 sections) since M14 (128 in v1.0), with sea level at Y 63. Default render distance is **9 chunks**. Both are constants in `config.rs`; if 60 FPS isn't reachable, lower them, note it in `DECISIONS.md`, and tell Kenzo.
 - **IDs:** Since M14, blocks and items have modern Java Edition names (`minecraft:oak_log`), defined in `assets/data/blocks.ron` and `items.ron`; `build.rs` turns the names into constants (`world::blocks::OAK_LOG`, `inventory::items::STICK`). Runtime IDs are file positions and saves store names. A `BlockState` is a block plus modern block state properties (`world::props`). `assets/data/legacy.ron` maps v1.0's numeric 1.0.0 IDs to the new names. Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type, placement, shape) live in `blocks.ron`. Never scatter block behavior across `match` arms; a block that behaves like another names it with `acts_as` (every wooden button acts as `oak_button`, every kind of leaves as `oak_leaves`), and code matches on `BlockState::kind()`.
-- **Textures (M15):** textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/`; older names are in `assets/data/texture_names.ron`. `look::Look` builds everything texture-derived and is rebuilt when the packs change. At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
+- **Textures (M15):** textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/` over the vanilla fallback in `assets/vanilla/`; older names are in `assets/data/texture_names.ron`. `look::Look` builds everything texture-derived and is rebuilt when the packs change. At M1, inspect the folder, map filenames to blocks/items in the RON files, and list any block with no matching texture in `DECISIONS.md`. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
 - **Timing:** Game logic runs at a fixed 20 ticks/second, like Minecraft. Rendering runs at the display refresh rate with interpolation.
 - **Threading:** Chunk generation and meshing run on worker threads. The main thread never blocks on them; it uploads finished meshes to the GPU.
 - **Physics constants (Minecraft values, per tick):** gravity 0.08 blocks/tick², vertical drag ×0.98 per tick, jump velocity 0.42, walk ≈4.317 blocks/s, sprint ≈5.612, sneak ≈1.31, player hitbox 0.6×1.8 (sneaking 1.5, swimming and crawling 0.6), eye height 1.62 (1.27, 0.4), step height 0.6, block reach 5 (survival), 20 health points (10 hearts), 20 hunger points.
@@ -267,7 +270,7 @@ Each milestone ends with a playable build, screenshots, a PR, and Kenzo's sign-o
 - **Done when:** the wood → stone → iron → diamond progression works in a fresh survival world.
 
 ### - [x] M11 — Audio and polish
-- **[PLACEHOLDER: sound effects and music, waiting on Kenzo]** Don't implement audio yet. Kenzo is still downloading the files listed in `docs/sounds.md`. Until Kenzo confirms the files are in `assets/sounds/` and replaces this line with real instructions, skip all audio work, add no audio crate code, and don't treat missing sound as a failure. If you reach M11 before then, do the rest of M11 and note in the PR that audio is pending.
+- Sound effects and music: built in the pre-release fixes (session 1), after M30, as named events from vanilla's `sounds.json` (see `src/audio/`); Kenzo's own files go in `assets/sounds/` and win over vanilla's. (Originally a placeholder waiting on Kenzo's downloads.)
 - Settings menu: render distance, FOV, mouse sensitivity, volume, vsync. Pause menu.
 - Block-breaking particles and crack overlay.
 - **Done when:** a fresh player can go from a new world to iron tools with no debug UI (sound is excluded while the placeholder above stands).
@@ -434,6 +437,37 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Modern advancements: the Minecraft, Nether, The End, Adventure and Husbandry tabs, covering everything implemented. Toast pop-ups, an advancements screen (L), saved per world.
 - Recipe sweep: every block and item has its modern crafting, smelting, stonecutter and smithing recipes, with any missing workstation blocks added. List anything intentionally skipped in `DECISIONS.md`.
 - **Done when:** a survival playthrough unlocks advancements as expected, and an automated test confirms every craftable item has a recipe.
+
+#### Pre-release bug fixes (before M30)
+
+Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the planning folder's bugfix-prompt.md. Vanilla values are written into each prompt. Each fix gets a unit test where the logic is testable without a GPU.
+
+- [x] **Session 1: assets**
+  - [x] Vanilla 26.3 textures, models, sounds and lang as a git-ignored fallback layer (scripts/fetch-vanilla-assets.sh)
+  - [x] Every missing vanilla block and item registered as a placeholder (docs/placeholders.md)
+  - [x] Eye of ender shows in the End portal frame
+- [ ] **Session 2: menus and UI**
+  - [ ] Clicking Singleplayer opens the world list instantly; worlds load only when picked
+  - [ ] `--creative` works from the terminal
+  - [ ] Clicking in the advancements screen (or any screen) doesn't move the camera
+  - [ ] Inventory slot highlight lines up at every window size and Retina scale; the "crafting" text box is gone
+  - [ ] Steve appears in the inventory and follows the mouse
+  - [ ] Modern creative inventory with tabs and a search bar
+  - [ ] Recipe book sidebar in the crafting table and the inventory
+- [ ] **Session 3: player and world**
+  - [ ] Sneaking stops at vanilla's edge, and standing up there doesn't make you fall
+  - [ ] Walk between path, farmland and full blocks without jumping
+  - [ ] Using food interacts with blocks and mobs first, and eats only when there's nothing to interact with
+  - [ ] Overworld mob spawning matches vanilla caps and rules
+  - [ ] Plains flowers at vanilla density (flower forests unchanged)
+  - [ ] Chorus plants use chorus_plant stems with chorus_flower tips, and drop chorus fruit
+- [ ] **Session 4: mobs and the End**
+  - [ ] Hostile mobs use real pathfinding and vanilla attack behavior
+  - [ ] Mobs show their held items (skeletons hold bows)
+  - [ ] Horse texture fixed
+  - [ ] Endermen teleport randomly and teleport and run toward you when angry
+  - [ ] The dragon doesn't knock back or target creative players
+  - [ ] The dying dragon flies to the exit portal before it rises and explodes
 
 ### - [x] M30 — v1.1 performance and release
 - Profile with all content loaded (Overworld, Nether, End), and fix hot spots.

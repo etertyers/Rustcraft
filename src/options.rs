@@ -32,7 +32,7 @@ pub struct Options {
     pub fov: f32,
     /// Mouse look speed, 1 for the default.
     pub sensitivity: f32,
-    /// Sound volume 0–1. Kept for when sound arrives; nothing plays yet.
+    /// Sound volume 0–1: the master volume of sounds and music.
     pub volume: f32,
     pub vsync: bool,
     /// Whether the view and hand shake with each step.

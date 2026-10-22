@@ -108,6 +108,22 @@ impl Container {
     }
 }
 
+/// The sound of the chest-like block opening or closing: chests and
+/// trapped chests, ender chests, barrels, shulker boxes.
+fn chest_sound(block: &Option<crate::world::block::BlockState>, open: bool) -> &'static str {
+    let name = block.map_or("chest", |b| b.def().name.as_str());
+    match (name, open) {
+        (n, true) if n.contains("ender_chest") => "block.ender_chest.open",
+        (n, false) if n.contains("ender_chest") => "block.ender_chest.close",
+        (n, true) if n.contains("barrel") => "block.barrel.open",
+        (n, false) if n.contains("barrel") => "block.barrel.close",
+        (n, true) if n.contains("shulker_box") => "block.shulker_box.open",
+        (n, false) if n.contains("shulker_box") => "block.shulker_box.close",
+        (_, true) => "block.chest.open",
+        (_, false) => "block.chest.close",
+    }
+}
+
 /// The player's slots in 1.0.0's container order: the main inventory top
 /// row first, then the hotbar.
 fn player_slots() -> impl DoubleEndedIterator<Item = usize> + Clone {
@@ -151,6 +167,12 @@ impl Game {
             self.chunks.set_block_entity(at, Some(BlockEntity::chest()));
         }
         self.container = Some(Container::Chest(at));
+        crate::audio::play_at(
+            chest_sound(&self.chunks.world().block(at.x, at.y, at.z), true),
+            at.as_dvec3() + glam::DVec3::splat(0.5),
+            0.5,
+            0.9 + self.rng.next_f64() as f32 * 0.1,
+        );
         self.release_input();
     }
 
@@ -211,6 +233,10 @@ impl Game {
             };
             if !stand.is_idle() && stand.tick() {
                 brewed = true;
+                crate::audio::play(
+                    "block.brewing_stand.brew",
+                    at.as_dvec3() + glam::DVec3::splat(0.5),
+                );
             }
             let bottles = stand.bottles();
             let Some(block) = self.chunks.world().block(at.x, at.y, at.z) else {
@@ -308,6 +334,14 @@ impl Game {
     /// Closes whatever is open, throwing out the crafting grid and the
     /// stack held on the mouse (1.0.0's `onCraftGuiClosed`).
     pub fn close_container(&mut self) {
+        if let Some(Container::Chest(at)) = self.container {
+            crate::audio::play_at(
+                chest_sound(&self.chunks.world().block(at.x, at.y, at.z), false),
+                at.as_dvec3() + glam::DVec3::splat(0.5),
+                0.5,
+                0.9 + self.rng.next_f64() as f32 * 0.1,
+            );
+        }
         let mut thrown: Vec<ItemStack> = self.cursor.take().into_iter().collect();
         match self.container.take() {
             Some(Container::Crafting { grid, .. }) => thrown.extend(grid.into_iter().flatten()),

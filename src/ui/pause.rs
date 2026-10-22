@@ -5,6 +5,7 @@
 
 use egui::{Align2, Button, Color32, RichText, Slider};
 
+use super::ClickSound;
 use super::packs::PackScreen;
 use crate::options::{BIOME_BLENDS, FOVS, Options, RENDER_DISTANCES, SENSITIVITIES};
 
@@ -80,17 +81,23 @@ impl PauseMenu {
                         return;
                     }
                     heading(ui, "Game menu");
-                    if ui.add_sized(BUTTON, Button::new("Back to Game")).clicked() {
+                    if ui
+                        .add_sized(BUTTON, Button::new("Back to Game"))
+                        .clicked_with_sound()
+                    {
                         action = Some(PauseAction::Resume);
                     }
                     ui.add_space(8.0);
-                    if ui.add_sized(BUTTON, Button::new("Options...")).clicked() {
+                    if ui
+                        .add_sized(BUTTON, Button::new("Options..."))
+                        .clicked_with_sound()
+                    {
                         self.options_open = true;
                     }
                     ui.add_space(8.0);
                     if ui
                         .add_sized(BUTTON, Button::new("Save and Quit to Title"))
-                        .clicked()
+                        .clicked_with_sound()
                     {
                         action = Some(PauseAction::SaveAndQuit);
                     }
@@ -135,10 +142,7 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
             .show_value(false),
     );
     ui.add_space(8.0);
-    row(
-        ui,
-        format!("Volume: {} (no sound yet)", percent(options.volume)),
-    );
+    row(ui, format!("Volume: {}", percent(options.volume)));
     ui.add(
         Slider::new(&mut options.volume, 0.0..=1.0)
             .step_by(0.01)
@@ -146,7 +150,10 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
     );
     ui.add_space(8.0);
     let vsync = format!("VSync: {}", if options.vsync { "ON" } else { "OFF" });
-    if ui.add_sized(BUTTON, Button::new(vsync)).clicked() {
+    if ui
+        .add_sized(BUTTON, Button::new(vsync))
+        .clicked_with_sound()
+    {
         options.vsync = !options.vsync;
     }
     ui.add_space(8.0);
@@ -154,15 +161,20 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
         "View Bobbing: {}",
         if options.view_bobbing { "ON" } else { "OFF" }
     );
-    if ui.add_sized(BUTTON, Button::new(bobbing)).clicked() {
+    if ui
+        .add_sized(BUTTON, Button::new(bobbing))
+        .clicked_with_sound()
+    {
         options.view_bobbing = !options.view_bobbing;
     }
     ui.add_space(8.0);
     let packs = ui
         .add_sized(BUTTON, Button::new("Resource Packs..."))
-        .clicked();
+        .clicked_with_sound();
     ui.add_space(16.0);
-    let done = ui.add_sized(BUTTON, Button::new("Done")).clicked();
+    let done = ui
+        .add_sized(BUTTON, Button::new("Done"))
+        .clicked_with_sound();
     if packs {
         Some(OptionsAction::ResourcePacks)
     } else {

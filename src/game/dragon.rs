@@ -129,6 +129,7 @@ impl Game {
         };
         let senses = self.dragon_senses();
         let acts = dragon.tick(&senses);
+        self.dragon_sounds(&dragon);
         self.heal_from_crystals(&mut dragon);
         self.dragon_breaks_blocks(&dragon);
         if !dragon.is_dying() {
@@ -137,9 +138,11 @@ impl Game {
         let mut finished = false;
         for act in acts {
             match act {
-                Act::Fireball { from, dir } => self
-                    .dragon_fireballs
-                    .push(DragonFireball::new(from, dir * dragon::FIREBALL_SPEED)),
+                Act::Fireball { from, dir } => {
+                    crate::audio::play_at("entity.ender_dragon.shoot", from, 5.0, 1.0);
+                    self.dragon_fireballs
+                        .push(DragonFireball::new(from, dir * dragon::FIREBALL_SPEED));
+                }
                 Act::Breath { at } => self.breath.push(BreathCloud::new(at, breath::BREATH_CLOUD)),
                 Act::Bite { at } => self.dragon_bites(at),
                 Act::Burst { at } => {
@@ -325,6 +328,7 @@ impl Game {
         });
         self.dragon_fireballs = balls;
         for at in bursts {
+            crate::audio::play_at("entity.dragon_fireball.explode", at, 4.0, 1.0);
             // The cloud lies on the ground under where it burst.
             let ground = self.ground_under(at);
             self.breath
@@ -394,6 +398,7 @@ impl Game {
                     .load_now(ChunkPos::of_block(origin.x + dx * 16, origin.z + dz * 16));
             }
         }
+        crate::audio::play_here_with("block.end_portal.spawn", 1.0, 1.0);
         let mut edits = end::podium(origin, true);
         if first {
             edits.push((origin + IVec3::Y * 4, BlockState::of(blocks::DRAGON_EGG)));
@@ -403,6 +408,7 @@ impl Game {
         self.end.gateways += 1;
         self.chunks
             .load_now(ChunkPos::of_block(gateway.x, gateway.z));
+        crate::audio::play_here_with("block.end_gateway.spawn", 1.0, 1.0);
         self.edit(&end::gateway(gateway));
         self.say("The Ender Dragon has been defeated");
         self.note(crate::advancements::Event::Used("kill_dragon".to_owned()));

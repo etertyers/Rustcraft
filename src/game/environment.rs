@@ -26,6 +26,34 @@ impl Game {
         self.fluid_at(self.camera.position.as_dvec3())
     }
 
+    /// The sound event music is taken from where the player is: the credits'
+    /// poem, the End (with its own track for the dragon fight), the Nether's
+    /// biomes, creative mode, under water, else the game's tracks.
+    pub fn music_event(&self) -> Option<&'static str> {
+        if self.credits.is_some() {
+            return Some("music.credits");
+        }
+        Some(match self.dimension {
+            Dimension::End if self.dragon.is_some() => "music.dragon",
+            Dimension::End => "music.end",
+            Dimension::Nether => {
+                let p = self.camera.position.floor().as_ivec3();
+                match self.chunks.world().biome_at(p.x, p.z).unwrap_or_default() {
+                    Biome::CrimsonForest => "music.nether.crimson_forest",
+                    Biome::SoulSandValley => "music.nether.soul_sand_valley",
+                    Biome::BasaltDeltas => "music.nether.basalt_deltas",
+                    // The warped forest has no tracks of its own.
+                    _ => "music.nether.nether_wastes",
+                }
+            }
+            Dimension::Overworld if self.eye_in() == Some(Fluid::Water) => "music.under_water",
+            Dimension::Overworld if self.mode == crate::player::mode::GameMode::Creative => {
+                "music.creative"
+            }
+            Dimension::Overworld => "music.game",
+        })
+    }
+
     pub fn environment(&self) -> Environment {
         let p = self.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();

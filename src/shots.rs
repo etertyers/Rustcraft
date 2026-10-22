@@ -403,6 +403,16 @@ pub static SHOTS: &[Shot] = &[
         stage: end_portal,
     },
     Shot {
+        name: "fixes1-end-portal-eyes",
+        about: "the ring of end portal frames from above and close: each frame is 13/16 tall with its eye, 8×3×8, in the eye texture on top and sides",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 66.0, 4.5], 0.0, -0.62)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: end_portal,
+    },
+    Shot {
         name: "m28-end-city",
         about: "an End city on an outer island 1000 blocks out: the purpur and end stone tower with its side towers and bridges, a ship off the south, shulkers",
         world: Some(WorldKind::End { seed: 20111118 }),

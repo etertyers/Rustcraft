@@ -20,6 +20,7 @@ use winit::{
 
 use crate::{
     assets,
+    audio::{Audio, Listener},
     bench::{self, Bench, FrameTimes},
     config,
     entity::mobs::MobRegistry,
@@ -35,7 +36,7 @@ use crate::{
     level::{self, WorldDir},
     look::Look,
     options::Options,
-    pack::model::ItemModels,
+    pack::{Resources, model::ItemModels},
     player::{
         mode::GameMode,
         stats::{DamageSource, MAX_AIR},
@@ -123,6 +124,9 @@ pub struct App {
     sleeping: bool,
     /// The player's settings, from `options.ron`.
     options: Options,
+    /// The sound engine, and the resource layers its sounds come from.
+    audio: Option<Audio>,
+    res: Option<Resources>,
     /// The pause menu, open over a stopped game.
     pause: Option<PauseMenu>,
     /// Atlas rects of the mining crack's stages.
@@ -188,6 +192,8 @@ impl App {
             advancements: None,
             sleeping: false,
             options: Options::load(&Options::path()),
+            audio: None,
+            res: None,
             pause: None,
             crack_uvs: Vec::new(),
             effect_uvs: EffectUvs::default(),
@@ -564,6 +570,41 @@ impl App {
         self.item_models = Some(look.item_models);
         self.skin_slim = look.skin_slim;
         self.held.clear();
+        match self.audio.as_mut() {
+            Some(audio) => audio.reload(&look.res),
+            None => self.audio = Some(Audio::new(&look.res)),
+        }
+        self.res = Some(look.res);
+    }
+
+    /// Plays the sounds the game and menus queued, and keeps the music going.
+    fn update_audio(&mut self, dt: f32) {
+        let (Some(audio), Some(res)) = (self.audio.as_mut(), self.res.as_ref()) else {
+            return;
+        };
+        let (listener, music) = match &self.game {
+            Some(game) => {
+                let forward = game.camera.forward();
+                let right = glam::DVec3::new(-f64::from(forward.z), 0.0, f64::from(forward.x))
+                    .normalize_or_zero();
+                (
+                    Listener {
+                        position: game.camera.position.as_dvec3(),
+                        right,
+                    },
+                    game.music_event(),
+                )
+            }
+            None => (
+                Listener {
+                    position: glam::DVec3::ZERO,
+                    right: glam::DVec3::X,
+                },
+                Some("music.menu"),
+            ),
+        };
+        audio.update(res, &listener, self.options.volume);
+        audio.update_music(res, music, dt, self.options.volume);
     }
 
     /// Rebuilds the look with the selected resource packs and swaps it in
@@ -777,6 +818,7 @@ impl App {
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
         self.animate_textures();
+        self.update_audio(dt);
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }

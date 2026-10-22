@@ -50,6 +50,63 @@ pub fn support_dir() -> Option<PathBuf> {
     Some(Path::new(&home).join("Library/Application Support/Rustcraft"))
 }
 
+/// What the asset layers cover, in lines for `--asset-report`: textures
+/// and sounds still missing with Kenzo's assets, the packs' none, and
+/// vanilla under them.
+pub fn report(assets: &Path) -> anyhow::Result<String> {
+    use crate::{
+        entity::mobs::MobRegistry, inventory::item, look::mob_texture, pack::Resources,
+        world::block,
+    };
+    let res = Resources::load(assets, Vec::new())?;
+    let mut out = String::new();
+    let has = |name: &str| res.texture(name).is_some();
+    out += &format!(
+        "vanilla layer: {}\n",
+        if res.has_vanilla() {
+            "present"
+        } else {
+            "missing"
+        }
+    );
+    let blocks = block::registry();
+    let items = item::registry();
+    let placeholders = blocks.iter().filter(|d| d.placeholder).count();
+    let placeholder_items = items.iter().filter(|d| d.placeholder).count();
+    out += &format!(
+        "blocks: {} ({placeholders} placeholders), items: {} ({placeholder_items} placeholders, incl. block items)\n",
+        blocks.iter().count(),
+        items.len()
+    );
+    let missing_blocks = blocks.missing_textures_in(has, true);
+    let missing_items = items.missing_textures_in(has, true);
+    let mobs = MobRegistry::load(&assets.join("data/mobs.ron"))?;
+    let missing_mobs: Vec<_> = mobs
+        .textures_sized()
+        .into_iter()
+        .filter(|&(name, size)| mob_texture(&res, name, Some(size)).is_none())
+        .map(|(name, _)| name)
+        .collect();
+    out += &format!(
+        "missing textures: {} block, {} item, {} mob {:?}{:?}{:?}\n",
+        missing_blocks.len(),
+        missing_items.len(),
+        missing_mobs.len(),
+        missing_blocks,
+        missing_items,
+        missing_mobs
+    );
+    let sounds = crate::audio::report(&res);
+    out += &format!(
+        "sound events: {} in the table, {} with no file at all {:?}, {} files named but absent\n",
+        sounds.events,
+        sounds.silent.len(),
+        sounds.silent,
+        sounds.missing_files.len()
+    );
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

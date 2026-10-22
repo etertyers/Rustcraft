@@ -129,6 +129,9 @@ impl Game {
             return;
         }
         state.ticks += 1;
+        if state.ticks == 1 {
+            crate::audio::play_here_with("block.portal.trigger", 0.25, 1.0);
+        }
         let wait = if self.mode == GameMode::Creative {
             1
         } else {
@@ -159,6 +162,7 @@ impl Game {
             cell.y.clamp(lo, hi),
             (feet.z * scale).floor() as i32,
         );
+        crate::audio::play_here_with("block.portal.travel", 0.25, 1.0);
         self.change_dimension(to, target.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
         let exit = self.portal_near(target, axis);
         self.place_player(exit);

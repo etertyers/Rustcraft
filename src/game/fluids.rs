@@ -22,6 +22,7 @@ impl Game {
     /// Sets blocks the player changed, waking fluids and fires next to
     /// them. Their chunks are remeshed at once.
     pub(super) fn edit(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.edit_sounds(edits);
         self.chunks.set_blocks(edits);
         self.wake_around(edits);
     }
@@ -29,6 +30,7 @@ impl Game {
     /// Sets blocks the world changed on its own, remeshing their chunks in
     /// the background.
     pub(super) fn edit_later(&mut self, edits: &[(IVec3, BlockState)]) {
+        self.edit_sounds(edits);
         self.chunks.set_blocks_later(edits);
         self.wake_around(edits);
     }
@@ -103,6 +105,17 @@ impl Game {
                 ((at, source), Bucket::Empty)
             }
         };
+        let sound = match (bucket, after) {
+            (Bucket::Empty, Bucket::Holds(crate::world::block::Fluid::Lava)) => {
+                "item.bucket.fill_lava"
+            }
+            (Bucket::Empty, _) => "item.bucket.fill",
+            (_, _) if bucket == Bucket::Holds(crate::world::block::Fluid::Lava) => {
+                "item.bucket.empty_lava"
+            }
+            _ => "item.bucket.empty",
+        };
+        crate::audio::play(sound, edit.0.as_dvec3() + DVec3::splat(0.5));
         self.edit(&[edit]);
         let keeps = after == Bucket::Empty && !self.mode.uses_up_items();
         if !keeps && let Some(id) = self.items.bucket_item(after) {
@@ -139,6 +152,22 @@ impl Game {
             for stack in harvest::drops(block, None, &mut random) {
                 self.entities
                     .push(ItemEntity::from_block(stack, at, &mut random));
+            }
+        }
+        // Lava meeting water hisses as it turns to stone.
+        for &(at, new) in &outcome.edits {
+            let was_lava = self
+                .chunks
+                .world()
+                .block(at.x, at.y, at.z)
+                .is_some_and(|old| old.def().fluid == Some(crate::world::block::Fluid::Lava));
+            if was_lava && new.def().fluid.is_none() {
+                crate::audio::play_at(
+                    "block.lava.extinguish",
+                    at.as_dvec3() + DVec3::splat(0.5),
+                    0.5,
+                    2.6 + self.rng.next_f64() as f32 * 0.8,
+                );
             }
         }
         self.chunks.set_blocks_later(&outcome.edits);
@@ -231,6 +260,19 @@ impl Game {
     /// is used up instead.
     fn finish_flint(&mut self) {
         self.view.swing();
+        let charge = self
+            .held()
+            .is_some_and(|s| s.id == crate::inventory::items::FIRE_CHARGE);
+        crate::audio::play_at(
+            if charge {
+                "item.firecharge.use"
+            } else {
+                "item.flintandsteel.use"
+            },
+            self.body.position(),
+            1.0,
+            0.8 + self.rng.next_f64() as f32 * 0.4,
+        );
         let slot = self.inventory.hand_slot(self.use_hand);
         let charge = self
             .inventory

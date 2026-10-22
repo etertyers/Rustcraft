@@ -68,6 +68,9 @@ impl Game {
             return;
         }
         self.glide_ticks += 1;
+        if self.glide_ticks.is_multiple_of(20) {
+            crate::audio::play_here_with("item.elytra.flying", 0.3, 1.0);
+        }
         if self.mode.wears_tools() && self.glide_ticks.is_multiple_of(WEAR_EVERY) {
             self.inventory.damage_slot(ARMOR_CHEST, 1, &self.items);
         }
@@ -101,6 +104,7 @@ impl Game {
         }
         let jitter = self.rng.below(6) + self.rng.below(7);
         self.rocket = ROCKET_TICKS + jitter;
+        crate::audio::play_here("entity.firework_rocket.launch");
         if self.mode.uses_up_items() {
             self.inventory.take(self.held_slot(), 1);
         }
@@ -132,6 +136,7 @@ impl Game {
                 .block(spot.x, spot.y - 1, spot.z)
                 .is_some_and(|b| b.def().solid);
             if ground && free(spot) && free(spot + glam::IVec3::Y) {
+                crate::audio::play_here("item.chorus_fruit.teleport");
                 self.place_player(DVec3::new(
                     f64::from(spot.x) + 0.5,
                     f64::from(spot.y),

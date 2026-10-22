@@ -365,6 +365,11 @@ impl MobRegistry {
         &self.mobs[kind]
     }
 
+    /// Every mob's name.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.mobs.iter().map(|m| m.name.as_str())
+    }
+
     pub fn find(&self, name: &str) -> Option<MobKind> {
         self.mobs.iter().position(|mob| mob.name == name)
     }
@@ -381,6 +386,22 @@ impl MobRegistry {
             names.push(mob.texture.as_str());
             names.extend(mob.variants.iter().map(String::as_str));
             names.extend(mob.layers.iter().map(|l| l.texture.as_str()));
+        }
+        names
+    }
+
+    /// `textures`, each with the texture size its model is built for.
+    pub fn textures_sized(&self) -> Vec<(&str, (u32, u32))> {
+        let size = |model: &Model| (model.texture_size.0 as u32, model.texture_size.1 as u32);
+        let mut names = Vec::new();
+        for mob in &self.mobs {
+            names.push((mob.texture.as_str(), size(&mob.model)));
+            names.extend(mob.variants.iter().map(|v| (v.as_str(), size(&mob.model))));
+            names.extend(
+                mob.layers
+                    .iter()
+                    .map(|l| (l.texture.as_str(), size(&l.model))),
+            );
         }
         names
     }
@@ -498,7 +519,8 @@ mod tests {
     #[test]
     fn every_texture_the_mobs_use_is_there_but_the_few_a_pack_must_bring() {
         let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
-        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let base =
+            crate::pack::Resources::load_with(&crate::assets::dir(), Vec::new(), false).unwrap();
         for (_, mob) in mobs.iter() {
             let own = std::iter::once(&mob.texture)
                 .chain(&mob.variants)

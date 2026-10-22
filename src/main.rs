@@ -12,6 +12,26 @@ fn main() -> Result<()> {
         println!("wrote {count} templates to {}", dir.display());
         return Ok(());
     }
+    // Prints what the asset layers cover: textures and sounds still missing.
+    if std::env::args().any(|arg| arg == "--asset-report") {
+        print!("{}", rustcraft::assets::report(&rustcraft::assets::dir())?);
+        return Ok(());
+    }
+    // Rewrites the placeholder blocks and items from vanilla's data in
+    // assets/vanilla (see src/placeholders.rs) and docs/placeholders.md.
+    if std::env::args().any(|arg| arg == "--gen-placeholders") {
+        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
+        let found = rustcraft::placeholders::generate(&rustcraft::assets::dir(), &docs)?;
+        println!(
+            "wrote {} placeholder blocks and {} items",
+            found.blocks.len(),
+            found.items.len()
+        );
+        for line in &found.unresolved {
+            println!("left out: {line}");
+        }
+        return Ok(());
+    }
     // `--biome-map --seed <n> --size <pixels> --out <file>`: the surface
     // biomes, one pixel per 4×4 column, and their statistics.
     let args: Vec<String> = std::env::args().collect();

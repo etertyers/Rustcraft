@@ -17,6 +17,8 @@ pub struct Texture {
     pub animation: Option<Animation>,
     /// The layer it came from (0 is the base).
     pub layer: usize,
+    /// It came from the vanilla fallback, below the base (`layer` is 0).
+    pub vanilla: bool,
 }
 
 impl Texture {
@@ -40,6 +42,9 @@ type Slice = (String, (u32, u32, u32, u32));
 pub struct Resources {
     /// Bottom (the base) first.
     layers: Vec<Pack>,
+    /// The downloaded vanilla assets under every layer, if present
+    /// (`assets/vanilla/`, see `scripts/fetch-vanilla-assets.sh`).
+    vanilla: Option<Pack>,
     /// Older names to try for a texture after its modern one.
     aliases: HashMap<String, Vec<String>>,
     /// Textures that older layouts keep on a shared sheet.
@@ -59,6 +64,20 @@ fn shield_icon(sheet: &RgbaImage) -> RgbaImage {
     icon
 }
 
+/// A skull's picture for the inventory: the front of the head on its
+/// 64×32 entity texture (8×8 pixels from 8,8), scaled up to a tile.
+fn skull_icon(sheet: &RgbaImage) -> RgbaImage {
+    let scale = (sheet.width() / 64).max(1);
+    let face =
+        image::imageops::crop_imm(sheet, 8 * scale, 8 * scale, 8 * scale, 8 * scale).to_image();
+    image::imageops::resize(
+        &face,
+        16 * scale,
+        16 * scale,
+        image::imageops::FilterType::Nearest,
+    )
+}
+
 /// `minecraft:block/stone` → `block/stone`.
 pub fn location(name: &str) -> &str {
     name.strip_prefix("minecraft:").unwrap_or(name)
@@ -68,6 +87,12 @@ impl Resources {
     /// The base layer from `assets`, with `packs` (highest priority first)
     /// over it, and the texture names in `assets/data/texture_names.ron`.
     pub fn load(assets: &Path, packs: Vec<Pack>) -> Result<Self> {
+        Self::load_with(assets, packs, true)
+    }
+
+    /// Like `load`; `vanilla` says whether to put `assets/vanilla` under
+    /// the base layer (off, only Kenzo's assets and the packs count).
+    pub fn load_with(assets: &Path, packs: Vec<Pack>, vanilla: bool) -> Result<Self> {
         let path = assets.join("data/texture_names.ron");
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
@@ -80,7 +105,89 @@ impl Resources {
             }
             Err(_) => HashMap::new(),
         };
-        Ok(Self::new(Pack::base(assets), packs, aliases).with_slices(slices))
+        let mut res = Self::new(Pack::base(assets), packs, aliases).with_slices(slices);
+        if !vanilla {
+            return Ok(res);
+        }
+        res.vanilla = Pack::vanilla(&assets.join("vanilla"));
+        if res.vanilla.is_none() {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| {
+                warn!(
+                    "no vanilla assets in {}: run scripts/fetch-vanilla-assets.sh; \
+                     missing textures and sounds will show as checkerboards or stay silent",
+                    assets.join("vanilla").display()
+                );
+            });
+        }
+        Ok(res)
+    }
+
+    /// Puts `pack` under every layer as the vanilla fallback.
+    pub fn with_vanilla(mut self, pack: Pack) -> Self {
+        self.vanilla = Some(pack);
+        self
+    }
+
+    /// Whether the vanilla fallback is present.
+    pub fn has_vanilla(&self) -> bool {
+        self.vanilla.is_some()
+    }
+
+    /// The vanilla fallback layer's index, one past the last pack, for
+    /// `texture_in` and `pack_at`.
+    pub fn vanilla_layer(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// Layer indices from the highest priority down: the packs, the base,
+    /// then the vanilla fallback.
+    pub fn priority(&self) -> impl Iterator<Item = usize> {
+        (0..self.layers.len())
+            .rev()
+            .chain(std::iter::once(self.layers.len()))
+    }
+
+    /// Layer `layer` (the vanilla fallback is the one past the packs).
+    fn pack_at(&self, layer: usize) -> Option<&Pack> {
+        self.layers.get(layer).or(if layer == self.layers.len() {
+            self.vanilla.as_ref()
+        } else {
+            None
+        })
+    }
+
+    /// What a texture from `layer` reports: the layer shown (the vanilla
+    /// fallback counts as the base) and whether it is the fallback.
+    fn tag(&self, layer: usize) -> (usize, bool) {
+        let vanilla = layer == self.layers.len();
+        (if vanilla { 0 } else { layer }, vanilla)
+    }
+
+    /// A file from the highest layer that has it, vanilla last.
+    pub fn bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.layers
+            .iter()
+            .rev()
+            .chain(&self.vanilla)
+            .find_map(|pack| pack.read(path))
+    }
+
+    /// Every layer's copy of a file, lowest priority first: the vanilla
+    /// fallback, the base, then the packs.
+    pub fn all_bytes(&self, path: &str) -> Vec<Vec<u8>> {
+        self.vanilla
+            .iter()
+            .chain(&self.layers)
+            .filter_map(|pack| pack.read(path))
+            .collect()
+    }
+
+    /// Which layer `bytes(path)` reads: its index (the vanilla fallback is
+    /// `vanilla_layer`).
+    pub fn layer_of(&self, path: &str) -> Option<usize> {
+        self.priority()
+            .find(|&layer| self.pack_at(layer).is_some_and(|p| p.has(path)))
     }
 
     /// Adds the sheets textures can be cut from.
@@ -94,6 +201,7 @@ impl Resources {
         layers.extend(packs.into_iter().rev());
         Self {
             layers,
+            vanilla: None,
             aliases,
             slices: HashMap::new(),
         }
@@ -136,14 +244,14 @@ impl Resources {
     /// A texture by its modern location (`block/stone`), from the highest
     /// layer that has it.
     pub fn texture(&self, name: &str) -> Option<Texture> {
-        (0..self.layers.len())
-            .rev()
+        self.priority()
             .find_map(|layer| self.texture_in(layer, name))
     }
 
-    /// A texture from one layer only.
+    /// A texture from one layer only (`vanilla_layer` is the fallback).
     pub fn texture_in(&self, layer: usize, name: &str) -> Option<Texture> {
-        let pack = &self.layers[layer];
+        let pack = self.pack_at(layer)?;
+        let (shown, vanilla) = self.tag(layer);
         for path in self.candidates(name) {
             let Some(bytes) = pack.read(&path) else {
                 continue;
@@ -164,7 +272,8 @@ impl Resources {
             return Some(Texture {
                 image,
                 animation,
-                layer,
+                layer: shown,
+                vanilla,
             });
         }
         self.slice_in(layer, name)
@@ -174,14 +283,17 @@ impl Resources {
     /// Textures made from others because no layout has them as files: the
     /// shield's inventory picture is the front of its entity texture.
     fn derived_in(&self, layer: usize, name: &str) -> Option<Texture> {
-        if location(name) != "item/shield" {
-            return None;
-        }
-        let sheet = self.texture_in(layer, "entity/shield_base_nopattern")?;
+        let (sheet, icon): (_, fn(&RgbaImage) -> RgbaImage) = match location(name) {
+            "item/shield" => ("entity/shield_base_nopattern", shield_icon),
+            "item/wither_skeleton_skull" => ("entity/skeleton/wither_skeleton", skull_icon),
+            _ => return None,
+        };
+        let sheet = self.texture_in(layer, sheet)?;
         Some(Texture {
-            image: shield_icon(&sheet.image),
+            image: icon(&sheet.image),
             animation: None,
-            layer,
+            layer: sheet.layer,
+            vanilla: sheet.vanilla,
         })
     }
 
@@ -200,8 +312,15 @@ impl Resources {
         Some(Texture {
             image: image::imageops::crop_imm(&sheet.image, x, y, w, h).to_image(),
             animation: None,
-            layer,
+            layer: sheet.layer,
+            vanilla: sheet.vanilla,
         })
+    }
+
+    /// A JSON file from the vanilla fallback only.
+    pub fn vanilla_json(&self, path: &str) -> Option<serde_json::Value> {
+        let bytes = self.vanilla.as_ref()?.read(path)?;
+        super::parse_json(&String::from_utf8_lossy(&bytes)).ok()
     }
 
     /// A texture's first frame, from the highest layer that has it.
@@ -210,7 +329,9 @@ impl Resources {
     }
 
     /// A JSON file (`models/block/stone.json`) from the highest layer that
-    /// has a readable one.
+    /// has a readable one. The vanilla fallback is not read here: blocks
+    /// and items Kenzo has keep his look, and the placeholders' models are
+    /// baked into their data files (`vanilla_json` reads vanilla's).
     pub fn json(&self, path: &str) -> Option<serde_json::Value> {
         self.layers.iter().rev().find_map(|pack| {
             let bytes = pack.read(path)?;
@@ -324,6 +445,82 @@ mod tests {
         assert!(res.texture("block/nothing").is_none());
         assert_eq!(red(res.texture_in(1, "block/stone")), Some((20, 1)));
         assert!(res.texture_in(1, "block/oak_planks").is_none());
+    }
+
+    /// An assets folder with Kenzo's stone and dirt, a `vanilla` folder (if
+    /// asked) with stone, dirt, sand and a model, and a pack with stone.
+    fn layered(dir: &Path, with_vanilla: bool) -> Resources {
+        let assets = dir.join("assets");
+        std::fs::create_dir_all(assets.join("data")).unwrap();
+        std::fs::create_dir_all(assets.join("textures/blocks")).unwrap();
+        std::fs::write(assets.join("data/texture_names.ron"), "{}").unwrap();
+        let write = |path: &str, bytes: &[u8]| std::fs::write(assets.join(path), bytes).unwrap();
+        write("textures/blocks/stone.png", &png([2, 0, 0, 255], 16, 16));
+        write("textures/blocks/dirt.png", &png([3, 0, 0, 255], 16, 16));
+        if with_vanilla {
+            let root = assets.join("vanilla/assets/minecraft");
+            std::fs::create_dir_all(root.join("textures/block")).unwrap();
+            std::fs::create_dir_all(root.join("models/block")).unwrap();
+            for (name, red) in [("stone", 10), ("dirt", 11), ("sand", 12)] {
+                std::fs::write(
+                    root.join(format!("textures/block/{name}.png")),
+                    png([red, 0, 0, 255], 16, 16),
+                )
+                .unwrap();
+            }
+            std::fs::write(
+                root.join("models/block/sand.json"),
+                br#"{"parent": "block/cube_all"}"#,
+            )
+            .unwrap();
+        }
+        let pack = dir.join("pack.zip");
+        write_zip(
+            &pack,
+            &[
+                ("pack.mcmeta", MCMETA),
+                (
+                    "assets/minecraft/textures/block/stone.png",
+                    &png([200, 0, 0, 255], 16, 16),
+                ),
+            ],
+        );
+        Resources::load(&assets, vec![Pack::open(&pack).unwrap()]).unwrap()
+    }
+
+    #[test]
+    fn packs_beat_kenzos_assets_which_beat_vanilla_which_beats_the_checkerboard() {
+        let dir = TempDir::new("vanilla-layers");
+        let res = layered(dir.path(), true);
+        assert!(res.has_vanilla());
+        // In all three layers: the pack's.
+        assert_eq!(red(res.texture("block/stone")), Some((200, 1)));
+        // In Kenzo's and vanilla: Kenzo's.
+        let dirt = res.texture("block/dirt").unwrap();
+        assert_eq!((dirt.image.get_pixel(0, 0).0[0], dirt.vanilla), (3, false));
+        // Only in vanilla: vanilla's, reported as the base layer.
+        let sand = res.texture("block/sand").unwrap();
+        assert_eq!((sand.image.get_pixel(0, 0).0[0], sand.vanilla), (12, true));
+        assert_eq!(sand.layer, 0);
+        // Nowhere: nothing, so it draws as the checkerboard.
+        assert!(res.texture("block/nothing").is_none());
+        // Vanilla's models are kept apart; files come from the same layers.
+        assert!(res.json("models/block/sand.json").is_none());
+        assert!(res.vanilla_json("models/block/sand.json").is_some());
+        assert_eq!(res.layer_of("textures/block/sand.png"), Some(2));
+        assert_eq!(res.layer_of("textures/block/stone.png"), Some(1));
+        assert_eq!(res.layer_of("textures/blocks/dirt.png"), Some(0));
+    }
+
+    #[test]
+    fn the_game_loads_without_the_vanilla_folder() {
+        let dir = TempDir::new("no-vanilla");
+        let res = layered(dir.path(), false);
+        assert!(!res.has_vanilla());
+        assert_eq!(red(res.texture("block/stone")), Some((200, 1)));
+        assert!(res.texture("block/sand").is_none());
+        assert!(res.json("models/block/sand.json").is_none());
+        assert!(res.bytes("sounds.json").is_none());
     }
 
     #[test]
@@ -440,13 +637,9 @@ mod tests {
         let res = Resources::load(&assets, vec![ashen, prime]).unwrap();
         let blocks = crate::world::block::registry();
         let missing = blocks.missing_textures(|name| res.texture(name).is_some());
-        // Drawn as an entity in modern Minecraft; v1.0 never had it either.
-        let expected = ["block/sign"].map(str::to_owned);
-        assert_eq!(missing, expected.into());
+        assert!(missing.is_empty(), "{missing:?}");
         let items = crate::inventory::item::registry();
         let missing = items.missing_textures(|name| res.texture(name).is_some());
-        // Modern draws the skull item from its head's entity texture.
-        let expected = ["item/wither_skeleton_skull"].map(str::to_owned);
-        assert_eq!(missing, expected.into());
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

@@ -31,6 +31,7 @@ impl Game {
     fn prime_at(&mut self, at: IVec3, fuse: i32) {
         let angle = self.rng.next_f64() * std::f64::consts::TAU;
         let position = at.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+        crate::audio::play("entity.tnt.primed", position);
         self.primed.push(PrimedTnt::new(position, angle, fuse));
     }
 
@@ -201,6 +202,8 @@ impl Game {
 
     /// The explosion itself; returns the cells it cleared.
     fn blow_up(&mut self, center: DVec3, power: f32) -> Vec<glam::IVec3> {
+        let pitch = 0.8 + self.rng.next_f64() as f32 * 0.3;
+        crate::audio::play_at("entity.generic.explode", center, 4.0, pitch);
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         let cells = explosion::destroyed(self.chunks.world(), center, power, &mut random);

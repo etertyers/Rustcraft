@@ -54,6 +54,14 @@ pub struct ItemDef {
     #[serde(skip)]
     pub id: ItemId,
     pub name: String,
+    /// Registered from vanilla's data with no behavior of its own
+    /// (`assets/data/placeholder_items.ron`, listed in `docs/placeholders.md`).
+    #[serde(default)]
+    pub placeholder: bool,
+    /// Its name as shown ("Baked Potato"), where the name made readable
+    /// isn't enough (placeholders take theirs from vanilla's language file).
+    #[serde(default)]
+    pub display: Option<String>,
     /// Texture name under `textures/item/`; `None` for block items drawn
     /// as their block.
     pub texture: Option<String>,
@@ -78,6 +86,17 @@ pub struct ItemDef {
     /// A bucket, and what it holds.
     #[serde(default)]
     pub bucket: Option<Bucket>,
+}
+
+/// An item texture name from `items.ron` as a resource location: bare
+/// names (`stick`) are under `item/`; names with a folder (`block/azalea`)
+/// are kept.
+pub fn texture_location(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.contains('/') {
+        name.into()
+    } else {
+        format!("item/{name}").into()
+    }
 }
 
 /// What a bucket holds (1.0.0's `ItemBucket.isFull`): an empty one picks
@@ -224,6 +243,8 @@ impl ItemDef {
         Self {
             id,
             name: def.name.clone(),
+            placeholder: def.placeholder,
+            display: def.display.clone(),
             texture: def.item_texture.clone(),
             max_stack: def.stack,
             durability: None,
@@ -247,15 +268,21 @@ pub struct ItemRegistry {
 /// into the game (its names are compiled in as constants, see build.rs).
 pub fn registry() -> &'static ItemRegistry {
     static REGISTRY: LazyLock<ItemRegistry> = LazyLock::new(|| {
-        ItemRegistry::from_ron(include_str!("../../assets/data/items.ron"))
-            .expect("assets/data/items.ron is valid")
+        ItemRegistry::from_ron(&[
+            include_str!("../../assets/data/items.ron"),
+            include_str!("../../assets/data/placeholder_items.ron"),
+        ])
+        .expect("assets/data/items.ron and placeholder_items.ron are valid")
     });
     &REGISTRY
 }
 
 impl ItemRegistry {
-    fn from_ron(text: &str) -> Result<Self> {
-        let plain: Vec<ItemDef> = ron::from_str(text)?;
+    fn from_ron(texts: &[&str]) -> Result<Self> {
+        let mut plain: Vec<ItemDef> = Vec::new();
+        for text in texts {
+            plain.extend(ron::from_str::<Vec<ItemDef>>(text)?);
+        }
         let blocks = block::registry();
         let mut items = Vec::with_capacity(super::items::COUNT);
         let mut by_block = vec![None; blocks.iter().count()];
@@ -318,14 +345,27 @@ impl ItemRegistry {
         self.items
             .iter()
             .filter_map(|item| item.texture.as_deref())
-            .map(|name| format!("item/{name}"))
+            .map(|name| texture_location(name).into_owned())
             .collect()
     }
 
     /// The item texture locations that `exists` says are missing.
     pub fn missing_textures(&self, exists: impl Fn(&str) -> bool) -> BTreeSet<String> {
-        self.texture_locations()
-            .into_iter()
+        self.missing_textures_in(exists, false)
+    }
+
+    /// Like `missing_textures`, counting the placeholder items too if
+    /// `placeholders` (they get their textures from the vanilla layer).
+    pub fn missing_textures_in(
+        &self,
+        exists: impl Fn(&str) -> bool,
+        placeholders: bool,
+    ) -> BTreeSet<String> {
+        self.items
+            .iter()
+            .filter(|item| placeholders || !item.placeholder)
+            .filter_map(|item| item.texture.as_deref())
+            .map(|name| texture_location(name).into_owned())
             .filter(|name| !exists(name))
             .collect()
     }
@@ -357,7 +397,8 @@ mod tests {
 
     #[test]
     fn every_item_texture_exists() {
-        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let base =
+            crate::pack::Resources::load_with(&crate::assets::dir(), Vec::new(), false).unwrap();
         let missing = registry().missing_textures(|name| base.texture(name).is_some());
         // M21's, M24's and M25's modern items, which Kenzo's 1.12-era textures
         // predate; a resource pack brings them.
@@ -385,11 +426,10 @@ mod tests {
             "netherite_shovel",
             "netherite_sword",
             "netherite_upgrade_smithing_template",
-            "wither_skeleton_skull",
             "elytra",
             "popped_chorus_fruit",
         ]
-        .map(|name| format!("item/{name}"))
+        .map(|name| texture_location(name).into_owned())
         .into();
         assert_eq!(missing, needs_pack, "missing item textures");
     }

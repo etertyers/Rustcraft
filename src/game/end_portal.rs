@@ -51,6 +51,10 @@ impl Game {
     /// the portal.
     fn place_eye(&mut self, cell: IVec3, frame: BlockState) {
         self.edit(&[(cell, frame.with_bool(Prop::Eye, true))]);
+        crate::audio::play(
+            "block.end_portal_frame.fill",
+            cell.as_dvec3() + DVec3::splat(0.5),
+        );
         if self.mode.uses_up_items() {
             self.inventory.take(self.held_slot(), 1);
         }
@@ -64,6 +68,7 @@ impl Game {
                 .map(|at| (at, portal))
                 .collect();
             self.edit(&edits);
+            crate::audio::play_here_with("block.end_portal.spawn", 1.0, 1.0);
         }
     }
 
@@ -93,6 +98,7 @@ impl Game {
             return;
         };
         let survives = self.rng.below(BREAK_IN) != 0;
+        crate::audio::play_at("entity.ender_eye.launch", from, 1.0, 0.8);
         self.eyes.push(EyeOfEnder::throw(from, toward, survives));
         if self.mode.uses_up_items() {
             self.inventory.take(self.held_slot(), 1);
@@ -123,6 +129,7 @@ impl Game {
                     ));
                 }
                 Landing::Broke(at) => {
+                    crate::audio::play("entity.ender_eye.death", at);
                     let rng = &mut self.rng;
                     let mut random = || rng.next_f64() as f32;
                     let specks: Vec<_> = (0..12)

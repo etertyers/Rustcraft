@@ -331,7 +331,10 @@ impl Items {
             return name.to_owned();
         }
         match self.item(stack.id) {
-            Some(item) => item.name.replace('_', " "),
+            Some(item) => item
+                .display
+                .clone()
+                .unwrap_or_else(|| item.name.replace('_', " ")),
             None => format!("unknown item {}", stack.id.index()),
         }
     }

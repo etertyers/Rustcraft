@@ -67,6 +67,9 @@ pub struct BlockModel {
     pub faces: [FaceTexture; 6],
     /// The boxes it's drawn as, for shapes drawn from boxes.
     pub boxes: Option<Vec<Cuboid>>,
+    /// Faces of each of `boxes` when they have textures of their own (a
+    /// model's elements); otherwise every box takes `faces`.
+    pub part_faces: Vec<[FaceTexture; 6]>,
 }
 
 /// Block models for every block state, resolved against the texture atlas.
@@ -232,6 +235,38 @@ fn build_model(
             _ => {}
         }
     }
+    // A model's boxes each wear their own textures, turned with the block.
+    let part_faces: Vec<[FaceTexture; 6]> = def
+        .parts_for(state)
+        .iter()
+        .map(|part| {
+            let mut faces = Face::ALL.map(|face| FaceTexture {
+                uv: part
+                    .textures
+                    .get(face)
+                    .and_then(|name| uv(&texture_location(name)))
+                    .unwrap_or(missing_uv),
+                tint: FaceTint::None,
+                rotation: 0,
+            });
+            // The sides of the block turn with its box.
+            if state.has(Prop::Facing) {
+                for _ in 0..crate::world::shape::turns_of(state.face(Prop::Facing)) {
+                    let before = faces;
+                    for face in [Face::North, Face::East, Face::South, Face::West] {
+                        faces[face.rotate_cw().index()] = before[face.index()];
+                    }
+                }
+            }
+            faces
+        })
+        .collect();
+    if let (true, Some(first)) = (
+        def.textures.is_none() && def.shape == Shape::Model,
+        part_faces.first(),
+    ) {
+        faces = *first;
+    }
     BlockModel {
         shape: def.shape,
         opaque_cube: def.is_opaque_cube_state(state),
@@ -243,6 +278,7 @@ fn build_model(
         stops_fluid: def.stops_fluid(),
         faces,
         boxes: shape::render_boxes(state),
+        part_faces,
     }
 }
 
@@ -956,6 +992,7 @@ fn mesh_box(
     tints: &Tints,
     block: BlockState,
     model: &BlockModel,
+    faces: &[FaceTexture; 6],
     b: Cuboid,
 ) {
     let [x, y, z] = cell;
@@ -977,7 +1014,7 @@ fn mesh_box(
         }
         let corners = face_corners(face)
             .map(|c| [0, 1, 2].map(|i| if c[i] > 0.5 { b.max[i] } else { b.min[i] }));
-        let texture = model.faces[face.index()];
+        let texture = faces[face.index()];
         let [u0, v0, u1, v1] = texture.uv;
         let uvs = if full {
             texture.corner_uvs()
@@ -1293,6 +1330,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 &tints,
                                 block,
                                 model,
+                                &model.faces,
                                 Cuboid::FULL,
                             );
                         }
@@ -1326,10 +1364,11 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         }
                         _ => {
                             let cell = [x as i32, y as i32, z as i32];
-                            for &b in model.boxes.iter().flatten() {
+                            for (i, &b) in model.boxes.iter().flatten().enumerate() {
+                                let faces = model.part_faces.get(i).unwrap_or(&model.faces);
                                 mesh_box(
                                     &mut mesh, models, area, light, cell, origin, &tints, block,
-                                    model, b,
+                                    model, faces, b,
                                 );
                             }
                         }
@@ -1410,6 +1449,65 @@ mod tests {
             model.faces[face.index()].uv = [i, 0.0, i + 1.0, 1.0];
         }
         model
+    }
+
+    /// Models whose textures are each a unique rect (`[n, 0, n + 1, 1]` for
+    /// the n-th name asked for), to see which texture a face got.
+    fn numbered_models(names: &std::cell::RefCell<Vec<String>>) -> BlockModels {
+        BlockModels::new(
+            crate::world::block::registry(),
+            |name| {
+                let mut names = names.borrow_mut();
+                let i = names.iter().position(|n| n == name).unwrap_or_else(|| {
+                    names.push(name.to_owned());
+                    names.len() - 1
+                });
+                Some([i as f32, 0.0, i as f32 + 1.0, 1.0])
+            },
+            [0.0, 0.0, 1.0, 1.0],
+            BiomeColors::uniform(),
+        )
+    }
+
+    #[test]
+    fn the_eye_of_a_filled_portal_frame_wears_the_eye_texture_on_its_top_and_sides() {
+        use crate::world::props::Prop;
+        for facing in [Face::North, Face::East, Face::South, Face::West] {
+            let names = std::cell::RefCell::new(Vec::new());
+            let models = numbered_models(&names);
+            let uv_of = |name: &str| {
+                let i = names.borrow().iter().position(|n| n == name).unwrap();
+                [i as f32, 0.0, i as f32 + 1.0, 1.0]
+            };
+            let frame = BlockState::of(blocks::END_PORTAL_FRAME).with_face(Prop::Facing, facing);
+            let empty = models.get(frame);
+            assert_eq!(empty.boxes.as_ref().unwrap().len(), 1);
+            let filled = models.get(frame.with_bool(Prop::Eye, true));
+            let boxes = filled.boxes.as_ref().unwrap();
+            assert_eq!(boxes.len(), 2);
+            assert_eq!(filled.part_faces.len(), 2);
+            let (base, eye) = (&filled.part_faces[0], &filled.part_faces[1]);
+            // The frame keeps its own top, sides and the end stone below.
+            assert_eq!(
+                base[Face::Top.index()].uv,
+                uv_of("block/end_portal_frame_top")
+            );
+            assert_eq!(base[Face::Bottom.index()].uv, uv_of("block/end_stone"));
+            for side in [Face::North, Face::East, Face::South, Face::West] {
+                assert_eq!(base[side.index()].uv, uv_of("block/end_portal_frame_side"));
+            }
+            // The eye wears the eye texture on its top and all four sides.
+            for face in [Face::Top, Face::North, Face::East, Face::South, Face::West] {
+                assert_eq!(
+                    eye[face.index()].uv,
+                    uv_of("block/end_portal_frame_eye"),
+                    "{face:?}"
+                );
+            }
+            // And both boxes are drawn, six faces each.
+            let mesh = mesh_with(&[(2, 70, 2, frame.with_bool(Prop::Eye, true))], true);
+            assert_eq!(quads(&mesh), 6 + 6, "{facing:?}");
+        }
     }
 
     #[test]

@@ -87,6 +87,12 @@ impl Game {
             let mob = &mut self.mobs[index];
             mob.data.timer += extra;
             let at = mob.feet();
+            crate::audio::play_at(
+                "entity.chicken.egg",
+                at,
+                1.0,
+                (self.rng.next_f64() as f32 - self.rng.next_f64() as f32) * 0.2 + 1.0,
+            );
             if let Some(egg) = items::by_name("egg") {
                 self.entities.push(ItemEntity::new(
                     ItemStack::new(egg, 1),
@@ -132,6 +138,7 @@ impl Game {
             "villager" => self.talk_to_villager(index),
             "cow" => {
                 if held.is_some_and(|s| s.id == items::BUCKET) {
+                    crate::audio::play("entity.cow.milk", self.mobs[index].feet());
                     self.fill_held_bucket(items::MILK_BUCKET);
                     return true;
                 }
@@ -177,6 +184,7 @@ impl Game {
     fn shear_sheep(&mut self, index: usize) {
         let color = usize::from(self.mobs[index].data.color) % 16;
         self.mobs[index].data.sheared = true;
+        crate::audio::play("entity.sheep.shear", self.mobs[index].feet());
         self.note(crate::advancements::Event::Used("shear".to_owned()));
         let count = 1 + self.rng.below(3) as u8;
         if let Some(wool) = items::by_name(WOOL[color]) {
@@ -245,6 +253,7 @@ impl Game {
             && self.mobs[index].data.tamed
         {
             self.mobs[index].data.saddled = true;
+            crate::audio::play("entity.horse.saddle", self.mobs[index].feet());
             if survival {
                 self.inventory.take(self.held_slot(), 1);
             }

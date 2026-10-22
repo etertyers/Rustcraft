@@ -46,6 +46,7 @@ impl Game {
         });
         self.bullets = bullets;
         for from in hits {
+            crate::audio::play("entity.shulker_bullet.hit", from);
             if self.mode.is_vulnerable() {
                 self.hurt_player(super::combat::Strike {
                     amount: bullet::DAMAGE,

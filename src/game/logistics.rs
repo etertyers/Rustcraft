@@ -156,8 +156,19 @@ impl Game {
             .filter(|&i| entity.slots()[i].is_some())
             .collect();
         if filled.is_empty() {
+            // A click, and nothing comes out.
+            crate::audio::play_at(
+                "block.dispenser.fail",
+                at.as_dvec3() + DVec3::splat(0.5),
+                1.0,
+                1.2,
+            );
             return;
         }
+        crate::audio::play(
+            "block.dispenser.dispense",
+            at.as_dvec3() + DVec3::splat(0.5),
+        );
         let slot = filled[self.rng.below(filled.len() as u32) as usize];
         let Some(stack) = entity.slots()[slot].clone() else {
             return;
@@ -213,6 +224,7 @@ impl Game {
                 &mut random,
             );
             self.arrows.push(arrow);
+            crate::audio::play("block.dispenser.launch", spot);
             return Some(Used::Gone);
         }
         if let Some(kind) = super::minecarts::kind_of(one.id)

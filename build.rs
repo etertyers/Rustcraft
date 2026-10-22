@@ -34,6 +34,14 @@ fn read<T: for<'de> Deserialize<'de>>(path: &str) -> Vec<T> {
     ron::from_str(&text).unwrap_or_else(|err| panic!("parsing {path}: {err}"))
 }
 
+/// `read`, then the placeholders generated from vanilla's data
+/// (`placeholder_*.ron`, see `src/placeholders.rs`) after them.
+fn read_with_placeholders<T: for<'de> Deserialize<'de>>(path: &str, placeholders: &str) -> Vec<T> {
+    let mut all = read(path);
+    all.extend(read::<T>(placeholders));
+    all
+}
+
 /// `pub const NAME: Ty = Ty(n);` for each name, then `COUNT`, `NAMES` and
 /// `by_name`.
 fn constants(ty: &str, names: &[&str]) -> String {
@@ -63,8 +71,12 @@ fn constants(ty: &str, names: &[&str]) -> String {
 }
 
 fn main() {
-    let blocks: Vec<BlockEntry> = read("assets/data/blocks.ron");
-    let items: Vec<ItemEntry> = read("assets/data/items.ron");
+    let blocks: Vec<BlockEntry> = read_with_placeholders(
+        "assets/data/blocks.ron",
+        "assets/data/placeholder_blocks.ron",
+    );
+    let items: Vec<ItemEntry> =
+        read_with_placeholders("assets/data/items.ron", "assets/data/placeholder_items.ron");
 
     let block_names: Vec<&str> = blocks.iter().map(|b| b.name.as_str()).collect();
     let mut item_names: Vec<&str> = blocks
