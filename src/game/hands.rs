@@ -119,6 +119,18 @@ impl Game {
             .find(|&hand| self.hand_uses(hand, hit))
     }
 
+    /// A fresh right-click's first two tries: use the mob under the crosshair,
+    /// then the block (not while sneaking with something in hand). Returns
+    /// whether either did something.
+    fn interact_first(&mut self, eye: DVec3, hit: Option<&Hit>) -> bool {
+        if let Some(mob) = self.target_mob(eye, hit)
+            && self.use_mob(mob)
+        {
+            return true;
+        }
+        hit.is_some_and(|hit| self.activate(hit.block, true))
+    }
+
     /// The block being mined and how far along it is (0–1), for the crack.
     pub fn mining_progress(&self) -> Option<(IVec3, f32)> {
         self.mining
@@ -139,6 +151,19 @@ impl Game {
         let eye = self.body.position() + DVec3::Y * self.body.eye_height();
         let hit = self.find_target(eye);
         let candidate = using.then(|| self.pick_use_hand(hit.as_ref())).flatten();
+        // Vanilla's order: the mob looked at, then the block, then the item
+        // by itself. Food, drink, bows and shields wait their turn.
+        if self.place_clicked
+            && !wants_break
+            && candidate.is_some()
+            && self.interact_first(eye, hit.as_ref())
+        {
+            self.view.swing();
+            self.place_clicked = false;
+            self.break_clicked = false;
+            self.mining = None;
+            return;
+        }
         // A shield stays up while its hand holds right-click, even while
         // the other hand attacks.
         self.keep_blocking(candidate);

@@ -143,6 +143,8 @@ pub struct Game {
     sounds: sounds::Memory,
     /// Feet position at the previous tick, for interpolating the camera.
     prev_feet: DVec3,
+    /// How far the camera still trails below the feet after a step up (≤ 0).
+    step_lag: f64,
     spawn: DVec3,
     keys: MoveKeys,
     /// The block under the crosshair this frame.
@@ -321,6 +323,7 @@ impl Game {
             body,
             sounds: Default::default(),
             prev_feet: feet,
+            step_lag: 0.0,
             spawn,
             keys: MoveKeys::default(),
             target: None,
@@ -757,7 +760,8 @@ impl Game {
         let seen = self
             .lying_eye()
             .unwrap_or(feet + DVec3::Y * self.view.eye_height(alpha as f32) as f64);
-        self.camera.position = seen.as_vec3();
+        // A step up eases the camera instead of snapping it.
+        self.camera.position = (seen + DVec3::Y * self.step_lag).as_vec3();
         self.target = self.find_target(eye);
     }
 
@@ -866,6 +870,7 @@ impl Game {
         };
         effects_move(&mut self.body, &self.stats.effects);
         self.body.tick(&input, self.camera.yaw, &collider);
+        self.step_lag = self.step_lag * 0.5 - self.body.step_up();
         if self.body.position().y < VOID_Y {
             if self.mode.is_vulnerable() {
                 self.stats.damage(VOID_DAMAGE, DamageSource::Fall);
@@ -1362,6 +1367,108 @@ pub(crate) mod tests {
         let feet = game.body.position();
         assert!(feet.z < -2.0, "stepped up without jumping: {feet}");
         assert_eq!(feet.y, 64.5);
+    }
+
+    #[test]
+    fn walking_from_a_path_or_farmland_onto_a_full_block_needs_no_jump() {
+        for low in [blocks::DIRT_PATH, blocks::FARMLAND] {
+            let mut game = flat_game(GameMode::Survival);
+            // The path or farmland lies at the player's feet; past z -3 the floor is
+            // a full block, 1/16 higher.
+            let edits: Vec<_> = (-8..=3)
+                .map(|z| {
+                    let block = if z < -3 { blocks::DIRT } else { low };
+                    (IVec3::new(0, 63, z), BlockState::of(block))
+                })
+                .collect();
+            game.chunks.set_blocks(&edits);
+            game.body = crate::player::physics::Body::new(glam::DVec3::new(0.5, 63.9375, 2.5));
+            game.body.on_ground = true;
+            game.camera.pitch = 0.0;
+            game.keys.set_key(KeyCode::KeyW, true);
+            let mut jumped = false;
+            for _ in 0..60 {
+                game.tick();
+                jumped |= game.body.velocity.y > 0.1;
+            }
+            let feet = game.body.position();
+            assert!(feet.z < -5.0, "walked on: {feet}");
+            assert!(!jumped, "jumped");
+            assert_eq!(feet.y, 64.0);
+        }
+    }
+
+    /// A game looking north with `held` in the first slot, hunger at `food`.
+    fn eater(held: crate::inventory::item::ItemId, food: i32) -> Game {
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory.set(0, Some(ItemStack::new(held, 4)));
+        game.stats.food = food;
+        game.camera.pitch = 0.0;
+        game.advance(0.0);
+        game
+    }
+
+    fn right_click(game: &mut Game) {
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+    }
+
+    #[test]
+    fn food_in_hand_still_opens_doors_and_crafting_tables() {
+        let mut game = eater(items::BREAD, 10);
+        game.chunks.set_blocks(&[(
+            IVec3::new(0, 65, -2),
+            BlockState::of(blocks::CRAFTING_TABLE),
+        )]);
+        right_click(&mut game);
+        assert!(game.container.is_some(), "the crafting table opened");
+        assert!(game.eating.is_none(), "and nothing was eaten");
+        assert_eq!(game.inventory.slot(0).map(|s| s.count), Some(4));
+
+        let mut game = eater(items::BREAD, 10);
+        let door = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
+        game.chunks.set_blocks(&[
+            (IVec3::new(0, 65, -2), door),
+            (
+                IVec3::new(0, 66, -2),
+                door.with(Prop::DoubleBlockHalf, door_half::UPPER),
+            ),
+        ]);
+        right_click(&mut game);
+        let opened = game.chunks.world().block(0, 65, -2);
+        assert_eq!(opened, Some(door.with_bool(Prop::Open, true)));
+        assert!(game.eating.is_none());
+    }
+
+    #[test]
+    fn bread_is_eaten_only_when_nothing_is_there_to_use_and_hunger_is_below_20() {
+        let mut game = eater(items::BREAD, 10);
+        game.keys.set_key(KeyCode::KeyW, false);
+        game.place_clicked = true;
+        game.tick();
+        assert!(
+            game.eating.is_some(),
+            "looking at air with an empty belly eats"
+        );
+        let mut game = eater(items::BREAD, 20);
+        game.place_clicked = true;
+        game.tick();
+        assert!(game.eating.is_none(), "a full belly doesn't");
+    }
+
+    #[test]
+    fn wheat_goes_to_the_cow_not_the_mouth() {
+        let mut game = eater(items::WHEAT, 10).with_mobs(mob_registry());
+        game.camera.pitch = -0.2;
+        let kind = game.mob_defs.find("cow").expect("cows exist");
+        let cow = game.new_mob(kind, glam::DVec3::new(0.5, 64.0, -1.5), 0.0);
+        game.add_mob(cow);
+        right_click(&mut game);
+        let cow = game.mobs.iter().find(|m| m.kind == kind).expect("cow");
+        assert!(cow.data.love > 0, "the cow is in love");
+        assert!(game.eating.is_none());
+        assert_eq!(game.inventory.slot(0).map(|s| s.count), Some(3));
     }
 
     #[test]

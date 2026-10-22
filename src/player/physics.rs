@@ -155,6 +155,8 @@ pub struct Body {
     /// Whether this is the player, who has poses (mobs stay standing).
     has_poses: bool,
     collided_horizontally: bool,
+    /// How far the last move stepped up a ledge, for easing the camera.
+    step_up: f64,
     was_moving_forward: bool,
     sprint_tap_timer: u8,
     was_jumping: bool,
@@ -194,6 +196,7 @@ impl Body {
             pose: Pose::Standing,
             has_poses: false,
             collided_horizontally: false,
+            step_up: 0.0,
             was_moving_forward: false,
             sprint_tap_timer: 0,
             was_jumping: false,
@@ -216,6 +219,11 @@ impl Body {
     }
 
     /// Whether the last move ran into a wall.
+    /// The height the last move stepped up, 0 when it didn't.
+    pub fn step_up(&self) -> f64 {
+        self.step_up
+    }
+
     pub fn collided_horizontally(&self) -> bool {
         self.collided_horizontally
     }
@@ -681,11 +689,20 @@ impl Body {
         let start = self.aabb();
         let mut wanted = wanted;
         if self.on_ground && self.sneaking && wanted.y <= 0.0 {
-            (wanted.x, wanted.z) = back_off_edges(&start, wanted.x, wanted.z, world);
+            let (x, z) = back_off_edges(&start, wanted.x, wanted.z, world);
+            // Backed-off speed would carry you over the edge once you stand up.
+            if x != wanted.x {
+                self.velocity.x = 0.0;
+            }
+            if z != wanted.z {
+                self.velocity.z = 0.0;
+            }
+            (wanted.x, wanted.z) = (x, z);
         }
         let mut boxes = Vec::new();
         let (mut moved, mut end) = sweep(start, wanted, world, &mut boxes);
 
+        self.step_up = 0.0;
         let landing = self.on_ground || (moved.y != wanted.y && wanted.y < 0.0);
         let blocked = moved.x != wanted.x || moved.z != wanted.z;
         if landing && blocked {
@@ -697,6 +714,7 @@ impl Body {
             if raised.x.hypot(raised.z) > moved.x.hypot(moved.z) {
                 moved = raised + lowered;
                 end = stepped_box;
+                self.step_up = moved.y.max(0.0);
             }
         }
 
@@ -803,6 +821,8 @@ mod tests {
         Half,
         /// 0.6 high, the tallest step the player takes.
         Step,
+        /// 15/16 high: dirt path and farmland.
+        Path,
         /// The top half of a block, a low ceiling.
         TopHalf,
         Ice,
@@ -844,6 +864,7 @@ mod tests {
                     match kind {
                         Kind::Half => bb.max.y -= 0.5,
                         Kind::Step => bb.max.y -= 0.4,
+                        Kind::Path => bb.max.y -= 1.0 / 16.0,
                         Kind::TopHalf => bb.min.y += 0.5,
                         _ => {}
                     }
@@ -1474,6 +1495,87 @@ mod tests {
             "{}",
             body.position()
         );
+    }
+
+    fn sneak_toward(dx: f64, dz: f64) -> MoveInput {
+        MoveInput {
+            sneak: true,
+            strafe: dx,
+            forward: -dz,
+            ..MoveInput::IDLE
+        }
+    }
+
+    #[test]
+    fn sneaking_stops_with_the_center_under_a_third_past_the_edge() {
+        let mut world = TestWorld::default();
+        world.set(0, 63, 0, Kind::Full);
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..100 {
+            body.tick(&sneak_toward(1.0, 0.0), 0.0, &world);
+        }
+        let past = body.position().x - 1.0;
+        assert!(past > 0.0 && past < 0.3, "center {past} past the edge");
+        // Standing up there keeps you on the block.
+        let y = body.position().y;
+        for _ in 0..20 {
+            body.tick(&MoveInput::IDLE, 0.0, &world);
+        }
+        assert_eq!(body.position().y, y);
+        assert!(body.on_ground);
+    }
+
+    #[test]
+    fn sneaking_still_jumps_off_and_ignores_drops_of_a_step() {
+        let mut world = TestWorld::default();
+        world.set(0, 63, 0, Kind::Full);
+        let mut body = standing_at(0.5, 0.5);
+        let jump = MoveInput {
+            jump: true,
+            ..sneak_toward(1.0, 0.0)
+        };
+        for _ in 0..40 {
+            body.tick(&jump, 0.0, &world);
+        }
+        assert!(body.position().y < 64.0 || !body.on_ground);
+        assert!(body.position().x > 1.3, "{}", body.position());
+    }
+
+    #[test]
+    fn walking_between_path_grass_and_slabs_needs_no_jump() {
+        for (from, to, y_from, y_to) in [
+            (Kind::Path, Kind::Full, 63.0 + 15.0 / 16.0, 64.0),
+            (Kind::Full, Kind::Path, 64.0, 63.0 + 15.0 / 16.0),
+            (Kind::Full, Kind::Half, 64.0, 63.5),
+        ] {
+            let mut world = TestWorld::default();
+            for z in -50..-2 {
+                world.set(0, 63, z, from);
+            }
+            // The far side sits one block up (full) or the same level (slab or path).
+            for z in -50..-2 {
+                world.set(0, 63, z, from);
+            }
+            for z in -50..2 {
+                if z < -2 {
+                    world.set(0, 63, z, to);
+                }
+            }
+            for z in -2..2 {
+                world.set(0, 63, z, from);
+            }
+            let mut body = Body::new(DVec3::new(0.5, y_from, 0.5));
+            body.on_ground = true;
+            for _ in 0..40 {
+                body.tick(&FORWARD, 0.0, &world);
+            }
+            assert!(
+                body.position().z < -3.0,
+                "{from_:?}",
+                from_ = (y_from, y_to)
+            );
+            assert!((body.position().y - y_to).abs() < 1e-6);
+        }
     }
 
     #[test]

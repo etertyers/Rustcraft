@@ -30,6 +30,34 @@ const SEAT_DROP: f64 = 0.2;
 /// (modern's temper growth), and bucks in the meantime.
 const TAME_RIDE_TICKS: u32 = 20;
 
+/// Ticks an animal stays in love after it's fed (modern: 600).
+const LOVE_TICKS: u32 = 600;
+
+/// What each animal is fed to breed it.
+const BREEDING_FOOD: [(&str, &[&str]); 4] = [
+    ("cow", &["wheat"]),
+    ("sheep", &["wheat"]),
+    ("pig", &["carrot", "potato", "beetroot"]),
+    (
+        "chicken",
+        &[
+            "wheat_seeds",
+            "beetroot_seeds",
+            "melon_seeds",
+            "pumpkin_seeds",
+        ],
+    ),
+];
+
+/// Whether `item` is the breeding food of the mob called `mob`.
+fn is_breeding_food(mob: &str, item: ItemId) -> bool {
+    BREEDING_FOOD
+        .iter()
+        .filter(|(name, _)| *name == mob)
+        .flat_map(|(_, foods)| foods.iter())
+        .any(|food| items::by_name(food) == Some(item))
+}
+
 /// The dye number of an item that dyes wool, 0–15 in wool order.
 pub fn dye_color(item: ItemId) -> Option<u8> {
     const DYES: [(&str, u8); 16] = [
@@ -66,6 +94,7 @@ impl Game {
                 continue;
             }
             let def = defs.get(mob.kind);
+            mob.data.love = mob.data.love.saturating_sub(1);
             match def.name.as_str() {
                 "chicken" => {
                     if !mob.body.on_ground && mob.body.velocity.y < 0.0 {
@@ -134,6 +163,17 @@ impl Game {
         let name = self.mob_defs.get(mob.kind).name.clone();
         let held = self.held().cloned();
         let survival = self.mode.uses_up_items();
+        // Breeding food goes to the animal, not into the player's mouth.
+        if let Some(stack) = &held
+            && is_breeding_food(&name, stack.id)
+            && self.mobs[index].data.love == 0
+        {
+            self.mobs[index].data.love = LOVE_TICKS;
+            if survival {
+                self.inventory.take(self.held_slot(), 1);
+            }
+            return true;
+        }
         match name.as_str() {
             "villager" => self.talk_to_villager(index),
             "cow" => {
