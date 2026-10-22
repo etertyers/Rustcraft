@@ -210,6 +210,14 @@ impl ChunkManager {
         }
     }
 
+    /// The End's generator, in the End.
+    pub fn end(&self) -> Option<&End> {
+        match &*self.source {
+            ChunkSource::End(end) => Some(end),
+            _ => None,
+        }
+    }
+
     /// The generator, for a generated world.
     pub fn terrain(&self) -> Option<&crate::world::worldgen::terrain::Terrain> {
         match &*self.source {

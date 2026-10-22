@@ -11,7 +11,7 @@ use super::Game;
 use crate::{
     inventory::{
         furnace::{self, Furnace},
-        player::{HOTBAR_SLOTS, SLOTS},
+        player::{HOTBAR_SLOTS, MAIN_SLOTS, SLOTS},
         slots::{self, Click, SlotRef},
         stack::ItemStack,
     },
@@ -107,7 +107,7 @@ impl Container {
 /// The player's slots in 1.0.0's container order: the main inventory top
 /// row first, then the hotbar.
 fn player_slots() -> impl DoubleEndedIterator<Item = usize> + Clone {
-    (HOTBAR_SLOTS..SLOTS).chain(0..HOTBAR_SLOTS)
+    (HOTBAR_SLOTS..MAIN_SLOTS).chain(0..HOTBAR_SLOTS)
 }
 
 impl Game {

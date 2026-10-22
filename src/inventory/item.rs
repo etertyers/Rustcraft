@@ -386,6 +386,8 @@ mod tests {
             "netherite_sword",
             "netherite_upgrade_smithing_template",
             "wither_skeleton_skull",
+            "elytra",
+            "popped_chorus_fruit",
         ]
         .map(|name| format!("item/{name}"))
         .into();

@@ -118,6 +118,7 @@ src/
   player/effects.rs, inventory/{potion,brewing}.rs, entity/thrown.rs, game/potions.rs   # status effects, potions and the brewing tree, the brewing stand, splash potions, drinking/cauldrons/food effects
   world/{end_portal,worldgen/end}.rs, entity/{dragon,crystal,breath,eye}.rs   # the End portal's ring of frames, the End's island/pillars/podium, the ender dragon (phases and parts), crystals, fireballs and breath clouds, eyes of ender
   game/{dragon,end_portal}.rs, render/dragon.rs, credits.rs   # the fight (breaking blocks, healing, death, exit portal), eyes/portal travel/credits, the dragon and crystal models, the poem and credits text
+  inventory/armor.rs, game/{armor,elytra,gateways,shulkers}.rs, entity/bullet.rs, world/structure/end.rs   # armor slots and protection, elytra gliding and rockets, End gateways, shulkers' bullets and shulker boxes, End cities and ships
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
@@ -422,7 +423,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - **Beating the game:** entering the exit portal plays the end poem and credits, then returns you to your Overworld spawn.
 - **Done when:** you can go from a fresh survival world to killing the dragon and seeing the credits, without creative mode.
 
-### - [ ] M28 — Outer End: End cities and elytra
+### - [x] M28 — Outer End: End cities and elytra
 - End gateways teleport to the outer islands; outer island generation with chorus plants and fruit.
 - End cities and End ships with loot, shulkers (levitation bullets, shulker shells, shulker boxes that keep their contents).
 - **Elytra:** found in End ships; gliding physics, firework rocket boosting, repair with phantom membranes, shown on the player model.

@@ -221,6 +221,8 @@ pub struct Intent {
     pub fireball: Option<Shot>,
     /// A blaze's small fireball.
     pub small_fireball: Option<Shot>,
+    /// A shulker's homing bullet (M28).
+    pub bullet: Option<Shot>,
     /// The blow (`hit`) throws its victim up (hoglins).
     pub toss: bool,
     /// A spider's leap: velocity to set.
@@ -295,6 +297,7 @@ pub fn think<T: Terrain>(
             | Ai::Witch
             | Ai::Archer { .. }
             | Ai::Ghast
+            | Ai::Shulker
             | Ai::Blaze => {
                 state.chasing = view.player.is_some();
             }
@@ -385,6 +388,7 @@ pub fn think<T: Terrain>(
         }
         Ai::Strider => Goal::Idle,
         Ai::Blaze => blaze(mob, def, view, random, &mut intent),
+        Ai::Shulker => shulker(mob, view, &mut intent),
     };
 
     steer(mob, def, view, goal, height, random, &mut intent);
@@ -884,6 +888,38 @@ fn blaze<T: Terrain>(
         Goal::Stand(Some(target.eye))
     }
 }
+
+/// Shulkers: with the player in sight within 20 blocks, open the shell
+/// after half a second and send a bullet after them every two seconds
+/// while it is open; with nobody about, close up again. They never move.
+fn shulker<T: Terrain>(mob: &mut Mob, view: &View<T>, intent: &mut Intent) -> Goal {
+    let eye = mob.eye();
+    let target = view
+        .player
+        .filter(|t| t.visible && t.eye.distance(eye) < SHULKER_RANGE);
+    let Some(target) = target else {
+        mob.ai.chasing = false;
+        mob.ai.charge = mob.ai.charge.min(0) - 1;
+        mob.ai.charge = mob.ai.charge.max(-SHULKER_REST);
+        return Goal::Idle;
+    };
+    mob.ai.chasing = true;
+    mob.ai.charge = mob.ai.charge.max(0) + 1;
+    mob.aggressive = mob.ai.charge > SHULKER_OPEN;
+    if mob.ai.charge > SHULKER_OPEN && (mob.ai.charge - SHULKER_OPEN) % SHULKER_VOLLEY == 1 {
+        intent.bullet = Some(Shot {
+            from: eye,
+            at: (target.aabb.min + target.aabb.max) / 2.0,
+        });
+    }
+    Goal::Stand(Some(target.eye))
+}
+
+/// How far a shulker sees, ticks before it opens, and between bullets.
+const SHULKER_RANGE: f64 = 20.0;
+const SHULKER_OPEN: i32 = 10;
+const SHULKER_VOLLEY: i32 = 40;
+const SHULKER_REST: i32 = 200;
 
 /// Piglins: while admiring gold they stand still; otherwise they go after
 /// the player (modern `PiglinAi` spares players wearing gold, but armor

@@ -550,7 +550,11 @@ impl Game {
             crouching: self.body.pose() == crate::player::physics::Pose::Crouching,
             swim_amount: view.swim_amount(alpha),
             in_water: self.body.liquid == Some(crate::world::block::Fluid::Water),
-            fall_flying: 0.0,
+            fall_flying: if self.body.fall_flying {
+                self.glide_ticks() as f32 + alpha
+            } else {
+                0.0
+            },
             attack: view.attack_anim(alpha),
             swing_left: false,
             right: main,

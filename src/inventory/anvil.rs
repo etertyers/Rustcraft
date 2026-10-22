@@ -76,6 +76,9 @@ pub fn repairs(tool: ItemId, material: ItemId) -> bool {
     if tool == "shears" {
         return material == "iron_ingot";
     }
+    if tool == "elytra" {
+        return material == "phantom_membrane";
+    }
     if made_of("wooden_") {
         material.ends_with("_planks")
     } else if made_of("stone_") {
@@ -379,6 +382,24 @@ mod tests {
         // Each diamond takes a quarter of the maximum off the damage.
         assert_eq!(made.output.damage, max - 10 - 3 * (max / 4));
         assert_eq!((made.right_used, made.cost), (3, 3));
+    }
+
+    #[test]
+    fn phantom_membranes_repair_elytra_and_nothing_else_does() {
+        let items = items();
+        let worn = ItemStack::with_damage(items::ELYTRA, 1, 400);
+        let made = combine(
+            &items,
+            &worn,
+            Some(&ItemStack::new(items::PHANTOM_MEMBRANE, 2)),
+            "",
+            false,
+        )
+        .unwrap();
+        assert_eq!(made.output.damage, 400 - 2 * (432 / 4));
+        assert!(!repairs(items::ELYTRA, items::LEATHER));
+        assert!(!repairs(items::ELYTRA, items::IRON_INGOT));
+        assert!(!repairs(items::IRON_PICKAXE, items::PHANTOM_MEMBRANE));
     }
 
     #[test]

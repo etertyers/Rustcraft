@@ -27,10 +27,12 @@ pub enum Effect {
     Absorption,
     Hunger,
     SlowFalling,
+    /// Lifts off the ground (shulker bullets, M28).
+    Levitation,
 }
 
 impl Effect {
-    pub const ALL: [Effect; 18] = [
+    pub const ALL: [Effect; 19] = [
         Effect::Speed,
         Effect::Slowness,
         Effect::Strength,
@@ -49,6 +51,7 @@ impl Effect {
         Effect::Absorption,
         Effect::Hunger,
         Effect::SlowFalling,
+        Effect::Levitation,
     ];
 
     /// Modern's name (`minecraft:fire_resistance`, less the namespace),
@@ -73,6 +76,7 @@ impl Effect {
             Effect::Absorption => "absorption",
             Effect::Hunger => "hunger",
             Effect::SlowFalling => "slow_falling",
+            Effect::Levitation => "levitation",
         }
     }
 
@@ -97,6 +101,7 @@ impl Effect {
             Effect::Absorption => "Absorption",
             Effect::Hunger => "Hunger",
             Effect::SlowFalling => "Slow Falling",
+            Effect::Levitation => "Levitation",
         }
     }
 
@@ -121,6 +126,7 @@ impl Effect {
             Effect::Absorption => 0x2552A5,
             Effect::Hunger => 0x587653,
             Effect::SlowFalling => 0xF3CFB9,
+            Effect::Levitation => 0xCEFFFF,
         }
     }
 

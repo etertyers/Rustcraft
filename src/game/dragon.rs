@@ -426,7 +426,10 @@ impl Game {
     /// fights the player.
     pub fn dragon_bar(&self) -> Option<f32> {
         let dragon = self.dragon.as_ref()?;
-        (self.dimension == Dimension::End)
+        // Shown while the dragon is within a few hundred blocks, as modern's
+        // boss bars are for those near the fight.
+        let near = dragon.position.distance(self.body.position()) < 300.0;
+        (self.dimension == Dimension::End && near)
             .then(|| (dragon.health / dragon::MAX_HEALTH).clamp(0.0, 1.0))
     }
 

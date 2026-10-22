@@ -37,6 +37,8 @@ pub struct Figure<'a> {
 pub struct PlayerMeshes {
     /// The model, textured with the skin (third person).
     pub body: Mesh,
+    /// The elytra on its back, textured with its own skin (third person).
+    pub elytra: Mesh,
     /// What the model holds, textured with the atlas (third person).
     pub items: Mesh,
     /// The first-person arm, textured with the skin, in camera space.
@@ -146,6 +148,13 @@ pub fn build(
                 [1.0; 3],
                 body_light,
             );
+            if game
+                .inventory
+                .slot(crate::inventory::player::ARMOR_CHEST)
+                .is_some_and(|s| s.id == items::ELYTRA)
+            {
+                crate::render::player::add_elytra(&mut meshes.elytra, &pose, feet, yaw, body_light);
+            }
             let frame = model_matrix(&body_frame(&pose, yaw), feet);
             let rig = rig(&pose, fig.slim);
             for hand in [Hand::Main, Hand::Off] {

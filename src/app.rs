@@ -886,6 +886,13 @@ impl App {
                     &view_camera,
                     game.tick_alpha(),
                 );
+                crate::render::entities::add_shulker_bullets(
+                    &mut mesh,
+                    &game.bullets,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                );
                 add_crystal_beams(
                     &mut mesh,
                     &game.crystals,
@@ -1018,13 +1025,14 @@ impl App {
             }
             meshes.push((mob_kinds + 2, dragon));
             meshes.push((mob_kinds + 3, crystals));
+            meshes.push((mob_kinds + 4, player.elytra.clone()));
             // Invisible players aren't drawn (modern draws their armor).
             let invisible = game
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility);
             meshes.push((
-                mob_kinds + 4,
+                mob_kinds + 5,
                 if invisible {
                     Default::default()
                 } else {

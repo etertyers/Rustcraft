@@ -81,6 +81,21 @@ fn end_generation(c: &mut Criterion) {
     });
 }
 
+/// Added in M28: chunks over an End city, tower and bridges.
+fn end_city_generation(c: &mut Criterion) {
+    let end = End::new(SEED);
+    let city = rustcraft::world::structure::end::find(&end, ChunkPos::new(1, -64), 10).unwrap();
+    let center = city.bounds.center();
+    let at = ChunkPos::of_block(center.x, center.z);
+    let mut dx = -1;
+    c.bench_function("generate an end city chunk", |b| {
+        b.iter(|| {
+            dx = if dx >= 1 { -1 } else { dx + 1 };
+            black_box(end.generate(at.offset(dx, 0)))
+        })
+    });
+}
+
 fn lighting_and_meshing(c: &mut Criterion) {
     let terrain = Terrain::new(SEED);
     let models = models();
@@ -206,6 +221,6 @@ fn redstone(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(50);
-    targets = generation, nether_generation, end_generation, lighting_and_meshing, fluids, redstone
+    targets = generation, nether_generation, end_generation, end_city_generation, lighting_and_meshing, fluids, redstone
 }
 criterion_main!(benches);

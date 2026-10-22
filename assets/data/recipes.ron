@@ -36,6 +36,14 @@
         "wool": ["white_wool", "orange_wool", "magenta_wool", "light_blue_wool", "yellow_wool", "lime_wool", "pink_wool", "gray_wool", "light_gray_wool", "cyan_wool", "purple_wool", "blue_wool", "brown_wool", "green_wool", "red_wool", "black_wool"],
     },
     shaped: [
+        // M28
+        (result: (item: "purpur_block", count: 4), pattern: ["##", "##"], key: {'#': (item: "popped_chorus_fruit")}),
+        (result: (item: "purpur_pillar", count: 1), pattern: ["#", "#"], key: {'#': (item: "purpur_slab")}),
+        (result: (item: "purpur_stairs", count: 4), pattern: ["#  ", "## ", "###"], key: {'#': (item: "purpur_block")}),
+        (result: (item: "purpur_slab", count: 6), pattern: ["###"], key: {'#': (item: "purpur_block")}),
+        (result: (item: "end_stone_bricks", count: 4), pattern: ["##", "##"], key: {'#': (item: "end_stone")}),
+        (result: (item: "end_rod", count: 4), pattern: ["#", "|"], key: {'#': (item: "blaze_rod"), '|': (item: "popped_chorus_fruit")}),
+        (result: (item: "shulker_box", count: 1), pattern: ["S", "C", "S"], key: {'S': (item: "shulker_shell"), 'C': (item: "chest")}),
         // M27
         (result: (item: "end_crystal", count: 1), pattern: ["GGG", "GEG", "GTG"], key: {'G': (item: "glass"), 'E': (item: "ender_eye"), 'T': (item: "ghast_tear")}),
         // Wood and basics
@@ -374,6 +382,24 @@
         (result: (item: "warped_fungus_on_a_stick", count: 1), pattern: ["# ", " X"], key: {'#': (item: "fishing_rod"), 'X': (item: "warped_fungus")}),
     ],
     shapeless: [
+        // M28
+        (result: (item: "firework_rocket", count: 3), ingredients: [(item: "paper"), (item: "gunpowder")]),
+        (result: (item: "white_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "white_dye")]),
+        (result: (item: "orange_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "orange_dye")]),
+        (result: (item: "magenta_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "magenta_dye")]),
+        (result: (item: "light_blue_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "light_blue_dye")]),
+        (result: (item: "yellow_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "yellow_dye")]),
+        (result: (item: "lime_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "lime_dye")]),
+        (result: (item: "pink_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "pink_dye")]),
+        (result: (item: "gray_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "gray_dye")]),
+        (result: (item: "light_gray_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "light_gray_dye")]),
+        (result: (item: "cyan_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "cyan_dye")]),
+        (result: (item: "purple_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "purple_dye")]),
+        (result: (item: "blue_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "blue_dye")]),
+        (result: (item: "brown_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "cocoa_beans")]),
+        (result: (item: "green_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "green_dye")]),
+        (result: (item: "red_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "red_dye")]),
+        (result: (item: "black_shulker_box", count: 1), ingredients: [(item: "shulker_box"), (item: "ink_sac")]),
         // M27
         (result: (item: "ender_eye", count: 1), ingredients: [(item: "ender_pearl"), (item: "blaze_powder")]),
         (result: (item: "wheat", count: 9), ingredients: [(item: "hay_block")]),
@@ -487,6 +513,7 @@
         (result: (item: "fire_charge", count: 3), ingredients: [(item: "gunpowder"), (item: "blaze_powder"), (item: "charcoal")]),
     ],
     smelting: [
+        (input: (item: "chorus_fruit"), result: (item: "popped_chorus_fruit", count: 1), xp: 0.1),
         (input: (item: "iron_ore"), result: (item: "iron_ingot", count: 1), xp: 0.7),  // iron
         (input: (item: "gold_ore"), result: (item: "gold_ingot", count: 1), xp: 1.0),  // gold
         (input: (item: "diamond_ore"), result: (item: "diamond", count: 1), xp: 1.0),  // diamond

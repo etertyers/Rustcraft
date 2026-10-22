@@ -355,6 +355,12 @@ fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
                 (stride.cos() * amount, rest_y, rest_z, pivot)
             }
         }
+        Role::Lid => (
+            rest_x,
+            rest_y,
+            rest_z,
+            pivot - Vec3::Y * if pose.aggressive { 10.0 } else { 0.0 },
+        ),
         Role::WingA => (rest_x, rest_y, rest_z + wing_beat(pose, flap), pivot),
         Role::WingB => (rest_x, rest_y, rest_z - wing_beat(pose, flap), pivot),
         Role::Tail => (rest_x, rest_y + stride.cos() * 1.4 * amount, rest_z, pivot),

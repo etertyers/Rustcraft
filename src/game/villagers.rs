@@ -489,6 +489,8 @@ impl Game {
             crate::world::structure::spawns_in(terrain, pos)
         } else if let Some(nether) = self.chunks.nether() {
             crate::world::structure::nether::spawns_in(nether, pos)
+        } else if let Some(end) = self.chunks.end() {
+            crate::world::structure::end::spawns_in(end, pos)
         } else {
             return;
         };

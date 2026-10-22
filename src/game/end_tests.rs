@@ -36,7 +36,7 @@ const SEED: u64 = 20111118;
 
 /// A test world that starts in the End, on the island, with the chunks
 /// around loaded.
-fn end_game(mode: GameMode) -> Game {
+pub(super) fn end_game(mode: GameMode) -> Game {
     let (items, models) = registries();
     let chunks = ChunkManager::new(ChunkSource::End(Box::new(End::new(SEED))), models, 3, 2);
     let top = End::new(SEED).top(24, 6).unwrap();

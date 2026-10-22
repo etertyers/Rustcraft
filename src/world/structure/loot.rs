@@ -397,6 +397,48 @@ pub fn table(name: &str) -> Option<Vec<Pool>> {
                 e("obsidian", 2, 2, 4),
             ],
         )],
+        // M28: modern's End city chest, less beetroot seeds and horse
+        // armor (not in), and the ship's, which always holds elytra.
+        "end_city_treasure" => vec![pool(
+            2,
+            6,
+            vec![
+                e("diamond", 5, 2, 7),
+                e("iron_ingot", 10, 4, 8),
+                e("gold_ingot", 15, 2, 7),
+                e("emerald", 2, 2, 6),
+                e("saddle", 3, 1, 1),
+                ench("diamond_sword", 3, 30),
+                ench("diamond_boots", 3, 30),
+                ench("diamond_chestplate", 3, 30),
+                ench("diamond_leggings", 3, 30),
+                ench("diamond_helmet", 3, 30),
+                ench("diamond_pickaxe", 3, 30),
+                ench("diamond_shovel", 3, 30),
+                ench("iron_sword", 3, 30),
+                ench("iron_boots", 3, 30),
+                ench("iron_chestplate", 3, 30),
+                ench("iron_leggings", 3, 30),
+                ench("iron_helmet", 3, 30),
+                ench("iron_pickaxe", 3, 30),
+                ench("iron_shovel", 3, 30),
+            ],
+        )],
+        "end_ship" => vec![
+            pool(1, 1, vec![e("elytra", 1, 1, 1)]),
+            pool(
+                2,
+                4,
+                vec![
+                    e("diamond", 5, 2, 7),
+                    e("iron_ingot", 10, 4, 8),
+                    e("gold_ingot", 15, 2, 7),
+                    e("emerald", 2, 2, 6),
+                    ench("diamond_sword", 3, 30),
+                    ench("diamond_chestplate", 3, 30),
+                ],
+            ),
+        ],
         "bastion_treasure" => vec![
             pool(
                 3,
@@ -585,6 +627,8 @@ pub const TABLES: &[&str] = &[
     "shipwreck_map",
     "ruined_portal",
     "nether_bridge",
+    "end_city_treasure",
+    "end_ship",
     "bastion_treasure",
     "bastion_other",
     "bastion_hoglin_stable",

@@ -37,6 +37,8 @@ pub const MINECART_TEXTURE: &str = "entity/minecart";
 /// The ender dragon's and the end crystal's, after the minecart's.
 pub const DRAGON_TEXTURE: &str = "entity/enderdragon/dragon";
 pub const CRYSTAL_TEXTURE: &str = "entity/endercrystal/endercrystal";
+/// The elytra's, after the crystal's.
+pub const ELYTRA_TEXTURE: &str = "entity/elytra";
 
 pub struct Look {
     pub res: Resources,
@@ -144,6 +146,7 @@ impl Look {
                 MINECART_TEXTURE,
                 DRAGON_TEXTURE,
                 CRYSTAL_TEXTURE,
+                ELYTRA_TEXTURE,
             ])
             .map(|name| {
                 res.image(name).unwrap_or_else(|| {
@@ -238,8 +241,8 @@ mod tests {
         assert_eq!(look.atlas.tile_size(), 16);
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());
-        // The mobs, then the arrow, cart, dragon and crystal, and the skin.
-        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 5);
+        // The mobs, then the arrow, cart, dragon, crystal and elytra, and the skin.
+        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 6);
         assert!(look.atlas.has("block/grass_block_top"));
         assert!(look.atlas.has("block/destroy_stage_9"));
         // Concrete has no texture without a pack.

@@ -56,6 +56,12 @@ impl Build {
         }
     }
 
+    /// A column of `block` from just under `top` down to the ground, so a
+    /// building on an island's rim doesn't float.
+    pub fn foundation(&mut self, top: IVec3, block: BlockState) {
+        self.piece.foundations.push((top, block));
+    }
+
     pub fn chest(&mut self, at: IVec3, block: BlockState, table: &str) {
         self.set(at, block);
         self.piece.loot.push((at, table.to_owned()));

@@ -1219,4 +1219,26 @@
             ],
         ),
     ),
+    // M28: shulkers, in End cities.
+    (
+        name: "shulker",
+        texture: "entity/shulker/shulker",
+        health: 30,
+        width: 1.0,
+        height: 1.0,
+        speed: 0.0,
+        ai: Shulker,
+        no_fall: true,
+        fire_immune: true,
+        drops: [(item: "shulker_shell", min: 0, max: 1, chance: 0.5)],
+        spawn: Never,
+        model: (
+            texture_size: (64, 64),
+            parts: [
+                (uv: (0, 28), from: (-8, -8, -8), size: (16, 8, 16), pivot: (0, 24, 0)),
+                (uv: (0, 0), from: (-8, -16, -8), size: (16, 12, 16), pivot: (0, 24, 0), role: Lid),
+                (uv: (0, 52), from: (-3, 0, -3), size: (6, 6, 6), pivot: (0, 12, 0), role: Head),
+            ],
+        ),
+    ),
 ]

@@ -112,6 +112,7 @@ impl Game {
         self.fireballs.clear();
         self.thrown.clear();
         self.eyes.clear();
+        self.bullets.clear();
         self.dragon_fireballs.clear();
         self.breath.clear();
         self.particles.clear();
