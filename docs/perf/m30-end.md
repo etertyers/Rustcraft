@@ -6,12 +6,12 @@ Measured on Macmini9,1 (Apple M1); ended at [28, 92, -1259], 462 chunks loaded, 
 
 | Measure | Value |
 |---|---|
-| Average FPS | 316 |
-| 1% low FPS | 160 |
-| Worst frame | 12.9 ms |
-| Frames over 33 ms / 50 ms | 0 / 0 (of 18958) |
-| Chunks generated or loaded | 1365 (avg 0.20 ms each, on worker threads) |
-| Chunks lit and meshed | 1197 (avg 1.66 ms each, on worker threads) |
-| Memory (resident) | 140 MiB |
+| Average FPS | 329 |
+| 1% low FPS | 155 |
+| Worst frame | 20.3 ms |
+| Frames over 33 ms / 50 ms | 0 / 0 (of 19757) |
+| Chunks generated or loaded | 1365 (avg 0.67 ms each, on worker threads) |
+| Chunks lit and meshed | 1197 (avg 1.41 ms each, on worker threads) |
+| Memory (resident) | 165 MiB |
 
 Gate (average ≥ 60, 1% low ≥ 40): **pass**
