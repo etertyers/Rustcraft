@@ -6,6 +6,7 @@ pub mod climate;
 pub mod end;
 pub mod features;
 pub mod flat;
+pub mod flower_stats;
 pub mod gallery;
 pub mod nether;
 pub mod ores;
