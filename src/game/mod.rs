@@ -1150,6 +1150,44 @@ pub(crate) mod tests {
         assert_eq!(game.chunks.world().block(at.x, at.y, at.z), Some(bricks));
     }
 
+    /// `RUSTCRAFT_V1_WORLD=saves/New\ World cargo test --release
+    /// opens_a_real_v1_world -- --ignored`: opens a copy of a world made by
+    /// v1.0 (never the original), plays it a second and saves it again.
+    #[test]
+    #[ignore]
+    fn opens_a_real_v1_world() {
+        let Some(from) = std::env::var_os("RUSTCRAFT_V1_WORLD") else {
+            return;
+        };
+        let saves = TempDir::new("v1");
+        let name = "Old World";
+        let copy = saves.path().join(name);
+        let status = std::process::Command::new("cp")
+            .arg("-R")
+            .arg(&from)
+            .arg(&copy)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let (items, models) = registries();
+        let dir = WorldDir::new(copy);
+        let mut game = Game::open(dir, items, models)
+            .unwrap()
+            .with_mobs(crate::game::tests::mob_registry());
+        load_player_chunk(&mut game);
+        game.run_ticks(40);
+        assert!(game.chunks.world().len() > 0);
+        game.save().unwrap();
+        // The upgrade kept a backup of the old files beside the new ones.
+        assert!(saves.path().join(name).read_dir().unwrap().count() > 2);
+        println!(
+            "opened at {:?}, {} chunks, seed {:?}",
+            game.body.position(),
+            game.chunks.world().len(),
+            game.chunks.seed()
+        );
+    }
+
     /// A flat test world with the player standing at the origin, looking
     /// straight down, with every chunk around them loaded.
     pub(crate) fn flat_game(mode: GameMode) -> Game {

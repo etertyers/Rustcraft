@@ -803,8 +803,11 @@ impl App {
         ) else {
             return;
         };
-        if self.bench.is_some() {
-            game.glide(bench::SPEED * dt as f64, bench::HEIGHT);
+        if let Some(bench) = &self.bench {
+            if let Some(start) = bench.start().filter(|_| game.time() == 0) {
+                game.teleport(glam::DVec3::from_array(start), 0.0, -0.35);
+            }
+            game.glide(bench::SPEED * dt as f64, bench.height());
         }
         // The pause menu stops the game; the camera still follows it. A
         // scene being captured stands still.

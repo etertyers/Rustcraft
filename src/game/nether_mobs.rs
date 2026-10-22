@@ -490,4 +490,44 @@ mod tests {
         game.tick_nether_mobs();
         assert_eq!(game.mobs[0].data.variant, 0, "warm over lava");
     }
+
+    /// `cargo test --release nether_remesh_churn -- --ignored --nocapture`:
+    /// how many times chunks get meshed standing still in the Nether.
+    #[test]
+    #[ignore]
+    fn nether_remesh_churn() {
+        use crate::world::{
+            chunk::ChunkPos,
+            manager::{ChunkManager, ChunkSource},
+            worldgen::nether::Nether,
+        };
+        let (items, models) = crate::game::tests::registries();
+        let nether = Nether::new(20111118);
+        let chunks = ChunkManager::new(ChunkSource::Nether(Box::new(nether)), models, 9, 6);
+        let feet = DVec3::new(0.5, 70.0, 0.5);
+        let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0)
+            .starting_in(crate::world::dimension::Dimension::Nether);
+        game.mode = GameMode::Creative;
+        for second in 0..40 {
+            let started = std::time::Instant::now();
+            while started.elapsed().as_secs_f32() < 1.0 {
+                if second >= 3 {
+                    game.glide(10.9 * 0.05, 72.0);
+                }
+                game.advance(0.05);
+                let at = game.body.position();
+                game.chunks
+                    .update(ChunkPos::of_block(at.x as i32, at.z as i32));
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let stats = game.chunks.work_stats();
+            println!(
+                "{second:2}s: {} loaded, generated {}, meshed {}, fluids {}",
+                game.chunks.world().len(),
+                stats.generated.summary().0,
+                stats.meshed.summary().0,
+                0,
+            );
+        }
+    }
 }
