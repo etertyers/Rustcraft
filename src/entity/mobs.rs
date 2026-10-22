@@ -28,6 +28,20 @@ pub struct MobDef {
     pub ai: Ai,
     #[serde(default)]
     pub burns_in_daylight: bool,
+    /// Walking speed while angry, if it differs (an enderman's 0.45 against
+    /// 0.3 calm, in this table's units).
+    #[serde(default)]
+    pub angry_speed: Option<f64>,
+    /// Teleports away from a projectile instead of being hit (endermen).
+    #[serde(default)]
+    pub dodges: bool,
+    /// What it holds in its main hand when it spawns (a skeleton's bow).
+    #[serde(default)]
+    pub holds: Option<ItemId>,
+    /// How far it notices a player it can see, and how far its paths
+    /// reach (modern `FOLLOW_RANGE`: 35 for the zombie family, else 16).
+    #[serde(default = "follow_range")]
+    pub follow_range: f64,
     #[serde(default)]
     pub drops: Vec<MobDrop>,
     pub spawn: Spawn,
@@ -68,6 +82,10 @@ pub struct MobDef {
     /// Eye height as a fraction of its height.
     #[serde(default = "eye_fraction")]
     pub eye: f64,
+}
+
+fn follow_range() -> f64 {
+    16.0
 }
 
 fn one() -> f32 {
@@ -166,6 +184,19 @@ impl Ai {
     /// and don't count against the monster cap.
     pub fn is_creature(self) -> bool {
         !self.is_monster()
+    }
+
+    /// Walkers that go after the player within their `follow_range`.
+    pub fn has_follow_range(self) -> bool {
+        matches!(
+            self,
+            Ai::Hostile { .. }
+                | Ai::Spider { .. }
+                | Ai::Archer { .. }
+                | Ai::Creeper { .. }
+                | Ai::ZombifiedPiglin { .. }
+                | Ai::Hoglin { .. }
+        )
     }
 
     /// Mobs that spawn in the dark and despawn.
@@ -305,6 +336,10 @@ pub struct Part {
     /// over a body, a robe).
     #[serde(default)]
     pub grow: f32,
+    /// What the mob holds in its main hand is drawn at the bottom of this
+    /// part (its right arm).
+    #[serde(default)]
+    pub hand: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

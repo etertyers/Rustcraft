@@ -27,6 +27,7 @@ use crate::{
         World,
         biome::Biome,
         block::{BlockId, BlockRegistry, Fluid},
+        blocks,
         chunk::ChunkPos,
         daytime, shape,
         worldgen::rng::Rng,
@@ -68,6 +69,8 @@ const PUSH: f64 = 0.05;
 const INVISIBLE_SIGHT: f64 = 2.8;
 /// A mob looks for the player only this close.
 const SIGHT_RANGE: f64 = 40.0;
+/// An enderman is angered by a stare from this far (modern 64).
+const ENDERMAN_SIGHT: f64 = 64.0;
 /// Mobs farther than this from the player aren't drawn or thought about
 /// for others' sake (the list of nearby mobs each one considers).
 const NEIGHBOR_RANGE: f64 = 20.0;
@@ -123,6 +126,25 @@ impl Terrain for WorldTerrain<'_> {
         self.def(cell)
             .is_some_and(|def| def.fluid == Some(Fluid::Lava))
     }
+    fn hazard(&self, cell: IVec3) -> bool {
+        self.world.block(cell.x, cell.y, cell.z).is_some_and(|s| {
+            [
+                blocks::FIRE,
+                blocks::SOUL_FIRE,
+                blocks::CACTUS,
+                blocks::SWEET_BERRY_BUSH,
+                blocks::POWDER_SNOW,
+                blocks::CAMPFIRE,
+                blocks::SOUL_CAMPFIRE,
+            ]
+            .contains(&s.kind())
+        })
+    }
+    fn hot_floor(&self, cell: IVec3) -> bool {
+        self.world
+            .block(cell.x, cell.y, cell.z)
+            .is_some_and(|s| s.kind() == blocks::MAGMA_BLOCK)
+    }
 }
 
 /// What the other mobs need to know about one.
@@ -163,6 +185,37 @@ impl Game {
             }
         });
         hit.is_none()
+    }
+
+    /// A mob with a hand and nothing in it picks up a sword or axe lying
+    /// within a block of it and holds that from then on (modern mobs that
+    /// `canPickUpLoot`), so a skeleton that has lost its bow wields what it
+    /// finds.
+    fn mobs_pick_up_weapons(&mut self, mobs: &mut [Mob]) {
+        if self.entities.is_empty() {
+            return;
+        }
+        let defs = self.mob_defs.clone();
+        for mob in mobs.iter_mut() {
+            if mob.is_dead()
+                || mob.data.held.is_some()
+                || !defs.get(mob.kind).model.parts.iter().any(|part| part.hand)
+            {
+                continue;
+            }
+            let feet = mob.feet();
+            let found = self.entities.iter().position(|item| {
+                let name = item.stack.id.name();
+                (name.ends_with("_sword") || name.ends_with("_axe"))
+                    && !item.pickup_delayed()
+                    && (item.center() - feet).with_y(0.0).length() < 1.0
+                    && (item.center().y - feet.y).abs() < 1.5
+            });
+            if let Some(index) = found {
+                let item = self.entities.remove(index);
+                mob.data.held = Some(item.stack.id);
+            }
+        }
     }
 
     /// Gives a new mob its id and adds it to the world.
@@ -264,15 +317,24 @@ impl Game {
                 .has(crate::player::effects::Effect::Invisibility)
             {
                 INVISIBLE_SIGHT
+            } else if matches!(def.ai, Ai::Enderman { .. }) {
+                ENDERMAN_SIGHT
+            } else if def.ai.has_follow_range() {
+                def.follow_range
             } else {
                 SIGHT_RANGE
             };
             let near_player = eye.distance(player_eye) < sight;
             let visible = attackable && hunts && near_player && self.sees(eye, player_eye);
+            // A carved pumpkin on the head hides the face from endermen.
+            let pumpkin = self
+                .inventory
+                .slot(crate::inventory::player::ARMOR_HEAD)
+                .is_some_and(|s| s.id == crate::inventory::items::CARVED_PUMPKIN);
             let stares = matches!(def.ai, Ai::Enderman { .. }) && {
                 let to = eye - player_eye;
                 let d = to.length();
-                d < 64.0 && d > 0.0 && look.dot(to / d) > 1.0 - 0.025 / d && visible
+                d < 64.0 && d > 0.0 && look.dot(to / d) > 1.0 - 0.025 / d && visible && !pumpkin
             };
             let target = (attackable && hunts && near_player).then(|| Target {
                 feet: player_feet,
@@ -320,6 +382,10 @@ impl Game {
                     .map_or(0.0, daytime::brightness),
                 day: daytime,
                 in_water,
+                sky: self
+                    .chunks
+                    .light_at(mob.cell().x, mob.cell().y, mob.cell().z)
+                    .map_or(0, |(sky, _)| sky),
             };
             let view = View {
                 terrain: &terrain,
@@ -381,6 +447,7 @@ impl Game {
             }
         }
         self.apply_intents(&mut mobs, pending, player_feet);
+        self.mobs_pick_up_weapons(&mut mobs);
         self.push_apart(&mut mobs);
         // Despawn far monsters; stash animals whose chunk unloaded.
         mobs.retain_mut(|mob| {

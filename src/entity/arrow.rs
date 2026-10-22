@@ -58,6 +58,8 @@ pub struct Arrow {
     pub power: u8,
     pub punch: u8,
     pub flame: bool,
+    /// A stray's: slows the player it hits.
+    pub slows: bool,
 }
 
 /// What a flying arrow did this tick.
@@ -86,7 +88,21 @@ impl Arrow {
         pickup: bool,
         random: &mut impl FnMut() -> f64,
     ) -> Self {
-        let mut triangle = || SCATTER * (random() - random());
+        Self::shoot_inaccurately(eye, forward, power, motion, pickup, 1.0, random)
+    }
+
+    /// `shoot` with the scatter multiplied by `inaccuracy` (a player's bow
+    /// is 1, a mob's is 14 less 4 a level of difficulty).
+    pub fn shoot_inaccurately(
+        eye: DVec3,
+        forward: DVec3,
+        power: f32,
+        motion: DVec3,
+        pickup: bool,
+        inaccuracy: f64,
+        random: &mut impl FnMut() -> f64,
+    ) -> Self {
+        let mut triangle = || SCATTER * inaccuracy * (random() - random());
         let scattered = (forward + DVec3::new(triangle(), triangle(), triangle())).normalize();
         Self {
             position: eye - DVec3::Y * 0.1,
@@ -101,6 +117,7 @@ impl Arrow {
             power: 0,
             punch: 0,
             flame: false,
+            slows: false,
         }
     }
 
