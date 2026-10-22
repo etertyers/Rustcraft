@@ -86,6 +86,14 @@ pub struct Smelting {
     pub xp: f32,
 }
 
+/// The stonecutter's: one input item cut into `result` (M29).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StonecuttingDef {
+    input: ItemId,
+    result: Output,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FuelDef {
@@ -104,6 +112,8 @@ struct RecipesFile {
     shaped: Vec<ShapedDef>,
     shapeless: Vec<ShapelessDef>,
     smelting: Vec<SmeltingDef>,
+    #[serde(default)]
+    stonecutting: Vec<StonecuttingDef>,
     fuels: Vec<FuelDef>,
 }
 
@@ -121,6 +131,7 @@ pub struct Recipes {
     shaped: Vec<Shaped>,
     shapeless: Vec<(Vec<Ingredient>, Output)>,
     smelting: Vec<Smelting>,
+    stonecutting: Vec<(ItemId, Output)>,
     fuels: Vec<(Ingredient, u32)>,
 }
 
@@ -202,12 +213,37 @@ impl Recipes {
                 Ok((Ingredient::resolve(&fuel, tags)?, def.ticks))
             })
             .collect::<Result<_>>()?;
+        let stonecutting = file
+            .stonecutting
+            .iter()
+            .map(|def| (def.input, def.result))
+            .collect();
         Ok(Self {
             shaped,
             shapeless,
             smelting,
+            stonecutting,
             fuels,
         })
+    }
+
+    /// What the stonecutter can make from `input`, in recipe order.
+    pub fn stonecutting(&self, input: ItemId) -> Vec<Output> {
+        self.stonecutting
+            .iter()
+            .filter(|(from, _)| *from == input)
+            .map(|&(_, out)| out)
+            .collect()
+    }
+
+    /// Every item some recipe makes: crafting, smelting or stonecutting.
+    pub fn results(&self) -> std::collections::BTreeSet<ItemId> {
+        let mut out = std::collections::BTreeSet::new();
+        out.extend(self.shaped.iter().map(|r| r.result.item));
+        out.extend(self.shapeless.iter().map(|(_, r)| r.item));
+        out.extend(self.smelting.iter().map(|s| s.result.item));
+        out.extend(self.stonecutting.iter().map(|(_, r)| r.item));
+        out
     }
 
     /// What a `size` × `size` grid (row by row) crafts, if anything.

@@ -686,6 +686,8 @@ pub enum Activate {
     Smithing,
     /// Opens the brewing stand (M26).
     Brewing,
+    /// Opens the stonecutter's screen (M29).
+    Stonecutter,
     /// Flips, presses or tunes it (levers, buttons, repeaters, note blocks).
     Redstone,
 }
@@ -1613,6 +1615,20 @@ mod tests {
             "purpur_block",
             "purpur_pillar",
             "purpur_pillar_top",
+            "stonecutter_top",
+            "stonecutter_bottom",
+            "stonecutter_side",
+            "loom_top",
+            "loom_bottom",
+            "loom_side",
+            "loom_front",
+            "cartography_table_top",
+            "cartography_table_side1",
+            "cartography_table_side2",
+            "cartography_table_side3",
+            "fletching_table_top",
+            "fletching_table_front",
+            "fletching_table_side",
         ] {
             expected.push(format!("block/{name}"));
         }

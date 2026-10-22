@@ -52,6 +52,8 @@ pub enum BenchKind {
     Grindstone,
     /// Template, base and addition slots (M25).
     Smithing,
+    /// One input slot and the shapes it can be cut into (M29).
+    Stonecutter,
 }
 
 /// The screen of an enchanting table, anvil or grindstone. Its input
@@ -64,6 +66,8 @@ pub struct Bench {
     pub slots: Vec<Option<ItemStack>>,
     /// What's typed in the anvil's name box.
     pub name: String,
+    /// Which of the stonecutter's cuts is chosen.
+    pub choice: usize,
 }
 
 impl Container {
@@ -687,7 +691,15 @@ impl Game {
             if let Some(stack) = cell {
                 stack.count -= 1;
                 if stack.count == 0 {
-                    *cell = None;
+                    // A bucket of milk or water leaves the empty bucket
+                    // (modern `getRemainingItems`).
+                    *cell = matches!(
+                        stack.id,
+                        crate::inventory::items::MILK_BUCKET
+                            | crate::inventory::items::WATER_BUCKET
+                            | crate::inventory::items::LAVA_BUCKET
+                    )
+                    .then(|| ItemStack::new(crate::inventory::items::BUCKET, 1));
                 }
             }
         }
@@ -1076,5 +1088,41 @@ mod tests {
         game.open_inventory();
         assert_eq!(game.container, None);
         assert_eq!(game.slot_stack(SlotRef::Result), None);
+    }
+
+    #[test]
+    fn a_cake_comes_out_of_milk_sugar_an_egg_and_wheat_and_leaves_the_buckets() {
+        let mut game = flat_game(GameMode::Survival);
+        game.open_inventory();
+        // Needs the 3×3 grid: open a table instead.
+        game.container = Some(Container::Crafting {
+            size: 3,
+            grid: vec![None; 9],
+        });
+        let stack = |id, n| Some(ItemStack::new(id, n));
+        game.container = Some(Container::Crafting {
+            size: 3,
+            grid: vec![
+                stack(items::MILK_BUCKET, 1),
+                stack(items::MILK_BUCKET, 1),
+                stack(items::MILK_BUCKET, 1),
+                stack(items::SUGAR, 1),
+                stack(items::EGG, 1),
+                stack(items::SUGAR, 1),
+                stack(items::WHEAT, 1),
+                stack(items::WHEAT, 1),
+                stack(items::WHEAT, 1),
+            ],
+        });
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::CAKE, 1))
+        );
+        game.click_slot(SlotRef::Result, Click::Left);
+        assert_eq!(game.cursor, Some(ItemStack::new(items::CAKE, 1)));
+        let grid = grid_of(&game);
+        assert_eq!(grid[0], Some(ItemStack::new(items::BUCKET, 1)));
+        assert_eq!(grid[1], Some(ItemStack::new(items::BUCKET, 1)));
+        assert!(grid[4].is_none() && grid[6].is_none());
     }
 }

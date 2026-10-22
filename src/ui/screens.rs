@@ -38,6 +38,8 @@ pub enum Screen {
     Grindstone,
     /// A smithing table's template, base and addition (M25).
     Smithing,
+    /// A stonecutter's input, the cuts it offers and its result (M29).
+    Stonecutter,
     /// Trading with a villager.
     Merchant,
 }
@@ -75,6 +77,8 @@ pub enum ScreenAction {
     AnvilName(String),
     /// Made the villager's trade with this number.
     Trade(usize),
+    /// Chose the stonecutter's cut with this number.
+    Choose(usize),
 }
 
 /// One of a villager's trades, ready to draw.
@@ -136,6 +140,10 @@ pub struct BenchView {
     pub has_item: bool,
     /// Something is in the slots but nothing can come out (the red X).
     pub blocked: bool,
+    /// What the stonecutter can cut, as shown with their names, and which
+    /// is chosen.
+    pub cuts: Vec<(SlotView, String)>,
+    pub choice: usize,
 }
 
 /// Everything a screen shows.
@@ -224,6 +232,7 @@ fn panel_size(screen: &Screen) -> [f32; 2] {
         | Screen::Enchanting
         | Screen::Anvil
         | Screen::Grindstone
+        | Screen::Stonecutter
         | Screen::Smithing => [176.0, 166.0],
         Screen::Hopper => [176.0, 133.0],
         Screen::Merchant => [176.0, 222.0],
@@ -321,6 +330,13 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
         .chain(inventory)
         .collect(),
         Screen::Merchant => inventory.collect(),
+        Screen::Stonecutter => [
+            (SlotRef::Grid(0), [20.0, 33.0]),
+            (SlotRef::Result, [143.0, 33.0]),
+        ]
+        .into_iter()
+        .chain(inventory)
+        .collect(),
         Screen::Grindstone => [
             (SlotRef::Grid(0), [49.0, 19.0]),
             (SlotRef::Grid(1), [49.0, 40.0]),
@@ -372,6 +388,7 @@ fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
             ("Inventory", [8.0, 73.0]),
         ],
         Screen::Smithing => &[("Upgrade Gear", [44.0, 15.0]), ("Inventory", [8.0, 73.0])],
+        Screen::Stonecutter => &[("Stonecutter", [8.0, 6.0]), ("Inventory", [8.0, 73.0])],
         Screen::Merchant => &[("Inventory", [8.0, 128.0])],
     }
 }
@@ -441,6 +458,7 @@ pub fn show(
         Screen::Anvil => &textures.anvil,
         Screen::Grindstone => &textures.grindstone,
         Screen::Smithing => &textures.smithing,
+        Screen::Stonecutter => &textures.stonecutter,
         Screen::Merchant => &textures.chest,
     };
     if *screen == Screen::Chest {
@@ -551,6 +569,7 @@ pub fn show(
     }
     if let (Screen::Merchant, Some(merchant)) = (*screen, &view.merchant) {
         let widgets = BenchWidgets {
+            atlas: textures.atlas.id(),
             ctx,
             painter: &painter,
             texture: background.id(),
@@ -565,6 +584,7 @@ pub fn show(
     }
     if let Some(bench) = &view.bench {
         let widgets = BenchWidgets {
+            atlas: textures.atlas.id(),
             ctx,
             painter: &painter,
             texture: background.id(),
@@ -767,6 +787,7 @@ fn paint_merchant(
 
 /// What drawing a workstation screen's extras needs.
 struct BenchWidgets<'a> {
+    atlas: egui::TextureId,
     ctx: &'a egui::Context,
     painter: &'a Painter,
     texture: egui::TextureId,
@@ -811,6 +832,30 @@ fn paint_bench(
     };
     let mut tooltip = None;
     match screen {
+        Screen::Stonecutter => {
+            // Up to twelve cuts in a grid of four across, beside the input.
+            for (i, (cut, name)) in bench.cuts.iter().enumerate().take(12) {
+                let (x, y) = (52.0 + (i % 4) as f32 * 16.0, 14.0 + (i / 4) as f32 * 18.0);
+                let rect = Rect::from_min_size(at(x, y), vec2(16.0, 18.0) * w.scale);
+                let hovered = w.pointer.is_some_and(|pos| rect.contains(pos));
+                let shade = if i == bench.choice {
+                    Color32::from_rgb(90, 120, 200)
+                } else if hovered {
+                    Color32::from_rgb(160, 160, 190)
+                } else {
+                    Color32::from_rgb(139, 139, 139)
+                };
+                w.painter
+                    .rect_filled(rect.shrink(w.scale * 0.5), 0.0, shade);
+                gui::paint_slot(w.painter, at(x, y + 1.0), cut, w.scale, w.atlas);
+                if hovered {
+                    tooltip = Some(name.clone());
+                    if w.pressed {
+                        actions.push(ScreenAction::Choose(i));
+                    }
+                }
+            }
+        }
         Screen::Enchanting => {
             for (i, offer) in bench.offers.iter().enumerate() {
                 let (x, y) = (60.0, 14.0 + 19.0 * i as f32);

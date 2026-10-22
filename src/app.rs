@@ -654,6 +654,7 @@ impl App {
                 BenchKind::Anvil => Screen::Anvil,
                 BenchKind::Grindstone => Screen::Grindstone,
                 BenchKind::Smithing => Screen::Smithing,
+                BenchKind::Stonecutter => Screen::Stonecutter,
             },
             Container::Cart(index) => match self.game.as_ref().and_then(|g| g.carts.get(*index)) {
                 Some(cart) if cart.kind == crate::entity::minecart::CartKind::Hopper => {
@@ -704,6 +705,7 @@ impl App {
             ScreenAction::Trade(index) => {
                 game.trade(index);
             }
+            ScreenAction::Choose(index) => game.choose_cut(index),
             ScreenAction::Respawn => {
                 game.respawn();
                 self.set_cursor_grab(true);
@@ -1124,7 +1126,7 @@ impl App {
             brewing: game.brewing_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
-            bench: bench_view(game),
+            bench: bench_view(game, self.icons.as_deref()),
             merchant: merchant_view(game, self.icons.as_deref()),
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
@@ -1389,7 +1391,7 @@ fn merchant_view(
 
 /// What the enchanting table, anvil or grindstone screen shows besides
 /// its slots.
-fn bench_view(game: &Game) -> Option<BenchView> {
+fn bench_view(game: &Game, icons: Option<&ItemIcons>) -> Option<BenchView> {
     use crate::{
         inventory::{anvil::Refusal, enchant::roman},
         ui::screens::{AnvilStatus, OfferView},
@@ -1429,6 +1431,20 @@ fn bench_view(game: &Game) -> Option<BenchView> {
                 Some(Err(Refusal::TooExpensive)) => AnvilStatus::TooExpensive,
                 _ => AnvilStatus::Nothing,
             };
+        }
+        BenchKind::Stonecutter => {
+            if let Some(icons) = icons {
+                let items = game.items();
+                view.choice = bench.choice;
+                view.cuts = game
+                    .stonecutter_cuts()
+                    .iter()
+                    .map(|cut| {
+                        let stack = cut.stack();
+                        (SlotView::of(&stack, icons, items), items.tooltip(&stack))
+                    })
+                    .collect();
+            }
         }
         BenchKind::Grindstone | BenchKind::Smithing => {}
     }

@@ -781,6 +781,7 @@ impl Game {
             Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
             Activate::Smithing => self.open_bench(BenchKind::Smithing, cell),
             Activate::Brewing => self.open_brewing(cell),
+            Activate::Stonecutter => self.open_bench(BenchKind::Stonecutter, cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }

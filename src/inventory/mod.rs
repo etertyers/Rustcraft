@@ -14,3 +14,5 @@ pub mod potion;
 pub mod slots;
 pub mod smithing;
 pub mod stack;
+#[cfg(test)]
+mod sweep;
