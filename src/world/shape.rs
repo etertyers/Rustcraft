@@ -706,6 +706,48 @@ mod tests {
     }
 
     #[test]
+    fn an_end_portal_frame_is_13_sixteenths_tall_and_an_eye_adds_an_8_by_3_by_8_box_on_top() {
+        for facing in [Face::North, Face::East, Face::South, Face::West] {
+            let empty = BlockState::of(blocks::END_PORTAL_FRAME).with_face(Prop::Facing, facing);
+            let filled = empty.with_bool(Prop::Eye, true);
+            assert_eq!(
+                render_boxes(empty).unwrap(),
+                [Cuboid::px(0.0, 0.0, 0.0, 16.0, 13.0, 16.0)],
+                "{facing:?}"
+            );
+            assert_eq!(
+                render_boxes(filled).unwrap(),
+                [
+                    Cuboid::px(0.0, 0.0, 0.0, 16.0, 13.0, 16.0),
+                    Cuboid::px(4.0, 13.0, 4.0, 12.0, 16.0, 12.0),
+                ],
+                "{facing:?}"
+            );
+            // What you can hit and bump into is the same as what is drawn.
+            assert_eq!(outline(filled), render_boxes(filled).unwrap());
+            assert_eq!(top(&outline(empty)), 13.0 / 16.0);
+            assert_eq!(top(&outline(filled)), 1.0);
+        }
+    }
+
+    #[test]
+    fn model_blocks_are_hit_and_bumped_as_one_box_round_their_boxes() {
+        let hanging = BlockState::of(blocks::by_name("oak_hanging_sign").unwrap());
+        let parts = outline(hanging);
+        assert!(parts.len() > 1, "drawn from several boxes");
+        let round = Cuboid::bounds(&parts).unwrap();
+        assert_eq!(collision(hanging), [round]);
+        // A plant placeholder is walked through; a slab one is solid.
+        let plant = BlockState::of(blocks::by_name("bush").unwrap());
+        assert!(collision(plant).is_empty());
+        let slab = BlockState::of(blocks::by_name("andesite_slab").unwrap());
+        assert_eq!(top(&collision(slab)), 0.5);
+        // Flat sheets are given a little thickness so the crosshair finds them.
+        let fan = BlockState::of(blocks::by_name("brain_coral_fan").unwrap());
+        assert!(Cuboid::bounds(&outline(fan)).unwrap().max[1] > 0.0);
+    }
+
+    #[test]
     fn plants_and_torches_are_small_and_walk_through() {
         for id in [
             blocks::TORCH,

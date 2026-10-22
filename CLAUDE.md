@@ -442,10 +442,10 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 
 Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the planning folder's bugfix-prompt.md. Vanilla values are written into each prompt. Each fix gets a unit test where the logic is testable without a GPU.
 
-- [ ] **Session 1: assets**
-  - [ ] Vanilla 26.3 textures, models, sounds and lang as a git-ignored fallback layer (scripts/fetch-vanilla-assets.sh)
-  - [ ] Every missing vanilla block and item registered as a placeholder (docs/placeholders.md)
-  - [ ] Eye of ender shows in the End portal frame
+- [x] **Session 1: assets**
+  - [x] Vanilla 26.3 textures, models, sounds and lang as a git-ignored fallback layer (scripts/fetch-vanilla-assets.sh)
+  - [x] Every missing vanilla block and item registered as a placeholder (docs/placeholders.md)
+  - [x] Eye of ender shows in the End portal frame
 - [ ] **Session 2: menus and UI**
   - [ ] Clicking Singleplayer opens the world list instantly; worlds load only when picked
   - [ ] `--creative` works from the terminal
