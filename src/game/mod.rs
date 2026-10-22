@@ -115,6 +115,22 @@ const SWIM_EXHAUSTION: f32 = 0.01;
 const JUMP_EXHAUSTION: f32 = 0.05;
 const SPRINT_JUMP_EXHAUSTION: f32 = 0.2;
 
+/// An inventory screen for a `--shot` scene to show, and the slot the
+/// pointer rests on (so the highlight can be checked against the slot).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShotUi {
+    pub screen: ShotScreen,
+    pub hover: Option<crate::inventory::slots::SlotRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShotScreen {
+    /// The survival inventory.
+    Inventory,
+    /// The creative inventory on the table's `n`th tab.
+    Creative(usize),
+}
+
 pub struct Game {
     pub chunks: ChunkManager,
     items: Items,
@@ -275,6 +291,8 @@ pub struct Game {
     toasts: Vec<advance::Toast>,
     levitation_from: Option<f64>,
     shot_tab: Option<usize>,
+    /// An inventory screen a `--shot` scene wants open.
+    shot_ui: Option<ShotUi>,
 }
 
 /// A world's folder and its level data, kept for the next save.
@@ -388,6 +406,7 @@ impl Game {
             toasts: Vec::new(),
             levitation_from: None,
             shot_tab: None,
+            shot_ui: None,
         }
     }
 

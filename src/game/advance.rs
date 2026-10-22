@@ -4,7 +4,7 @@
 
 use glam::IVec3;
 
-use super::Game;
+use super::{Game, ShotUi};
 use crate::{
     advancements::{self, Event, Progress},
     player::effects::Effect,
@@ -35,6 +35,15 @@ impl Game {
     /// Shows the advancements screen on tab `tab` in a `--shot` scene.
     pub fn stage_advancements(&mut self, tab: usize) {
         self.shot_tab = Some(tab);
+    }
+
+    /// Has the scene open an inventory screen, with the pointer on a slot.
+    pub fn stage_ui(&mut self, ui: ShotUi) {
+        self.shot_ui = Some(ui);
+    }
+
+    pub fn shot_ui(&self) -> Option<ShotUi> {
+        self.shot_ui
     }
 
     /// The tab a scene wants shown, if it wants the screen.

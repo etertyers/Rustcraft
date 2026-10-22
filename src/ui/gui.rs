@@ -129,6 +129,45 @@ const FURNACE: &[Sprite] = &[
         [176, 14, 24, 17],
     ),
 ];
+/// The recipe book's pieces on 1.12's sheet, which a modern pack draws as
+/// separate sprites.
+const RECIPE_BOOK: &[Sprite] = &[
+    ("gui/sprites/recipe_book/tab", [153, 2, 30, 26]),
+    ("gui/sprites/recipe_book/tab_selected", [188, 2, 35, 26]),
+    ("gui/sprites/recipe_book/filter_disabled", [152, 41, 26, 16]),
+    (
+        "gui/sprites/recipe_book/filter_disabled_highlighted",
+        [152, 59, 26, 16],
+    ),
+    ("gui/sprites/recipe_book/filter_enabled", [180, 41, 26, 16]),
+    (
+        "gui/sprites/recipe_book/filter_enabled_highlighted",
+        [180, 59, 26, 16],
+    ),
+    ("gui/sprites/recipe_book/slot_craftable", [29, 206, 25, 25]),
+    (
+        "gui/sprites/recipe_book/slot_uncraftable",
+        [54, 206, 25, 25],
+    ),
+    ("gui/sprites/recipe_book/page_backward", [1, 208, 11, 17]),
+    (
+        "gui/sprites/recipe_book/page_backward_highlighted",
+        [1, 226, 11, 17],
+    ),
+    ("gui/sprites/recipe_book/page_forward", [15, 208, 11, 17]),
+    (
+        "gui/sprites/recipe_book/page_forward_highlighted",
+        [15, 226, 11, 17],
+    ),
+];
+/// The green book button, in 1.12's sheet of two (plain, then hovered).
+const RECIPE_BUTTON: &[Sprite] = &[
+    ("gui/sprites/recipe_book/button", [0, 0, 20, 18]),
+    (
+        "gui/sprites/recipe_book/button_highlighted",
+        [0, 19, 20, 18],
+    ),
+];
 const TABS: &[Sprite] = &[(
     "gui/sprites/container/creative_inventory/scroller",
     [232, 0, 12, 15],
@@ -170,8 +209,8 @@ impl GuiTextures {
             anvil: sheet("gui/container/anvil", &[])?,
             grindstone: sheet("gui/container/grindstone", &[])?,
             brewing: sheet("gui/container/brewing_stand", &[])?,
-            recipe_book: sheet("gui/recipe_book", &[])?,
-            recipe_button: sheet("gui/recipe_button", &[])?,
+            recipe_book: sheet("gui/recipe_book", RECIPE_BOOK)?,
+            recipe_button: sheet("gui/recipe_button", RECIPE_BUTTON)?,
             skin: load("skin", skin),
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,

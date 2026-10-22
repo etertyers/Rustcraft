@@ -822,4 +822,35 @@ mod tests {
         );
         assert!(texts.iter().any(|t| t == "Showing all"), "{texts:?}");
     }
+
+    #[test]
+    fn the_sheet_has_every_sprite_the_book_draws() {
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
+        let look = crate::look::Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap();
+        let sheet = gui::compose_sheet(&look.res, "gui/recipe_book", &[]).unwrap();
+        let scale = sheet.width() / 256;
+        // (x, y, w, h) of each sprite, and a pixel in it that must be drawn.
+        for (name, [x, y, w, h]) in [
+            ("panel", [1, 1, 147, 166]),
+            ("tab", [153, 2, 30, 26]),
+            ("selected tab", [188, 2, 35, 26]),
+            ("show all", [152, 41, 26, 16]),
+            ("show craftable", [180, 41, 26, 16]),
+            ("craftable button", [29, 206, 25, 25]),
+            ("uncraftable button", [54, 206, 25, 25]),
+            ("page back", [1, 208, 11, 17]),
+            ("page forward", [15, 208, 11, 17]),
+        ] {
+            let opaque = (0..h)
+                .flat_map(|dy| (0..w).map(move |dx| (dx, dy)))
+                .filter(|&(dx, dy)| sheet.get_pixel((x + dx) * scale, (y + dy) * scale)[3] > 0)
+                .count();
+            assert!(
+                opaque * 2 > (w * h) as usize,
+                "{name} is blank on the sheet"
+            );
+        }
+    }
 }

@@ -686,6 +686,21 @@ pub fn show(
     actions
 }
 
+/// The middle of `slot` on `screen` in a `full` window at `ppp`, with the
+/// screen shifted `shift` GUI pixels (for scenes that put the pointer
+/// there).
+pub fn slot_point(
+    screen: &Screen,
+    full: Rect,
+    ppp: f32,
+    shift: f32,
+    slot: SlotRef,
+) -> Option<Pos2> {
+    let geo = Geometry::new(full, ppp, panel_size(screen), shift);
+    let (_, at) = layout(screen).into_iter().find(|&(s, _)| s == slot)?;
+    Some(geo.slot_rect(at).center())
+}
+
 /// The player's model in the inventory's black box, turned toward the
 /// mouse.
 fn paint_doll(

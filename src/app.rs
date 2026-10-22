@@ -537,6 +537,42 @@ impl App {
         }
     }
 
+    /// A `--shot` scene's inventory screen, opened once and kept with the
+    /// pointer on the slot the scene names.
+    fn show_staged_screen(&mut self) {
+        use crate::game::ShotScreen;
+        let Some(staged) = self.game.as_ref().and_then(Game::shot_ui) else {
+            return;
+        };
+        if self.screen.is_none() {
+            if let ShotScreen::Creative(tab) = staged.screen {
+                self.creative_tab = CreativeTab::Items(tab);
+            }
+            self.open_screen();
+        }
+        let (Some(window), Some(screen), Some(hover)) =
+            (self.window.clone(), self.screen, staged.hover)
+        else {
+            return;
+        };
+        let ppp = window.scale_factor() as f32;
+        let size = window.inner_size();
+        let full = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(size.width as f32 / ppp, size.height as f32 / ppp),
+        );
+        let open = self.game.as_ref().is_some_and(|g| g.recipe_book.open);
+        let shift = match screen {
+            Screen::Inventory | Screen::Crafting => crate::ui::recipe_book::shift(open, full),
+            _ => 0.0,
+        };
+        if let Some(at) = crate::ui::screens::slot_point(&screen, full, ppp, shift, hover)
+            && let Some(debug_ui) = self.debug_ui.as_mut()
+        {
+            debug_ui.point_at(at);
+        }
+    }
+
     /// A text box on the open screen has the keyboard: the anvil's name
     /// box, or the creative inventory's search box on its Search tab.
     fn types_into_a_box(&self) -> bool {
@@ -1002,6 +1038,7 @@ impl App {
             return self.redraw_menu(event_loop, now);
         }
         self.show_opened_container();
+        self.show_staged_screen();
         // Lying in bed frees the mouse for the Leave Bed button; dying
         // closes any screen and frees it for the Respawn button.
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
