@@ -1,6 +1,7 @@
 //! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
 mod fps;
+pub mod geometry;
 pub mod glint;
 pub mod gui;
 pub mod menu;

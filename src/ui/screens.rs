@@ -4,6 +4,7 @@
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
+use super::geometry::Geometry;
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
     brewing, furnace,
@@ -224,7 +225,7 @@ fn inventory_slot(index: usize) -> [f32; 2] {
 }
 
 /// Panel size in GUI pixels.
-fn panel_size(screen: &Screen) -> [f32; 2] {
+pub(super) fn panel_size(screen: &Screen) -> [f32; 2] {
     match screen {
         Screen::Inventory
         | Screen::Crafting
@@ -258,7 +259,7 @@ fn crafting_slots(size: usize, at: [f32; 2], result: [f32; 2]) -> Vec<(SlotRef, 
 
 /// The slots `screen` shows and where (1.0.0's container layouts). The
 /// creative item grid isn't included.
-fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
+pub(super) fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
     // 1.0.0's chest puts the player's rows at 103 + (rows − 4) × 18.
     let below = match screen {
         Screen::Chest => 103.0 + (CHEST_ROWS as f32 - 4.0) * 18.0 - 84.0,
@@ -370,7 +371,8 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
 /// Titles drawn on a screen, with where (1.0.0's foreground layers).
 fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
     match screen {
-        Screen::Inventory => &[("Crafting", [86.0, 16.0])],
+        // Vanilla's title, 8 pixels from the top at x 97 (over the grid).
+        Screen::Inventory => &[("Crafting", [97.0, 8.0])],
         Screen::Crafting => &[("Crafting", [28.0, 6.0]), ("Inventory", [8.0, 72.0])],
         Screen::Creative { .. } => &[],
         Screen::Chest => &[("Chest", [8.0, 6.0]), ("Inventory", [8.0, 74.0])],
@@ -436,14 +438,11 @@ pub fn show(
     };
 
     let size = egui::Vec2::from(panel_size(screen));
-    let origin = full.center() - size * scale / 2.0;
-    let panel = Rect::from_min_size(origin, size * scale);
-    let slot_rect = |at: [f32; 2]| {
-        Rect::from_min_size(
-            origin + vec2(at[0], at[1]) * scale,
-            vec2(16.0, 16.0) * scale,
-        )
-    };
+    // The one place that says where things are: drawing, the highlight and
+    // hit testing all use it.
+    let geo = Geometry::new(full, ctx.pixels_per_point(), panel_size(screen), 0.0);
+    let (origin, scale, panel) = (geo.origin, geo.scale, geo.panel());
+    let slot_rect = |at: [f32; 2]| geo.slot_rect(at);
     let mut actions = Vec::new();
     let mut tooltip = None;
 
@@ -553,16 +552,16 @@ pub fn show(
         }
     }
 
-    let mut hovered = None;
-    for (slot, at) in layout(screen) {
+    let slots = layout(screen);
+    let hovered = pointer.and_then(|pos| geo.slot_at(&slots, pos));
+    for (slot, at) in slots {
         let rect = slot_rect(at);
         let shown = (view.slot)(slot);
         if let Some((stack, _)) = &shown {
             gui::paint_slot(&painter, rect.min, stack, scale, textures.atlas.id());
         }
         let dragged = drag.as_ref().is_some_and(|drag| drag.slots.contains(&slot));
-        if pointer.is_some_and(|pos| rect.contains(pos)) {
-            hovered = Some(slot);
+        if hovered == Some(slot) {
             tooltip = shown.map(|(_, name)| name);
         }
         if dragged || hovered == Some(slot) {
@@ -1154,6 +1153,50 @@ mod tests {
                 slots: vec![a, b]
             })
         );
+    }
+
+    /// The text a screen draws in one frame, with where.
+    fn texts_drawn(screen: Screen) -> Vec<String> {
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
+        let look = crate::look::Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap();
+        let ctx = egui::Context::default();
+        let textures = GuiTextures::load(&ctx, look.atlas.image(), &look.res).unwrap();
+        let slot = |_: SlotRef| None;
+        let view = ScreenView {
+            slot: &slot,
+            furnace: None,
+            brewing: None,
+            cursor: None,
+            catalog: &[],
+            bench: None,
+            merchant: None,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(854.0, 480.0))),
+            ..Default::default()
+        };
+        let mut screen = screen;
+        let mut output = ctx.run_ui(input, |ui| {
+            show(ui.ctx(), &mut screen, &view, &textures);
+        });
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_survival_inventory_draws_only_vanillas_small_crafting_label() {
+        // No text box or window: one label, and nothing else with text.
+        assert_eq!(texts_drawn(Screen::Inventory), ["Crafting"]);
+        assert_eq!(texts_drawn(Screen::Crafting), ["Crafting", "Inventory"]);
     }
 
     #[test]
