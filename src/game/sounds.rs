@@ -283,7 +283,7 @@ impl Game {
     pub(super) fn dragon_sounds(&mut self, dragon: &crate::entity::dragon::EnderDragon) {
         use crate::entity::dragon::Phase;
         let at = dragon.position;
-        let dying = dragon.is_dying();
+        let dying = dragon.in_death_sequence();
         if dying && !self.sounds.dragon_dying {
             audio::play_at("entity.ender_dragon.death", at, 5.0, 1.0);
         } else if !dying {

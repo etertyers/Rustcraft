@@ -391,6 +391,7 @@ mod tests {
                 player: None,
                 crystals: 5,
                 podium: DVec3::new(0.0, 64.0, 0.0),
+                exit: DVec3::new(0.0, 66.0, 0.0),
             });
         }
         let mut mesh = Mesh::default();

@@ -21,6 +21,19 @@ pub const FIRST_KILL_XP: u32 = 12_000;
 pub const REPEAT_KILL_XP: u32 = 500;
 /// Ticks the death takes.
 pub const DEATH_TICKS: u32 = 200;
+/// A dying dragon flies at this speed to the exit portal, and starts dying
+/// where it is if it hasn't got there in 10 seconds.
+const DEATH_FLIGHT_SPEED: f64 = 0.9;
+const DEATH_FLIGHT_LIMIT: u32 = 200;
+/// It has arrived this near (sideways, and up or down).
+const DEATH_ARRIVED: (f64, f64) = (2.0, 4.0);
+/// While dying it rises this much a tick and turns this much (radians).
+const DEATH_RISE: f64 = 0.1;
+const DEATH_SPIN: f32 = 0.12;
+/// Bursts of light break out round it from this tick on.
+pub const DEATH_BURSTS_FROM: u32 = 180;
+/// Experience orbs drop from this tick on (every fifth).
+pub const DEATH_XP_FROM: u32 = 154;
 /// Ticks between the heals a crystal gives, and how far away one reaches.
 pub const HEAL_EVERY: u32 = 10;
 pub const HEAL_REACH: f64 = 32.0;
@@ -82,7 +95,10 @@ pub enum Phase {
     Takeoff,
     /// Flying straight at where the player was.
     ChargingPlayer,
-    /// Dying.
+    /// Out of health: flying to the point over the exit portal, still
+    /// dangerous to survival players on the way.
+    DeathFlight,
+    /// The 200-tick death sequence: rising, spinning, beams, bursts.
     Dying,
 }
 
@@ -104,6 +120,9 @@ pub struct Senses {
     pub crystals: usize,
     /// The top of the fountain, where the portal level is.
     pub podium: DVec3,
+    /// The point above the highest block of the exit portal's column, where
+    /// the dragon dies.
+    pub exit: DVec3,
 }
 
 /// What the dragon does that the world has to carry out.
@@ -222,7 +241,13 @@ impl EnderDragon {
         }
     }
 
+    /// Out of health: on its way to die or dying.
     pub fn is_dying(&self) -> bool {
+        matches!(self.phase, Phase::DeathFlight | Phase::Dying)
+    }
+
+    /// In the 200-tick death sequence itself.
+    pub fn in_death_sequence(&self) -> bool {
         self.phase == Phase::Dying
     }
 
@@ -262,7 +287,7 @@ impl EnderDragon {
         self.hurt_ticks = 10;
         if self.health <= 0.0 {
             self.health = 0.0;
-            self.set_phase(Phase::Dying);
+            self.set_phase(Phase::DeathFlight);
             return true;
         }
         if self.phase.is_sitting() {
@@ -314,6 +339,7 @@ impl EnderDragon {
             Phase::SittingAttacking => self.bite(senses, &mut acts),
             Phase::Takeoff => self.take_off(senses),
             Phase::ChargingPlayer => self.charge(senses),
+            Phase::DeathFlight => self.death_flight(senses),
             Phase::Dying => self.die(&mut acts),
         }
         if self.phase.is_sitting() {
@@ -520,12 +546,25 @@ impl EnderDragon {
         }
     }
 
+    /// Flies straight to the point over the exit portal, then starts the
+    /// death sequence there (or where it is, if that takes over 10 seconds).
+    fn death_flight(&mut self, senses: &Senses) {
+        self.steer(senses.exit, DEATH_FLIGHT_SPEED);
+        let to = senses.exit - self.position;
+        let there = to.x.hypot(to.z) < DEATH_ARRIVED.0 && to.y.abs() < DEATH_ARRIVED.1;
+        if there || self.phase_ticks > DEATH_FLIGHT_LIMIT {
+            self.velocity = DVec3::ZERO;
+            self.set_phase(Phase::Dying);
+        }
+    }
+
     fn die(&mut self, acts: &mut Vec<Act>) {
         self.death_ticks += 1;
-        self.velocity *= 0.9;
-        self.position += self.velocity;
-        // Bursts of light somewhere over its body, every other tick.
-        if self.death_ticks.is_multiple_of(2) {
+        // Rising and spinning.
+        self.position.y += DEATH_RISE;
+        self.yaw += DEATH_SPIN;
+        // Bursts of light round its body over the last twenty ticks.
+        if self.death_ticks >= DEATH_BURSTS_FROM {
             let spread = DVec3::new(
                 self.roll() * 2.0 - 1.0,
                 self.roll() * 2.0 - 1.0,
@@ -648,12 +687,14 @@ mod tests {
     use super::*;
 
     const PODIUM: DVec3 = DVec3::new(0.0, 64.0, 0.0);
+    const EXIT: DVec3 = DVec3::new(0.5, 70.0, 0.5);
 
     fn senses(player: Option<DVec3>, crystals: usize) -> Senses {
         Senses {
             player,
             crystals,
             podium: PODIUM,
+            exit: EXIT,
         }
     }
 
@@ -809,18 +850,37 @@ mod tests {
     }
 
     #[test]
-    fn it_dies_over_two_hundred_ticks_and_cant_be_hurt_meanwhile() {
+    fn it_flies_to_the_exit_portal_then_dies_over_two_hundred_ticks() {
         let mut dragon = start();
+        dragon.position = DVec3::new(80.0, 100.0, 0.0);
         assert!(dragon.hurt(Part::Head, 500.0));
-        assert_eq!(dragon.phase, Phase::Dying);
+        assert_eq!(dragon.phase, Phase::DeathFlight);
         assert_eq!(dragon.health, 0.0);
-        assert!(!dragon.hurt(Part::Head, 5.0));
+        assert!(!dragon.hurt(Part::Head, 5.0), "can't be hurt meanwhile");
+        // It flies, doing nothing else, until it's over the portal.
+        let mut flight = 0;
+        while dragon.phase == Phase::DeathFlight {
+            let acts = dragon.tick(&senses(Some(dragon.position), 0));
+            assert!(acts.is_empty(), "no attacks while it flies: {acts:?}");
+            flight += 1;
+            assert!(flight <= 201, "arrives within 10 seconds");
+        }
+        assert_eq!(dragon.phase, Phase::Dying);
+        let (dx, dz) = (dragon.position.x - EXIT.x, dragon.position.z - EXIT.z);
+        assert!(dx.hypot(dz) < 3.0, "over the portal: {}", dragon.position);
+        // Then the 200 ticks: rising a tenth a tick, turning, bursts over
+        // the last twenty, and gone at the end.
+        let (y0, yaw0) = (dragon.position.y, dragon.yaw);
         let mut bursts = 0;
         let mut died_at = None;
+        let mut first_burst = None;
         for tick in 1..=DEATH_TICKS + 5 {
             for act in dragon.tick(&senses(None, 0)) {
                 match act {
-                    Act::Burst { .. } => bursts += 1,
+                    Act::Burst { .. } => {
+                        bursts += 1;
+                        first_burst.get_or_insert(tick);
+                    }
                     Act::Died => {
                         died_at.get_or_insert(tick);
                     }
@@ -829,7 +889,25 @@ mod tests {
             }
         }
         assert_eq!(died_at, Some(DEATH_TICKS));
-        assert!(bursts >= 90, "{bursts}");
+        assert_eq!(first_burst, Some(DEATH_BURSTS_FROM));
+        assert_eq!(bursts, (DEATH_TICKS + 5 - DEATH_BURSTS_FROM + 1) as usize);
+        assert!(
+            (dragon.position.y - y0 - 0.1 * f64::from(DEATH_TICKS + 5)).abs() < 1e-6,
+            "rose a tenth a tick"
+        );
+        assert!(dragon.yaw != yaw0, "spun");
+    }
+
+    #[test]
+    fn a_dragon_that_cannot_reach_the_portal_in_10_seconds_dies_where_it_is() {
+        let mut dragon = start();
+        dragon.position = DVec3::new(900.0, 100.0, 0.0);
+        dragon.hurt(Part::Head, 500.0);
+        for _ in 0..205 {
+            dragon.tick(&senses(None, 0));
+        }
+        assert_eq!(dragon.phase, Phase::Dying);
+        assert!(dragon.position.x > 600.0, "{}", dragon.position);
     }
 
     #[test]

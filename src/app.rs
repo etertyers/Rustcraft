@@ -1184,6 +1184,15 @@ impl App {
                     game.tick_alpha(),
                 );
                 add_gateway_beams(&mut mesh, &game.gateways(), &self.effect_uvs, &view_camera);
+                if let Some(dragon) = &game.dragon {
+                    crate::render::entities::add_death_beams(
+                        &mut mesh,
+                        dragon,
+                        &self.effect_uvs,
+                        &view_camera,
+                        game.tick_alpha(),
+                    );
+                }
                 add_particles(
                     &mut mesh,
                     &game.particles,
