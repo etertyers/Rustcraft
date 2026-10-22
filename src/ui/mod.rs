@@ -1,12 +1,17 @@
 //! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
+pub mod creative;
+pub mod doll;
 mod fps;
+pub mod geometry;
 pub mod glint;
 pub mod gui;
 pub mod menu;
 pub mod packs;
 pub mod pause;
+pub mod recipe_book;
 pub mod screens;
+pub mod stack;
 
 use std::time::Instant;
 
@@ -165,10 +170,11 @@ impl DebugUi {
     pub fn new(
         window: &Window,
         atlas: &image::RgbaImage,
+        skin: &image::RgbaImage,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<Self> {
         let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, atlas, res)?;
+        let textures = GuiTextures::load(&ctx, atlas, skin, res)?;
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,
@@ -190,9 +196,10 @@ impl DebugUi {
     pub fn set_textures(
         &mut self,
         atlas: &image::RgbaImage,
+        skin: &image::RgbaImage,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<()> {
-        self.textures = GuiTextures::load(&self.ctx, atlas, res)?;
+        self.textures = GuiTextures::load(&self.ctx, atlas, skin, res)?;
         Ok(())
     }
 
@@ -205,6 +212,15 @@ impl DebugUi {
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
         // The overlay isn't interactive, so whether egui consumed the event doesn't matter.
         let _ = self.state.on_window_event(window, event);
+    }
+
+    /// Moves egui's pointer to `pos` (in points), for when the real cursor
+    /// was put there without a mouse event.
+    pub fn point_at(&mut self, pos: egui::Pos2) {
+        self.state
+            .egui_input_mut()
+            .events
+            .push(egui::Event::PointerMoved(pos));
     }
 
     pub fn toggle(&mut self) {

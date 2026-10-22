@@ -12,7 +12,10 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition},
     error::ExternalError,
-    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, StartCause, WindowEvent},
+    event::{
+        DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause,
+        WindowEvent,
+    },
     event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
@@ -58,10 +61,12 @@ use crate::{
     shots,
     ui::{
         DebugStats, DebugUi, Hud,
+        creative::CreativeTab,
         gui::{SlotView, SurvivalHud},
         menu::{Menu, MenuAction},
         pause::{PauseAction, PauseMenu},
         screens::{BenchView, Screen, ScreenAction, ScreenView},
+        stack::{Layer, ScreenStack},
     },
     world::{
         biome::Biome,
@@ -84,6 +89,9 @@ pub enum WorldKind {
         seed: Option<u64>,
         mode: GameMode,
     },
+    /// A new world in a folder named after `name` (with `-` added if that
+    /// is taken), with a random seed (`--creative` alone).
+    New { name: String, mode: GameMode },
     /// Generated terrain from a seed (the default).
     Generated { seed: u64 },
     /// Endless flat grass plain (`--flat`).
@@ -120,8 +128,6 @@ pub struct App {
     screen: Option<Screen>,
     /// The advancements screen (L), with the tab it shows.
     advancements: Option<usize>,
-    /// Whether the player was in bed last frame.
-    sleeping: bool,
     /// The player's settings, from `options.ron`.
     options: Options,
     /// The sound engine, and the resource layers its sounds come from.
@@ -148,7 +154,19 @@ pub struct App {
     animation_start: Instant,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
-    cursor_grabbed: bool,
+    /// The creative inventory's tab buttons.
+    tab_views: Vec<crate::ui::creative::TabView>,
+    /// Every crafting recipe, for the recipe book.
+    book_recipes: Arc<Vec<crate::inventory::book::BookRecipe>>,
+    /// The icons on the recipe book's category tabs.
+    book_tab_icons: Vec<SlotView>,
+    /// The recipe the book shows the missing ingredients of in the grid.
+    book_ghost: Option<usize>,
+    /// The tab the creative inventory opens on: the last one used.
+    creative_tab: CreativeTab,
+    /// The screens open over the game; the one place that decides whether
+    /// the camera has the mouse.
+    stack: ScreenStack,
     last_frame: Instant,
     /// The window is fully hidden; don't draw until it's visible again.
     occluded: bool,
@@ -190,7 +208,6 @@ impl App {
             game: None,
             screen: None,
             advancements: None,
-            sleeping: false,
             options: Options::load(&Options::path()),
             audio: None,
             res: None,
@@ -205,7 +222,12 @@ impl App {
             applied_packs: Vec::new(),
             animation_start: Instant::now(),
             catalog: Vec::new(),
-            cursor_grabbed: false,
+            tab_views: Vec::new(),
+            book_recipes: Arc::new(Vec::new()),
+            book_tab_icons: Vec::new(),
+            book_ghost: None,
+            creative_tab: CreativeTab::Items(0),
+            stack: ScreenStack::default(),
             last_frame: Instant::now(),
             occluded: false,
             frame_skipped: false,
@@ -286,13 +308,24 @@ impl App {
         // The bench measures how fast frames can go.
         renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
-        self.debug_ui = Some(DebugUi::new(&window, look.atlas.image(), &look.res)?);
+        self.debug_ui = Some(DebugUi::new(
+            &window,
+            look.atlas.image(),
+            look.skin(),
+            &look.res,
+        )?);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
-        self.items = Some(Items::new().with_recipes(Arc::new(recipes)));
+        let items = Items::new().with_recipes(Arc::new(recipes));
+        self.book_recipes = Arc::new(crate::inventory::book::all(&items.recipes, &items));
+        self.items = Some(items);
         self.mob_defs = Some(mob_defs);
         self.install_look(look);
         match self.world_kind.clone() {
-            Some(kind) => self.game = Some(self.start_game(kind)?),
+            Some(kind) => {
+                self.game = Some(self.start_game(kind)?);
+                // A click puts the mouse in the window.
+                self.stack.set_in_world(true, false);
+            }
             None => self.menu = Some(Menu::new(level::saves_dir())),
         }
         self.renderer = Some(renderer);
@@ -335,6 +368,10 @@ impl App {
                     let seed = seed.unwrap_or_else(level::random_seed);
                     Game::create(&saves, &name, seed, mode, items, models)
                 };
+            }
+            WorldKind::New { name, mode } => {
+                let seed = level::random_seed();
+                return Game::create(&level::saves_dir(), &name, seed, mode, items, models);
             }
             // The test worlds below aren't saved.
             WorldKind::Generated { seed } => {
@@ -423,25 +460,172 @@ impl App {
         }
     }
 
-    /// Locks and hides the cursor for mouse look, or releases it.
-    fn set_cursor_grab(&mut self, grab: bool) {
-        let Some(window) = &self.window else {
+    /// Makes the window match the screen stack: the cursor is locked and
+    /// hidden for mouse look when no screen is open, and free otherwise
+    /// (centered, like Minecraft does when a screen opens).
+    fn apply_grab(&mut self) {
+        let Some(grab) = self.stack.pending() else {
             return;
         };
-        let result = if grab {
-            lock_cursor(window)
-        } else {
-            window.set_cursor_grab(CursorGrabMode::None)
-        };
-        if let Err(err) = result {
-            warn!("cursor grab failed: {err}");
-            return;
+        if let Some(window) = &self.window {
+            let result = if grab {
+                lock_cursor(window)
+            } else {
+                window.set_cursor_grab(CursorGrabMode::None)
+            };
+            if let Err(err) = result {
+                warn!("cursor grab failed: {err}");
+                // Wait for the next click rather than failing every frame.
+                self.stack.set_engaged(false);
+                return;
+            }
+            window.set_cursor_visible(!grab);
+            if !grab {
+                Self::center_cursor(window, self.debug_ui.as_mut());
+            }
         }
-        window.set_cursor_visible(!grab);
-        self.cursor_grabbed = grab;
+        self.stack.confirm(grab);
         if !grab && let Some(game) = self.game.as_mut() {
             game.release_input();
         }
+    }
+
+    /// Puts the free cursor in the middle of the window, where egui's idea
+    /// of the pointer is moved too (a locked cursor leaves it stale).
+    fn center_cursor(window: &Window, debug_ui: Option<&mut DebugUi>) {
+        let size = window.inner_size();
+        let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+        if let Err(err) = window.set_cursor_position(center) {
+            log::debug!("centering the cursor failed: {err}");
+        }
+        if let Some(debug_ui) = debug_ui {
+            let scale = window.scale_factor() as f32;
+            debug_ui.point_at(egui::pos2(center.x as f32 / scale, center.y as f32 / scale));
+        }
+    }
+
+    /// A mouse button press or release in the window. A click with no
+    /// screen open takes the mouse back after a pause or leaving the
+    /// window; otherwise it reaches the player only while the camera has
+    /// the mouse.
+    fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        if pressed && button == MouseButton::Left && self.playing() && self.stack.click_in() {
+            return self.apply_grab();
+        }
+        if self.stack.reaches_game()
+            && let Some(game) = self.game.as_mut()
+        {
+            game.on_mouse_button(button, pressed);
+        }
+    }
+
+    fn on_scroll(&mut self, delta: MouseScrollDelta) {
+        if self.stack.reaches_game()
+            && let Some(game) = self.game.as_mut()
+        {
+            game.on_scroll(delta);
+        }
+    }
+
+    /// Raw mouse motion: it turns the camera only while the camera has the
+    /// mouse.
+    fn on_mouse_motion(&mut self, dx: f64, dy: f64) {
+        if self.stack.reaches_game()
+            && let Some(game) = self.game.as_mut()
+        {
+            game.look(dx, dy);
+        }
+    }
+
+    /// A `--shot` scene's inventory screen, opened once and kept with the
+    /// pointer on the slot the scene names.
+    fn show_staged_screen(&mut self) {
+        use crate::game::ShotScreen;
+        let Some(staged) = self.game.as_ref().and_then(Game::shot_ui) else {
+            return;
+        };
+        if self.screen.is_none() {
+            if let ShotScreen::Creative(tab) = staged.screen {
+                self.creative_tab = CreativeTab::Items(tab);
+            }
+            self.open_screen();
+        }
+        let (Some(window), Some(screen), Some(hover)) =
+            (self.window.clone(), self.screen, staged.hover)
+        else {
+            return;
+        };
+        let ppp = window.scale_factor() as f32;
+        let size = window.inner_size();
+        let full = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(size.width as f32 / ppp, size.height as f32 / ppp),
+        );
+        let open = self.game.as_ref().is_some_and(|g| g.recipe_book.open);
+        let shift = match screen {
+            Screen::Inventory | Screen::Crafting => crate::ui::recipe_book::shift(open, full),
+            _ => 0.0,
+        };
+        if let Some(at) = crate::ui::screens::slot_point(&screen, full, ppp, shift, hover)
+            && let Some(debug_ui) = self.debug_ui.as_mut()
+        {
+            debug_ui.point_at(at);
+        }
+    }
+
+    /// A text box on the open screen has the keyboard: the anvil's name
+    /// box, or the creative inventory's search box on its Search tab.
+    fn types_into_a_box(&self) -> bool {
+        let book_search = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting))
+            && self.game.as_ref().is_some_and(|g| g.recipe_book.open)
+            && self
+                .debug_ui
+                .as_ref()
+                .is_some_and(|ui| crate::ui::recipe_book::search_focused(ui.context()));
+        book_search
+            || matches!(
+                self.screen,
+                Some(Screen::Anvil)
+                    | Some(Screen::Creative {
+                        tab: CreativeTab::Search,
+                        ..
+                    })
+            )
+    }
+
+    fn open_advancements(&mut self) {
+        self.advancements = Some(0);
+        self.stack.push(Layer::Advancements);
+        self.apply_grab();
+    }
+
+    fn close_advancements(&mut self) {
+        self.advancements = None;
+        self.stack.remove(Layer::Advancements);
+        self.apply_grab();
+    }
+
+    /// Shows an inventory or container screen.
+    fn show_container(&mut self, screen: Screen) {
+        if matches!(screen, Screen::Inventory | Screen::Crafting)
+            && let Some(debug_ui) = self.debug_ui.as_ref()
+        {
+            crate::ui::recipe_book::reset(debug_ui.context());
+        }
+        self.screen = Some(screen);
+        self.stack.push(Layer::Container);
+        self.apply_grab();
+    }
+
+    fn hide_container(&mut self) {
+        self.book_ghost = None;
+        // The creative inventory opens on the tab it was left on.
+        if let Some(Screen::Creative { tab, .. }) = self.screen {
+            self.creative_tab = tab;
+        }
+        self.screen = None;
+        self.stack.remove(Layer::Container);
+        self.apply_grab();
     }
 
     fn on_key(&mut self, event: &KeyEvent) {
@@ -459,21 +643,17 @@ impl App {
             && !event.repeat
             && matches!(key, KeyCode::Escape | KeyCode::KeyL)
         {
-            self.advancements = None;
-            self.set_cursor_grab(true);
+            self.close_advancements();
         } else if self.advancements.is_some() {
             // Nothing else works while it is open.
         } else if key == KeyCode::KeyL
             && pressed
             && !event.repeat
             && self.playing()
-            && self.screen.is_none()
-            && self.pause.is_none()
-            && !sleeping
+            && self.stack.is_empty()
             && !rolling
         {
-            self.advancements = Some(0);
-            self.set_cursor_grab(false);
+            self.open_advancements();
         } else if key == KeyCode::Escape && pressed && !event.repeat && rolling {
             // Skipping the poem and credits goes home.
             if let Some(game) = self.game.as_mut() {
@@ -493,10 +673,9 @@ impl App {
             }
         } else if key == KeyCode::Escape && pressed && !event.repeat && self.game.is_some() {
             self.pause_game();
-        } else if key == KeyCode::Escape && pressed {
-            self.set_cursor_grab(false);
-        } else if self.screen == Some(Screen::Anvil) && key != KeyCode::F3 {
-            // The name box has the keyboard (E and the digits are letters).
+        } else if self.types_into_a_box() && key != KeyCode::F3 {
+            // The anvil's name box or the creative search box has the
+            // keyboard (E and the digits are letters).
         } else if key == KeyCode::KeyE
             && pressed
             && !event.repeat
@@ -514,7 +693,7 @@ impl App {
                 debug_ui.toggle();
             }
         } else if let Some(game) = self.game.as_mut() {
-            game.on_key(key, pressed, event.repeat, self.cursor_grabbed);
+            game.on_key(key, pressed, event.repeat, self.stack.reaches_game());
         }
     }
 
@@ -523,21 +702,17 @@ impl App {
     fn pause_game(&mut self) {
         // The bench keeps flying when the window loses focus, and a scene
         // being captured never pauses.
-        if self.bench.is_none()
-            && self.shot.is_none()
-            && self.playing()
-            && self.screen.is_none()
-            && !self.sleeping
-            && self.pause.is_none()
-        {
+        if self.bench.is_none() && self.shot.is_none() && self.playing() && self.stack.is_empty() {
             self.pause = Some(PauseMenu::default());
-            self.set_cursor_grab(false);
+            self.stack.push(Layer::Pause);
+            self.apply_grab();
         }
     }
 
     fn resume(&mut self) {
         self.pause = None;
-        self.set_cursor_grab(true);
+        self.stack.remove(Layer::Pause);
+        self.apply_grab();
     }
 
     /// Saves the world and goes back to the title screen.
@@ -552,15 +727,27 @@ impl App {
         }
         self.pause = None;
         self.screen = None;
-        self.sleeping = false;
+        self.advancements = None;
         self.menu = Some(Menu::new(level::saves_dir()));
-        self.set_cursor_grab(false);
+        self.stack.set_in_world(false, false);
+        self.apply_grab();
     }
 
     /// Keeps a newly built look's models, icons and atlas.
     fn install_look(&mut self, look: Look) {
         if let Some(items) = &self.items {
-            self.catalog = catalog(items, &look.icons);
+            self.catalog = crate::ui::creative::catalog(items, &look.icons);
+            self.tab_views = crate::ui::creative::tab_views(items, &look.icons, &self.catalog);
+            use crate::inventory::items as ids;
+            self.book_tab_icons = [
+                ids::COMPASS,
+                ids::IRON_SWORD,
+                ids::BRICK,
+                ids::LAVA_BUCKET,
+                ids::REDSTONE,
+            ]
+            .map(|id| SlotView::of(&ItemStack::new(id, 1), &look.icons, items))
+            .to_vec();
         }
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
@@ -623,7 +810,7 @@ impl App {
             renderer.set_textures(&look.atlas, &look.sky, &look.mob_textures);
         }
         if let Some(debug_ui) = self.debug_ui.as_mut()
-            && let Err(err) = debug_ui.set_textures(look.atlas.image(), &look.res)
+            && let Err(err) = debug_ui.set_textures(look.atlas.image(), look.skin(), &look.res)
         {
             error!("can't load the GUI images: {err:#}");
         }
@@ -674,25 +861,32 @@ impl App {
         let Some(game) = self.game.as_ref().filter(|game| !game.stats.is_dead()) else {
             return;
         };
-        self.screen = Some(if game.mode.has_every_item() {
-            Screen::Creative { scroll: 0.0 }
+        let screen = if game.mode.has_every_item() {
+            Screen::Creative {
+                tab: self.creative_tab,
+                scroll: 0.0,
+            }
         } else {
             Screen::Inventory
-        });
+        };
         if let Some(game) = self.game.as_mut() {
             game.open_inventory();
         }
-        self.set_cursor_grab(false);
+        if matches!(screen, Screen::Creative { .. })
+            && let Some(debug_ui) = self.debug_ui.as_ref()
+        {
+            crate::ui::creative::reset_search(debug_ui.context());
+        }
+        self.show_container(screen);
     }
 
     /// Closes the screen, throwing out whatever was held on the mouse or
     /// left in a crafting grid (1.0.0).
     fn close_screen(&mut self) {
-        self.screen = None;
         if let Some(game) = self.game.as_mut() {
             game.close_container();
         }
-        self.set_cursor_grab(true);
+        self.hide_container();
     }
 
     /// Shows the screen for a container the game opened (a right-clicked
@@ -704,7 +898,7 @@ impl App {
         let Some(container) = self.game.as_ref().and_then(|game| game.container.as_ref()) else {
             return;
         };
-        self.screen = Some(match container {
+        let screen = match container {
             Container::Crafting { size: 2, .. } => Screen::Inventory,
             Container::Crafting { .. } => Screen::Crafting,
             Container::Chest(_) => Screen::Chest,
@@ -726,8 +920,8 @@ impl App {
                 }
                 _ => Screen::Chest,
             },
-        });
-        self.set_cursor_grab(false);
+        };
+        self.show_container(screen);
     }
 
     fn on_screen_action(&mut self, action: ScreenAction) {
@@ -754,14 +948,37 @@ impl App {
                 }
                 game.throw(thrown);
             }
-            ScreenAction::Take(stack) => {
-                let full = ItemStack {
-                    count: items.max_stack(stack.id),
-                    ..stack
-                };
-                game.inventory.set(game.inventory.selected, Some(full));
+            ScreenAction::CreativePick { stack, pick } => {
+                crate::inventory::creative::pick(
+                    &mut game.cursor,
+                    &mut game.inventory,
+                    &stack,
+                    pick,
+                    &items,
+                );
             }
-            ScreenAction::Discard => game.cursor = None,
+            ScreenAction::Book(action) => {
+                use crate::ui::recipe_book::BookAction;
+                match action {
+                    BookAction::Open(open) => {
+                        game.recipe_book.open = open;
+                        self.book_ghost = None;
+                    }
+                    BookAction::Filter(only) => game.recipe_book.craftable_only = only,
+                    BookAction::Category(category) => game.recipe_book.category = category,
+                    BookAction::Place { index, max } => {
+                        let recipes = self.book_recipes.clone();
+                        if let Some(recipe) = recipes.get(index) {
+                            game.place_recipe(recipe, max);
+                        }
+                        self.book_ghost = None;
+                    }
+                    BookAction::Ghost(index) => self.book_ghost = Some(index),
+                }
+            }
+            ScreenAction::CreativeDestroy { shift } => {
+                crate::inventory::creative::destroy(&mut game.cursor, &mut game.inventory, shift);
+            }
             ScreenAction::Enchant(button) => {
                 game.enchant_item(button);
             }
@@ -771,10 +988,7 @@ impl App {
             }
             ScreenAction::Choose(index) => game.choose_cut(index),
             ScreenAction::AdvTab(tab) => self.advancements = Some(tab),
-            ScreenAction::Respawn => {
-                game.respawn();
-                self.set_cursor_grab(true);
-            }
+            ScreenAction::Respawn => game.respawn(),
             ScreenAction::LeaveBed => game.wake(),
             ScreenAction::Pause(PauseAction::Resume) => self.resume(),
             ScreenAction::Pause(PauseAction::SaveAndQuit) => self.quit_to_title(),
@@ -802,7 +1016,8 @@ impl App {
                 game.set_view_mode(self.start_view);
                 self.game = Some(game);
                 self.menu = None;
-                self.set_cursor_grab(true);
+                self.stack.set_in_world(true, true);
+                self.apply_grab();
             }
             Err(err) => {
                 error!("{err:#}");
@@ -823,20 +1038,17 @@ impl App {
             return self.redraw_menu(event_loop, now);
         }
         self.show_opened_container();
-        // Lying in bed frees the mouse for the Leave Bed button; getting up
-        // takes it back.
+        self.show_staged_screen();
+        // Lying in bed frees the mouse for the Leave Bed button; dying
+        // closes any screen and frees it for the Respawn button.
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
-        if sleeping != self.sleeping {
-            self.sleeping = sleeping;
-            self.set_cursor_grab(!sleeping);
-        }
-        // Dying closes any screen and frees the mouse for the Respawn button.
+        self.stack.set(Layer::Bed, sleeping);
         if !self.playing() {
             self.screen = None;
-            if self.cursor_grabbed {
-                self.set_cursor_grab(false);
-            }
+            self.stack.remove(Layer::Container);
         }
+        self.stack.set(Layer::Death, !self.playing());
+        self.apply_grab();
         let (Some(window), Some(renderer), Some(debug_ui), Some(game)) = (
             &self.window,
             self.renderer.as_mut(),
@@ -1126,8 +1338,8 @@ impl App {
             dimension: game.dimension(),
         };
         let hud = Hud {
-            crosshair: self.cursor_grabbed,
-            attack: self.cursor_grabbed.then(|| game.attack_indicator()),
+            crosshair: self.stack.grabbed(),
+            attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
                 .map(|i| {
                     let stack = game.inventory.slot(i)?;
@@ -1194,14 +1406,80 @@ impl App {
             let stack = game.slot_stack(slot)?;
             Some((view_of(&stack)?, game.items().tooltip(&stack)))
         };
+        let held = std::cell::RefCell::new(&mut self.held);
+        let doll = |angles| match (&self.atlas, &self.item_models, self.icons.as_deref()) {
+            (Some(atlas), Some(item_models), Some(icons)) => {
+                let fig = Figure {
+                    icons,
+                    item_models,
+                    atlas: atlas.image(),
+                    slim: self.skin_slim,
+                };
+                crate::ui::doll::build(game, &mut held.borrow_mut(), &fig, angles)
+            }
+            _ => crate::ui::doll::Doll::default(),
+        };
+        // The recipe book's entries, built only while it is open.
+        let (entries, ghost) = match (&self.screen, self.icons.as_deref()) {
+            (Some(Screen::Inventory | Screen::Crafting), Some(icons)) if game.recipe_book.open => {
+                let grid = game.crafting_grid().unwrap_or(&[]);
+                let items = game.items();
+                let entries: Vec<_> = self
+                    .book_recipes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, recipe)| {
+                        let stack = ItemStack::new(recipe.result.item, 1);
+                        crate::ui::recipe_book::RecipeEntry {
+                            index,
+                            icon: SlotView::of(&stack, icons, items),
+                            name: items.name(&stack),
+                            craftable: recipe.craftable(&game.inventory, grid),
+                            category: recipe.category,
+                            fits_small: recipe.fits(2),
+                        }
+                    })
+                    .collect();
+                let ghost = self
+                    .book_ghost
+                    .and_then(|index| self.book_recipes.get(index))
+                    .map(|recipe| crate::ui::recipe_book::Ghost {
+                        cells: recipe
+                            .placements(game.crafting_size().unwrap_or(2))
+                            .into_iter()
+                            .map(|(cell, ingredient)| {
+                                let choices = ingredient
+                                    .items()
+                                    .iter()
+                                    .map(|&id| SlotView::of(&ItemStack::new(id, 1), icons, items))
+                                    .collect();
+                                (cell, choices)
+                            })
+                            .collect(),
+                    });
+                (entries, ghost)
+            }
+            _ => (Vec::new(), None),
+        };
+        let book = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting)).then(|| {
+            crate::ui::recipe_book::BookView {
+                settings: &game.recipe_book,
+                entries: &entries,
+                ghost: ghost.as_ref(),
+                tab_icons: &self.book_tab_icons,
+            }
+        });
         let view = ScreenView {
             slot: &slot,
             furnace: game.furnace_progress(),
             brewing: game.brewing_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
+            tabs: &self.tab_views,
             bench: bench_view(game, self.icons.as_deref()),
             merchant: merchant_view(game, self.icons.as_deref()),
+            doll: Some(&doll),
+            book,
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();
@@ -1341,8 +1619,9 @@ impl ApplicationHandler for App {
             }
             // Like 1.0.0, leaving the window pauses the game.
             WindowEvent::Focused(false) => {
-                self.set_cursor_grab(false);
+                self.stack.set_engaged(false);
                 self.pause_game();
+                self.apply_grab();
             }
             WindowEvent::Occluded(occluded) => {
                 // The bench draws off screen when hidden.
@@ -1351,29 +1630,11 @@ impl ApplicationHandler for App {
                     window.request_redraw();
                 }
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } if !self.cursor_grabbed
-                && self.screen.is_none()
-                && self.pause.is_none()
-                && self.playing()
-                && !self.sleeping =>
-            {
-                self.set_cursor_grab(true)
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.on_mouse_button(button, state == ElementState::Pressed);
             }
-            WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {
-                if let Some(game) = self.game.as_mut() {
-                    game.on_mouse_button(button, state == ElementState::Pressed);
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed => {
-                if let Some(game) = self.game.as_mut() {
-                    game.on_scroll(delta);
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } if self.cursor_grabbed => {
+            WindowEvent::MouseWheel { delta, .. } => self.on_scroll(delta),
+            WindowEvent::CursorMoved { position, .. } if self.stack.reaches_game() => {
                 self.recenter_cursor(position);
             }
             WindowEvent::KeyboardInput { event, .. } => self.on_key(&event),
@@ -1383,11 +1644,8 @@ impl ApplicationHandler for App {
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event
-            && self.cursor_grabbed
-            && let Some(game) = self.game.as_mut()
-        {
-            game.look(dx, dy);
+        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            self.on_mouse_motion(dx, dy);
         }
     }
 
@@ -1523,44 +1781,6 @@ fn bench_view(game: &Game, icons: Option<&ItemIcons>) -> Option<BenchView> {
         BenchKind::Grindstone | BenchKind::Smithing => {}
     }
     Some(view)
-}
-
-fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
-    // Every item, then an enchanted book for each enchantment at each of
-    // its levels (the plain one would be useless), then the potions.
-    let books = crate::inventory::enchant::ALL
-        .iter()
-        .flat_map(|&enchantment| {
-            (1..=enchantment.max_level()).map(move |level| {
-                let mut book = ItemStack::new(crate::inventory::items::ENCHANTED_BOOK, 1);
-                book.enchant(enchantment, level);
-                book
-            })
-        });
-    // Every potion, drunk and thrown, in place of the plain potion items.
-    use crate::inventory::{items as ids, potion};
-    let potions = [ids::POTION, ids::SPLASH_POTION]
-        .into_iter()
-        .flat_map(|item| {
-            (0..potion::POTIONS.len() as u16).map(move |n| ItemStack::with_damage(item, 1, n))
-        });
-    items
-        .items
-        .iter()
-        .filter(|item| {
-            !matches!(
-                item.id,
-                ids::ENCHANTED_BOOK | ids::POTION | ids::SPLASH_POTION
-            )
-        })
-        .map(|item| ItemStack::with_damage(item.id, 1, 0))
-        .chain(books)
-        .chain(potions)
-        .map(|stack| {
-            let (view, name) = (SlotView::of(&stack, icons, items), items.tooltip(&stack));
-            (stack, view, name)
-        })
-        .collect()
 }
 
 /// Pins the cursor in place. macOS supports only Locked; other platforms may
@@ -1713,6 +1933,101 @@ mod tests {
             advancements_view(&game, Some(&icons), 99).unwrap().current,
             4
         );
+    }
+
+    /// A game with the player in a world, the camera holding the mouse.
+    fn app_in_a_world() -> App {
+        let mut app = App::new(None);
+        app.game = Some(flat_game(GameMode::Survival));
+        app.stack.set_in_world(true, true);
+        app.apply_grab();
+        app
+    }
+
+    fn view_of(app: &App) -> (f32, f32, usize) {
+        let game = app.game.as_ref().unwrap();
+        (game.camera.yaw, game.camera.pitch, game.inventory.selected)
+    }
+
+    /// Everything the mouse can do in a window: a click, a drag with the
+    /// button held, wheel notches and trackpad scrolling.
+    fn use_the_mouse(app: &mut App) {
+        for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            app.on_mouse_button(button, true);
+            for step in 0..5 {
+                app.on_mouse_motion(40.0 + step as f64, -25.0);
+            }
+            app.on_mouse_button(button, false);
+        }
+        app.on_scroll(MouseScrollDelta::LineDelta(0.0, -3.0));
+        app.on_scroll(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+            0.0, -90.0,
+        )));
+    }
+
+    #[test]
+    fn the_mouse_turns_the_camera_when_no_screen_is_open() {
+        let mut app = app_in_a_world();
+        let before = view_of(&app);
+        use_the_mouse(&mut app);
+        let after = view_of(&app);
+        assert_ne!(
+            (before.0, before.1),
+            (after.0, after.1),
+            "the drag turned the view"
+        );
+        assert_ne!(before.2, after.2, "scrolling changed the hotbar slot");
+    }
+
+    #[test]
+    fn opening_the_advancements_screen_and_clicking_dragging_and_scrolling_leaves_yaw_and_pitch_alone()
+     {
+        let mut app = app_in_a_world();
+        app.open_advancements();
+        assert!(!app.stack.grabbed(), "the cursor is released");
+        let before = view_of(&app);
+        use_the_mouse(&mut app);
+        assert_eq!(view_of(&app), before);
+        assert!(
+            !app.stack.grabbed(),
+            "a click in the screen didn't grab it again"
+        );
+        // Closing the last screen gives the mouse back to the camera.
+        app.close_advancements();
+        assert!(app.stack.grabbed());
+        use_the_mouse(&mut app);
+        assert_ne!(view_of(&app), before);
+    }
+
+    #[test]
+    fn no_screen_lets_the_mouse_reach_the_player() {
+        for layer in [
+            Layer::Container,
+            Layer::Advancements,
+            Layer::Pause,
+            Layer::Bed,
+            Layer::Death,
+        ] {
+            let mut app = app_in_a_world();
+            app.stack.push(layer);
+            app.apply_grab();
+            let before = view_of(&app);
+            use_the_mouse(&mut app);
+            assert_eq!(view_of(&app), before, "{layer:?}");
+            assert!(!app.stack.grabbed(), "{layer:?}");
+        }
+    }
+
+    #[test]
+    fn a_container_opened_over_another_screen_keeps_the_mouse_free_until_both_close() {
+        let mut app = app_in_a_world();
+        app.show_container(Screen::Chest);
+        app.stack.push(Layer::Pause);
+        app.apply_grab();
+        app.hide_container();
+        assert!(!app.stack.grabbed(), "the pause menu is still open");
+        app.resume();
+        assert!(app.stack.grabbed());
     }
 
     #[test]

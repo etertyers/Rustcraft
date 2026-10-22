@@ -57,12 +57,21 @@ pub struct GuiTextures {
     pub anvil: TextureHandle,
     pub grindstone: TextureHandle,
     pub brewing: TextureHandle,
+    /// The recipe book's panel, tabs and buttons, and the green book button.
+    pub recipe_book: TextureHandle,
+    pub recipe_button: TextureHandle,
+    /// The player's skin, for the figure in the inventory.
+    pub skin: TextureHandle,
     /// Falls back to the anvil's sheet: Kenzo's 1.12 GUI has no smithing
     /// table, so the slots then sit over the wrong outlines.
     pub smithing: TextureHandle,
     /// The stonecutter's, which also falls back to the anvil's sheet.
     pub stonecutter: TextureHandle,
     pub creative: TextureHandle,
+    /// The Search tab's panel, with its text box.
+    pub creative_search: TextureHandle,
+    /// The Survival Inventory tab's panel.
+    pub creative_inventory: TextureHandle,
     pub tabs: TextureHandle,
     pub icons: TextureHandle,
     /// Each status effect's icon, in `Effect::ALL`'s order, if any layer
@@ -120,6 +129,45 @@ const FURNACE: &[Sprite] = &[
         [176, 14, 24, 17],
     ),
 ];
+/// The recipe book's pieces on 1.12's sheet, which a modern pack draws as
+/// separate sprites.
+const RECIPE_BOOK: &[Sprite] = &[
+    ("gui/sprites/recipe_book/tab", [153, 2, 30, 26]),
+    ("gui/sprites/recipe_book/tab_selected", [188, 2, 35, 26]),
+    ("gui/sprites/recipe_book/filter_disabled", [152, 41, 26, 16]),
+    (
+        "gui/sprites/recipe_book/filter_disabled_highlighted",
+        [152, 59, 26, 16],
+    ),
+    ("gui/sprites/recipe_book/filter_enabled", [180, 41, 26, 16]),
+    (
+        "gui/sprites/recipe_book/filter_enabled_highlighted",
+        [180, 59, 26, 16],
+    ),
+    ("gui/sprites/recipe_book/slot_craftable", [29, 206, 25, 25]),
+    (
+        "gui/sprites/recipe_book/slot_uncraftable",
+        [54, 206, 25, 25],
+    ),
+    ("gui/sprites/recipe_book/page_backward", [1, 208, 11, 17]),
+    (
+        "gui/sprites/recipe_book/page_backward_highlighted",
+        [1, 226, 11, 17],
+    ),
+    ("gui/sprites/recipe_book/page_forward", [15, 208, 11, 17]),
+    (
+        "gui/sprites/recipe_book/page_forward_highlighted",
+        [15, 226, 11, 17],
+    ),
+];
+/// The green book button, in 1.12's sheet of two (plain, then hovered).
+const RECIPE_BUTTON: &[Sprite] = &[
+    ("gui/sprites/recipe_book/button", [0, 0, 20, 18]),
+    (
+        "gui/sprites/recipe_book/button_highlighted",
+        [0, 19, 20, 18],
+    ),
+];
 const TABS: &[Sprite] = &[(
     "gui/sprites/container/creative_inventory/scroller",
     [232, 0, 12, 15],
@@ -127,7 +175,12 @@ const TABS: &[Sprite] = &[(
 
 impl GuiTextures {
     /// Builds each sheet from the resource layers (see `compose_sheet`).
-    pub fn load(ctx: &egui::Context, atlas: &RgbaImage, res: &Resources) -> Result<Self> {
+    pub fn load(
+        ctx: &egui::Context,
+        atlas: &RgbaImage,
+        skin: &RgbaImage,
+        res: &Resources,
+    ) -> Result<Self> {
         let load = |name: &str, image: &RgbaImage| {
             let size = [image.width() as usize, image.height() as usize];
             let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
@@ -156,11 +209,16 @@ impl GuiTextures {
             anvil: sheet("gui/container/anvil", &[])?,
             grindstone: sheet("gui/container/grindstone", &[])?,
             brewing: sheet("gui/container/brewing_stand", &[])?,
+            recipe_book: sheet("gui/recipe_book", RECIPE_BOOK)?,
+            recipe_button: sheet("gui/recipe_button", RECIPE_BUTTON)?,
+            skin: load("skin", skin),
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             stonecutter: sheet("gui/container/stonecutter", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
+            creative_search: sheet("gui/container/creative_inventory/tab_item_search", &[])?,
+            creative_inventory: sheet("gui/container/creative_inventory/tab_inventory", &[])?,
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
             icons: sheet("gui/icons", ICONS)?,
             effects: crate::player::effects::Effect::ALL

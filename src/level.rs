@@ -14,7 +14,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -68,6 +67,10 @@ pub struct Level {
     /// What the world has done (added in M29).
     #[serde(default)]
     pub advancements: crate::advancements::Progress,
+    /// Whether the recipe book is open and how it filters (added with
+    /// the book).
+    #[serde(default)]
+    pub recipe_book: crate::inventory::book::Settings,
 }
 
 /// The End as the world remembers it (added in M27).
@@ -150,6 +153,7 @@ impl Level {
             portals: Vec::new(),
             end: EndData::default(),
             advancements: Default::default(),
+            recipe_book: Default::default(),
         }
     }
 }
@@ -242,6 +246,14 @@ impl WorldDir {
         let temp = path.with_extension("ron.tmp");
         fs::write(&temp, text).with_context(|| format!("writing {}", temp.display()))?;
         fs::rename(&temp, &path).with_context(|| format!("writing {}", path.display()))?;
+        crate::worldlist::write_meta(
+            &self.path,
+            &crate::worldlist::Meta {
+                name: level.name.clone(),
+                game_mode: level.game_mode,
+                last_played: level.last_played,
+            },
+        );
         Ok(())
     }
 
@@ -297,30 +309,6 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Every world in `saves` that has a readable level, most recently played first.
-pub fn list_worlds(saves: &Path) -> Vec<(WorldDir, Level)> {
-    let Ok(entries) = fs::read_dir(saves) else {
-        return Vec::new();
-    };
-    let mut worlds: Vec<(WorldDir, Level)> = entries
-        .filter_map(|entry| {
-            let dir = WorldDir::new(entry.ok()?.path());
-            if !dir.exists() {
-                return None;
-            }
-            match dir.load_level() {
-                Ok(level) => Some((dir, level)),
-                Err(err) => {
-                    warn!("skipping world: {err:#}");
-                    None
-                }
-            }
-        })
-        .collect();
-    worlds.sort_by_key(|(_, level)| std::cmp::Reverse(level.last_played));
-    worlds
-}
-
 /// 1.0.0's folder name for a world: the name with characters that aren't
 /// allowed in file names replaced by `_`, plus `-` until it's unused.
 pub fn folder_name(name: &str, exists: impl Fn(&str) -> bool) -> String {
@@ -373,6 +361,18 @@ pub fn random_seed() -> u64 {
 mod tests {
     use super::*;
     use crate::world::save::TempDir;
+
+    /// Every world in `saves` with a readable level (the menu uses `worldlist`).
+    fn list_worlds(saves: &Path) -> Vec<(WorldDir, Level)> {
+        let entries = fs::read_dir(saves).unwrap();
+        entries
+            .filter_map(|entry| {
+                let dir = WorldDir::new(entry.ok()?.path());
+                let level = dir.load_level().ok()?;
+                Some((dir, level))
+            })
+            .collect()
+    }
 
     #[test]
     fn health_saved_as_whole_points_still_loads() {
@@ -452,10 +452,46 @@ mod tests {
         .unwrap();
         fs::create_dir(saves.path().join("not a world")).unwrap();
 
-        let worlds = list_worlds(saves.path());
-        let modes: Vec<GameMode> = worlds.iter().map(|(_, level)| level.game_mode).collect();
+        let mut scan = crate::worldlist::WorldScan::start(saves.path().to_owned());
+        let mut worlds = Vec::new();
+        while !scan.poll(&mut worlds) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        worlds.sort_by_key(|w| std::cmp::Reverse(w.meta.last_played));
+        let modes: Vec<GameMode> = worlds.iter().map(|w| w.meta.game_mode).collect();
         assert_eq!(modes, [GameMode::Creative, GameMode::Survival]);
-        assert!(list_worlds(&saves.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn the_recipe_books_state_is_saved_with_the_world_and_old_worlds_start_closed() {
+        use crate::inventory::book::{Category, Settings};
+        let saves = TempDir::new("book");
+        let mut level = Level::new("Book", 1, GameMode::Survival, [0.0; 3]);
+        assert_eq!(level.recipe_book, Settings::default());
+        level.recipe_book = Settings {
+            open: true,
+            craftable_only: true,
+            category: Category::Redstone,
+        };
+        let dir = WorldDir::create(saves.path(), &level).unwrap();
+        assert_eq!(dir.load_level().unwrap().recipe_book, level.recipe_book);
+        // A level from before the book has no such field.
+        let text = ron::ser::to_string_pretty(&level, ron::ser::PrettyConfig::default()).unwrap();
+        let mut kept = Vec::new();
+        let mut skipping = false;
+        for line in text.lines() {
+            if line.starts_with("    recipe_book:") {
+                skipping = true;
+            }
+            if !skipping {
+                kept.push(line);
+            }
+            if skipping && line.starts_with("    ),") {
+                skipping = false;
+            }
+        }
+        let old: Level = ron::from_str(&kept.join("\n")).unwrap();
+        assert_eq!(old.recipe_book, Settings::default());
     }
 
     #[test]

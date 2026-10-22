@@ -4,7 +4,11 @@
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
+use super::creative::{self, CreativeTab, TabView};
+use super::doll;
+use super::geometry::Geometry;
 use super::gui::{self, GuiTextures, SlotView};
+use super::recipe_book::{self, Host};
 use crate::inventory::{
     brewing, furnace,
     player::{ARMOR_FEET, ARMOR_HEAD, HOTBAR_SLOTS, MAIN_SLOTS, OFFHAND, is_armor_slot},
@@ -16,9 +20,10 @@ use crate::inventory::{
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
     Inventory,
-    /// `scroll` is how many rows the item grid has scrolled; it's
-    /// fractional while a trackpad moves it.
+    /// The creative inventory on `tab`; `scroll` is how many rows the
+    /// item grid has scrolled, fractional while a trackpad moves it.
     Creative {
+        tab: CreativeTab,
         scroll: f32,
     },
     /// A crafting table's 3×3 grid.
@@ -61,10 +66,17 @@ pub enum ScreenAction {
     Throw {
         all: bool,
     },
-    /// Creative: put a full stack of this in the selected hotbar slot.
-    Take(ItemStack),
-    /// Creative: clicked the item grid while holding something.
-    Discard,
+    /// Creative: clicked `stack` in a tab's grid (see `creative::pick`).
+    CreativePick {
+        stack: ItemStack,
+        pick: crate::inventory::creative::Pick,
+    },
+    /// Creative: clicked the destroy slot (shift clears the inventory).
+    CreativeDestroy {
+        shift: bool,
+    },
+    /// Used the recipe book.
+    Book(super::recipe_book::BookAction),
     /// The death screen's Respawn button.
     Respawn,
     /// The sleep screen's Leave Bed button.
@@ -160,9 +172,17 @@ pub struct ScreenView<'a> {
     pub cursor: Option<SlotView>,
     /// Creative: every block and item, with how it looks and its name.
     pub catalog: &'a [(ItemStack, SlotView, String)],
+    /// Creative: the tab buttons, then Search's and the Survival
+    /// Inventory's, each with its picture, name and what it lists.
+    pub tabs: &'a [TabView],
     /// The workstation screens' extras.
     pub bench: Option<BenchView>,
     pub merchant: Option<MerchantView>,
+    /// Poses and builds the player's model for the inventory's picture of
+    /// them, given how it should turn.
+    pub doll: Option<&'a dyn Fn(doll::DollAngles) -> doll::Doll>,
+    /// The recipe book, on the screens that have one.
+    pub book: Option<recipe_book::BookView<'a>>,
 }
 
 /// A drag across slots in progress: the button held and the slots crossed.
@@ -175,15 +195,6 @@ struct Drag {
 /// A second left press on the same slot within this many seconds is a
 /// double-click.
 const DOUBLE_CLICK: f64 = 0.25;
-
-/// Creative grid size.
-const COLUMNS: usize = 9;
-const ROWS: usize = 5;
-
-/// Rows the creative grid can scroll through.
-pub fn creative_scroll_rows(catalog_len: usize) -> usize {
-    catalog_len.div_ceil(COLUMNS).saturating_sub(ROWS)
-}
 
 /// Mouse wheel movement this frame in grid rows (positive scrolls up):
 /// a wheel notch is one row, trackpad movement one row per slot height.
@@ -224,7 +235,7 @@ fn inventory_slot(index: usize) -> [f32; 2] {
 }
 
 /// Panel size in GUI pixels.
-fn panel_size(screen: &Screen) -> [f32; 2] {
+pub(super) fn panel_size(screen: &Screen) -> [f32; 2] {
     match screen {
         Screen::Inventory
         | Screen::Crafting
@@ -238,7 +249,7 @@ fn panel_size(screen: &Screen) -> [f32; 2] {
         | Screen::Smithing => [176.0, 166.0],
         Screen::Hopper => [176.0, 133.0],
         Screen::Merchant => [176.0, 222.0],
-        Screen::Creative { .. } => [195.0, 136.0],
+        Screen::Creative { .. } => creative::PANEL,
         // 1.0.0's GuiChest: 114 plus 18 per row.
         Screen::Chest => [176.0, 114.0 + CHEST_ROWS as f32 * 18.0],
     }
@@ -258,7 +269,7 @@ fn crafting_slots(size: usize, at: [f32; 2], result: [f32; 2]) -> Vec<(SlotRef, 
 
 /// The slots `screen` shows and where (1.0.0's container layouts). The
 /// creative item grid isn't included.
-fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
+pub(super) fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
     // 1.0.0's chest puts the player's rows at 103 + (rows − 4) × 18.
     let below = match screen {
         Screen::Chest => 103.0 + (CHEST_ROWS as f32 - 4.0) * 18.0 - 84.0,
@@ -283,9 +294,7 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
             .into_iter()
             .chain(inventory)
             .collect(),
-        Screen::Creative { .. } => (0..HOTBAR_SLOTS)
-            .map(|i| (SlotRef::Inventory(i), [9.0 + i as f32 * 18.0, 112.0]))
-            .collect(),
+        Screen::Creative { tab, .. } => creative::slots(*tab),
         Screen::Furnace => [
             (SlotRef::Block(furnace::INPUT), [56.0, 17.0]),
             (SlotRef::Block(furnace::FUEL), [56.0, 53.0]),
@@ -370,7 +379,8 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
 /// Titles drawn on a screen, with where (1.0.0's foreground layers).
 fn labels(screen: &Screen) -> &'static [(&'static str, [f32; 2])] {
     match screen {
-        Screen::Inventory => &[("Crafting", [86.0, 16.0])],
+        // Vanilla's title, 8 pixels from the top at x 97 (over the grid).
+        Screen::Inventory => &[("Crafting", [97.0, 8.0])],
         Screen::Crafting => &[("Crafting", [28.0, 6.0]), ("Inventory", [8.0, 72.0])],
         Screen::Creative { .. } => &[],
         Screen::Chest => &[("Chest", [8.0, 6.0]), ("Inventory", [8.0, 74.0])],
@@ -436,21 +446,34 @@ pub fn show(
     };
 
     let size = egui::Vec2::from(panel_size(screen));
-    let origin = full.center() - size * scale / 2.0;
-    let panel = Rect::from_min_size(origin, size * scale);
-    let slot_rect = |at: [f32; 2]| {
-        Rect::from_min_size(
-            origin + vec2(at[0], at[1]) * scale,
-            vec2(16.0, 16.0) * scale,
-        )
+    // The one place that says where things are: drawing, the highlight and
+    // hit testing all use it.
+    let host = match screen {
+        Screen::Inventory => Some(Host::Inventory),
+        Screen::Crafting => Some(Host::Table),
+        _ => None,
     };
+    let book = host.and(view.book.as_ref());
+    // An open recipe book pushes the screen to the right.
+    let book_shift = book.map_or(0.0, |book| recipe_book::shift(book.settings.open, full));
+    let geo = Geometry::new(full, ctx.pixels_per_point(), panel_size(screen), book_shift);
+    let (origin, scale, panel) = (geo.origin, geo.scale, geo.panel());
+    let slot_rect = |at: [f32; 2]| geo.slot_rect(at);
     let mut actions = Vec::new();
     let mut tooltip = None;
 
+    // The creative tabs that aren't selected go under the panel.
+    if let Screen::Creative { tab, .. } = screen {
+        creative::paint_tabs_behind(&painter, &geo, *tab, view.tabs, textures);
+    }
     let background = match screen {
         Screen::Inventory => &textures.inventory,
         Screen::Crafting => &textures.crafting,
-        Screen::Creative { .. } => &textures.creative,
+        Screen::Creative { tab, .. } => match tab {
+            CreativeTab::Items(_) => &textures.creative,
+            CreativeTab::Search => &textures.creative_search,
+            CreativeTab::Survival => &textures.creative_inventory,
+        },
         Screen::Chest => &textures.chest,
         Screen::Furnace => &textures.furnace,
         Screen::Brewing => &textures.brewing,
@@ -493,6 +516,17 @@ pub fn show(
             scale,
         );
     }
+    let doll_spot = match screen {
+        Screen::Inventory => Some(doll::SURVIVAL),
+        Screen::Creative {
+            tab: CreativeTab::Survival,
+            ..
+        } => Some(creative::DOLL),
+        _ => None,
+    };
+    if let (Some(spot), Some(make)) = (doll_spot, view.doll) {
+        paint_doll(&painter, &geo, pointer, make, &spot, textures);
+    }
     if let (Screen::Furnace, Some((fuel, cooked))) = (*screen, view.furnace) {
         paint_furnace_progress(&painter, background.id(), origin, scale, fuel, cooked);
     }
@@ -508,65 +542,62 @@ pub fn show(
             Color32::from_gray(0x40),
         );
     }
-    if let Screen::Creative { scroll } = screen {
-        let rows = creative_scroll_rows(view.catalog.len());
-        if let Some(pos) = pointer
-            && panel.contains(pos)
-        {
-            *scroll = (*scroll - wheel).clamp(0.0, rows as f32);
-        }
-        let top_row = scroll.round() as usize;
-        let fraction = if rows == 0 {
-            0.0
-        } else {
-            top_row as f32 / rows as f32
-        };
-        let scroller = origin + vec2(175.0, 18.0 + (112.0 - 15.0) * fraction) * scale;
-        gui::sheet_image(
+    let mut over_creative = false;
+    let input = creative::Input {
+        pointer,
+        left,
+        right,
+        middle: ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle)),
+        shift,
+        wheel,
+        left_down,
+        events: ctx.input(|i| i.events.clone()),
+        time: now,
+    };
+    if let Screen::Creative { tab, scroll } = screen {
+        let out = creative::show(
+            ctx,
             &painter,
-            textures.tabs.id(),
-            [232.0, 0.0],
-            [12.0, 15.0],
-            scroller,
-            scale,
+            &geo,
+            tab,
+            scroll,
+            view.catalog,
+            view.tabs,
+            view.cursor.is_some(),
+            &input,
+            textures,
         );
-        for row in 0..ROWS {
-            for column in 0..COLUMNS {
-                let index = (top_row + row) * COLUMNS + column;
-                let Some((stack, slot, name)) = view.catalog.get(index) else {
-                    continue;
-                };
-                let rect = slot_rect([9.0 + column as f32 * 18.0, 18.0 + row as f32 * 18.0]);
-                gui::paint_slot(&painter, rect.min, slot, scale, textures.atlas.id());
-                if pointer.is_some_and(|pos| rect.contains(pos)) {
-                    painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
-                    tooltip = Some(name.clone());
-                    if click.is_some() {
-                        actions.push(if view.cursor.is_some() {
-                            ScreenAction::Discard
-                        } else {
-                            ScreenAction::Take(stack.clone())
-                        });
-                    }
-                }
-            }
-        }
+        actions.extend(out.actions);
+        tooltip = out.tooltip;
+        over_creative = out.inside;
     }
 
-    let mut hovered = None;
-    for (slot, at) in layout(screen) {
+    let slots = layout(screen);
+    let hovered = pointer.and_then(|pos| geo.slot_at(&slots, pos));
+    for (slot, at) in slots {
         let rect = slot_rect(at);
         let shown = (view.slot)(slot);
         if let Some((stack, _)) = &shown {
             gui::paint_slot(&painter, rect.min, stack, scale, textures.atlas.id());
         }
         let dragged = drag.as_ref().is_some_and(|drag| drag.slots.contains(&slot));
-        if pointer.is_some_and(|pos| rect.contains(pos)) {
-            hovered = Some(slot);
+        if hovered == Some(slot) {
             tooltip = shown.map(|(_, name)| name);
         }
         if dragged || hovered == Some(slot) {
             painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
+        }
+    }
+    let mut over_book = false;
+    if let (Some(host), Some(book)) = (host, book) {
+        let free = |cell: usize| (view.slot)(SlotRef::Grid(cell)).is_none();
+        let out = recipe_book::show(
+            ctx, &painter, &geo, full, host, book, &free, &input, textures,
+        );
+        actions.extend(out.actions);
+        over_book = out.inside;
+        if out.tooltip.is_some() {
+            tooltip = out.tooltip;
         }
     }
     if let (Screen::Merchant, Some(merchant)) = (*screen, &view.merchant) {
@@ -636,7 +667,8 @@ pub fn show(
     });
 
     if let Some(pos) = pointer {
-        if click.is_some() && !panel.contains(pos) && view.cursor.is_some() {
+        let outside = !panel.contains(pos) && !over_creative && !over_book;
+        if click.is_some() && outside && view.cursor.is_some() {
             actions.push(ScreenAction::Throw { all: left });
         }
         if let Some(cursor) = &view.cursor {
@@ -652,6 +684,47 @@ pub fn show(
         }
     }
     actions
+}
+
+/// The middle of `slot` on `screen` in a `full` window at `ppp`, with the
+/// screen shifted `shift` GUI pixels (for scenes that put the pointer
+/// there).
+pub fn slot_point(
+    screen: &Screen,
+    full: Rect,
+    ppp: f32,
+    shift: f32,
+    slot: SlotRef,
+) -> Option<Pos2> {
+    let geo = Geometry::new(full, ppp, panel_size(screen), shift);
+    let (_, at) = layout(screen).into_iter().find(|&(s, _)| s == slot)?;
+    Some(geo.slot_rect(at).center())
+}
+
+/// The player's model in the inventory's black box, turned toward the
+/// mouse.
+fn paint_doll(
+    painter: &Painter,
+    geo: &Geometry,
+    pointer: Option<Pos2>,
+    make: &dyn Fn(doll::DollAngles) -> doll::Doll,
+    spot: &doll::Spot,
+    textures: &GuiTextures,
+) {
+    let head = geo.origin + vec2(spot.head[0], spot.head[1]) * geo.scale;
+    let offset = pointer.map_or(egui::Vec2::ZERO, |pos| (pos - head) / geo.scale);
+    let figure = make(doll::angles(offset));
+    let feet = geo.origin + vec2(spot.feet[0], spot.feet[1]) * geo.scale;
+    let per_block = spot.per_block * geo.scale;
+    let painter = painter.with_clip_rect(doll::clip(geo.origin, geo.scale, spot));
+    for (mesh, texture) in [
+        (&figure.body, textures.skin.id()),
+        (&figure.items, textures.atlas.id()),
+    ] {
+        painter.add(egui::Shape::mesh(doll::project(
+            mesh, texture, feet, per_block,
+        )));
+    }
 }
 
 /// Turns a press or drag over the slot under the mouse into actions
@@ -1156,10 +1229,50 @@ mod tests {
         );
     }
 
+    /// The text a screen draws in one frame, with where.
+    fn texts_drawn(screen: Screen) -> Vec<String> {
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
+        let look = crate::look::Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap();
+        let ctx = egui::Context::default();
+        let textures = GuiTextures::load(&ctx, look.atlas.image(), look.skin(), &look.res).unwrap();
+        let slot = |_: SlotRef| None;
+        let view = ScreenView {
+            slot: &slot,
+            furnace: None,
+            brewing: None,
+            cursor: None,
+            catalog: &[],
+            tabs: &[],
+            bench: None,
+            merchant: None,
+            doll: None,
+            book: None,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(854.0, 480.0))),
+            ..Default::default()
+        };
+        let mut screen = screen;
+        let mut output = ctx.run_ui(input, |ui| {
+            show(ui.ctx(), &mut screen, &view, &textures);
+        });
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn the_creative_grid_scrolls_by_rows() {
-        assert_eq!(creative_scroll_rows(45), 0);
-        assert_eq!(creative_scroll_rows(46), 1);
-        assert_eq!(creative_scroll_rows(320), 31);
+    fn the_survival_inventory_draws_only_vanillas_small_crafting_label() {
+        // No text box or window: one label, and nothing else with text.
+        assert_eq!(texts_drawn(Screen::Inventory), ["Crafting"]);
+        assert_eq!(texts_drawn(Screen::Crafting), ["Crafting", "Inventory"]);
     }
 }

@@ -74,6 +74,11 @@ pub fn open_packs(dir: &Path, ids: &[String]) -> Vec<Pack> {
 }
 
 impl Look {
+    /// The player's skin, the last of the mob textures.
+    pub fn skin(&self) -> &RgbaImage {
+        self.mob_textures.last().expect("the skin is loaded last")
+    }
+
     /// Builds the look from Kenzo's textures in `assets` with `packs` over
     /// them (highest priority first).
     pub fn build(assets: &Path, packs: Vec<Pack>, mobs: &MobRegistry) -> Result<Self> {

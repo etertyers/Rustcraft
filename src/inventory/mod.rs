@@ -2,8 +2,10 @@
 
 pub mod anvil;
 pub mod armor;
+pub mod book;
 pub mod brewing;
 pub mod crafting;
+pub mod creative;
 pub mod enchant;
 pub mod furnace;
 pub mod grindstone;

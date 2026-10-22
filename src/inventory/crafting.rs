@@ -39,6 +39,11 @@ impl Ingredient {
     fn matches(&self, stack: &ItemStack) -> bool {
         self.0.contains(&stack.id)
     }
+
+    /// The items that fit this cell.
+    pub fn items(&self) -> &[ItemId] {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -225,6 +230,31 @@ impl Recipes {
             stonecutting,
             fuels,
         })
+    }
+
+    /// Every crafting recipe, shaped ones then shapeless, as (result, width,
+    /// height, whether shaped, cells row by row). Shapeless recipes are
+    /// laid out in a row of at most three.
+    #[allow(clippy::type_complexity)]
+    pub fn crafting(
+        &self,
+    ) -> impl Iterator<Item = (Output, usize, usize, bool, Vec<Option<Ingredient>>)> + '_ {
+        let shaped = self
+            .shaped
+            .iter()
+            .map(|r| (r.result, r.width, r.height, true, r.cells.clone()));
+        let shapeless = self.shapeless.iter().map(|(ingredients, result)| {
+            let width = ingredients.len().clamp(1, 3);
+            let height = ingredients.len().div_ceil(3).max(1);
+            (
+                *result,
+                width,
+                height,
+                false,
+                ingredients.iter().cloned().map(Some).collect(),
+            )
+        });
+        shaped.chain(shapeless)
     }
 
     /// What the stonecutter can make from `input`, in recipe order.

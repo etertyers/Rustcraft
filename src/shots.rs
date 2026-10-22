@@ -433,6 +433,26 @@ pub static SHOTS: &[Shot] = &[
         stage: advancements,
     },
     Shot {
+        name: "fixes-inventory",
+        about: "the survival inventory with the player turned toward the pointer, the recipe book open with craftable recipes first, and the pointer on a slot",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: inventory_with_book,
+    },
+    Shot {
+        name: "fixes-creative",
+        about: "the creative inventory on its Building Blocks tab, with the tabs along the top and bottom and the hotbar under the grid",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: creative_tabs,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -704,6 +724,51 @@ fn advancements(game: &mut Game) {
     }
     game.note(Event::Dimension("the_nether".to_owned()));
     game.stage_advancements(0);
+}
+
+/// The survival inventory with some materials, a sword in hand and the
+/// recipe book open.
+fn inventory_with_book(game: &mut Game) {
+    use crate::{
+        game::{ShotScreen, ShotUi},
+        inventory::{items, slots::SlotRef, stack::ItemStack},
+    };
+    game.run_ticks(2);
+    for (slot, stack) in [
+        (0, ItemStack::new(items::IRON_SWORD, 1)),
+        (1, ItemStack::new(items::OAK_LOG, 12)),
+        (2, ItemStack::new(items::OAK_PLANKS, 24)),
+        (3, ItemStack::new(items::STICK, 9)),
+        (9, ItemStack::new(items::COBBLESTONE, 40)),
+        (10, ItemStack::new(items::IRON_INGOT, 6)),
+        (11, ItemStack::new(items::COAL, 16)),
+        (12, ItemStack::new(items::BREAD, 5)),
+    ] {
+        game.inventory.set(slot, Some(stack));
+    }
+    game.inventory.selected = 0;
+    game.recipe_book.open = true;
+    game.stage_ui(ShotUi {
+        screen: ShotScreen::Inventory,
+        hover: Some(SlotRef::Inventory(10)),
+    });
+}
+
+/// The creative inventory on Building Blocks.
+fn creative_tabs(game: &mut Game) {
+    use crate::{
+        game::{ShotScreen, ShotUi},
+        inventory::{items, slots::SlotRef, stack::ItemStack},
+    };
+    game.run_ticks(2);
+    game.inventory
+        .set(0, Some(ItemStack::new(items::DIAMOND_PICKAXE, 1)));
+    game.inventory
+        .set(1, Some(ItemStack::new(items::STONE_BRICKS, 64)));
+    game.stage_ui(ShotUi {
+        screen: ShotScreen::Creative(0),
+        hover: Some(SlotRef::Inventory(1)),
+    });
 }
 
 /// Part-way through the credits.
