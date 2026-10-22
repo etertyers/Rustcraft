@@ -9,6 +9,8 @@
     // Renamed since: the chain is iron_chain; purpur pillars' sides are
     // purpur_pillar_side; the sign is an entity in modern Minecraft, so its
     // block texture is the oak planks it is made of.
+    "entity/elytra": ["entity/equipment/wings/elytra"],
+    "entity/strider/strider_saddle": ["entity/equipment/strider_saddle/saddle"],
     "block/chain": ["block/iron_chain"],
     "item/chain": ["item/iron_chain"],
     "block/purpur_pillar": ["block/purpur_pillar_side"],
@@ -34,7 +36,7 @@
     "entity/wolf/wolf_collar": ["entity/wolf/wolf_collar"],
     "entity/squid/squid": ["entity/squid"],
     "entity/iron_golem/iron_golem": ["entity/iron_golem"],
-    "entity/phantom": ["entity/phantom"],
+    "entity/phantom": ["entity/phantom", "entity/phantom/phantom"],
     "block/activator_rail": ["blocks/rail_activator"],
     "block/activator_rail_on": ["blocks/rail_activator_powered"],
     "block/redstone_lamp_off": ["blocks/redstone_lamp_off"],

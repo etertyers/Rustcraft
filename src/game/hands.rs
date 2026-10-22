@@ -388,6 +388,12 @@ impl Game {
             so_far + per_tick
         };
         if progress < 1.0 {
+            // The block rings out under the blows, every fourth tick.
+            if self.time.is_multiple_of(4)
+                && let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z)
+            {
+                self.block_sound(&block.def().name, "hit", cell);
+            }
             self.mining = Some((cell, progress));
             return;
         }
@@ -408,6 +414,18 @@ impl Game {
         let edits = interaction::break_block(world, self.items.blocks, cell);
         if edits.is_empty() {
             return;
+        }
+        if let Some(name) = &mined {
+            if name.ends_with("fire") {
+                crate::audio::play_at(
+                    "block.fire.extinguish",
+                    cell.as_dvec3() + DVec3::splat(0.5),
+                    0.5,
+                    2.6 + self.rng.next_f64() as f32 * 0.8,
+                );
+            } else {
+                self.block_sound(name, "break", cell);
+            }
         }
         if let Some(broken) = world.block(cell.x, cell.y, cell.z) {
             let rng = &mut self.rng;
@@ -550,6 +568,12 @@ impl Game {
         );
         let rng = &mut self.rng;
         let mut random = || rng.next_f64();
+        crate::audio::play_at(
+            "entity.arrow.shoot",
+            eye,
+            1.0,
+            1.0 / (random() as f32 * 0.4 + 1.2) + power * 0.5,
+        );
         self.arrows.push(
             Arrow::shoot(
                 eye,
@@ -615,7 +639,12 @@ impl Game {
                 continue;
             }
             let at_player = (arrow.hostile && !self.stats.is_dead()).then_some(&player);
-            match arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random) {
+            let was_stuck = arrow.stuck;
+            let event = arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random);
+            if !was_stuck && arrow.stuck {
+                crate::audio::play_at("entity.arrow.hit", arrow.position, 1.0, 1.0);
+            }
+            match event {
                 Some(ArrowEvent::HitMob {
                     index,
                     damage,
@@ -623,6 +652,11 @@ impl Game {
                     flame,
                 }) => {
                     self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+                    crate::audio::play("entity.arrow.hit", self.mobs[index].feet());
+                    if !arrow.hostile {
+                        // The archer hears the ding.
+                        crate::audio::play_here_with("entity.arrow.hit_player", 0.18, 0.45);
+                    }
                     if punch > 0 {
                         crate::entity::mob::push(
                             &mut self.mobs[index].body,
@@ -695,6 +729,21 @@ impl Game {
             Some((eating_slot, ticks)) if eating_slot == slot => ticks + 1,
             _ => 1,
         };
+        // Munching or gulping every fourth tick.
+        if ticks % 4 == 0 && ticks < EAT_TICKS {
+            let at = self.body.position() + DVec3::Y * self.body.eye_height();
+            let pitch = 0.9 + self.rng.next_f64() as f32 * 0.2;
+            crate::audio::play_at(
+                if drink {
+                    "entity.generic.drink"
+                } else {
+                    "entity.generic.eat"
+                },
+                at,
+                0.5,
+                pitch,
+            );
+        }
         if ticks < EAT_TICKS {
             self.eating = Some((slot, ticks));
             return true;
@@ -708,6 +757,12 @@ impl Game {
             return false;
         };
         self.inventory.take(slot, 1);
+        crate::audio::play_at(
+            "entity.player.burp",
+            self.body.position() + DVec3::Y * self.body.eye_height(),
+            0.5,
+            0.9 + self.rng.next_f64() as f32 * 0.2,
+        );
         self.stats.eat(food.hunger, food.saturation);
         self.note(crate::advancements::Event::Ate(stack.id.name().to_owned()));
         self.food_effects(stack.id);
@@ -851,6 +906,9 @@ impl Game {
             return;
         };
         self.edit(&edits);
+        if let Some(&(at, _)) = edits.iter().find(|(_, state)| state.id() == block.id()) {
+            self.block_sound(&block.def().name, "place", at);
+        }
         self.note(crate::advancements::Event::Placed(block.def().name.clone()));
         // A shulker box put down keeps what the item held.
         if !stack.contents().is_empty()
@@ -976,8 +1034,9 @@ impl Game {
         let alive = !self.stats.is_dead();
         for item in &mut self.entities {
             item.tick(&collider);
-            if alive {
-                item.pick_up(&player, &mut self.inventory, &self.items);
+            if alive && item.pick_up(&player, &mut self.inventory, &self.items) {
+                let pitch = 1.4 + (item.center().x * 7.0).sin().abs() as f32 * 0.8;
+                crate::audio::play_at("entity.item.pickup", item.center(), 0.2, pitch);
             }
         }
         self.entities.retain(|item| !item.expired());

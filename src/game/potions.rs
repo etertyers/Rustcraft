@@ -99,6 +99,13 @@ impl Game {
         } else {
             BlockState::of(blocks::WATER_CAULDRON).with_number(Prop::LevelCauldron, new_level)
         };
+        let sound = match held.id {
+            items::WATER_BUCKET => "item.bucket.empty",
+            items::BUCKET => "item.bucket.fill",
+            items::GLASS_BOTTLE => "item.bottle.fill",
+            _ => "item.bottle.empty",
+        };
+        crate::audio::play(sound, cell.as_dvec3() + DVec3::splat(0.5));
         self.edit(&[(cell, state)]);
         self.swap_held(ItemStack::new(gives, 1));
         true
@@ -123,6 +130,7 @@ impl Game {
         if !is_water {
             return false;
         }
+        crate::audio::play_here("item.bottle.fill");
         self.swap_held(ItemStack::new(items::POTION, 1));
         true
     }
@@ -170,6 +178,12 @@ impl Game {
             self.body.velocity,
         );
         self.thrown.push(thrown);
+        crate::audio::play_at(
+            "entity.splash_potion.throw",
+            eye,
+            0.5,
+            0.4 / (self.rng.next_f64() as f32 * 0.4 + 0.8),
+        );
         if self.mode.uses_up_items() {
             self.inventory.take(slot, 1);
         }
@@ -215,6 +229,7 @@ impl Game {
             return;
         };
         let effects = potion::effects(potion);
+        crate::audio::play("entity.splash_potion.break", at);
         let scaled = |effect: Active, strength: f64| -> Option<Active> {
             if effect.effect.instant() {
                 // Instant ones are scaled as they act (below).

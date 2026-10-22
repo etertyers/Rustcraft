@@ -173,6 +173,16 @@ impl Resources {
             .find_map(|pack| pack.read(path))
     }
 
+    /// Every layer's copy of a file, lowest priority first: the vanilla
+    /// fallback, the base, then the packs.
+    pub fn all_bytes(&self, path: &str) -> Vec<Vec<u8>> {
+        self.vanilla
+            .iter()
+            .chain(&self.layers)
+            .filter_map(|pack| pack.read(path))
+            .collect()
+    }
+
     /// Which layer `bytes(path)` reads: its index (the vanilla fallback is
     /// `vanilla_layer`).
     pub fn layer_of(&self, path: &str) -> Option<usize> {

@@ -51,7 +51,16 @@ impl Game {
             .inventory
             .slot(slot)
             .is_some_and(|stack| armor_slot_of(&items, stack).is_some());
-        is_armor && self.inventory.equip(slot, &items)
+        let name = self
+            .inventory
+            .slot(slot)
+            .map(|stack| stack.id.name())
+            .unwrap_or_default();
+        let worn = is_armor && self.inventory.equip(slot, &items);
+        if worn {
+            crate::audio::play_here(crate::audio::events::armor_equip(name));
+        }
+        worn
     }
 }
 

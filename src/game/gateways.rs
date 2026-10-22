@@ -96,6 +96,7 @@ impl Game {
         let Some(feet) = self.gateway_exit(cell) else {
             return;
         };
+        crate::audio::play_here("entity.player.teleport");
         self.place_player(feet);
         self.note(crate::advancements::Event::Used("gateway".to_owned()));
         self.gateway_cooldown = COOLDOWN;

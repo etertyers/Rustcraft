@@ -184,6 +184,7 @@ impl Game {
 
     /// Swinging at nothing wastes the swing.
     pub(super) fn swing_at_air(&mut self) {
+        crate::audio::play_here_with("entity.player.attack.weak", 0.6, 1.0);
         self.attack_ticker = 0;
     }
 
@@ -231,6 +232,25 @@ impl Game {
         let hit = self.mobs[index].hurt(blow.damage, Some(from), DamageSource::Mob);
         self.mobs[index].hit_by_player();
         self.rally(index);
+        let here = self.mobs[index].feet();
+        if !hit {
+            crate::audio::play("entity.player.attack.nodamage", here);
+        } else {
+            let swing = if blow.critical {
+                "entity.player.attack.crit"
+            } else if super::combat::is_strong(charge) {
+                "entity.player.attack.strong"
+            } else {
+                "entity.player.attack.weak"
+            };
+            crate::audio::play(swing, here);
+            if blow.sprint_knockback {
+                crate::audio::play("entity.player.attack.knockback", here);
+            }
+            if blow.sweep {
+                crate::audio::play("entity.player.attack.sweep", here);
+            }
+        }
         if hit {
             let knockback = self.held_level(Enchantment::Knockback);
             if knockback > 0 {
@@ -371,11 +391,13 @@ impl Game {
                 if self.wear_hand(hand, wear) {
                     self.shield_hand = None;
                     self.shield_ticks = 0;
+                    crate::audio::play("item.shield.break", self.body.position());
                 }
             }
             if strike.axe {
                 self.disable_shield(c::SHIELD_DISABLE_TICKS);
             }
+            crate::audio::play("item.shield.block", self.body.position());
             return Outcome::Blocked;
         }
         if self.stats.damage(strike.amount, strike.source) {

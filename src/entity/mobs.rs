@@ -365,6 +365,11 @@ impl MobRegistry {
         &self.mobs[kind]
     }
 
+    /// Every mob's name.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.mobs.iter().map(|m| m.name.as_str())
+    }
+
     pub fn find(&self, name: &str) -> Option<MobKind> {
         self.mobs.iter().position(|mob| mob.name == name)
     }

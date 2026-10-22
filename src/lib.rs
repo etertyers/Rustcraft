@@ -5,6 +5,7 @@
 pub mod advancements;
 pub mod app;
 pub mod assets;
+pub mod audio;
 pub mod bench;
 pub mod config;
 pub mod credits;

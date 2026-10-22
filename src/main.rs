@@ -12,6 +12,11 @@ fn main() -> Result<()> {
         println!("wrote {count} templates to {}", dir.display());
         return Ok(());
     }
+    // Prints what the asset layers cover: textures and sounds still missing.
+    if std::env::args().any(|arg| arg == "--asset-report") {
+        print!("{}", rustcraft::assets::report(&rustcraft::assets::dir())?);
+        return Ok(());
+    }
     // Rewrites the placeholder blocks and items from vanilla's data in
     // assets/vanilla (see src/placeholders.rs) and docs/placeholders.md.
     if std::env::args().any(|arg| arg == "--gen-placeholders") {

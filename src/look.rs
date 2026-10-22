@@ -224,12 +224,11 @@ pub fn load_skin(res: &Resources, assets: &Path) -> (RgbaImage, bool) {
 /// A mob's texture from the highest layer that has it. One from the vanilla
 /// fallback must be the size the hand-built model is laid out for (newer
 /// versions change some layouts, and a different size means different
-/// UVs), else it is skipped with a log line and the mob shows the
-/// checkerboard.
-fn mob_image(res: &Resources, name: &str, size: Option<(u32, u32)>) -> RgbaImage {
+/// UVs), else it is skipped with a log line, and `None` is returned.
+pub fn mob_texture(res: &Resources, name: &str, size: Option<(u32, u32)>) -> Option<RgbaImage> {
     let Some(texture) = res.texture(name) else {
         warn!("no layer has {name}");
-        return missing_image();
+        return None;
     };
     let dims = texture.image.dimensions();
     if texture.vanilla && size.is_some_and(|size| size != dims) {
@@ -240,9 +239,14 @@ fn mob_image(res: &Resources, name: &str, size: Option<(u32, u32)>) -> RgbaImage
             size.map_or(0, |s| s.0),
             size.map_or(0, |s| s.1)
         );
-        return missing_image();
+        return None;
     }
-    texture.first_frame()
+    Some(texture.first_frame())
+}
+
+/// `mob_texture`, or the checkerboard.
+fn mob_image(res: &Resources, name: &str, size: Option<(u32, u32)>) -> RgbaImage {
+    mob_texture(res, name, size).unwrap_or_else(missing_image)
 }
 
 /// A small magenta and black checkerboard for a missing mob texture.

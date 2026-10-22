@@ -244,6 +244,7 @@ impl Game {
                             && reach.contains(item.center())
                     }) {
                         gold.stack.count -= 1;
+                        crate::audio::play("entity.piglin.admiring_item", self.mobs[index].feet());
                         self.mobs[index].data.timer = ADMIRE_TICKS;
                     }
                 }
@@ -283,6 +284,7 @@ impl Game {
             return;
         };
         let count = least + self.rng.below(u32::from(most - least) + 1) as u8;
+        crate::audio::play("entity.piglin.celebrate", at);
         let toward = (self.body.position() - at).with_y(0.0).normalize_or_zero();
         let velocity = toward * 0.3 + DVec3::Y * 0.3;
         let hover = self.rng.next_f64() as f32 * std::f32::consts::TAU;

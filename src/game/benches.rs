@@ -93,6 +93,7 @@ impl Game {
             && let Some(Container::Bench(bench)) = &mut self.container
         {
             bench.choice = index;
+            crate::audio::play_here("ui.stonecutter.select_recipe");
         }
     }
 
@@ -211,6 +212,12 @@ impl Game {
             self.stats.experience.spend_levels(price);
         }
         self.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
+        if let Some(at) = self.bench().map(|bench| bench.at) {
+            crate::audio::play(
+                "block.enchantment_table.use",
+                at.as_dvec3() + DVec3::splat(0.5),
+            );
+        }
         self.note(crate::advancements::Event::Used("enchant".to_owned()));
         true
     }
@@ -293,6 +300,16 @@ impl Game {
                 (output, 0, 1, 0)
             }
         };
+        if let Some(at) = self.bench().map(|bench| bench.at) {
+            let sound = match kind {
+                BenchKind::Anvil => "block.anvil.use",
+                BenchKind::Grindstone => "block.grindstone.use",
+                BenchKind::Smithing => "block.smithing_table.use",
+                BenchKind::Stonecutter => "ui.stonecutter.take_result",
+                BenchKind::Enchanting => "block.enchantment_table.use",
+            };
+            crate::audio::play(sound, at.as_dvec3() + DVec3::splat(0.5));
+        }
         if shift {
             if self
                 .inventory
@@ -361,6 +378,7 @@ impl Game {
         if distance <= 0.0 {
             return state;
         }
+        crate::audio::play("block.anvil.land", at.as_dvec3() + DVec3::splat(0.5));
         let damage = (distance * 2.0).floor().min(40.0) as f32;
         let cell = crate::player::collision::Aabb::new(at.as_dvec3(), at.as_dvec3() + DVec3::ONE);
         if self.mode.is_vulnerable() && self.body.aabb().intersects(&cell) {
@@ -405,6 +423,7 @@ impl Game {
         };
         self.edit(&[(at, worn)]);
         if worn == BlockState::AIR {
+            crate::audio::play("block.anvil.destroy", at.as_dvec3() + DVec3::splat(0.5));
             self.close_container();
         }
     }

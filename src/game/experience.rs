@@ -85,6 +85,8 @@ impl Game {
         }
         self.orbs.retain(|orb| !orb.expired());
         if collected > 0 {
+            let pitch = 0.9 + self.rng.next_f64() as f32 * 0.6;
+            crate::audio::play_here_with("entity.experience_orb.pickup", 0.1, pitch);
             self.collect_xp(collected);
         }
     }

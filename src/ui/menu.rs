@@ -8,6 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use super::ClickSound;
 use egui::{Align, Button, Color32, Frame, Layout, RichText};
 
 use super::{
@@ -127,25 +128,31 @@ impl Menu {
                 .color(Color32::WHITE),
         );
         ui.add_space(48.0);
-        if ui.add_sized(BUTTON, Button::new("Singleplayer")).clicked() {
+        if ui
+            .add_sized(BUTTON, Button::new("Singleplayer"))
+            .clicked_with_sound()
+        {
             self.worlds = level::list_worlds(&self.saves);
             self.selected = None;
             self.screen = Screen::SelectWorld;
         }
         ui.add_space(8.0);
-        if ui.add_sized(BUTTON, Button::new("Options...")).clicked() {
+        if ui
+            .add_sized(BUTTON, Button::new("Options..."))
+            .clicked_with_sound()
+        {
             self.screen = Screen::Options;
         }
         ui.add_space(8.0);
         if ui
             .add_sized(BUTTON, Button::new("Resource Packs..."))
-            .clicked()
+            .clicked_with_sound()
         {
             self.open_packs(options, Screen::Title);
         }
         ui.add_space(8.0);
         ui.add_sized(BUTTON, Button::new("Quit Game"))
-            .clicked()
+            .clicked_with_sound()
             .then_some(MenuAction::Quit)
     }
 
@@ -176,7 +183,7 @@ impl Menu {
                         [400.0, 56.0],
                         Button::selectable(self.selected == Some(i), text),
                     );
-                    if row.clicked() {
+                    if row.clicked_with_sound() {
                         self.selected = Some(i);
                     }
                     if row.double_clicked() {
@@ -193,13 +200,13 @@ impl Menu {
                     can_play,
                     Button::new("Play Selected World").min_size(BUTTON.into()),
                 )
-                .clicked()
+                .clicked_with_sound()
             {
                 play = self.selected;
             }
             if ui
                 .add(Button::new("Create New World").min_size(BUTTON.into()))
-                .clicked()
+                .clicked_with_sound()
             {
                 self.name = "New World".to_owned();
                 self.seed.clear();
@@ -208,7 +215,10 @@ impl Menu {
             }
         });
         ui.add_space(8.0);
-        if ui.add_sized(BUTTON, Button::new("Cancel")).clicked() {
+        if ui
+            .add_sized(BUTTON, Button::new("Cancel"))
+            .clicked_with_sound()
+        {
             self.screen = Screen::Title;
         }
         let i = play?;
@@ -232,16 +242,19 @@ impl Menu {
         ui.label(RichText::new("Leave blank for a random seed").color(GRAY));
         ui.add_space(12.0);
         let mode = format!("Game Mode: {}", self.mode.name());
-        if ui.add_sized(BUTTON, Button::new(mode)).clicked() {
+        if ui.add_sized(BUTTON, Button::new(mode)).clicked_with_sound() {
             self.mode = self.mode.next();
         }
         ui.label(RichText::new(mode_description(self.mode)).color(GRAY));
         ui.add_space(24.0);
         let create = ui
             .add_sized(BUTTON, Button::new("Create New World"))
-            .clicked();
+            .clicked_with_sound();
         ui.add_space(8.0);
-        if ui.add_sized(BUTTON, Button::new("Cancel")).clicked() {
+        if ui
+            .add_sized(BUTTON, Button::new("Cancel"))
+            .clicked_with_sound()
+        {
             self.screen = Screen::SelectWorld;
         }
         create.then(|| MenuAction::Create {

@@ -381,8 +381,10 @@ impl Game {
             .as_deref()
             .is_some_and(|v| v.baby == 0 && !v.trades.is_empty());
         if !can_trade {
+            crate::audio::play("entity.villager.no", mob.feet());
             return false;
         }
+        crate::audio::play("entity.villager.ambient", mob.feet());
         self.container = Some(Container::Merchant(mob.id));
         self.release_input();
         true
@@ -478,6 +480,7 @@ impl Game {
             points += 5;
         }
         let at = self.mobs[m].feet() + DVec3::Y;
+        crate::audio::play("entity.villager.yes", at);
         self.spawn_xp(points, at);
         self.note(crate::advancements::Event::Used("trade".to_owned()));
         true
