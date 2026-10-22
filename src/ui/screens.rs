@@ -4,6 +4,7 @@
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
+use super::doll;
 use super::geometry::Geometry;
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
@@ -164,6 +165,9 @@ pub struct ScreenView<'a> {
     /// The workstation screens' extras.
     pub bench: Option<BenchView>,
     pub merchant: Option<MerchantView>,
+    /// Poses and builds the player's model for the inventory's picture of
+    /// them, given how it should turn.
+    pub doll: Option<&'a dyn Fn(doll::DollAngles) -> doll::Doll>,
 }
 
 /// A drag across slots in progress: the button held and the slots crossed.
@@ -492,6 +496,11 @@ pub fn show(
             scale,
         );
     }
+    if matches!(screen, Screen::Inventory)
+        && let Some(make) = view.doll
+    {
+        paint_doll(&painter, &geo, pointer, make, textures);
+    }
     if let (Screen::Furnace, Some((fuel, cooked))) = (*screen, view.furnace) {
         paint_furnace_progress(&painter, background.id(), origin, scale, fuel, cooked);
     }
@@ -651,6 +660,31 @@ pub fn show(
         }
     }
     actions
+}
+
+/// The player's model in the inventory's black box, turned toward the
+/// mouse.
+fn paint_doll(
+    painter: &Painter,
+    geo: &Geometry,
+    pointer: Option<Pos2>,
+    make: &dyn Fn(doll::DollAngles) -> doll::Doll,
+    textures: &GuiTextures,
+) {
+    let head = geo.origin + vec2(doll::HEAD[0], doll::HEAD[1]) * geo.scale;
+    let offset = pointer.map_or(egui::Vec2::ZERO, |pos| (pos - head) / geo.scale);
+    let figure = make(doll::angles(offset));
+    let feet = geo.origin + vec2(doll::FEET[0], doll::FEET[1]) * geo.scale;
+    let per_block = doll::PIXELS_PER_BLOCK * geo.scale;
+    let painter = painter.with_clip_rect(doll::clip(geo.origin, geo.scale));
+    for (mesh, texture) in [
+        (&figure.body, textures.skin.id()),
+        (&figure.items, textures.atlas.id()),
+    ] {
+        painter.add(egui::Shape::mesh(doll::project(
+            mesh, texture, feet, per_block,
+        )));
+    }
 }
 
 /// Turns a press or drag over the slot under the mouse into actions
@@ -1162,7 +1196,7 @@ mod tests {
                 .unwrap();
         let look = crate::look::Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap();
         let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, look.atlas.image(), &look.res).unwrap();
+        let textures = GuiTextures::load(&ctx, look.atlas.image(), look.skin(), &look.res).unwrap();
         let slot = |_: SlotRef| None;
         let view = ScreenView {
             slot: &slot,
@@ -1172,6 +1206,7 @@ mod tests {
             catalog: &[],
             bench: None,
             merchant: None,
+            doll: None,
         };
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(854.0, 480.0))),

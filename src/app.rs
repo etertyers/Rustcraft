@@ -292,7 +292,12 @@ impl App {
         // The bench measures how fast frames can go.
         renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
-        self.debug_ui = Some(DebugUi::new(&window, look.atlas.image(), &look.res)?);
+        self.debug_ui = Some(DebugUi::new(
+            &window,
+            look.atlas.image(),
+            look.skin(),
+            &look.res,
+        )?);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
         self.items = Some(Items::new().with_recipes(Arc::new(recipes)));
         self.mob_defs = Some(mob_defs);
@@ -709,7 +714,7 @@ impl App {
             renderer.set_textures(&look.atlas, &look.sky, &look.mob_textures);
         }
         if let Some(debug_ui) = self.debug_ui.as_mut()
-            && let Err(err) = debug_ui.set_textures(look.atlas.image(), &look.res)
+            && let Err(err) = debug_ui.set_textures(look.atlas.image(), look.skin(), &look.res)
         {
             error!("can't load the GUI images: {err:#}");
         }
@@ -1273,6 +1278,19 @@ impl App {
             let stack = game.slot_stack(slot)?;
             Some((view_of(&stack)?, game.items().tooltip(&stack)))
         };
+        let held = std::cell::RefCell::new(&mut self.held);
+        let doll = |angles| match (&self.atlas, &self.item_models, self.icons.as_deref()) {
+            (Some(atlas), Some(item_models), Some(icons)) => {
+                let fig = Figure {
+                    icons,
+                    item_models,
+                    atlas: atlas.image(),
+                    slim: self.skin_slim,
+                };
+                crate::ui::doll::build(game, &mut held.borrow_mut(), &fig, angles)
+            }
+            _ => crate::ui::doll::Doll::default(),
+        };
         let view = ScreenView {
             slot: &slot,
             furnace: game.furnace_progress(),
@@ -1281,6 +1299,7 @@ impl App {
             catalog: &self.catalog,
             bench: bench_view(game, self.icons.as_deref()),
             merchant: merchant_view(game, self.icons.as_deref()),
+            doll: Some(&doll),
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();

@@ -139,40 +139,56 @@ pub fn build(
         ViewMode::ThirdBack | ViewMode::ThirdFront => {
             let pose = game.player_pose();
             let (feet, yaw) = game.player_body();
-            add_player(
-                &mut meshes.body,
-                &pose,
-                fig.slim,
-                feet,
-                yaw,
-                [1.0; 3],
-                body_light,
-            );
-            if game
-                .inventory
-                .slot(crate::inventory::player::ARMOR_CHEST)
-                .is_some_and(|s| s.id == items::ELYTRA)
-            {
-                crate::render::player::add_elytra(&mut meshes.elytra, &pose, feet, yaw, body_light);
-            }
-            let frame = model_matrix(&body_frame(&pose, yaw), feet);
-            let rig = rig(&pose, fig.slim);
-            for hand in [Hand::Main, Hand::Off] {
-                let Some(stack) = game.inventory.hand_stack(hand).cloned() else {
-                    continue;
-                };
-                let left = hand == Hand::Off;
-                let up = blocking && game.shield_hand() == Some(hand);
-                let geometry = held.get(&icon(&stack, hand), fig.atlas);
-                let display = third_person_display(fig, &stack, left, up);
-                let matrix =
-                    frame * hand_mount(&rig, !left, fig.slim) * display_matrix(&display, left);
-                let light = crate::render::hand::glinted(body_light, stack.is_enchanted());
-                geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], light);
-            }
+            add_body(&mut meshes, game, held, fig, &pose, feet, yaw, body_light);
         }
     }
     meshes
+}
+
+/// Adds the model in `pose` standing at `feet` facing `yaw`, with the elytra
+/// it wears and what it holds in its hands, to `meshes`' `body`, `elytra`
+/// and `items`.
+#[allow(clippy::too_many_arguments)]
+pub fn add_body(
+    meshes: &mut PlayerMeshes,
+    game: &Game,
+    held: &mut HeldCache,
+    fig: &Figure,
+    pose: &crate::render::player::PlayerPose,
+    feet: glam::Vec3,
+    yaw: f32,
+    light: (u8, u8),
+) {
+    let icons = fig.icons;
+    let pull = game.bow_ticks();
+    // The icon a stack shows: a bow in the main hand looks drawn while it is.
+    let icon = |stack: &ItemStack, hand: Hand| match (pull, hand) {
+        (Some(ticks), Hand::Main) => icons.icon_drawn(stack, ticks),
+        _ => icons.icon(stack),
+    };
+    let blocking = game.is_blocking();
+    add_player(&mut meshes.body, pose, fig.slim, feet, yaw, [1.0; 3], light);
+    if game
+        .inventory
+        .slot(crate::inventory::player::ARMOR_CHEST)
+        .is_some_and(|s| s.id == items::ELYTRA)
+    {
+        crate::render::player::add_elytra(&mut meshes.elytra, pose, feet, yaw, light);
+    }
+    let frame = model_matrix(&body_frame(pose, yaw), feet);
+    let rig = rig(pose, fig.slim);
+    for hand in [Hand::Main, Hand::Off] {
+        let Some(stack) = game.inventory.hand_stack(hand).cloned() else {
+            continue;
+        };
+        let left = hand == Hand::Off;
+        let up = blocking && game.shield_hand() == Some(hand);
+        let geometry = held.get(&icon(&stack, hand), fig.atlas);
+        let display = third_person_display(fig, &stack, left, up);
+        let matrix = frame * hand_mount(&rig, !left, fig.slim) * display_matrix(&display, left);
+        let light = crate::render::hand::glinted(light, stack.is_enchanted());
+        geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], light);
+    }
 }
 
 /// A shield's own display transforms: it is held as a plate, flat to the

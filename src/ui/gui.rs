@@ -57,6 +57,8 @@ pub struct GuiTextures {
     pub anvil: TextureHandle,
     pub grindstone: TextureHandle,
     pub brewing: TextureHandle,
+    /// The player's skin, for the figure in the inventory.
+    pub skin: TextureHandle,
     /// Falls back to the anvil's sheet: Kenzo's 1.12 GUI has no smithing
     /// table, so the slots then sit over the wrong outlines.
     pub smithing: TextureHandle,
@@ -127,7 +129,12 @@ const TABS: &[Sprite] = &[(
 
 impl GuiTextures {
     /// Builds each sheet from the resource layers (see `compose_sheet`).
-    pub fn load(ctx: &egui::Context, atlas: &RgbaImage, res: &Resources) -> Result<Self> {
+    pub fn load(
+        ctx: &egui::Context,
+        atlas: &RgbaImage,
+        skin: &RgbaImage,
+        res: &Resources,
+    ) -> Result<Self> {
         let load = |name: &str, image: &RgbaImage| {
             let size = [image.width() as usize, image.height() as usize];
             let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
@@ -156,6 +163,7 @@ impl GuiTextures {
             anvil: sheet("gui/container/anvil", &[])?,
             grindstone: sheet("gui/container/grindstone", &[])?,
             brewing: sheet("gui/container/brewing_stand", &[])?,
+            skin: load("skin", skin),
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             stonecutter: sheet("gui/container/stonecutter", &[])
