@@ -7,6 +7,7 @@ pub mod menu;
 pub mod packs;
 pub mod pause;
 pub mod screens;
+pub mod stack;
 
 use std::time::Instant;
 
@@ -205,6 +206,15 @@ impl DebugUi {
     pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
         // The overlay isn't interactive, so whether egui consumed the event doesn't matter.
         let _ = self.state.on_window_event(window, event);
+    }
+
+    /// Moves egui's pointer to `pos` (in points), for when the real cursor
+    /// was put there without a mouse event.
+    pub fn point_at(&mut self, pos: egui::Pos2) {
+        self.state
+            .egui_input_mut()
+            .events
+            .push(egui::Event::PointerMoved(pos));
     }
 
     pub fn toggle(&mut self) {

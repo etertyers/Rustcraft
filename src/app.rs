@@ -12,7 +12,10 @@ use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition},
     error::ExternalError,
-    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, StartCause, WindowEvent},
+    event::{
+        DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, StartCause,
+        WindowEvent,
+    },
     event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
@@ -62,6 +65,7 @@ use crate::{
         menu::{Menu, MenuAction},
         pause::{PauseAction, PauseMenu},
         screens::{BenchView, Screen, ScreenAction, ScreenView},
+        stack::{Layer, ScreenStack},
     },
     world::{
         biome::Biome,
@@ -123,8 +127,6 @@ pub struct App {
     screen: Option<Screen>,
     /// The advancements screen (L), with the tab it shows.
     advancements: Option<usize>,
-    /// Whether the player was in bed last frame.
-    sleeping: bool,
     /// The player's settings, from `options.ron`.
     options: Options,
     /// The sound engine, and the resource layers its sounds come from.
@@ -151,7 +153,9 @@ pub struct App {
     animation_start: Instant,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
-    cursor_grabbed: bool,
+    /// The screens open over the game; the one place that decides whether
+    /// the camera has the mouse.
+    stack: ScreenStack,
     last_frame: Instant,
     /// The window is fully hidden; don't draw until it's visible again.
     occluded: bool,
@@ -193,7 +197,6 @@ impl App {
             game: None,
             screen: None,
             advancements: None,
-            sleeping: false,
             options: Options::load(&Options::path()),
             audio: None,
             res: None,
@@ -208,7 +211,7 @@ impl App {
             applied_packs: Vec::new(),
             animation_start: Instant::now(),
             catalog: Vec::new(),
-            cursor_grabbed: false,
+            stack: ScreenStack::default(),
             last_frame: Instant::now(),
             occluded: false,
             frame_skipped: false,
@@ -295,7 +298,11 @@ impl App {
         self.mob_defs = Some(mob_defs);
         self.install_look(look);
         match self.world_kind.clone() {
-            Some(kind) => self.game = Some(self.start_game(kind)?),
+            Some(kind) => {
+                self.game = Some(self.start_game(kind)?);
+                // A click puts the mouse in the window.
+                self.stack.set_in_world(true, false);
+            }
             None => self.menu = Some(Menu::new(level::saves_dir())),
         }
         self.renderer = Some(renderer);
@@ -430,25 +437,106 @@ impl App {
         }
     }
 
-    /// Locks and hides the cursor for mouse look, or releases it.
-    fn set_cursor_grab(&mut self, grab: bool) {
-        let Some(window) = &self.window else {
+    /// Makes the window match the screen stack: the cursor is locked and
+    /// hidden for mouse look when no screen is open, and free otherwise
+    /// (centered, like Minecraft does when a screen opens).
+    fn apply_grab(&mut self) {
+        let Some(grab) = self.stack.pending() else {
             return;
         };
-        let result = if grab {
-            lock_cursor(window)
-        } else {
-            window.set_cursor_grab(CursorGrabMode::None)
-        };
-        if let Err(err) = result {
-            warn!("cursor grab failed: {err}");
-            return;
+        if let Some(window) = &self.window {
+            let result = if grab {
+                lock_cursor(window)
+            } else {
+                window.set_cursor_grab(CursorGrabMode::None)
+            };
+            if let Err(err) = result {
+                warn!("cursor grab failed: {err}");
+                // Wait for the next click rather than failing every frame.
+                self.stack.set_engaged(false);
+                return;
+            }
+            window.set_cursor_visible(!grab);
+            if !grab {
+                Self::center_cursor(window, self.debug_ui.as_mut());
+            }
         }
-        window.set_cursor_visible(!grab);
-        self.cursor_grabbed = grab;
+        self.stack.confirm(grab);
         if !grab && let Some(game) = self.game.as_mut() {
             game.release_input();
         }
+    }
+
+    /// Puts the free cursor in the middle of the window, where egui's idea
+    /// of the pointer is moved too (a locked cursor leaves it stale).
+    fn center_cursor(window: &Window, debug_ui: Option<&mut DebugUi>) {
+        let size = window.inner_size();
+        let center = PhysicalPosition::new(size.width as f64 / 2.0, size.height as f64 / 2.0);
+        if let Err(err) = window.set_cursor_position(center) {
+            log::debug!("centering the cursor failed: {err}");
+        }
+        if let Some(debug_ui) = debug_ui {
+            let scale = window.scale_factor() as f32;
+            debug_ui.point_at(egui::pos2(center.x as f32 / scale, center.y as f32 / scale));
+        }
+    }
+
+    /// A mouse button press or release in the window. A click with no
+    /// screen open takes the mouse back after a pause or leaving the
+    /// window; otherwise it reaches the player only while the camera has
+    /// the mouse.
+    fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        if pressed && button == MouseButton::Left && self.playing() && self.stack.click_in() {
+            return self.apply_grab();
+        }
+        if self.stack.reaches_game()
+            && let Some(game) = self.game.as_mut()
+        {
+            game.on_mouse_button(button, pressed);
+        }
+    }
+
+    fn on_scroll(&mut self, delta: MouseScrollDelta) {
+        if self.stack.reaches_game()
+            && let Some(game) = self.game.as_mut()
+        {
+            game.on_scroll(delta);
+        }
+    }
+
+    /// Raw mouse motion: it turns the camera only while the camera has the
+    /// mouse.
+    fn on_mouse_motion(&mut self, dx: f64, dy: f64) {
+        if self.stack.reaches_game()
+            && let Some(game) = self.game.as_mut()
+        {
+            game.look(dx, dy);
+        }
+    }
+
+    fn open_advancements(&mut self) {
+        self.advancements = Some(0);
+        self.stack.push(Layer::Advancements);
+        self.apply_grab();
+    }
+
+    fn close_advancements(&mut self) {
+        self.advancements = None;
+        self.stack.remove(Layer::Advancements);
+        self.apply_grab();
+    }
+
+    /// Shows an inventory or container screen.
+    fn show_container(&mut self, screen: Screen) {
+        self.screen = Some(screen);
+        self.stack.push(Layer::Container);
+        self.apply_grab();
+    }
+
+    fn hide_container(&mut self) {
+        self.screen = None;
+        self.stack.remove(Layer::Container);
+        self.apply_grab();
     }
 
     fn on_key(&mut self, event: &KeyEvent) {
@@ -466,21 +554,17 @@ impl App {
             && !event.repeat
             && matches!(key, KeyCode::Escape | KeyCode::KeyL)
         {
-            self.advancements = None;
-            self.set_cursor_grab(true);
+            self.close_advancements();
         } else if self.advancements.is_some() {
             // Nothing else works while it is open.
         } else if key == KeyCode::KeyL
             && pressed
             && !event.repeat
             && self.playing()
-            && self.screen.is_none()
-            && self.pause.is_none()
-            && !sleeping
+            && self.stack.is_empty()
             && !rolling
         {
-            self.advancements = Some(0);
-            self.set_cursor_grab(false);
+            self.open_advancements();
         } else if key == KeyCode::Escape && pressed && !event.repeat && rolling {
             // Skipping the poem and credits goes home.
             if let Some(game) = self.game.as_mut() {
@@ -500,8 +584,6 @@ impl App {
             }
         } else if key == KeyCode::Escape && pressed && !event.repeat && self.game.is_some() {
             self.pause_game();
-        } else if key == KeyCode::Escape && pressed {
-            self.set_cursor_grab(false);
         } else if self.screen == Some(Screen::Anvil) && key != KeyCode::F3 {
             // The name box has the keyboard (E and the digits are letters).
         } else if key == KeyCode::KeyE
@@ -521,7 +603,7 @@ impl App {
                 debug_ui.toggle();
             }
         } else if let Some(game) = self.game.as_mut() {
-            game.on_key(key, pressed, event.repeat, self.cursor_grabbed);
+            game.on_key(key, pressed, event.repeat, self.stack.reaches_game());
         }
     }
 
@@ -530,21 +612,17 @@ impl App {
     fn pause_game(&mut self) {
         // The bench keeps flying when the window loses focus, and a scene
         // being captured never pauses.
-        if self.bench.is_none()
-            && self.shot.is_none()
-            && self.playing()
-            && self.screen.is_none()
-            && !self.sleeping
-            && self.pause.is_none()
-        {
+        if self.bench.is_none() && self.shot.is_none() && self.playing() && self.stack.is_empty() {
             self.pause = Some(PauseMenu::default());
-            self.set_cursor_grab(false);
+            self.stack.push(Layer::Pause);
+            self.apply_grab();
         }
     }
 
     fn resume(&mut self) {
         self.pause = None;
-        self.set_cursor_grab(true);
+        self.stack.remove(Layer::Pause);
+        self.apply_grab();
     }
 
     /// Saves the world and goes back to the title screen.
@@ -559,9 +637,10 @@ impl App {
         }
         self.pause = None;
         self.screen = None;
-        self.sleeping = false;
+        self.advancements = None;
         self.menu = Some(Menu::new(level::saves_dir()));
-        self.set_cursor_grab(false);
+        self.stack.set_in_world(false, false);
+        self.apply_grab();
     }
 
     /// Keeps a newly built look's models, icons and atlas.
@@ -681,25 +760,24 @@ impl App {
         let Some(game) = self.game.as_ref().filter(|game| !game.stats.is_dead()) else {
             return;
         };
-        self.screen = Some(if game.mode.has_every_item() {
+        let screen = if game.mode.has_every_item() {
             Screen::Creative { scroll: 0.0 }
         } else {
             Screen::Inventory
-        });
+        };
         if let Some(game) = self.game.as_mut() {
             game.open_inventory();
         }
-        self.set_cursor_grab(false);
+        self.show_container(screen);
     }
 
     /// Closes the screen, throwing out whatever was held on the mouse or
     /// left in a crafting grid (1.0.0).
     fn close_screen(&mut self) {
-        self.screen = None;
         if let Some(game) = self.game.as_mut() {
             game.close_container();
         }
-        self.set_cursor_grab(true);
+        self.hide_container();
     }
 
     /// Shows the screen for a container the game opened (a right-clicked
@@ -711,7 +789,7 @@ impl App {
         let Some(container) = self.game.as_ref().and_then(|game| game.container.as_ref()) else {
             return;
         };
-        self.screen = Some(match container {
+        let screen = match container {
             Container::Crafting { size: 2, .. } => Screen::Inventory,
             Container::Crafting { .. } => Screen::Crafting,
             Container::Chest(_) => Screen::Chest,
@@ -733,8 +811,8 @@ impl App {
                 }
                 _ => Screen::Chest,
             },
-        });
-        self.set_cursor_grab(false);
+        };
+        self.show_container(screen);
     }
 
     fn on_screen_action(&mut self, action: ScreenAction) {
@@ -778,10 +856,7 @@ impl App {
             }
             ScreenAction::Choose(index) => game.choose_cut(index),
             ScreenAction::AdvTab(tab) => self.advancements = Some(tab),
-            ScreenAction::Respawn => {
-                game.respawn();
-                self.set_cursor_grab(true);
-            }
+            ScreenAction::Respawn => game.respawn(),
             ScreenAction::LeaveBed => game.wake(),
             ScreenAction::Pause(PauseAction::Resume) => self.resume(),
             ScreenAction::Pause(PauseAction::SaveAndQuit) => self.quit_to_title(),
@@ -809,7 +884,8 @@ impl App {
                 game.set_view_mode(self.start_view);
                 self.game = Some(game);
                 self.menu = None;
-                self.set_cursor_grab(true);
+                self.stack.set_in_world(true, true);
+                self.apply_grab();
             }
             Err(err) => {
                 error!("{err:#}");
@@ -830,20 +906,16 @@ impl App {
             return self.redraw_menu(event_loop, now);
         }
         self.show_opened_container();
-        // Lying in bed frees the mouse for the Leave Bed button; getting up
-        // takes it back.
+        // Lying in bed frees the mouse for the Leave Bed button; dying
+        // closes any screen and frees it for the Respawn button.
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
-        if sleeping != self.sleeping {
-            self.sleeping = sleeping;
-            self.set_cursor_grab(!sleeping);
-        }
-        // Dying closes any screen and frees the mouse for the Respawn button.
+        self.stack.set(Layer::Bed, sleeping);
         if !self.playing() {
             self.screen = None;
-            if self.cursor_grabbed {
-                self.set_cursor_grab(false);
-            }
+            self.stack.remove(Layer::Container);
         }
+        self.stack.set(Layer::Death, !self.playing());
+        self.apply_grab();
         let (Some(window), Some(renderer), Some(debug_ui), Some(game)) = (
             &self.window,
             self.renderer.as_mut(),
@@ -1133,8 +1205,8 @@ impl App {
             dimension: game.dimension(),
         };
         let hud = Hud {
-            crosshair: self.cursor_grabbed,
-            attack: self.cursor_grabbed.then(|| game.attack_indicator()),
+            crosshair: self.stack.grabbed(),
+            attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
                 .map(|i| {
                     let stack = game.inventory.slot(i)?;
@@ -1348,8 +1420,9 @@ impl ApplicationHandler for App {
             }
             // Like 1.0.0, leaving the window pauses the game.
             WindowEvent::Focused(false) => {
-                self.set_cursor_grab(false);
+                self.stack.set_engaged(false);
                 self.pause_game();
+                self.apply_grab();
             }
             WindowEvent::Occluded(occluded) => {
                 // The bench draws off screen when hidden.
@@ -1358,29 +1431,11 @@ impl ApplicationHandler for App {
                     window.request_redraw();
                 }
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } if !self.cursor_grabbed
-                && self.screen.is_none()
-                && self.pause.is_none()
-                && self.playing()
-                && !self.sleeping =>
-            {
-                self.set_cursor_grab(true)
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.on_mouse_button(button, state == ElementState::Pressed);
             }
-            WindowEvent::MouseInput { state, button, .. } if self.cursor_grabbed => {
-                if let Some(game) = self.game.as_mut() {
-                    game.on_mouse_button(button, state == ElementState::Pressed);
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed => {
-                if let Some(game) = self.game.as_mut() {
-                    game.on_scroll(delta);
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } if self.cursor_grabbed => {
+            WindowEvent::MouseWheel { delta, .. } => self.on_scroll(delta),
+            WindowEvent::CursorMoved { position, .. } if self.stack.reaches_game() => {
                 self.recenter_cursor(position);
             }
             WindowEvent::KeyboardInput { event, .. } => self.on_key(&event),
@@ -1390,11 +1445,8 @@ impl ApplicationHandler for App {
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event
-            && self.cursor_grabbed
-            && let Some(game) = self.game.as_mut()
-        {
-            game.look(dx, dy);
+        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            self.on_mouse_motion(dx, dy);
         }
     }
 
@@ -1720,6 +1772,101 @@ mod tests {
             advancements_view(&game, Some(&icons), 99).unwrap().current,
             4
         );
+    }
+
+    /// A game with the player in a world, the camera holding the mouse.
+    fn app_in_a_world() -> App {
+        let mut app = App::new(None);
+        app.game = Some(flat_game(GameMode::Survival));
+        app.stack.set_in_world(true, true);
+        app.apply_grab();
+        app
+    }
+
+    fn view_of(app: &App) -> (f32, f32, usize) {
+        let game = app.game.as_ref().unwrap();
+        (game.camera.yaw, game.camera.pitch, game.inventory.selected)
+    }
+
+    /// Everything the mouse can do in a window: a click, a drag with the
+    /// button held, wheel notches and trackpad scrolling.
+    fn use_the_mouse(app: &mut App) {
+        for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            app.on_mouse_button(button, true);
+            for step in 0..5 {
+                app.on_mouse_motion(40.0 + step as f64, -25.0);
+            }
+            app.on_mouse_button(button, false);
+        }
+        app.on_scroll(MouseScrollDelta::LineDelta(0.0, -3.0));
+        app.on_scroll(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+            0.0, -90.0,
+        )));
+    }
+
+    #[test]
+    fn the_mouse_turns_the_camera_when_no_screen_is_open() {
+        let mut app = app_in_a_world();
+        let before = view_of(&app);
+        use_the_mouse(&mut app);
+        let after = view_of(&app);
+        assert_ne!(
+            (before.0, before.1),
+            (after.0, after.1),
+            "the drag turned the view"
+        );
+        assert_ne!(before.2, after.2, "scrolling changed the hotbar slot");
+    }
+
+    #[test]
+    fn opening_the_advancements_screen_and_clicking_dragging_and_scrolling_leaves_yaw_and_pitch_alone()
+     {
+        let mut app = app_in_a_world();
+        app.open_advancements();
+        assert!(!app.stack.grabbed(), "the cursor is released");
+        let before = view_of(&app);
+        use_the_mouse(&mut app);
+        assert_eq!(view_of(&app), before);
+        assert!(
+            !app.stack.grabbed(),
+            "a click in the screen didn't grab it again"
+        );
+        // Closing the last screen gives the mouse back to the camera.
+        app.close_advancements();
+        assert!(app.stack.grabbed());
+        use_the_mouse(&mut app);
+        assert_ne!(view_of(&app), before);
+    }
+
+    #[test]
+    fn no_screen_lets_the_mouse_reach_the_player() {
+        for layer in [
+            Layer::Container,
+            Layer::Advancements,
+            Layer::Pause,
+            Layer::Bed,
+            Layer::Death,
+        ] {
+            let mut app = app_in_a_world();
+            app.stack.push(layer);
+            app.apply_grab();
+            let before = view_of(&app);
+            use_the_mouse(&mut app);
+            assert_eq!(view_of(&app), before, "{layer:?}");
+            assert!(!app.stack.grabbed(), "{layer:?}");
+        }
+    }
+
+    #[test]
+    fn a_container_opened_over_another_screen_keeps_the_mouse_free_until_both_close() {
+        let mut app = app_in_a_world();
+        app.show_container(Screen::Chest);
+        app.stack.push(Layer::Pause);
+        app.apply_grab();
+        app.hide_container();
+        assert!(!app.stack.grabbed(), "the pause menu is still open");
+        app.resume();
+        assert!(app.stack.grabbed());
     }
 
     #[test]
