@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rustcraft::{app, bench, game::view::ViewMode, player, shots};
+use rustcraft::{app, cli};
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
@@ -41,9 +41,17 @@ fn main() -> Result<()> {
     if args.iter().any(|arg| arg == "--height-map") {
         return height_map(&args);
     }
+    let cli = match cli::parse(std::env::args().skip(1)) {
+        Ok(cli) => cli,
+        Err(err) => {
+            eprint!("{err}");
+            std::process::exit(err.exit_code());
+        }
+    };
     let event_loop = EventLoop::new()?;
-    let (world, bench, shot, view) = parse_args(std::env::args().skip(1))?;
-    let mut app = app::App::new(world).with_bench(bench).with_view(view);
+    let mut app = app::App::new(cli.world)
+        .with_bench(cli.bench)
+        .with_view(cli.view);
     // `--pack <file or folder>` (repeatable): play or shoot with these
     // resource packs instead of the chosen ones, leaving options.ron be.
     let packs: Vec<String> = args
@@ -54,7 +62,7 @@ fn main() -> Result<()> {
     if !packs.is_empty() {
         app = app.with_packs(packs);
     }
-    if let Some((shot, out)) = shot {
+    if let Some((shot, out)) = cli.shot {
         app = app.with_shot(shot, out);
     }
     event_loop.run_app(&mut app)?;
@@ -117,155 +125,4 @@ fn height_map(args: &[String]) -> Result<()> {
     );
     print!("{}", height_summary(&map.stats()));
     Ok(())
-}
-
-/// The scene to capture and where to save it.
-type ShotArgs = (&'static shots::Shot, std::path::PathBuf);
-
-/// What the command line asked for: the world, a bench, a scene to
-/// capture and the view to start in.
-type Parsed = (
-    Option<app::WorldKind>,
-    Option<bench::Bench>,
-    Option<ShotArgs>,
-    ViewMode,
-);
-
-/// No arguments opens the main menu. `--world <name>` opens a saved world
-/// (creating it with `--seed <n>` and `--creative` if it doesn't exist).
-/// The unsaved test worlds are `--gallery`, `--flat`, and generated terrain
-/// with `--seed <n>`. `--bench [seconds]` flies over generated terrain
-/// and prints frame timings (see `bench`), at `--distance <chunks>` if
-/// given. `--shot <name> [--out <file>]` captures a scene (see `shots`);
-/// `--shot list` lists them. `--view first|back|front` starts in that view
-/// (F5 cycles them). `--nether` and `--end` start in the Nether or the End
-/// of the seed, and
-/// `--pack <name>` uses that resource pack this once.
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
-    let mut args = args.peekable();
-    let (mut seed, mut world, mut mode) = (None, None, player::mode::GameMode::Survival);
-    let mut bench = None;
-    let (mut shot, mut out) = (None, None);
-    let mut test_world = None;
-    let mut nether = false;
-    let mut end = false;
-    let mut view = ViewMode::First;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--shot" => {
-                let name = args.next().context("--shot needs a scene name")?;
-                if name == "list" {
-                    for shot in shots::SHOTS {
-                        println!("{:28} {}", shot.name, shot.about);
-                    }
-                    std::process::exit(0);
-                }
-                shot = Some(
-                    shots::find(&name)
-                        .with_context(|| format!("no scene {name:?} (try --shot list)"))?,
-                );
-            }
-            "--out" => out = Some(args.next().context("--out needs a file")?.into()),
-            "--bench" => {
-                let seconds = match args.next_if(|next| !next.starts_with("--")) {
-                    Some(value) => value
-                        .parse()
-                        .with_context(|| format!("bad bench length {value:?}"))?,
-                    None => bench::DEFAULT_SECONDS,
-                };
-                bench
-                    .get_or_insert_with(|| bench::Bench::new(seconds))
-                    .seconds = seconds;
-            }
-            "--perf-test" => {
-                let mut perf = bench::Bench::new(bench::PERF_SECONDS);
-                perf.distance = Some(bench::PERF_DISTANCE);
-                perf.perf_report = Some(format!("docs/perf/m{}.md", bench::PERF_MILESTONE).into());
-                bench = Some(perf);
-            }
-            "--distance" => {
-                let value = args.next().context("--distance needs a number of chunks")?;
-                let distance = value
-                    .parse()
-                    .with_context(|| format!("bad render distance {value:?}"))?;
-                bench
-                    .get_or_insert_with(|| bench::Bench::new(bench::DEFAULT_SECONDS))
-                    .distance = Some(distance);
-            }
-            "--view" => {
-                let value = args.next().context("--view needs first, back or front")?;
-                view = match value.as_str() {
-                    "first" => ViewMode::First,
-                    "back" => ViewMode::ThirdBack,
-                    "front" => ViewMode::ThirdFront,
-                    other => anyhow::bail!("bad view {other:?} (first, back or front)"),
-                };
-            }
-            "--gallery" => test_world = Some(app::WorldKind::Gallery),
-            // Read in `main`.
-            "--pack" => {
-                args.next().context("--pack needs a resource pack's name")?;
-            }
-            "--flat" => test_world = Some(app::WorldKind::Flat),
-            "--nether" => nether = true,
-            "--end" => end = true,
-            "--world" => world = Some(args.next().context("--world needs a name")?),
-            "--creative" => mode = player::mode::GameMode::Creative,
-            "--seed" => {
-                let value = args.next().context("--seed needs a number")?;
-                seed = Some(
-                    value
-                        .parse()
-                        .with_context(|| format!("bad seed {value:?}"))?,
-                );
-            }
-            other => anyhow::bail!(
-                "unknown argument {other:?} (try --world <name>, --seed <n>, --creative, --flat, --gallery, --nether, --end, --bench [seconds], --distance <chunks> or --shot <name>)"
-            ),
-        }
-    }
-    let shot = shot.map(|shot: &'static shots::Shot| {
-        let out = out.unwrap_or_else(|| format!("docs/screenshots/{}.png", shot.name).into());
-        (shot, out)
-    });
-    let bench_world = bench.as_mut().map(|bench| {
-        use rustcraft::world::dimension::Dimension;
-        let seed = seed.unwrap_or(bench::SEED);
-        let (dimension, kind) = if nether {
-            (Dimension::Nether, app::WorldKind::Nether { seed })
-        } else if end {
-            (Dimension::End, app::WorldKind::End { seed })
-        } else {
-            (Dimension::Overworld, app::WorldKind::Generated { seed })
-        };
-        bench.dimension = dimension;
-        // Each dimension's report has its own file.
-        if let Some(path) = bench.perf_report.as_mut() {
-            let suffix = match dimension {
-                Dimension::Overworld => "",
-                Dimension::Nether => "-nether",
-                Dimension::End => "-end",
-            };
-            if !suffix.is_empty() {
-                *path = format!("docs/perf/m{}{suffix}.md", bench::PERF_MILESTONE).into();
-            }
-        }
-        kind
-    });
-    if let Some(kind) = bench_world {
-        return Ok((Some(kind), bench, None, view));
-    }
-    let world = match (world, seed) {
-        _ if nether => Some(app::WorldKind::Nether {
-            seed: seed.unwrap_or(bench::SEED),
-        }),
-        _ if end => Some(app::WorldKind::End {
-            seed: seed.unwrap_or(bench::SEED),
-        }),
-        _ if test_world.is_some() => test_world,
-        (Some(name), seed) => Some(app::WorldKind::Saved { name, seed, mode }),
-        (None, Some(seed)) => Some(app::WorldKind::Generated { seed }),
-        (None, None) => None,
-    };
-    Ok((world, None, shot, view))
 }

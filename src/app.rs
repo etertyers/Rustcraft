@@ -84,6 +84,9 @@ pub enum WorldKind {
         seed: Option<u64>,
         mode: GameMode,
     },
+    /// A new world in a folder named after `name` (with `-` added if that
+    /// is taken), with a random seed (`--creative` alone).
+    New { name: String, mode: GameMode },
     /// Generated terrain from a seed (the default).
     Generated { seed: u64 },
     /// Endless flat grass plain (`--flat`).
@@ -335,6 +338,10 @@ impl App {
                     let seed = seed.unwrap_or_else(level::random_seed);
                     Game::create(&saves, &name, seed, mode, items, models)
                 };
+            }
+            WorldKind::New { name, mode } => {
+                let seed = level::random_seed();
+                return Game::create(&level::saves_dir(), &name, seed, mode, items, models);
             }
             // The test worlds below aren't saved.
             WorldKind::Generated { seed } => {

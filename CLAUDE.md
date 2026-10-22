@@ -58,7 +58,12 @@ cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight,
 cargo run --release -- --perf-test [--nether|--end]   # the performance gate: writes docs/perf/m<N>.md (§7.2)
 cargo bench                    # chunk generation, lighting, meshing and fluid benchmarks
 cargo run --release -- --end         # an unsaved test world in the End, dragon circling (also --nether)
+cargo run --release -- --creative    # a new creative world "Creative test", opened without the menu
+cargo run --release -- --world <name> [--creative] [--seed <n>]   # open that saved world, or create it
+cargo run --release -- --help        # every flag (note the `--`: without it cargo rejects the flag itself)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
+# Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end,
+#   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>], --help
 scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
 ```
