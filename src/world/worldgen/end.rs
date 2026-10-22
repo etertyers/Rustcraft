@@ -58,6 +58,9 @@ pub const GATEWAYS: usize = 20;
 /// 1000; 20 blocks of void to 600 keeps the first ones within reach of a
 /// gateway's 1024).
 pub const OUTER_START: f64 = 600.0;
+/// Chorus plants per chunk on the outer islands, at most (modern's 0–4).
+const CHORUS_PER_CHUNK: u32 = 4;
+const CHORUS_SALT: u64 = 0x43_484F_5255;
 /// The outer islands' grid, in blocks, and the chance in 100 a cell has
 /// one.
 const CELL: i32 = 96;
@@ -268,30 +271,34 @@ impl End {
         found
     }
 
-    /// A chorus plant growing from the island's top at the column, if one
-    /// does there (about one column in sixty): a trunk two to five blocks
-    /// tall, with a flower on top.
-    fn chorus(&self, chunk: &mut Chunk, local: (usize, usize), at: (i32, i32), top: i32) {
-        let h =
-            mix(self.seed ^ 0x43_484F_5255 ^ mix((at.0 as u32 as u64) << 32 | at.1 as u32 as u64));
-        if !h.is_multiple_of(60) {
-            return;
-        }
-        let height = 2 + (h >> 8) % 4;
-        for i in 1..=height as i32 {
-            chunk.set(
-                local.0,
-                (top + i) as usize,
-                local.1,
-                BlockState::of(blocks::CHORUS_PLANT),
+    /// The chorus plants rooted in chunk `pos` (none to four of them, on the
+    /// outer islands' end stone), grown whole, so a chunk can draw the part of
+    /// a neighbor's plant that leans over it.
+    fn chorus_plants(&self, pos: ChunkPos) -> Vec<(IVec3, BlockState)> {
+        let mut rng = Rng::for_chunk(self.seed, pos.x, pos.z, CHORUS_SALT);
+        let (x0, z0) = pos.min_block();
+        let mut blocks = Vec::new();
+        for _ in 0..rng.below(CHORUS_PER_CHUNK + 1) {
+            let (x, z) = (
+                x0 + rng.below(CHUNK_SIZE as u32) as i32,
+                z0 + rng.below(CHUNK_SIZE as u32) as i32,
             );
+            if f64::from(x).hypot(f64::from(z)) < OUTER_START - 60.0 {
+                continue;
+            }
+            let Some(top) = self.top(x, z) else {
+                continue;
+            };
+            let mut growth = Rng::new(mix(self.seed
+                ^ CHORUS_SALT
+                ^ mix((x as u32 as u64) << 32 | z as u32 as u64)));
+            blocks.extend(crate::world::chorus::grow_plant(
+                IVec3::new(x, top + 1, z),
+                &mut growth,
+                &|at| self.solid(at.x, at.y, at.z),
+            ));
         }
-        chunk.set(
-            local.0,
-            (top + height as i32 + 1) as usize,
-            local.1,
-            BlockState::of(blocks::CHORUS_FLOWER),
-        );
+        blocks
     }
 
     pub fn generate(&self, pos: ChunkPos) -> Chunk {
@@ -302,16 +309,13 @@ impl End {
                 chunk.set_biome(lx, lz, Biome::TheEnd);
                 let (x, z) = (x0 + lx as i32, z0 + lz as i32);
                 let spans = self.spans(x, z);
-                let Some(&(highest, _)) = spans.iter().max_by_key(|(top, _)| *top) else {
+                let Some(_) = spans.iter().max_by_key(|(top, _)| *top) else {
                     continue;
                 };
                 for (top, bottom) in spans {
                     for y in bottom.max(1)..=top {
                         chunk.set(lx, y as usize, lz, END_STONE);
                     }
-                }
-                if f64::from(x).hypot(f64::from(z)) >= OUTER_START - 60.0 {
-                    self.chorus(&mut chunk, (lx, lz), (x, z), highest);
                 }
             }
         }
@@ -334,6 +338,14 @@ impl End {
                 }
             }
         };
+        // Plants lean at most 8 blocks, so only the neighbors' reach this chunk.
+        if f64::from(x0).hypot(f64::from(z0)) > OUTER_START - 200.0 {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    put(&mut chunk, self.chorus_plants(pos.offset(dx, dz)));
+                }
+            }
+        }
         for spike in spikes(self.seed) {
             if spike.reaches(pos) {
                 put(&mut chunk, spike.blocks());

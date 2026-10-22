@@ -5,6 +5,7 @@ pub mod blend;
 pub mod block;
 pub mod block_entity;
 pub mod blocks;
+pub mod chorus;
 pub mod chunk;
 pub mod connect;
 pub mod daytime;

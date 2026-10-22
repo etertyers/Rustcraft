@@ -66,6 +66,9 @@ pub fn update_shape(
 ) -> BlockState {
     let def = state.def();
     let near = |face: Face| get(at + offset(face)).unwrap_or(BlockState::AIR);
+    if state.is(blocks::CHORUS_PLANT) {
+        return super::chorus::connect(state, at, get);
+    }
     match def.shape {
         Shape::Fence => SIDES.iter().fold(state, |s, &face| {
             let other = near(face);

@@ -64,6 +64,8 @@ cargo run --release -- --help        # every flag (note the `--`: without it car
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end,
 #   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>], --help
+cargo run --release -- --spawn-test --seed 12345   # one night in plains, prints monster and animal counts every 1,000 ticks
+cargo run --release -- --flower-test --seed 12345   # flowers per chunk by biome
 scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
 ```
@@ -117,6 +119,8 @@ src/
   world/structure/   # structure placement and per-chunk writing, templates (RON) and jigsaw joining, loot; designs/ draws the shipped templates (--write-structures)
   entity/villager.rs, game/villagers.rs   # professions, levels and trades; job sites, beds, schedule, breeding, golems, trading
   game/{spawners,capture}.rs   # spawners spawning, the creative capture tool (F8/F9 corners, F10 save)
+  world/chorus.rs   # chorus plants: how one grows, joins its neighbors and what holds it up
+  game/spawn_test.rs, world/worldgen/flower_stats.rs   # --spawn-test and --flower-test
   world/{dimension,portal}.rs, world/worldgen/nether.rs   # dimensions, portal frames, the Nether's terrain, biomes and features
   game/{dimensions,portals,nether_mobs}.rs, entity/fireball.rs   # switching dimensions, lighting and travelling through portals, ghasts' and blazes' fireballs, bartering, striders
   world/structure/{nether,fortress,bastion}.rs, inventory/smithing.rs   # the Nether's structures (placement, fortresses, bastions and its ruined portals), the netherite upgrade
@@ -462,13 +466,13 @@ Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the plann
   - [x] Steve appears in the inventory and follows the mouse
   - [x] Modern creative inventory with tabs and a search bar
   - [x] Recipe book sidebar in the crafting table and the inventory
-- [ ] **Session 3: player and world**
-  - [ ] Sneaking stops at vanilla's edge, and standing up there doesn't make you fall
-  - [ ] Walk between path, farmland and full blocks without jumping
-  - [ ] Using food interacts with blocks and mobs first, and eats only when there's nothing to interact with
-  - [ ] Overworld mob spawning matches vanilla caps and rules
-  - [ ] Plains flowers at vanilla density (flower forests unchanged)
-  - [ ] Chorus plants use chorus_plant stems with chorus_flower tips, and drop chorus fruit
+- [x] **Session 3: player and world**
+  - [x] Sneaking stops at vanilla's edge, and standing up there doesn't make you fall
+  - [x] Walk between path, farmland and full blocks without jumping
+  - [x] Using food interacts with blocks and mobs first, and eats only when there's nothing to interact with
+  - [x] Overworld mob spawning matches vanilla caps and rules
+  - [x] Plains flowers at vanilla density (flower forests unchanged)
+  - [x] Chorus plants use chorus_plant stems with chorus_flower tips, and drop chorus fruit
 - [ ] **Session 4: mobs and the End**
   - [ ] Hostile mobs use real pathfinding and vanilla attack behavior
   - [ ] Mobs show their held items (skeletons hold bows)

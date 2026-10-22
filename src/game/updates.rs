@@ -20,6 +20,7 @@ use crate::{
     world::{
         Face,
         block::{BlockState, Placement},
+        blocks, chorus,
         chunk::ChunkPos,
         connect, harvest,
     },
@@ -57,6 +58,7 @@ impl Game {
                     continue;
                 }
                 self.pop_unsupported(next, at);
+                self.pop_chorus(next);
                 self.harden(next);
                 self.schedule_fall(next);
                 let world = self.chunks.world();
@@ -109,6 +111,38 @@ impl Game {
         for stack in harvest::drops(state, None, &mut random) {
             self.entities
                 .push(ItemEntity::from_block(stack, cell, &mut random));
+        }
+        self.edit(&[(cell, BlockState::AIR)]);
+    }
+
+    /// A chorus plant or flower at `cell` that nothing holds up any more
+    /// breaks (modern `ChorusPlantBlock` and `ChorusFlowerBlock` `canSurvive`):
+    /// the plant drops fruit half the time, the flower drops nothing, and
+    /// whatever hung on it is checked in turn by the edit.
+    fn pop_chorus(&mut self, cell: IVec3) {
+        let world = self.chunks.world();
+        let get = |p: IVec3| world.block(p.x, p.y, p.z);
+        let Some(state) = get(cell) else {
+            return;
+        };
+        let plant = state.is(blocks::CHORUS_PLANT);
+        let holds = if plant {
+            chorus::plant_survives(cell, &get)
+        } else if state.is(blocks::CHORUS_FLOWER) {
+            chorus::flower_survives(cell, &get)
+        } else {
+            return;
+        };
+        if holds {
+            return;
+        }
+        if plant {
+            let rng = &mut self.rng;
+            let mut random = || rng.next_f64() as f32;
+            for stack in harvest::drops(state, None, &mut random) {
+                self.entities
+                    .push(ItemEntity::from_block(stack, cell, &mut random));
+            }
         }
         self.edit(&[(cell, BlockState::AIR)]);
     }
@@ -430,5 +464,44 @@ mod tests {
             );
         }
         assert_eq!(game.entities.len(), 3, "and dropped");
+    }
+
+    #[test]
+    fn breaking_a_chorus_plants_base_brings_the_whole_plant_down() {
+        let mut game = flat_game(GameMode::Survival);
+        game.entities.clear();
+        let end = BlockState::of(blocks::END_STONE);
+        let floor: Vec<_> = (0..32)
+            .flat_map(|z| (0..32).map(move |x| (IVec3::new(x, 63, z), end)))
+            .collect();
+        game.set_blocks(&floor);
+        let mut rng = crate::world::worldgen::rng::Rng::new(5);
+        let origin = IVec3::new(16, 64, 16);
+        let plant = crate::world::chorus::grow_plant(origin, &mut rng, &|p| p.y <= 63);
+        game.set_blocks(&plant);
+        game.run_ticks(2);
+        let count = |game: &super::Game| {
+            (0..32)
+                .flat_map(|z| (60..90).flat_map(move |y| (0..32).map(move |x| IVec3::new(x, y, z))))
+                .filter(|p| {
+                    game.chunks
+                        .world()
+                        .block(p.x, p.y, p.z)
+                        .is_some_and(|b| b.is(blocks::CHORUS_PLANT) || b.is(blocks::CHORUS_FLOWER))
+                })
+                .count()
+        };
+        assert_eq!(count(&game), plant.len(), "the plant stands");
+        game.entities.clear();
+        game.set_blocks(&[(origin, BlockState::AIR)]);
+        game.run_ticks(2);
+        assert_eq!(count(&game), 0, "all of it came down");
+        // Flowers drop nothing when their support goes; stems only fruit.
+        assert!(
+            game.entities
+                .iter()
+                .all(|item| item.stack.id == crate::inventory::items::CHORUS_FRUIT),
+            "only fruit"
+        );
     }
 }

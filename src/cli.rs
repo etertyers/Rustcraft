@@ -39,7 +39,9 @@ Usage: cargo run --release -- [flags]
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
   --help                this text
 Tools: --write-structures, --asset-report, --gen-placeholders,
-       --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>]
+       --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>],
+       --spawn-test [--seed <n>] (one night of mob counts in plains),
+       --flower-test [--seed <n>] (flowers per chunk by biome)
 ";
 
 /// Why the command line wasn't used: a mistake, or `--help`.
