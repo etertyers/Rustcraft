@@ -216,6 +216,9 @@ pub enum Spawn {
         min_light: u8,
         chance: f32,
         group: u8,
+        /// Its share of the biome's animals, against the other kinds.
+        #[serde(default = "hundred")]
+        weight: u32,
         #[serde(default)]
         biomes: Vec<Biome>,
     },

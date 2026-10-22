@@ -3,8 +3,12 @@
 
 use glam::{DVec3, IVec3};
 
-use super::{Game, tests::lit_flat_game};
+use super::{
+    Game,
+    tests::{full_flat_game, lit_flat_game},
+};
 use crate::{
+    config::spawning,
     entity::{mob::Mob, mobs::Spawn},
     inventory::{items, stack::ItemStack},
     player::mode::GameMode,
@@ -983,4 +987,96 @@ fn saved_animals_keep_their_color_tameness_and_coat() {
     // Monsters aren't saved.
     spawn(&mut game, "zombie", 8.5, 8.5);
     assert!(game.saved_mobs().iter().all(|m| m.name != "zombie"));
+}
+
+fn animals(game: &Game) -> usize {
+    game.mobs
+        .iter()
+        .filter(|m| matches!(game.mob_defs.get(m.kind).spawn, Spawn::Ground { .. }))
+        .count()
+}
+
+#[test]
+fn cycle_spawning_stops_at_the_caps_for_one_player() {
+    let mut game = full_flat_game(GameMode::Creative);
+    game.time = NIGHT;
+    for _ in 0..300 {
+        game.spawn_category(&spawning::MONSTER);
+        assert!(
+            game.monster_count() <= 70,
+            "{} monsters",
+            game.monster_count()
+        );
+    }
+    assert!(
+        game.monster_count() >= 60,
+        "the cap fills: {}",
+        game.monster_count()
+    );
+    for cycle in 0..200 {
+        game.time = 400 * (cycle + 45);
+        game.spawn_category(&spawning::CREATURE);
+        assert!(animals(&game) <= 10, "{} animals", animals(&game));
+    }
+    assert!(animals(&game) > 0, "animals come by cycle too");
+}
+
+#[test]
+fn animals_are_tried_only_every_400_ticks() {
+    let mut game = full_flat_game(GameMode::Creative);
+    for time in [1, 399, 401, 799, 1_001] {
+        game.time = time;
+        for _ in 0..20 {
+            game.spawn_category(&spawning::CREATURE);
+        }
+    }
+    assert_eq!(animals(&game), 0);
+    game.time = 800;
+    for _ in 0..20 {
+        game.spawn_category(&spawning::CREATURE);
+    }
+    assert!(animals(&game) > 0);
+}
+
+#[test]
+fn nothing_spawns_within_24_blocks_of_the_player_or_the_world_spawn() {
+    let mut game = full_flat_game(GameMode::Creative);
+    game.time = NIGHT;
+    for cycle in 0..100 {
+        game.spawn_category(&spawning::MONSTER);
+        game.time = 400 * (cycle + 45);
+        game.spawn_category(&spawning::CREATURE);
+        game.time = NIGHT;
+    }
+    assert!(!game.mobs.is_empty());
+    for mob in &game.mobs {
+        let feet = mob.feet();
+        assert!(feet.distance(game.body.position()) >= 24.0, "{feet}");
+        assert!(feet.distance(game.spawn) >= 24.0, "{feet}");
+        assert!(feet.distance(game.body.position()) <= 128.0, "{feet}");
+    }
+}
+
+#[test]
+fn hostiles_need_block_light_zero() {
+    let mut game = full_flat_game(GameMode::Creative);
+    game.time = NIGHT;
+    let dark = IVec3::new(40, 64, 40);
+    let lit = IVec3::new(60, 64, 60);
+    game.set_blocks(&[(lit + IVec3::X, BlockState::of(blocks::TORCH))]);
+    for _ in 0..200 {
+        game.chunks.update(crate::world::chunk::ChunkPos::new(0, 0));
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        game.chunks.light_at(lit.x, lit.y, lit.z).unwrap().1 > 0,
+        "torch light arrived"
+    );
+    let tries = |game: &mut Game, cell| {
+        (0..3000)
+            .filter(|_| game.can_monster_spawn(cell, 7))
+            .count()
+    };
+    assert!(tries(&mut game, dark) > 0, "the dark spot spawns at night");
+    assert_eq!(tries(&mut game, lit), 0, "never beside a torch");
 }

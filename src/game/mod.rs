@@ -1728,6 +1728,26 @@ pub(crate) mod tests {
         Arc::new(MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap())
     }
 
+    /// A flat world of 17 × 17 chunks (a full spawn area for one player) with
+    /// light computed.
+    pub(crate) fn full_flat_game(mode: GameMode) -> Game {
+        let (items, models) = registries();
+        let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 8, 4);
+        let feet = DVec3::new(0.5, 64.0, 0.5);
+        let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).with_mobs(mob_registry());
+        game.mode = mode;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while game.chunks.world().len() < 289
+            || game.chunks.light_at(-127, 64, -127).is_none()
+            || game.chunks.light_at(127, 64, 127).is_none()
+        {
+            assert!(Instant::now() < deadline, "chunks never loaded");
+            game.chunks.update(ChunkPos::new(0, 0));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        game
+    }
+
     /// A flat world 5×5 chunks around the origin with light computed.
     pub(crate) fn lit_flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();

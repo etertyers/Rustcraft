@@ -10,6 +10,7 @@ use glam::{DVec3, IVec3};
 
 use super::Game;
 use crate::{
+    config::spawning::{self, Category},
     entity::{
         ai::{self, Env, Other, Target, View},
         mob::{Mob, MobData},
@@ -33,14 +34,12 @@ use crate::{
 };
 
 /// Monsters don't spawn closer than this to the player (1.0.0).
-const MIN_SPAWN_DISTANCE: f64 = 24.0;
+const MIN_SPAWN_DISTANCE: f64 = spawning::MIN_DISTANCE;
 /// Chunks this far from the player (Chebyshev) take part in spawning.
-const SPAWN_CHUNK_RADIUS: i32 = 8;
+const SPAWN_CHUNK_RADIUS: i32 = spawning::CHUNK_RADIUS;
 /// Heights slimes spawn at in swamps (modern y 51..70, above sea level,
 /// so the same here).
 const SWAMP_SLIMES: std::ops::Range<i32> = 51..70;
-/// 1.0.0's monster cap: this many per 256 eligible chunks.
-const MONSTERS_PER_256_CHUNKS: usize = 70;
 /// The cap on sea creatures (modern: 5 squid, 20 fish; one cap here).
 const WATER_MOBS_PER_256_CHUNKS: usize = 20;
 /// Besides blazes and wither skeletons, what spawns in fortresses: name,
@@ -415,7 +414,7 @@ impl Game {
         self.tick_animals();
         self.tick_nether_mobs();
         self.tick_villagers();
-        self.spawn_monsters();
+        self.spawn_cycle();
         self.spawn_water_mobs();
         self.spawn_striders();
         self.spawn_phantoms();
@@ -557,41 +556,67 @@ impl Game {
         self.chunks.world().biome_at(x, z).unwrap_or_default()
     }
 
-    /// 1.0.0's `performWorldGenSpawning`: maybe a group of animals on
-    /// suitable ground in a new chunk.
+    /// `NaturalSpawner.spawnMobsForChunkGeneration`: a new chunk has a chance
+    /// (its biome's creature spawn probability) of one pack of animals, of a
+    /// kind picked by the biome's weights.
     fn populate(&mut self, pos: ChunkPos) {
-        let kinds: Vec<MobKind> = self.mob_defs.iter().map(|(kind, _)| kind).collect();
-        for kind in kinds {
-            let Spawn::Ground {
-                ref blocks,
-                chance,
-                group,
-                ref biomes,
-                ..
-            } = self.mob_defs.get(kind).spawn
-            else {
-                continue;
-            };
-            let (blocks, biomes) = (blocks.clone(), biomes.clone());
-            if self.rng.next_f64() as f32 >= chance {
-                continue;
-            }
-            let (min_x, min_z) = pos.min_block();
-            let mut x = min_x + (self.rng.next_f64() * 16.0) as i32;
-            let mut z = min_z + (self.rng.next_f64() * 16.0) as i32;
-            if !biomes.is_empty() && !biomes.contains(&self.biome_at(x, z)) {
-                continue;
-            }
-            for _ in 0..group {
-                if let Some(feet) = self.ground_spot(x, z, &blocks) {
-                    let yaw = (self.rng.next_f64() as f32) * std::f32::consts::TAU;
-                    let mob = self.new_mob(kind, feet, yaw);
-                    self.add_mob(mob);
-                }
-                x += (self.rng.next_f64() * 5.0) as i32 - (self.rng.next_f64() * 5.0) as i32;
-                z += (self.rng.next_f64() * 5.0) as i32 - (self.rng.next_f64() * 5.0) as i32;
-            }
+        let (min_x, min_z) = pos.min_block();
+        let mut x = min_x + (self.rng.next_f64() * 16.0) as i32;
+        let mut z = min_z + (self.rng.next_f64() * 16.0) as i32;
+        let biome = self.biome_at(x, z);
+        let chance = match biome {
+            Biome::SnowyPlains => spawning::SNOWY_PLAINS_PACK_CHANCE,
+            Biome::Badlands => spawning::BADLANDS_PACK_CHANCE,
+            _ => spawning::CHUNK_PACK_CHANCE,
+        };
+        if self.rng.next_f64() as f32 >= chance {
+            return;
         }
+        let Some((kind, group)) = self.pick_creature_kind(biome) else {
+            return;
+        };
+        let Spawn::Ground { ref blocks, .. } = self.mob_defs.get(kind).spawn else {
+            return;
+        };
+        let blocks = blocks.clone();
+        for _ in 0..group {
+            if let Some(feet) = self.ground_spot(x, z, &blocks) {
+                let yaw = (self.rng.next_f64() as f32) * std::f32::consts::TAU;
+                let mob = self.new_mob(kind, feet, yaw);
+                self.add_mob(mob);
+            }
+            x += (self.rng.next_f64() * 5.0) as i32 - (self.rng.next_f64() * 5.0) as i32;
+            z += (self.rng.next_f64() * 5.0) as i32 - (self.rng.next_f64() * 5.0) as i32;
+        }
+    }
+
+    /// An animal kind for `biome` by weight, and its pack size.
+    fn pick_creature_kind(&mut self, biome: Biome) -> Option<(MobKind, u8)> {
+        let options: Vec<(MobKind, u8, u32)> = self
+            .mob_defs
+            .iter()
+            .filter_map(|(kind, def)| match &def.spawn {
+                Spawn::Ground {
+                    group,
+                    weight,
+                    biomes,
+                    ..
+                } if biomes.contains(&biome) => Some((kind, *group, *weight)),
+                _ => None,
+            })
+            .collect();
+        let total: u32 = options.iter().map(|o| o.2).sum();
+        if total == 0 {
+            return None;
+        }
+        let mut roll = self.rng.below(total);
+        options.into_iter().find_map(|(kind, group, weight)| {
+            if roll < weight {
+                return Some((kind, group));
+            }
+            roll -= weight;
+            None
+        })
     }
 
     /// Feet position on top of column (x, z) if its surface is one of
@@ -617,60 +642,206 @@ impl Game {
             .then(|| DVec3::new(x as f64 + 0.5, feet as f64, z as f64 + 0.5))
     }
 
-    /// The monsters near the player, and how many may be (the cap grows with
-    /// the chunks in range).
-    fn monster_count(&self) -> usize {
+    /// The category a mob counts toward, if natural spawning tracks it.
+    fn category_of(&self, mob: &Mob) -> Option<&'static Category> {
+        match self.mob_defs.get(mob.kind).spawn {
+            Spawn::Dark { .. } | Spawn::SlimeChunk { .. } | Spawn::Fortress { .. } => {
+                Some(&spawning::MONSTER)
+            }
+            Spawn::Nether { .. } => Some(&spawning::MONSTER),
+            Spawn::Ground { .. } => Some(&spawning::CREATURE),
+            _ => None,
+        }
+    }
+
+    /// Mobs that count toward a cap: not tamed or ridden (persistent), and
+    /// in a chunk near the player.
+    fn counted_in(&self, category: &Category, center: ChunkPos) -> usize {
         self.mobs
             .iter()
-            .filter(|mob| self.mob_defs.get(mob.kind).ai.is_monster() && !mob.is_dead())
+            .filter(|mob| !mob.is_dead() && !mob.data.tamed && !mob.ridden)
+            .filter(|mob| {
+                self.category_of(mob)
+                    .is_some_and(|c| c.name == category.name)
+            })
+            .filter(|mob| {
+                let at =
+                    ChunkPos::of_block(mob.feet().x.floor() as i32, mob.feet().z.floor() as i32);
+                (at.x - center.x).abs().max((at.z - center.z).abs()) <= SPAWN_CHUNK_RADIUS
+            })
             .count()
     }
 
-    /// 1.0.0's `findChunksForSpawning` for monsters: in each chunk near the
-    /// player, a random spot that's dark, free and on solid ground, at
-    /// least 24 blocks away, up to the cap. The kind is picked among those
-    /// that spawn in the spot's biome by weight, and arrives with a pack.
-    pub(super) fn spawn_monsters(&mut self) {
+    /// The chunks that take part in spawning: loaded, within the radius of
+    /// the player, in random order.
+    fn spawnable_chunks(&mut self, center: ChunkPos) -> Vec<ChunkPos> {
+        let mut chunks: Vec<ChunkPos> = (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS)
+            .flat_map(|dz| (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).map(move |dx| (dx, dz)))
+            .map(|(dx, dz)| center.offset(dx, dz))
+            .filter(|&pos| self.chunks.world().get(pos).is_some())
+            .collect();
+        for i in (1..chunks.len()).rev() {
+            let j = self.rng.below(i as u32 + 1) as usize;
+            chunks.swap(i, j);
+        }
+        chunks
+    }
+
+    /// One tick of natural spawning: each category whose turn it is.
+    pub(super) fn spawn_cycle(&mut self) {
+        self.spawn_category(&spawning::MONSTER);
+        self.spawn_category(&spawning::CREATURE);
+    }
+
+    /// `NaturalSpawner.spawnForChunk` for every spawnable chunk and each
+    /// category under its cap.
+    pub(super) fn spawn_category(&mut self, category: &Category) {
+        if !self.time.is_multiple_of(category.every) {
+            return;
+        }
         let player = self.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
-        let side = SPAWN_CHUNK_RADIUS * 2 + 1;
-        let cap = MONSTERS_PER_256_CHUNKS * (side * side) as usize / 256;
-        for dz in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
-            for dx in -SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS {
-                if self.monster_count() >= cap {
-                    return;
+        let chunks = self.spawnable_chunks(center);
+        // The cap grows with the chunks in range: 70 for a full 17 × 17.
+        let cap = category.cap * chunks.len() / spawning::CAP_CHUNKS;
+        let mut count = self.counted_in(category, center);
+        for pos in chunks {
+            if count >= cap {
+                return;
+            }
+            count += self.spawn_in_chunk(category, pos, cap - count);
+        }
+    }
+
+    /// A random spot in the chunk, then up to three packs from it, no more
+    /// than `room` mobs in all. Returns how many arrived.
+    fn spawn_in_chunk(&mut self, category: &Category, pos: ChunkPos, room: usize) -> usize {
+        // Up to the top of the chunk's highest blocks (modern picks a height
+        // up to the surface), so mountains get monsters too.
+        let Some(top) = self.chunks.world().get(pos).map(|c| c.height_bound()) else {
+            return 0;
+        };
+        let (min_x, min_z) = pos.min_block();
+        let start = IVec3::new(
+            min_x + self.rng.below(16) as i32,
+            self.rng.below(top as u32 + 2) as i32,
+            min_z + self.rng.below(16) as i32,
+        );
+        // A solid block there leaves no room for anything.
+        if self.solid_at(start) {
+            return 0;
+        }
+        let creature = category.name == spawning::CREATURE.name;
+        let mut arrived = 0;
+        for _ in 0..spawning::PACKS {
+            let mut cell = start;
+            let mut picked: Option<(MobKind, u8, u8)> = None;
+            let mut in_pack = 0;
+            for _ in 0..spawning::PACK_STEPS {
+                cell.x += self.rng.below(spawning::PACK_STEP) as i32
+                    - self.rng.below(spawning::PACK_STEP) as i32;
+                cell.z += self.rng.below(spawning::PACK_STEP) as i32
+                    - self.rng.below(spawning::PACK_STEP) as i32;
+                let here = ChunkPos::of_block(cell.x, cell.z);
+                if self.chunks.world().get(here).is_none() {
+                    continue;
                 }
-                let pos = center.offset(dx, dz);
-                // Up to the top of the chunk's highest blocks (modern
-                // picks a height up to the surface), so mountains get
-                // monsters too.
-                let Some(top) = self.chunks.world().get(pos).map(|c| c.height_bound()) else {
-                    continue;
+                let (kind, max_light, group) = match picked {
+                    Some(found) => found,
+                    None => {
+                        let biome = self.biome_at(cell.x, cell.z);
+                        let found = if creature {
+                            self.pick_creature_kind(biome)
+                                .map(|(kind, group)| (kind, 15, group))
+                        } else {
+                            self.pick_dark_kind(biome, cell, here)
+                        };
+                        let Some(found) = found else {
+                            break;
+                        };
+                        picked = Some(found);
+                        found
+                    }
                 };
-                let (min_x, min_z) = pos.min_block();
-                let mut cell = IVec3::new(
-                    min_x + (self.rng.next_f64() * 16.0) as i32,
-                    (self.rng.next_f64() * (top + 1) as f64) as i32,
-                    min_z + (self.rng.next_f64() * 16.0) as i32,
-                );
-                let biome = self.biome_at(cell.x, cell.z);
-                let Some((kind, max_light, group)) = self.pick_dark_kind(biome, cell, pos) else {
-                    continue;
+                let fits = if creature {
+                    self.can_animal_spawn(kind, cell)
+                } else {
+                    self.can_monster_spawn(cell, max_light)
                 };
-                for _ in 0..group {
-                    cell.x +=
-                        (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
-                    cell.z +=
-                        (self.rng.next_f64() * 6.0) as i32 - (self.rng.next_f64() * 6.0) as i32;
-                    if self.can_monster_spawn(cell, max_light) && self.has_room(kind, cell) {
-                        let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
-                        let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
-                        let mob = self.new_mob(kind, feet, yaw);
-                        self.add_mob(mob);
+                if fits && self.has_room(kind, cell) {
+                    let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+                    let yaw = self.rng.next_f64() as f32 * std::f32::consts::TAU;
+                    let mob = self.new_mob(kind, feet, yaw);
+                    self.add_mob(mob);
+                    arrived += 1;
+                    in_pack += 1;
+                    if arrived >= room {
+                        return arrived;
+                    }
+                    if in_pack >= group {
+                        break;
                     }
                 }
             }
         }
+        arrived
+    }
+
+    /// Whether the block at `cell` is solid.
+    fn solid_at(&self, cell: IVec3) -> bool {
+        let terrain = WorldTerrain {
+            world: self.chunks.world(),
+            blocks: self.items.blocks,
+        };
+        terrain.def(cell).is_none_or(|def| def.solid)
+    }
+
+    /// Far enough from the player and the world spawn, and not out of range.
+    fn right_distance(&self, feet: DVec3) -> bool {
+        let player = feet.distance(self.body.position());
+        (spawning::MIN_DISTANCE..=spawning::MAX_DISTANCE).contains(&player)
+            && feet.distance(self.spawn) >= spawning::MIN_DISTANCE
+    }
+
+    /// Animals: on their kind's ground (grass), two free cells above, and
+    /// brighter than 8 (block or sky light, not dimmed by the time of day).
+    fn can_animal_spawn(&self, kind: MobKind, cell: IVec3) -> bool {
+        let Spawn::Ground { ref blocks, .. } = self.mob_defs.get(kind).spawn else {
+            return false;
+        };
+        let terrain = WorldTerrain {
+            world: self.chunks.world(),
+            blocks: self.items.blocks,
+        };
+        let free = |c: IVec3| terrain.passable(c) && !terrain.water(c) && !terrain.lava(c);
+        let ground = self
+            .chunks
+            .world()
+            .block(cell.x, cell.y - 1, cell.z)
+            .is_some_and(|b| blocks.contains(&b.id()));
+        if !ground || !free(cell) || !free(cell + IVec3::Y) {
+            return false;
+        }
+        if !self.right_distance(cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5)) {
+            return false;
+        }
+        self.chunks
+            .light_at(cell.x, cell.y, cell.z)
+            .is_some_and(|(sky, block)| sky.max(block) > spawning::ANIMAL_LIGHT_ABOVE)
+    }
+
+    /// The monsters near the player (for the tests and the cap).
+    #[cfg(test)]
+    pub(super) fn monster_count(&self) -> usize {
+        let player = self.body.position();
+        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        self.counted_in(&spawning::MONSTER, center)
+    }
+
+    /// Only the monster category's cycle (for the tests).
+    #[cfg(test)]
+    pub(super) fn spawn_monsters(&mut self) {
+        self.spawn_category(&spawning::MONSTER);
     }
 
     /// A kind that can spawn here by weight: (kind, max light, group size).
@@ -766,7 +937,7 @@ impl Game {
 
     /// Solid ground below, two free cells (no liquid), far enough from the
     /// player and dark enough (1.0.0's `EntityMob.getCanSpawnHere`).
-    fn can_monster_spawn(&mut self, cell: IVec3, max_light: u8) -> bool {
+    pub(super) fn can_monster_spawn(&mut self, cell: IVec3, max_light: u8) -> bool {
         let terrain = WorldTerrain {
             world: self.chunks.world(),
             blocks: self.items.blocks,
@@ -780,7 +951,7 @@ impl Game {
             return false;
         }
         let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
-        if feet.distance(self.body.position()) < MIN_SPAWN_DISTANCE {
+        if !self.right_distance(feet) {
             return false;
         }
         let Some((sky, block)) = self.chunks.light_at(cell.x, cell.y, cell.z) else {
@@ -792,22 +963,25 @@ impl Game {
         } else {
             sky
         };
+        // Monsters of the Overworld need no block light at all.
+        if self.dimension == crate::world::dimension::Dimension::Overworld
+            && block > spawning::MONSTER_BLOCK_LIGHT
+        {
+            return false;
+        }
         let subtracted = daytime::sky_light_subtracted(self.celestial_angle());
         let sky = sky.saturating_sub(subtracted);
         if sky as f64 > self.rng.next_f64() * 32.0 {
             return false;
         }
         let level = sky.max(block);
-        level <= max_light && (level as f64) <= self.rng.next_f64() * 8.0
+        level <= max_light && u32::from(level) <= self.rng.below(spawning::MONSTER_LIGHT_BELOW)
     }
 
     /// Whether a mob of `kind` standing in `cell` touches nothing solid
     /// (a ghast needs a 4-block cube of air).
     fn has_room(&self, kind: MobKind, cell: IVec3) -> bool {
         let def = self.mob_defs.get(kind);
-        if def.width <= 1.0 && def.height <= 2.0 {
-            return true;
-        }
         let feet = cell.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
         let half = def.width / 2.0;
         let region = crate::player::collision::Aabb::new(
