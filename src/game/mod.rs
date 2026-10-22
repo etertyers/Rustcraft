@@ -41,6 +41,7 @@ mod redstone;
 mod shulkers;
 mod sleep;
 mod sounds;
+pub mod spawn_test;
 mod spawners;
 mod updates;
 pub mod view;
