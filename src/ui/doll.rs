@@ -18,17 +18,29 @@ use crate::{
     world::mesh::Mesh,
 };
 
-/// GUI pixels per block of height: vanilla's `scale` of 30, which makes the
-/// player (1.875 blocks, 1.9 with the hat) about 57 pixels tall in a
-/// 70-pixel box.
-pub const PIXELS_PER_BLOCK: f32 = 30.0;
+/// Where the player's picture goes on a screen, in GUI pixels from the
+/// panel's corner.
+#[derive(Debug, Clone, Copy)]
+pub struct Spot {
+    /// Where the feet stand.
+    pub feet: [f32; 2],
+    /// The point the mouse is measured from (vanilla's 30 above the feet).
+    pub head: [f32; 2],
+    /// The black box the picture is clipped to: top-left and size.
+    pub clip: ([f32; 2], [f32; 2]),
+    /// GUI pixels per block of height: vanilla's `scale`.
+    pub per_block: f32,
+}
 
-/// The black box in the survival inventory, in GUI pixels: top-left and size.
-pub const BOX: ([f32; 2], [f32; 2]) = ([26.0, 8.0], [50.0, 70.0]);
-/// Where the feet stand and the height of the eyes the mouse is measured
-/// from (vanilla's `i + 51, j + 75`, and 50 above that).
-pub const FEET: [f32; 2] = [51.0, 75.0];
-pub const HEAD: [f32; 2] = [51.0, 25.0];
+/// The survival inventory's: `drawEntityOnScreen(51, 75, 30, ...)`, which
+/// makes the player (1.875 blocks, 1.9 with the hat) about 57 pixels tall
+/// in the 70-pixel box.
+pub const SURVIVAL: Spot = Spot {
+    feet: [51.0, 75.0],
+    head: [51.0, 25.0],
+    clip: ([26.0, 8.0], [52.0, 70.0]),
+    per_block: 30.0,
+};
 
 /// How the figure is turned, in radians.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -144,10 +156,10 @@ pub fn project(mesh: &Mesh, texture: egui::TextureId, feet: Pos2, per_block: f32
 }
 
 /// The rectangle the doll is clipped to, on a panel at `origin`.
-pub fn clip(origin: Pos2, scale: f32) -> Rect {
+pub fn clip(origin: Pos2, scale: f32, spot: &Spot) -> Rect {
     Rect::from_min_size(
-        origin + Vec2::from(BOX.0) * scale,
-        Vec2::from(BOX.1) * scale,
+        origin + Vec2::from(spot.clip.0) * scale,
+        Vec2::from(spot.clip.1) * scale,
     )
 }
 
@@ -202,11 +214,11 @@ mod tests {
             .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
         game.inventory.selected = 0;
         let doll = build(&game, &mut HeldCache::default(), &fig, angles);
-        let feet = pos2(51.0 * 3.0, 75.0 * 3.0);
+        let feet = pos2(SURVIVAL.feet[0] * 3.0, SURVIVAL.feet[1] * 3.0);
         let id = egui::TextureId::default();
         (
-            project(&doll.body, id, feet, PIXELS_PER_BLOCK * 3.0),
-            project(&doll.items, id, feet, PIXELS_PER_BLOCK * 3.0),
+            project(&doll.body, id, feet, SURVIVAL.per_block * 3.0),
+            project(&doll.items, id, feet, SURVIVAL.per_block * 3.0),
         )
     }
 
@@ -225,7 +237,7 @@ mod tests {
         );
         assert!((bottom - 75.0).abs() < 0.5, "feet at {bottom}");
         assert!((bottom - top - 57.0).abs() < 1.5, "{} tall", bottom - top);
-        let (box_at, box_size) = BOX;
+        let (box_at, box_size) = SURVIVAL.clip;
         assert!(top >= box_at[1] && bottom <= box_at[1] + box_size[1]);
         // The sword is in the picture, beside the body.
         assert!(!items.vertices.is_empty());

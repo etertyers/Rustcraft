@@ -4,6 +4,7 @@
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
+use super::creative::{self, CreativeTab, TabView};
 use super::doll;
 use super::geometry::Geometry;
 use super::gui::{self, GuiTextures, SlotView};
@@ -18,9 +19,10 @@ use crate::inventory::{
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
     Inventory,
-    /// `scroll` is how many rows the item grid has scrolled; it's
-    /// fractional while a trackpad moves it.
+    /// The creative inventory on `tab`; `scroll` is how many rows the
+    /// item grid has scrolled, fractional while a trackpad moves it.
     Creative {
+        tab: CreativeTab,
         scroll: f32,
     },
     /// A crafting table's 3×3 grid.
@@ -63,10 +65,15 @@ pub enum ScreenAction {
     Throw {
         all: bool,
     },
-    /// Creative: put a full stack of this in the selected hotbar slot.
-    Take(ItemStack),
-    /// Creative: clicked the item grid while holding something.
-    Discard,
+    /// Creative: clicked `stack` in a tab's grid (see `creative::pick`).
+    CreativePick {
+        stack: ItemStack,
+        pick: crate::inventory::creative::Pick,
+    },
+    /// Creative: clicked the destroy slot (shift clears the inventory).
+    CreativeDestroy {
+        shift: bool,
+    },
     /// The death screen's Respawn button.
     Respawn,
     /// The sleep screen's Leave Bed button.
@@ -162,6 +169,9 @@ pub struct ScreenView<'a> {
     pub cursor: Option<SlotView>,
     /// Creative: every block and item, with how it looks and its name.
     pub catalog: &'a [(ItemStack, SlotView, String)],
+    /// Creative: the tab buttons, then Search's and the Survival
+    /// Inventory's, each with its picture, name and what it lists.
+    pub tabs: &'a [TabView],
     /// The workstation screens' extras.
     pub bench: Option<BenchView>,
     pub merchant: Option<MerchantView>,
@@ -180,15 +190,6 @@ struct Drag {
 /// A second left press on the same slot within this many seconds is a
 /// double-click.
 const DOUBLE_CLICK: f64 = 0.25;
-
-/// Creative grid size.
-const COLUMNS: usize = 9;
-const ROWS: usize = 5;
-
-/// Rows the creative grid can scroll through.
-pub fn creative_scroll_rows(catalog_len: usize) -> usize {
-    catalog_len.div_ceil(COLUMNS).saturating_sub(ROWS)
-}
 
 /// Mouse wheel movement this frame in grid rows (positive scrolls up):
 /// a wheel notch is one row, trackpad movement one row per slot height.
@@ -243,7 +244,7 @@ pub(super) fn panel_size(screen: &Screen) -> [f32; 2] {
         | Screen::Smithing => [176.0, 166.0],
         Screen::Hopper => [176.0, 133.0],
         Screen::Merchant => [176.0, 222.0],
-        Screen::Creative { .. } => [195.0, 136.0],
+        Screen::Creative { .. } => creative::PANEL,
         // 1.0.0's GuiChest: 114 plus 18 per row.
         Screen::Chest => [176.0, 114.0 + CHEST_ROWS as f32 * 18.0],
     }
@@ -288,9 +289,7 @@ pub(super) fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
             .into_iter()
             .chain(inventory)
             .collect(),
-        Screen::Creative { .. } => (0..HOTBAR_SLOTS)
-            .map(|i| (SlotRef::Inventory(i), [9.0 + i as f32 * 18.0, 112.0]))
-            .collect(),
+        Screen::Creative { tab, .. } => creative::slots(*tab),
         Screen::Furnace => [
             (SlotRef::Block(furnace::INPUT), [56.0, 17.0]),
             (SlotRef::Block(furnace::FUEL), [56.0, 53.0]),
@@ -450,10 +449,18 @@ pub fn show(
     let mut actions = Vec::new();
     let mut tooltip = None;
 
+    // The creative tabs that aren't selected go under the panel.
+    if let Screen::Creative { tab, .. } = screen {
+        creative::paint_tabs_behind(&painter, &geo, *tab, view.tabs, textures);
+    }
     let background = match screen {
         Screen::Inventory => &textures.inventory,
         Screen::Crafting => &textures.crafting,
-        Screen::Creative { .. } => &textures.creative,
+        Screen::Creative { tab, .. } => match tab {
+            CreativeTab::Items(_) => &textures.creative,
+            CreativeTab::Search => &textures.creative_search,
+            CreativeTab::Survival => &textures.creative_inventory,
+        },
         Screen::Chest => &textures.chest,
         Screen::Furnace => &textures.furnace,
         Screen::Brewing => &textures.brewing,
@@ -496,10 +503,16 @@ pub fn show(
             scale,
         );
     }
-    if matches!(screen, Screen::Inventory)
-        && let Some(make) = view.doll
-    {
-        paint_doll(&painter, &geo, pointer, make, textures);
+    let doll_spot = match screen {
+        Screen::Inventory => Some(doll::SURVIVAL),
+        Screen::Creative {
+            tab: CreativeTab::Survival,
+            ..
+        } => Some(creative::DOLL),
+        _ => None,
+    };
+    if let (Some(spot), Some(make)) = (doll_spot, view.doll) {
+        paint_doll(&painter, &geo, pointer, make, &spot, textures);
     }
     if let (Screen::Furnace, Some((fuel, cooked))) = (*screen, view.furnace) {
         paint_furnace_progress(&painter, background.id(), origin, scale, fuel, cooked);
@@ -516,49 +529,34 @@ pub fn show(
             Color32::from_gray(0x40),
         );
     }
-    if let Screen::Creative { scroll } = screen {
-        let rows = creative_scroll_rows(view.catalog.len());
-        if let Some(pos) = pointer
-            && panel.contains(pos)
-        {
-            *scroll = (*scroll - wheel).clamp(0.0, rows as f32);
-        }
-        let top_row = scroll.round() as usize;
-        let fraction = if rows == 0 {
-            0.0
-        } else {
-            top_row as f32 / rows as f32
+    let mut over_creative = false;
+    if let Screen::Creative { tab, scroll } = screen {
+        let input = creative::Input {
+            pointer,
+            left,
+            right,
+            middle: ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle)),
+            shift,
+            wheel,
+            left_down,
+            events: ctx.input(|i| i.events.clone()),
+            time: now,
         };
-        let scroller = origin + vec2(175.0, 18.0 + (112.0 - 15.0) * fraction) * scale;
-        gui::sheet_image(
+        let out = creative::show(
+            ctx,
             &painter,
-            textures.tabs.id(),
-            [232.0, 0.0],
-            [12.0, 15.0],
-            scroller,
-            scale,
+            &geo,
+            tab,
+            scroll,
+            view.catalog,
+            view.tabs,
+            view.cursor.is_some(),
+            &input,
+            textures,
         );
-        for row in 0..ROWS {
-            for column in 0..COLUMNS {
-                let index = (top_row + row) * COLUMNS + column;
-                let Some((stack, slot, name)) = view.catalog.get(index) else {
-                    continue;
-                };
-                let rect = slot_rect([9.0 + column as f32 * 18.0, 18.0 + row as f32 * 18.0]);
-                gui::paint_slot(&painter, rect.min, slot, scale, textures.atlas.id());
-                if pointer.is_some_and(|pos| rect.contains(pos)) {
-                    painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
-                    tooltip = Some(name.clone());
-                    if click.is_some() {
-                        actions.push(if view.cursor.is_some() {
-                            ScreenAction::Discard
-                        } else {
-                            ScreenAction::Take(stack.clone())
-                        });
-                    }
-                }
-            }
-        }
+        actions.extend(out.actions);
+        tooltip = out.tooltip;
+        over_creative = out.inside;
     }
 
     let slots = layout(screen);
@@ -644,7 +642,7 @@ pub fn show(
     });
 
     if let Some(pos) = pointer {
-        if click.is_some() && !panel.contains(pos) && view.cursor.is_some() {
+        if click.is_some() && !panel.contains(pos) && !over_creative && view.cursor.is_some() {
             actions.push(ScreenAction::Throw { all: left });
         }
         if let Some(cursor) = &view.cursor {
@@ -669,14 +667,15 @@ fn paint_doll(
     geo: &Geometry,
     pointer: Option<Pos2>,
     make: &dyn Fn(doll::DollAngles) -> doll::Doll,
+    spot: &doll::Spot,
     textures: &GuiTextures,
 ) {
-    let head = geo.origin + vec2(doll::HEAD[0], doll::HEAD[1]) * geo.scale;
+    let head = geo.origin + vec2(spot.head[0], spot.head[1]) * geo.scale;
     let offset = pointer.map_or(egui::Vec2::ZERO, |pos| (pos - head) / geo.scale);
     let figure = make(doll::angles(offset));
-    let feet = geo.origin + vec2(doll::FEET[0], doll::FEET[1]) * geo.scale;
-    let per_block = doll::PIXELS_PER_BLOCK * geo.scale;
-    let painter = painter.with_clip_rect(doll::clip(geo.origin, geo.scale));
+    let feet = geo.origin + vec2(spot.feet[0], spot.feet[1]) * geo.scale;
+    let per_block = spot.per_block * geo.scale;
+    let painter = painter.with_clip_rect(doll::clip(geo.origin, geo.scale, spot));
     for (mesh, texture) in [
         (&figure.body, textures.skin.id()),
         (&figure.items, textures.atlas.id()),
@@ -1204,6 +1203,7 @@ mod tests {
             brewing: None,
             cursor: None,
             catalog: &[],
+            tabs: &[],
             bench: None,
             merchant: None,
             doll: None,
@@ -1232,12 +1232,5 @@ mod tests {
         // No text box or window: one label, and nothing else with text.
         assert_eq!(texts_drawn(Screen::Inventory), ["Crafting"]);
         assert_eq!(texts_drawn(Screen::Crafting), ["Crafting", "Inventory"]);
-    }
-
-    #[test]
-    fn the_creative_grid_scrolls_by_rows() {
-        assert_eq!(creative_scroll_rows(45), 0);
-        assert_eq!(creative_scroll_rows(46), 1);
-        assert_eq!(creative_scroll_rows(320), 31);
     }
 }

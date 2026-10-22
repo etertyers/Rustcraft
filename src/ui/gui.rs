@@ -65,6 +65,10 @@ pub struct GuiTextures {
     /// The stonecutter's, which also falls back to the anvil's sheet.
     pub stonecutter: TextureHandle,
     pub creative: TextureHandle,
+    /// The Search tab's panel, with its text box.
+    pub creative_search: TextureHandle,
+    /// The Survival Inventory tab's panel.
+    pub creative_inventory: TextureHandle,
     pub tabs: TextureHandle,
     pub icons: TextureHandle,
     /// Each status effect's icon, in `Effect::ALL`'s order, if any layer
@@ -169,6 +173,8 @@ impl GuiTextures {
             stonecutter: sheet("gui/container/stonecutter", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
+            creative_search: sheet("gui/container/creative_inventory/tab_item_search", &[])?,
+            creative_inventory: sheet("gui/container/creative_inventory/tab_inventory", &[])?,
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
             icons: sheet("gui/icons", ICONS)?,
             effects: crate::player::effects::Effect::ALL

@@ -73,19 +73,26 @@ impl Geometry {
     }
 }
 
+/// Window sizes and scale factors the layout tests run at.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub mod tests_support {
+    use egui::{Pos2, Rect, vec2};
 
     /// Window sizes in points: a small window, 720p and a MacBook's
-    /// default (the last two are what 2560 × 1600 and 2880 × 1800
-    /// Retina screens report).
+    /// default (what 2560 × 1600 and 2880 × 1800 Retina screens report).
     pub const WINDOWS: [(f32, f32); 3] = [(854.0, 480.0), (1280.0, 720.0), (1440.0, 900.0)];
+    /// Physical pixels per point: a plain display and a Retina one.
     pub const FACTORS: [f32; 2] = [1.0, 2.0];
 
     pub fn window(size: (f32, f32)) -> Rect {
         Rect::from_min_size(Pos2::ZERO, vec2(size.0, size.1))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tests_support::{FACTORS, WINDOWS, window};
 
     fn on_a_physical_pixel(points: f32, ppp: f32) -> bool {
         ((points * ppp) - (points * ppp).round()).abs() < 1e-3
@@ -123,7 +130,10 @@ mod tests {
 
     #[test]
     fn every_slot_of_every_screen_is_hit_exactly_where_it_is_drawn() {
-        use crate::ui::screens::{Screen, layout, panel_size};
+        use crate::ui::{
+            creative::CreativeTab,
+            screens::{Screen, layout, panel_size},
+        };
         let screens = [
             Screen::Inventory,
             Screen::Crafting,
@@ -138,6 +148,18 @@ mod tests {
             Screen::Smithing,
             Screen::Stonecutter,
             Screen::Merchant,
+            Screen::Creative {
+                tab: CreativeTab::Items(0),
+                scroll: 0.0,
+            },
+            Screen::Creative {
+                tab: CreativeTab::Search,
+                scroll: 0.0,
+            },
+            Screen::Creative {
+                tab: CreativeTab::Survival,
+                scroll: 0.0,
+            },
         ];
         for screen in screens {
             let slots = layout(&screen);

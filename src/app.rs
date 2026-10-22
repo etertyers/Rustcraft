@@ -61,6 +61,7 @@ use crate::{
     shots,
     ui::{
         DebugStats, DebugUi, Hud,
+        creative::CreativeTab,
         gui::{SlotView, SurvivalHud},
         menu::{Menu, MenuAction},
         pause::{PauseAction, PauseMenu},
@@ -153,6 +154,10 @@ pub struct App {
     animation_start: Instant,
     /// Every block and item, for the creative inventory.
     catalog: Vec<(ItemStack, SlotView, String)>,
+    /// The creative inventory's tab buttons.
+    tab_views: Vec<crate::ui::creative::TabView>,
+    /// The tab the creative inventory opens on: the last one used.
+    creative_tab: CreativeTab,
     /// The screens open over the game; the one place that decides whether
     /// the camera has the mouse.
     stack: ScreenStack,
@@ -211,6 +216,8 @@ impl App {
             applied_packs: Vec::new(),
             animation_start: Instant::now(),
             catalog: Vec::new(),
+            tab_views: Vec::new(),
+            creative_tab: CreativeTab::Items(0),
             stack: ScreenStack::default(),
             last_frame: Instant::now(),
             occluded: false,
@@ -519,6 +526,19 @@ impl App {
         }
     }
 
+    /// A text box on the open screen has the keyboard: the anvil's name
+    /// box, or the creative inventory's search box on its Search tab.
+    fn types_into_a_box(&self) -> bool {
+        matches!(
+            self.screen,
+            Some(Screen::Anvil)
+                | Some(Screen::Creative {
+                    tab: CreativeTab::Search,
+                    ..
+                })
+        )
+    }
+
     fn open_advancements(&mut self) {
         self.advancements = Some(0);
         self.stack.push(Layer::Advancements);
@@ -539,6 +559,10 @@ impl App {
     }
 
     fn hide_container(&mut self) {
+        // The creative inventory opens on the tab it was left on.
+        if let Some(Screen::Creative { tab, .. }) = self.screen {
+            self.creative_tab = tab;
+        }
         self.screen = None;
         self.stack.remove(Layer::Container);
         self.apply_grab();
@@ -589,8 +613,9 @@ impl App {
             }
         } else if key == KeyCode::Escape && pressed && !event.repeat && self.game.is_some() {
             self.pause_game();
-        } else if self.screen == Some(Screen::Anvil) && key != KeyCode::F3 {
-            // The name box has the keyboard (E and the digits are letters).
+        } else if self.types_into_a_box() && key != KeyCode::F3 {
+            // The anvil's name box or the creative search box has the
+            // keyboard (E and the digits are letters).
         } else if key == KeyCode::KeyE
             && pressed
             && !event.repeat
@@ -651,7 +676,8 @@ impl App {
     /// Keeps a newly built look's models, icons and atlas.
     fn install_look(&mut self, look: Look) {
         if let Some(items) = &self.items {
-            self.catalog = catalog(items, &look.icons);
+            self.catalog = crate::ui::creative::catalog(items, &look.icons);
+            self.tab_views = crate::ui::creative::tab_views(items, &look.icons, &self.catalog);
         }
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
@@ -766,12 +792,20 @@ impl App {
             return;
         };
         let screen = if game.mode.has_every_item() {
-            Screen::Creative { scroll: 0.0 }
+            Screen::Creative {
+                tab: self.creative_tab,
+                scroll: 0.0,
+            }
         } else {
             Screen::Inventory
         };
         if let Some(game) = self.game.as_mut() {
             game.open_inventory();
+        }
+        if matches!(screen, Screen::Creative { .. })
+            && let Some(debug_ui) = self.debug_ui.as_ref()
+        {
+            crate::ui::creative::reset_search(debug_ui.context());
         }
         self.show_container(screen);
     }
@@ -844,14 +878,18 @@ impl App {
                 }
                 game.throw(thrown);
             }
-            ScreenAction::Take(stack) => {
-                let full = ItemStack {
-                    count: items.max_stack(stack.id),
-                    ..stack
-                };
-                game.inventory.set(game.inventory.selected, Some(full));
+            ScreenAction::CreativePick { stack, pick } => {
+                crate::inventory::creative::pick(
+                    &mut game.cursor,
+                    &mut game.inventory,
+                    &stack,
+                    pick,
+                    &items,
+                );
             }
-            ScreenAction::Discard => game.cursor = None,
+            ScreenAction::CreativeDestroy { shift } => {
+                crate::inventory::creative::destroy(&mut game.cursor, &mut game.inventory, shift);
+            }
             ScreenAction::Enchant(button) => {
                 game.enchant_item(button);
             }
@@ -1297,6 +1335,7 @@ impl App {
             brewing: game.brewing_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
+            tabs: &self.tab_views,
             bench: bench_view(game, self.icons.as_deref()),
             merchant: merchant_view(game, self.icons.as_deref()),
             doll: Some(&doll),
@@ -1601,44 +1640,6 @@ fn bench_view(game: &Game, icons: Option<&ItemIcons>) -> Option<BenchView> {
         BenchKind::Grindstone | BenchKind::Smithing => {}
     }
     Some(view)
-}
-
-fn catalog(items: &Items, icons: &ItemIcons) -> Vec<(ItemStack, SlotView, String)> {
-    // Every item, then an enchanted book for each enchantment at each of
-    // its levels (the plain one would be useless), then the potions.
-    let books = crate::inventory::enchant::ALL
-        .iter()
-        .flat_map(|&enchantment| {
-            (1..=enchantment.max_level()).map(move |level| {
-                let mut book = ItemStack::new(crate::inventory::items::ENCHANTED_BOOK, 1);
-                book.enchant(enchantment, level);
-                book
-            })
-        });
-    // Every potion, drunk and thrown, in place of the plain potion items.
-    use crate::inventory::{items as ids, potion};
-    let potions = [ids::POTION, ids::SPLASH_POTION]
-        .into_iter()
-        .flat_map(|item| {
-            (0..potion::POTIONS.len() as u16).map(move |n| ItemStack::with_damage(item, 1, n))
-        });
-    items
-        .items
-        .iter()
-        .filter(|item| {
-            !matches!(
-                item.id,
-                ids::ENCHANTED_BOOK | ids::POTION | ids::SPLASH_POTION
-            )
-        })
-        .map(|item| ItemStack::with_damage(item.id, 1, 0))
-        .chain(books)
-        .chain(potions)
-        .map(|stack| {
-            let (view, name) = (SlotView::of(&stack, icons, items), items.tooltip(&stack));
-            (stack, view, name)
-        })
-        .collect()
 }
 
 /// Pins the cursor in place. macOS supports only Locked; other platforms may
