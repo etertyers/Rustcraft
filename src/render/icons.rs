@@ -117,11 +117,10 @@ impl ItemIcons {
         for item in registry.iter() {
             let icon = match (&item.texture, item.places) {
                 (Some(texture), _) => ItemIcon::Flat(IconFace {
-                    uv: atlas.uv_or_missing(
-                        &item_models
-                            .texture(&item.name)
-                            .map_or_else(|| format!("item/{texture}"), str::to_owned),
-                    ),
+                    uv: atlas.uv_or_missing(&item_models.texture(&item.name).map_or_else(
+                        || crate::inventory::item::texture_location(texture).into_owned(),
+                        str::to_owned,
+                    )),
                     color: [1.0; 3],
                 }),
                 // Facing the viewer, as an icon shows the south face.

@@ -278,6 +278,12 @@ mod tests {
         let missing: Vec<&str> = every_item()
             .into_iter()
             .filter(|id| !made.contains(id) && !NOT_CRAFTED.contains(&id.name()))
+            // Placeholders (docs/placeholders.md) have no recipes yet.
+            .filter(|id| {
+                !crate::inventory::item::registry()
+                    .get(*id)
+                    .is_some_and(|d| d.placeholder)
+            })
             .map(|id| id.name())
             .collect();
         assert!(missing.is_empty(), "no recipe for {missing:?}");

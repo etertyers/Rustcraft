@@ -733,15 +733,23 @@ pub struct ModelPart {
 }
 
 impl ModelPart {
+    /// The box, with flat elements (vanilla draws planes) given a half
+    /// pixel of thickness so the crosshair can hit them.
     pub fn cuboid(&self) -> crate::world::shape::Cuboid {
-        crate::world::shape::Cuboid::px(
-            self.from.0,
-            self.from.1,
-            self.from.2,
-            self.to.0,
-            self.to.1,
-            self.to.2,
-        )
+        const MIN_THICKNESS: f32 = 0.5;
+        let grow = |from: f32, to: f32| {
+            if to - from >= MIN_THICKNESS {
+                (from, to)
+            } else if to + MIN_THICKNESS <= 16.0 {
+                (from, from + MIN_THICKNESS)
+            } else {
+                (to - MIN_THICKNESS, to)
+            }
+        };
+        let (x0, x1) = grow(self.from.0, self.to.0);
+        let (y0, y1) = grow(self.from.1, self.to.1);
+        let (z0, z1) = grow(self.from.2, self.to.2);
+        crate::world::shape::Cuboid::px(x0, y0, z0, x1, y1, z1)
     }
 }
 
@@ -1478,12 +1486,9 @@ mod tests {
         let base =
             crate::pack::Resources::load_with(&crate::assets::dir(), Vec::new(), false).unwrap();
         let missing = registry().missing_textures(|name| base.texture(name).is_some());
-        // The sign is an entity in modern Minecraft; the eye of the End
-        // portal frame is only in vanilla's and the packs' textures.
-        let mut expected = vec![
-            "block/sign".to_owned(),
-            "block/end_portal_frame_eye".to_owned(),
-        ];
+        // The eye of the End portal frame is only in vanilla's and the
+        // packs' textures (the sign borrows the oak planks).
+        let mut expected = vec!["block/end_portal_frame_eye".to_owned()];
         // Concrete isn't in Kenzo's textures; a resource pack brings it.
         for color in [
             "white",

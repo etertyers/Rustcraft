@@ -88,6 +88,17 @@ pub struct ItemDef {
     pub bucket: Option<Bucket>,
 }
 
+/// An item texture name from `items.ron` as a resource location: bare
+/// names (`stick`) are under `item/`; names with a folder (`block/azalea`)
+/// are kept.
+pub fn texture_location(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.contains('/') {
+        name.into()
+    } else {
+        format!("item/{name}").into()
+    }
+}
+
 /// What a bucket holds (1.0.0's `ItemBucket.isFull`): an empty one picks
 /// up a source block, a full one pours one out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -334,7 +345,7 @@ impl ItemRegistry {
         self.items
             .iter()
             .filter_map(|item| item.texture.as_deref())
-            .map(|name| format!("item/{name}"))
+            .map(|name| texture_location(name).into_owned())
             .collect()
     }
 
@@ -354,7 +365,7 @@ impl ItemRegistry {
             .iter()
             .filter(|item| placeholders || !item.placeholder)
             .filter_map(|item| item.texture.as_deref())
-            .map(|name| format!("item/{name}"))
+            .map(|name| texture_location(name).into_owned())
             .filter(|name| !exists(name))
             .collect()
     }
@@ -415,11 +426,10 @@ mod tests {
             "netherite_shovel",
             "netherite_sword",
             "netherite_upgrade_smithing_template",
-            "wither_skeleton_skull",
             "elytra",
             "popped_chorus_fruit",
         ]
-        .map(|name| format!("item/{name}"))
+        .map(|name| texture_location(name).into_owned())
         .into();
         assert_eq!(missing, needs_pack, "missing item textures");
     }

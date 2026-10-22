@@ -64,6 +64,20 @@ fn shield_icon(sheet: &RgbaImage) -> RgbaImage {
     icon
 }
 
+/// A skull's picture for the inventory: the front of the head on its
+/// 64×32 entity texture (8×8 pixels from 8,8), scaled up to a tile.
+fn skull_icon(sheet: &RgbaImage) -> RgbaImage {
+    let scale = (sheet.width() / 64).max(1);
+    let face =
+        image::imageops::crop_imm(sheet, 8 * scale, 8 * scale, 8 * scale, 8 * scale).to_image();
+    image::imageops::resize(
+        &face,
+        16 * scale,
+        16 * scale,
+        image::imageops::FilterType::Nearest,
+    )
+}
+
 /// `minecraft:block/stone` → `block/stone`.
 pub fn location(name: &str) -> &str {
     name.strip_prefix("minecraft:").unwrap_or(name)
@@ -259,12 +273,14 @@ impl Resources {
     /// Textures made from others because no layout has them as files: the
     /// shield's inventory picture is the front of its entity texture.
     fn derived_in(&self, layer: usize, name: &str) -> Option<Texture> {
-        if location(name) != "item/shield" {
-            return None;
-        }
-        let sheet = self.texture_in(layer, "entity/shield_base_nopattern")?;
+        let (sheet, icon): (_, fn(&RgbaImage) -> RgbaImage) = match location(name) {
+            "item/shield" => ("entity/shield_base_nopattern", shield_icon),
+            "item/wither_skeleton_skull" => ("entity/skeleton/wither_skeleton", skull_icon),
+            _ => return None,
+        };
+        let sheet = self.texture_in(layer, sheet)?;
         Some(Texture {
-            image: shield_icon(&sheet.image),
+            image: icon(&sheet.image),
             animation: None,
             layer: sheet.layer,
             vanilla: sheet.vanilla,
@@ -291,28 +307,32 @@ impl Resources {
         })
     }
 
+    /// A JSON file from the vanilla fallback only.
+    pub fn vanilla_json(&self, path: &str) -> Option<serde_json::Value> {
+        let bytes = self.vanilla.as_ref()?.read(path)?;
+        super::parse_json(&String::from_utf8_lossy(&bytes)).ok()
+    }
+
     /// A texture's first frame, from the highest layer that has it.
     pub fn image(&self, name: &str) -> Option<RgbaImage> {
         self.texture(name).map(Texture::first_frame)
     }
 
     /// A JSON file (`models/block/stone.json`) from the highest layer that
-    /// has a readable one, the vanilla fallback last.
+    /// has a readable one. The vanilla fallback is not read here: blocks
+    /// and items Kenzo has keep his look, and the placeholders' models are
+    /// baked into their data files (`vanilla_json` reads vanilla's).
     pub fn json(&self, path: &str) -> Option<serde_json::Value> {
-        self.layers
-            .iter()
-            .rev()
-            .chain(&self.vanilla)
-            .find_map(|pack| {
-                let bytes = pack.read(path)?;
-                match super::parse_json(&String::from_utf8_lossy(&bytes)) {
-                    Ok(json) => Some(json),
-                    Err(err) => {
-                        warn!("can't read {path} in {}: {err}", pack.name());
-                        None
-                    }
+        self.layers.iter().rev().find_map(|pack| {
+            let bytes = pack.read(path)?;
+            match super::parse_json(&String::from_utf8_lossy(&bytes)) {
+                Ok(json) => Some(json),
+                Err(err) => {
+                    warn!("can't read {path} in {}: {err}", pack.name());
+                    None
                 }
-            })
+            }
+        })
     }
 }
 
@@ -474,8 +494,9 @@ mod tests {
         assert_eq!(sand.layer, 0);
         // Nowhere: nothing, so it draws as the checkerboard.
         assert!(res.texture("block/nothing").is_none());
-        // Models fall back the same way, and files come from the same layers.
-        assert!(res.json("models/block/sand.json").is_some());
+        // Vanilla's models are kept apart; files come from the same layers.
+        assert!(res.json("models/block/sand.json").is_none());
+        assert!(res.vanilla_json("models/block/sand.json").is_some());
         assert_eq!(res.layer_of("textures/block/sand.png"), Some(2));
         assert_eq!(res.layer_of("textures/block/stone.png"), Some(1));
         assert_eq!(res.layer_of("textures/blocks/dirt.png"), Some(0));
@@ -606,13 +627,9 @@ mod tests {
         let res = Resources::load(&assets, vec![ashen, prime]).unwrap();
         let blocks = crate::world::block::registry();
         let missing = blocks.missing_textures(|name| res.texture(name).is_some());
-        // Drawn as an entity in modern Minecraft; v1.0 never had it either.
-        let expected = ["block/sign"].map(str::to_owned);
-        assert_eq!(missing, expected.into());
+        assert!(missing.is_empty(), "{missing:?}");
         let items = crate::inventory::item::registry();
         let missing = items.missing_textures(|name| res.texture(name).is_some());
-        // Modern draws the skull item from its head's entity texture.
-        let expected = ["item/wither_skeleton_skull"].map(str::to_owned);
-        assert_eq!(missing, expected.into());
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

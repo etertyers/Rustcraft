@@ -6,6 +6,13 @@
 // table, block/X also tries blocks/X and item/X also tries items/X, the
 // folder names before 1.13.
 {
+    // Renamed since: the chain is iron_chain; purpur pillars' sides are
+    // purpur_pillar_side; the sign is an entity in modern Minecraft, so its
+    // block texture is the oak planks it is made of.
+    "block/chain": ["block/iron_chain"],
+    "item/chain": ["item/iron_chain"],
+    "block/purpur_pillar": ["block/purpur_pillar_side"],
+    "block/sign": ["block/oak_planks", "blocks/planks_oak"],
     "misc/enchanted_glint_item": ["misc/enchanted_item_glint"],
     "item/mutton": ["items/mutton_raw"],
     "item/fire_charge": ["items/fireball"],

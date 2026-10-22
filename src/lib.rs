@@ -16,6 +16,7 @@ pub mod level;
 pub mod look;
 pub mod options;
 pub mod pack;
+pub mod placeholders;
 pub mod player;
 pub mod render;
 pub mod shots;
