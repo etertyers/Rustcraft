@@ -166,6 +166,36 @@ pub fn add_dragon_fireballs(
     }
 }
 
+/// Adds shulkers' bullets: small pale sparks facing the camera.
+pub fn add_shulker_bullets(
+    mesh: &mut Mesh,
+    bullets: &[crate::entity::bullet::ShulkerBullet],
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+) {
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin()) * BULLET_HALF;
+    let up = Vec3::Y * BULLET_HALF;
+    for bullet in bullets {
+        let center = bullet.position_between_ticks(alpha).as_vec3();
+        mesh.quad(
+            [
+                center - right - up,
+                center + right - up,
+                center + right + up,
+                center - right + up,
+            ]
+            .map(|p| p.to_array()),
+            uvs.dragon_fireball,
+            [[0.9, 0.85, 1.0]; 4],
+            [[15.0, 15.0]; 4],
+        );
+    }
+}
+
+/// Half the width a shulker's bullet is drawn.
+const BULLET_HALF: f32 = 0.2;
+
 /// Half the width a dragon fireball is drawn.
 const DRAGON_FIREBALL_HALF: f32 = 0.9;
 

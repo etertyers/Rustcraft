@@ -108,6 +108,40 @@ impl Game {
         true
     }
 
+    /// Eating chorus fruit: up to sixteen tries at a spot within eight
+    /// blocks each way with ground under it and room to stand (modern
+    /// `ChorusFruitItem`), taking the first.
+    pub(super) fn chorus_teleport(&mut self) {
+        let feet = self.body.position();
+        for _ in 0..16 {
+            let spot = glam::IVec3::new(
+                (feet.x + (self.rng.next_f64() - 0.5) * 16.0).floor() as i32,
+                (feet.y + (self.rng.next_f64() - 0.5) * 16.0).floor() as i32,
+                (feet.z + (self.rng.next_f64() - 0.5) * 16.0).floor() as i32,
+            );
+            if spot.y < 1 || spot.y > crate::config::WORLD_HEIGHT as i32 - 3 {
+                continue;
+            }
+            let world = self.chunks.world();
+            let free = |at: glam::IVec3| {
+                world
+                    .block(at.x, at.y, at.z)
+                    .is_some_and(|b| b.is_air() || !b.def().solid)
+            };
+            let ground = world
+                .block(spot.x, spot.y - 1, spot.z)
+                .is_some_and(|b| b.def().solid);
+            if ground && free(spot) && free(spot + glam::IVec3::Y) {
+                self.place_player(DVec3::new(
+                    f64::from(spot.x) + 0.5,
+                    f64::from(spot.y),
+                    f64::from(spot.z) + 0.5,
+                ));
+                return;
+            }
+        }
+    }
+
     /// How fast the player is going, for the debug overlay and tests.
     pub fn speed(&self) -> f64 {
         DVec3::length(self.body.velocity)
@@ -195,6 +229,24 @@ mod tests {
         assert!(!game.elytra_ready());
         game.run_ticks(2);
         assert!(!game.is_gliding());
+    }
+
+    #[test]
+    fn eating_chorus_fruit_moves_you_a_few_blocks_to_somewhere_you_can_stand() {
+        let mut game = flat_game(GameMode::Survival);
+        let from = game.body.position();
+        let mut moved = 0;
+        for _ in 0..20 {
+            game.body.set_position(from);
+            game.chorus_teleport();
+            let at = game.body.position();
+            if at != from {
+                moved += 1;
+                assert!((at - from).length() < 14.0, "{at}");
+                assert_eq!(at.y, 64.0, "on the flat ground");
+            }
+        }
+        assert!(moved >= 10, "{moved}");
     }
 
     #[test]

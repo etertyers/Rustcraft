@@ -479,6 +479,56 @@ pub fn add_player(
     }
 }
 
+/// Adds the elytra on the player's back, folded at rest and spread out
+/// while gliding (modern `ElytraModel`; 64 × 32 skin), turned and tipped
+/// with the body.
+pub fn add_elytra(mesh: &mut Mesh, pose: &PlayerPose, feet: Vec3, yaw: f32, light: (u8, u8)) {
+    let frame = body_frame(pose, yaw);
+    let light = [light.0 as f32, light.1 as f32];
+    let (mut x_rot, mut z_rot, mut lift) = (0.261_799_4_f32, -0.261_799_4_f32, 0.0_f32);
+    if pose.fall_flying > 0.0 {
+        // Spreads over the first ticks of a glide.
+        let spread = (pose.fall_flying / 6.0).clamp(0.0, 1.0);
+        x_rot += spread * (0.349_065_84 - x_rot);
+        z_rot += spread * (-FRAC_PI_2 - z_rot);
+    } else if pose.crouching {
+        x_rot = 0.698_131_7;
+        z_rot = -FRAC_PI_4;
+        lift = 3.0;
+    }
+    for side in [1.0_f32, -1.0] {
+        // The left wing is at +x, mirrored, and spreads the other way.
+        let pivot = Vec3::new(5.0 * side, lift, 2.0);
+        let m = Mat4::from_translation(pivot)
+            * Mat4::from_rotation_z(z_rot * side)
+            * Mat4::from_rotation_x(x_rot);
+        let wing = PartBox {
+            uv: (22.0, 0.0),
+            from: if side > 0.0 {
+                (-10.0, 0.0, 0.0)
+            } else {
+                (0.0, 0.0, 0.0)
+            },
+            size: (10.0, 20.0, 2.0),
+        };
+        add_box(
+            mesh,
+            ELYTRA_SIZE,
+            &wing,
+            BoxStyle {
+                mirror: side < 0.0,
+                grow: 1.0,
+            },
+            |corner| model_to_world(&frame, feet, m.transform_point3(corner)).to_array(),
+            [1.0; 3],
+            light,
+        );
+    }
+}
+
+/// The elytra's skin is 64 × 32.
+const ELYTRA_SIZE: (f32, f32) = (64.0, 32.0);
+
 /// The matrix, in model blocks, to a held item's origin in third person:
 /// the hand's end, turned and moved as vanilla's `ItemInHandLayer` does.
 pub fn hand_mount(rig: &Rig, right: bool, slim: bool) -> Mat4 {
@@ -732,6 +782,30 @@ mod tests {
             arms.windows(2).any(|w| (w[0] - w[1]).abs() > 0.1),
             "{arms:?}"
         );
+    }
+
+    #[test]
+    fn the_elytra_hangs_folded_behind_the_back_and_spreads_wide_when_gliding() {
+        let folded = PlayerPose::default();
+        let mut mesh = Mesh::default();
+        add_elytra(&mut mesh, &folded, Vec3::ZERO, 0.0, (15, 0));
+        let (lo, hi) = bounds(&mesh);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|v| v.position.iter().all(|c| c.is_finite()))
+        );
+        // Facing north the back is south (+z); the wings are behind the body.
+        assert!(hi.z > 0.1 && lo.z > -0.2, "{lo} {hi}");
+        let narrow = hi.x - lo.x;
+        let gliding = PlayerPose {
+            fall_flying: 20.0,
+            ..PlayerPose::default()
+        };
+        let mut open = Mesh::default();
+        add_elytra(&mut open, &gliding, Vec3::ZERO, 0.0, (15, 0));
+        let (lo, hi) = bounds(&open);
+        assert!(hi.x - lo.x > narrow + 0.5, "{} vs {narrow}", hi.x - lo.x);
     }
 
     #[test]

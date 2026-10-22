@@ -156,6 +156,9 @@ pub enum Ai {
     /// Hovers near the player, burns up and shoots three small fireballs
     /// (M25).
     Blaze,
+    /// Sits in its shell on the spot, opens up with the player in sight and
+    /// shoots homing bullets that lift whoever they hit (M28).
+    Shulker,
 }
 
 impl Ai {
@@ -182,6 +185,7 @@ impl Ai {
                 | Ai::Piglin { .. }
                 | Ai::Hoglin { .. }
                 | Ai::Blaze
+                | Ai::Shulker
         )
     }
 }
@@ -327,6 +331,8 @@ pub enum Role {
     /// right one is mirrored.
     WingA,
     WingB,
+    /// A shulker's lid: raised while it's open (M28).
+    Lid,
     /// One of a spider's eight legs, 0–7.
     SpiderLeg(u8),
     /// One of a squid's eight tentacles, 0–7.
@@ -414,7 +420,8 @@ mod tests {
 
     /// Mobs whose textures Kenzo's 1.12-era textures don't have; a resource
     /// pack brings them.
-    const NO_BASE_TEXTURE: [&str; 10] = [
+    const NO_BASE_TEXTURE: [&str; 11] = [
+        "shulker",
         "bee",
         "fox",
         "cod",

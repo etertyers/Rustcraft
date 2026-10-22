@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod arrow;
 pub mod breath;
+pub mod bullet;
 pub mod crystal;
 pub mod dragon;
 pub mod effects;

@@ -411,7 +411,7 @@ impl Stats {
     /// slime and flight cancel it, lava halves it. Jump Boost forgives a
     /// block a level and Slow Falling the whole fall.
     fn tick_fall(&mut self, around: &Surroundings, vulnerable: bool) {
-        if self.effects.has(Effect::SlowFalling) {
+        if self.effects.has(Effect::SlowFalling) || self.effects.has(Effect::Levitation) {
             self.fall_distance = 0.0;
         }
         if around.in_water || around.flying || around.no_fall {

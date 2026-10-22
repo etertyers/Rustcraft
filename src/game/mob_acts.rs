@@ -115,6 +115,11 @@ impl Game {
             if let Some(shot) = intent.fireball {
                 self.loose_fireball(shot.from, shot.at);
             }
+            if let Some(shot) = intent.bullet {
+                self.bullets.push(crate::entity::bullet::ShulkerBullet::new(
+                    shot.from, shot.at,
+                ));
+            }
             if let Some(shot) = intent.small_fireball {
                 self.loose_small_fireball(shot.from, shot.at);
             }

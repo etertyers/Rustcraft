@@ -146,6 +146,8 @@ pub struct Body {
     /// Gliding on elytra (M28): a lying 0.6-block body steered by where
     /// it looks, which Game starts and stops.
     pub fall_flying: bool,
+    /// The level of Levitation (amplifier 0 is level I) lifting the body.
+    pub levitation: Option<u8>,
     /// How hard the last glide tick hit a wall: modern's kinetic energy,
     /// `(speed lost) × 10 − 3`, when above 0.
     pub glide_impact: f64,
@@ -200,6 +202,7 @@ impl Body {
             jump_bonus: 0.0,
             slow_falling: false,
             fall_flying: false,
+            levitation: None,
             glide_impact: 0.0,
         }
     }
@@ -462,6 +465,10 @@ impl Body {
             if self.on_ground && !self.free_flight {
                 self.flying = false;
             }
+        } else if let Some(level) = self.levitation {
+            // Levitation rises toward 0.05 blocks a tick a level, no gravity
+            // (modern `travel`).
+            self.velocity.y += (0.05 * (f64::from(level) + 1.0) - self.velocity.y) * 0.2;
         } else {
             // Slow Falling: modern's 0.01 gravity while falling.
             let gravity = if self.slow_falling && self.velocity.y <= 0.0 {

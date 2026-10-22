@@ -701,6 +701,9 @@ impl Game {
         self.inventory.take(slot, 1);
         self.stats.eat(food.hunger, food.saturation);
         self.food_effects(stack.id);
+        if stack.id == items::CHORUS_FRUIT {
+            self.chorus_teleport();
+        }
         if let Some(leftover) = self.items.item(stack.id).and_then(|item| item.leftover) {
             let bowl = ItemStack::with_damage(leftover, 1, 0);
             if self.inventory.slot(slot).is_none() {

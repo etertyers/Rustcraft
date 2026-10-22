@@ -403,6 +403,16 @@ pub static SHOTS: &[Shot] = &[
         stage: end_portal,
     },
     Shot {
+        name: "m28-end-city",
+        about: "an End city on an outer island 1000 blocks out: the purpur and end stone tower with its side towers and bridges, a ship off the south, shulkers",
+        world: Some(WorldKind::End { seed: 20111118 }),
+        view: Some(([27.5, 100.0, -940.0], 0.0, 0.12)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),

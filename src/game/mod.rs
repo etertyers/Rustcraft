@@ -18,6 +18,7 @@ pub mod environment;
 mod experience;
 mod explosion;
 mod fluids;
+mod gateways;
 mod gear;
 mod hands;
 mod logistics;
@@ -36,6 +37,7 @@ mod potions;
 #[cfg(test)]
 mod progression;
 mod redstone;
+mod shulkers;
 mod sleep;
 mod spawners;
 mod updates;
@@ -172,6 +174,8 @@ pub struct Game {
     pub arrows: Vec<Arrow>,
     /// Ghasts' fireballs in flight.
     pub fireballs: Vec<crate::entity::fireball::Fireball>,
+    /// Shulkers' bullets in flight (M28).
+    pub bullets: Vec<crate::entity::bullet::ShulkerBullet>,
     /// Splash potions in flight.
     pub thrown: Vec<crate::entity::thrown::ThrownPotion>,
     /// Sand and gravel falling.
@@ -257,6 +261,8 @@ pub struct Game {
     glide_ticks: u32,
     rocket: u32,
     jump_was: bool,
+    /// Ticks before an End gateway works for the player again.
+    gateway_cooldown: u32,
 }
 
 /// A world's folder and its level data, kept for the next save.
@@ -315,6 +321,7 @@ impl Game {
             arrows: Vec::new(),
             fireballs: Vec::new(),
             thrown: Vec::new(),
+            bullets: Vec::new(),
             falling: Vec::new(),
             falls_due: Vec::new(),
             post_processing: Vec::new(),
@@ -362,6 +369,7 @@ impl Game {
             glide_ticks: 0,
             rocket: 0,
             jump_was: false,
+            gateway_cooldown: 0,
         }
     }
 
@@ -747,6 +755,7 @@ impl Game {
             }
             self.tick_portal();
             self.tick_end_portal();
+            self.tick_gateway();
         }
         self.tick_view();
         if !self.is_sleeping() {
@@ -766,6 +775,7 @@ impl Game {
         self.tick_arrows();
         self.tick_fireballs();
         self.tick_thrown();
+        self.tick_bullets();
         self.tick_eyes();
         self.tick_end();
         self.swirl_effects();
@@ -975,6 +985,9 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
     body.speed_factor = effects.speed_factor();
     body.jump_bonus = effects.jump_boost().0;
     body.slow_falling = effects.has(Effect::SlowFalling);
+    body.levitation = effects
+        .get(Effect::Levitation)
+        .map(|active| active.amplifier);
 }
 
 /// A seed for drop and throw randomness, from the clock.

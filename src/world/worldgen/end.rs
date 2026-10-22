@@ -54,6 +54,23 @@ const GATEWAY_RING: f64 = 96.0;
 const GATEWAY_Y: i32 = 75;
 pub const GATEWAYS: usize = 20;
 
+/// Outer islands start this far from the middle (modern's start around
+/// 1000; 20 blocks of void to 600 keeps the first ones within reach of a
+/// gateway's 1024).
+pub const OUTER_START: f64 = 600.0;
+/// The outer islands' grid, in blocks, and the chance in 100 a cell has
+/// one.
+const CELL: i32 = 96;
+const ISLAND_CHANCE: u64 = 60;
+
+/// One outer island: its middle column, its radius and its flat top.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Island {
+    center: (i32, i32),
+    radius: i32,
+    base: i32,
+}
+
 const END_STONE: BlockState = BlockState::of(blocks::END_STONE);
 const OBSIDIAN: BlockState = BlockState::of(blocks::OBSIDIAN);
 const BEDROCK: BlockState = BlockState::of(blocks::BEDROCK);
@@ -93,9 +110,11 @@ impl End {
         RADIUS + around * RAGGED + wobble * 4.0
     }
 
-    /// The top solid block of the column at (x, z), if it is over the
-    /// island.
-    pub fn top(&self, x: i32, z: i32) -> Option<i32> {
+    /// The main island's top and bottom blocks in the column at (x, z).
+    fn main_span(&self, x: i32, z: i32) -> Option<(i32, i32)> {
+        if x.abs() > 100 || z.abs() > 100 {
+            return None;
+        }
         let (fx, fz) = (f64::from(x), f64::from(z));
         let d = fx.hypot(fz);
         let radius = self.radius(fx, fz);
@@ -111,26 +130,168 @@ impl End {
                 .get([fx / 11.0 + self.shift[2], fz / 11.0 + self.shift[0]])
                 * 1.2
         };
-        Some(SURFACE_Y + (bumps - sink * sink * 6.0).round() as i32)
-    }
-
-    /// The lowest solid block of the column at (x, z) under a top of `top`.
-    fn bottom(&self, x: i32, z: i32, top: i32) -> i32 {
-        let (fx, fz) = (f64::from(x), f64::from(z));
-        let radius = self.radius(fx, fz);
-        let across = (fx.hypot(fz) / radius).min(1.0);
+        let top = SURFACE_Y + (bumps - sink * sink * 6.0).round() as i32;
+        let across = (d / radius).min(1.0);
         let belly = DEPTH * (1.0 - across * across).sqrt();
         let jag = self
             .rough
             .get([fx / 9.0 + self.shift[0], fz / 9.0 + self.shift[2]])
             * 2.0;
-        ((f64::from(SURFACE_Y) - belly + jag).round() as i32).min(top)
+        let bottom = ((f64::from(SURFACE_Y) - belly + jag).round() as i32).min(top);
+        Some((top, bottom))
     }
 
-    /// Whether (x, y, z) is end stone of the island.
+    /// The island of the outer cell (`cx`, `cz`), if it has one: a disc
+    /// 12–43 blocks wide at its edge, a flat top between y 56 and 75.
+    fn island_in(&self, cx: i32, cz: i32) -> Option<Island> {
+        let h =
+            mix(self.seed ^ 0x4F55_5445_5200 ^ mix((cx as u32 as u64) << 32 | cz as u32 as u64));
+        if h % 100 >= ISLAND_CHANCE {
+            return None;
+        }
+        let pick = |shift: u32, n: u64| (mix(h >> shift ^ 0x9E37) % n) as i32;
+        let center = (
+            cx * CELL + 20 + pick(3, (CELL - 40) as u64),
+            cz * CELL + 20 + pick(7, (CELL - 40) as u64),
+        );
+        let reach = f64::from(center.0).hypot(f64::from(center.1));
+        let radius = 12 + pick(11, 32);
+        (reach >= OUTER_START).then_some(Island {
+            center,
+            radius,
+            base: 56 + pick(17, 20),
+        })
+    }
+
+    /// The outer islands whose discs could reach (x, z).
+    fn islands_near(&self, x: i32, z: i32) -> Vec<Island> {
+        if f64::from(x).hypot(f64::from(z)) < OUTER_START - 60.0 {
+            return Vec::new();
+        }
+        let (cx, cz) = (x.div_euclid(CELL), z.div_euclid(CELL));
+        let mut found = Vec::new();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                found.extend(self.island_in(cx + dx, cz + dz));
+            }
+        }
+        found
+    }
+
+    /// The top and bottom blocks of every island's column at (x, z): the
+    /// main island's, then the outer ones'.
+    fn spans(&self, x: i32, z: i32) -> Vec<(i32, i32)> {
+        let mut spans: Vec<(i32, i32)> = self.main_span(x, z).into_iter().collect();
+        let (fx, fz) = (f64::from(x), f64::from(z));
+        for island in self.islands_near(x, z) {
+            let (dx, dz) = (
+                fx - f64::from(island.center.0),
+                fz - f64::from(island.center.1),
+            );
+            let wobble = self
+                .rough
+                .get([fx / 13.0 + self.shift[1], fz / 13.0 + self.shift[2]])
+                * 3.0;
+            let radius = f64::from(island.radius) + wobble;
+            let d = dx.hypot(dz);
+            if d >= radius {
+                continue;
+            }
+            let sink = ((d - (radius - 6.0)) / 6.0).max(0.0);
+            let top = island.base - (sink * sink * 3.0).round() as i32;
+            let across = d / radius;
+            let belly = radius * 0.5 * (1.0 - across * across).sqrt();
+            let bottom = ((f64::from(island.base) - belly).round() as i32).min(top);
+            spans.push((top, bottom));
+        }
+        spans
+    }
+
+    /// The top solid block of the column at (x, z), if it is over an
+    /// island.
+    pub fn top(&self, x: i32, z: i32) -> Option<i32> {
+        self.spans(x, z).into_iter().map(|(top, _)| top).max()
+    }
+
+    /// Whether (x, y, z) is end stone of an island.
     pub fn solid(&self, x: i32, y: i32, z: i32) -> bool {
-        self.top(x, z)
-            .is_some_and(|top| y <= top && y >= self.bottom(x, z, top))
+        self.spans(x, z)
+            .into_iter()
+            .any(|(top, bottom)| y <= top && y >= bottom)
+    }
+
+    /// The outer island whose middle is nearest (x, z), with its top: where
+    /// a gateway leads.
+    pub fn island_near(&self, x: i32, z: i32) -> Option<(IVec3, i32)> {
+        let (cx, cz) = (x.div_euclid(CELL), z.div_euclid(CELL));
+        let mut best: Option<(f64, IVec3, i32)> = None;
+        for dz in -4..=4 {
+            for dx in -4..=4 {
+                let Some(island) = self.island_in(cx + dx, cz + dz) else {
+                    continue;
+                };
+                // Small islands are a poor welcome.
+                if island.radius < 16 {
+                    continue;
+                }
+                let d = f64::from(island.center.0 - x).hypot(f64::from(island.center.1 - z));
+                if best.is_none_or(|(b, _, _)| d < b) {
+                    best = Some((
+                        d,
+                        IVec3::new(island.center.0, island.base, island.center.1),
+                        island.radius,
+                    ));
+                }
+            }
+        }
+        best.map(|(_, at, radius)| (at, radius))
+    }
+
+    /// Every outer island of at least `radius` blocks whose middle is in
+    /// the square of `size` blocks from (`x`, `z`), for placing cities.
+    pub fn big_islands_in(&self, x: i32, z: i32, size: i32, radius: i32) -> Vec<(IVec3, i32)> {
+        let mut found = Vec::new();
+        for cz in z.div_euclid(CELL)..=(z + size).div_euclid(CELL) {
+            for cx in x.div_euclid(CELL)..=(x + size).div_euclid(CELL) {
+                if let Some(island) = self.island_in(cx, cz)
+                    && island.radius >= radius
+                    && (x..x + size).contains(&island.center.0)
+                    && (z..z + size).contains(&island.center.1)
+                {
+                    found.push((
+                        IVec3::new(island.center.0, island.base, island.center.1),
+                        island.radius,
+                    ));
+                }
+            }
+        }
+        found
+    }
+
+    /// A chorus plant growing from the island's top at the column, if one
+    /// does there (about one column in sixty): a trunk two to five blocks
+    /// tall, with a flower on top.
+    fn chorus(&self, chunk: &mut Chunk, local: (usize, usize), at: (i32, i32), top: i32) {
+        let h =
+            mix(self.seed ^ 0x43_484F_5255 ^ mix((at.0 as u32 as u64) << 32 | at.1 as u32 as u64));
+        if !h.is_multiple_of(60) {
+            return;
+        }
+        let height = 2 + (h >> 8) % 4;
+        for i in 1..=height as i32 {
+            chunk.set(
+                local.0,
+                (top + i) as usize,
+                local.1,
+                BlockState::of(blocks::CHORUS_PLANT),
+            );
+        }
+        chunk.set(
+            local.0,
+            (top + height as i32 + 1) as usize,
+            local.1,
+            BlockState::of(blocks::CHORUS_FLOWER),
+        );
     }
 
     pub fn generate(&self, pos: ChunkPos) -> Chunk {
@@ -140,14 +301,17 @@ impl End {
             for lx in 0..CHUNK_SIZE {
                 chunk.set_biome(lx, lz, Biome::TheEnd);
                 let (x, z) = (x0 + lx as i32, z0 + lz as i32);
-                if x.abs() > 100 || z.abs() > 100 {
-                    continue;
-                }
-                let Some(top) = self.top(x, z) else {
+                let spans = self.spans(x, z);
+                let Some(&(highest, _)) = spans.iter().max_by_key(|(top, _)| *top) else {
                     continue;
                 };
-                for y in self.bottom(x, z, top).max(1)..=top {
-                    chunk.set(lx, y as usize, lz, END_STONE);
+                for (top, bottom) in spans {
+                    for y in bottom.max(1)..=top {
+                        chunk.set(lx, y as usize, lz, END_STONE);
+                    }
+                }
+                if f64::from(x).hypot(f64::from(z)) >= OUTER_START - 60.0 {
+                    self.chorus(&mut chunk, (lx, lz), (x, z), highest);
                 }
             }
         }
@@ -177,6 +341,10 @@ impl End {
         }
         if pos.x.abs() <= 1 && pos.z.abs() <= 1 {
             put(&mut chunk, podium(PODIUM, false));
+        }
+        // End cities and their ships on the outer islands.
+        if f64::from(x0).hypot(f64::from(z0)) > OUTER_START - 200.0 {
+            crate::world::structure::end::place(self, &mut chunk);
         }
         chunk
     }
@@ -346,6 +514,16 @@ pub fn gateway(at: IVec3) -> Vec<(IVec3, BlockState)> {
     for dy in [-2, -1, 1, 2] {
         out.push((at + IVec3::Y * dy, BEDROCK));
     }
+    out
+}
+
+/// The gateway standing on an outer island at `at` (the block the player
+/// walks into, on the island's top): a bedrock block under it and two over.
+pub fn exit_gateway(at: IVec3) -> Vec<(IVec3, BlockState)> {
+    let mut out = vec![(at, BlockState::of(blocks::END_GATEWAY))];
+    out.push((at - IVec3::Y, BEDROCK));
+    out.push((at + IVec3::Y, BEDROCK));
+    out.push((at + IVec3::Y * 2, BEDROCK));
     out
 }
 
@@ -526,6 +704,75 @@ mod tests {
                 .iter()
                 .all(|(at, b)| (b.is_air()) == (at.y >= PLATFORM.y))
         );
+    }
+
+    #[test]
+    fn outer_islands_start_beyond_600_blocks_and_every_direction_has_some_to_land_on() {
+        let end = End::new(5);
+        // None between the main island and the outer ring.
+        for d in (150..560).step_by(10) {
+            for a in 0..12 {
+                let t = f64::from(a) * std::f64::consts::TAU / 12.0;
+                assert!(
+                    end.top(
+                        (f64::from(d) * t.cos()) as i32,
+                        (f64::from(d) * t.sin()) as i32
+                    )
+                    .is_none()
+                );
+            }
+        }
+        // Around a gateway's 1024 there's always one within a few hundred blocks.
+        for slot in 0..GATEWAYS {
+            let t = slot as f64 * std::f64::consts::TAU / GATEWAYS as f64;
+            let (x, z) = ((1024.0 * t.cos()) as i32, (1024.0 * t.sin()) as i32);
+            let (at, radius) = end.island_near(x, z).expect("an island");
+            assert!(radius >= 16);
+            let near = f64::from(at.x - x).hypot(f64::from(at.z - z));
+            assert!(near < 450.0, "{near} from {x},{z}");
+            assert!(end.solid(at.x, at.y, at.z) && end.top(at.x, at.z).unwrap() >= at.y - 1);
+            assert!(!end.solid(at.x, at.y + 1, at.z));
+        }
+    }
+
+    #[test]
+    fn outer_islands_are_the_same_whichever_chunk_draws_them_and_grow_chorus_plants() {
+        let end = End::new(5);
+        let (at, radius) = end.island_near(1024, 0).unwrap();
+        assert_eq!(end.island_near(1024, 0), Some((at, radius)));
+        let pos = ChunkPos::of_block(at.x, at.z);
+        let chunk = end.generate(pos);
+        let again = end.generate(pos);
+        let local = (
+            (at.x.rem_euclid(16)) as usize,
+            (at.z.rem_euclid(16)) as usize,
+        );
+        assert_eq!(chunk.get(local.0, at.y as usize, local.1), END_STONE);
+        for y in 0..crate::config::WORLD_HEIGHT {
+            assert_eq!(
+                chunk.get(local.0, y, local.1),
+                again.get(local.0, y, local.1)
+            );
+        }
+        // Somewhere on the island's chunks a chorus plant stands on end stone.
+        let mut plants = 0;
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                let chunk = end.generate(pos.offset(dx, dz));
+                for z in 0..16 {
+                    for x in 0..16 {
+                        for y in 1..crate::config::WORLD_HEIGHT {
+                            if chunk.get(x, y, z).is(blocks::CHORUS_PLANT)
+                                && chunk.get(x, y - 1, z).is(blocks::END_STONE)
+                            {
+                                plants += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(plants >= 1, "{plants}");
     }
 
     #[test]
