@@ -1202,7 +1202,41 @@ struct Plants {
     ferns: f64,
     flower_patches: u32,
     flowers: &'static [BlockId],
+    /// Vanilla-style flower patches, for the biomes that have them.
+    patch: Option<Patch>,
 }
+
+/// A vanilla `random_patch` of flowers (`flower_plains`, `flower_default`):
+/// `count` tries per chunk, or `crowded_count` where the noise at the chunk
+/// is below `crowded_below`, each kept with chance 1 in `rarity`, then
+/// `tries` placements around a random surface spot.
+struct Patch {
+    count: u32,
+    crowded: Option<(f64, u32)>,
+    rarity: u32,
+    tries: u32,
+}
+
+/// Plains: 4 tries per chunk, 15 in the rare chunks the noise marks.
+const PLAINS_PATCH: Patch = Patch {
+    count: 4,
+    crowded: Some((-0.8, 15)),
+    rarity: 32,
+    tries: 64,
+};
+/// Forests: one try per chunk.
+const DEFAULT_PATCH: Patch = Patch {
+    count: 1,
+    crowded: None,
+    rarity: 32,
+    tries: 64,
+};
+/// Patches spread this far sideways and this far up and down.
+const PATCH_SPREAD: u32 = 6;
+const PATCH_SPREAD_Y: u32 = 2;
+/// The noise that picks the crowded plains chunks, in blocks per cycle.
+const PATCH_NOISE_SCALE: f64 = 200.0;
+const PATCH_SALT: u64 = 0xF10;
 
 const NO_PLANTS: Plants = Plants {
     grass: 0,
@@ -1210,6 +1244,7 @@ const NO_PLANTS: Plants = Plants {
     ferns: 0.0,
     flower_patches: 0,
     flowers: &[],
+    patch: None,
 };
 
 fn plants_for(biome: Biome) -> Plants {
@@ -1220,24 +1255,33 @@ fn plants_for(biome: Biome) -> Plants {
         ferns,
         flower_patches,
         flowers,
+        patch: None,
+    };
+    let with = |plants: Plants, patch| Plants {
+        patch: Some(patch),
+        flower_patches: 0,
+        ..plants
     };
     match biome {
-        Biome::Plains => p(
-            32,
-            0.9,
-            0.0,
-            4,
-            &[
-                DANDELION,
-                POPPY,
-                AZURE_BLUET,
-                OXEYE_DAISY,
-                CORNFLOWER,
-                RED_TULIP,
-                ORANGE_TULIP,
-                WHITE_TULIP,
-                PINK_TULIP,
-            ],
+        Biome::Plains => with(
+            p(
+                32,
+                0.9,
+                0.0,
+                0,
+                &[
+                    DANDELION,
+                    POPPY,
+                    AZURE_BLUET,
+                    OXEYE_DAISY,
+                    CORNFLOWER,
+                    RED_TULIP,
+                    ORANGE_TULIP,
+                    WHITE_TULIP,
+                    PINK_TULIP,
+                ],
+            ),
+            PLAINS_PATCH,
         ),
         Biome::Meadow => p(
             40,
@@ -1253,26 +1297,32 @@ fn plants_for(biome: Biome) -> Plants {
                 CORNFLOWER,
             ],
         ),
-        Biome::Forest => p(
-            12,
-            0.4,
-            0.0,
-            3,
-            &[
-                DANDELION,
-                POPPY,
-                LILY_OF_THE_VALLEY,
-                LILAC,
-                ROSE_BUSH,
-                PEONY,
-            ],
+        Biome::Forest => with(
+            p(
+                12,
+                0.4,
+                0.0,
+                0,
+                &[
+                    DANDELION,
+                    POPPY,
+                    LILY_OF_THE_VALLEY,
+                    LILAC,
+                    ROSE_BUSH,
+                    PEONY,
+                ],
+            ),
+            DEFAULT_PATCH,
         ),
-        Biome::BirchForest => p(
-            12,
-            0.4,
-            0.0,
-            3,
-            &[DANDELION, POPPY, LILY_OF_THE_VALLEY, LILAC, PEONY],
+        Biome::BirchForest => with(
+            p(
+                12,
+                0.4,
+                0.0,
+                0,
+                &[DANDELION, POPPY, LILY_OF_THE_VALLEY, LILAC, PEONY],
+            ),
+            DEFAULT_PATCH,
         ),
         Biome::DarkForest => p(
             10,
@@ -1371,6 +1421,38 @@ fn plants(terrain: &Terrain, area: &Area, chunk: &mut Chunk, keep_out: &[Bounds]
             let ground = column.grassy() || (mushroom && column.top.id() == blocks::MYCELIUM);
             if ground && column.height >= SEA_LEVEL {
                 plant(&mut writer, x, column.height + 1, z, flower);
+            }
+        }
+    }
+
+    // Vanilla flower patches: few chunks have any, and those have many.
+    if let Some(patch) = &kinds.patch {
+        let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, PATCH_SALT);
+        let tries = match patch.crowded {
+            Some((below, crowded)) if patch_noise(terrain.seed(), min_x, min_z) < below => crowded,
+            _ => patch.count,
+        };
+        for _ in 0..tries {
+            if rng.below(patch.rarity) != 0 {
+                continue;
+            }
+            let (cx, cz) = pick(&mut rng);
+            let surface = area.get(cx, cz).height + 1;
+            let flower = of(kinds.flowers[rng.below(kinds.flowers.len() as u32) as usize]);
+            let spread = |rng: &mut Rng, n: u32| rng.below(n + 1) as i32 - rng.below(n + 1) as i32;
+            for _ in 0..patch.tries {
+                let (x, z) = (
+                    cx + spread(&mut rng, PATCH_SPREAD),
+                    cz + spread(&mut rng, PATCH_SPREAD),
+                );
+                let y = surface + spread(&mut rng, PATCH_SPREAD_Y);
+                if !(min_x..min_x + 16).contains(&x) || !(min_z..min_z + 16).contains(&z) {
+                    continue;
+                }
+                let column = area.get(x, z);
+                if column.grassy() && column.height >= SEA_LEVEL && y == column.height + 1 {
+                    plant(&mut writer, x, y, z, flower);
+                }
             }
         }
     }
@@ -1494,6 +1576,14 @@ fn plants(terrain: &Terrain, area: &Area, chunk: &mut Chunk, keep_out: &[Bounds]
             }
         }
     }
+}
+
+/// The smooth noise (about -1 to 1) that marks plains chunks for the crowded
+/// flower count.
+fn patch_noise(seed: u64, x: i32, z: i32) -> f64 {
+    use noise::{NoiseFn, Perlin};
+    Perlin::new((seed ^ PATCH_SALT) as u32)
+        .get([x as f64 / PATCH_NOISE_SCALE, z as f64 / PATCH_NOISE_SCALE])
 }
 
 /// Open sand, red sand or terracotta above sea level, for desert plants.

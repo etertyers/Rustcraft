@@ -53,6 +53,9 @@ pub struct MobData {
     /// Taming progress for a horse (temper) or similar.
     #[serde(default)]
     pub temper: u8,
+    /// Ticks left in love mode after being fed breeding food.
+    #[serde(default)]
+    pub love: u32,
     /// A villager's job, trades, bed and so on (added in M23).
     #[serde(default)]
     pub villager: Option<Box<super::villager::VillagerData>>,

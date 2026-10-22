@@ -745,9 +745,11 @@
     (name: "purpur_slab", hardness: 1.5, props: [SlabType, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), placement: Slab, shape: Slab, textures: (all: "purpur_block")),
     (name: "end_stone_bricks", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "end_stone_bricks")),
     (name: "end_rod", hardness: 0.0, shape: Torch, layer: Cutout, solid: false, light: 14, textures: (all: "end_rod")),
-    // Chorus plants are drawn as whole blocks, and neither grows.
-    (name: "chorus_plant", hardness: 0.4, tool: Axe, drops: All([(item: "chorus_fruit", min: 0, max: 1)]), textures: (all: "chorus_plant")),
-    (name: "chorus_flower", hardness: 0.4, tool: Axe, textures: (all: "chorus_flower")),
+    // Chorus plants are drawn as whole blocks, and neither grows. A stem joins
+    // its neighbors (up, down and the four sides) and drops fruit half the
+    // time; a flower drops itself when broken.
+    (name: "chorus_plant", hardness: 0.4, props: [Up, Down, North, East, South, West], tool: Axe, drops: All([(item: "chorus_fruit", min: 0, max: 1)]), textures: (all: "chorus_plant")),
+    (name: "chorus_flower", hardness: 0.4, props: [Age5], tool: Axe, drops: Itself, textures: (all: "chorus_flower")),
     // Shulker boxes keep what's in them when broken (the item carries the contents).
     (name: "shulker_box", hardness: 2.0, activate: Chest, tool: Pickaxe, drops: Nothing, textures: (all: "shulker_box")),
     (name: "white_shulker_box", hardness: 2.0, activate: Chest, tool: Pickaxe, drops: Nothing, textures: (all: "white_shulker_box")),

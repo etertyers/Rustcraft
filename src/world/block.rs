@@ -1086,6 +1086,7 @@ impl BlockDef {
                 | Shape::Vine
                 | Shape::FenceGate
         ) || self.props.contains(&Prop::Snowy)
+            || self.id == super::blocks::CHORUS_PLANT
     }
 
     /// Whether placing something may overwrite `state`: a snow layer only

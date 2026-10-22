@@ -35,6 +35,25 @@ fn main() -> Result<()> {
     // `--biome-map --seed <n> --size <pixels> --out <file>`: the surface
     // biomes, one pixel per 4×4 column, and their statistics.
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--flower-test") {
+        let seed = args
+            .iter()
+            .position(|arg| arg == "--seed")
+            .and_then(|i| args.get(i + 1))
+            .map_or(Ok(12345), |s| s.parse())
+            .context("--seed needs a number")?;
+        rustcraft::world::worldgen::flower_stats::print_stats(seed, 400);
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--spawn-test") {
+        let seed = args
+            .iter()
+            .position(|arg| arg == "--seed")
+            .and_then(|i| args.get(i + 1))
+            .map_or(Ok(12345), |s| s.parse())
+            .context("--seed needs a number")?;
+        return rustcraft::game::spawn_test::run(seed);
+    }
     if args.iter().any(|arg| arg == "--biome-map") {
         return biome_map(&args);
     }

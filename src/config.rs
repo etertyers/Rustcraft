@@ -153,3 +153,79 @@ pub mod combat {
     /// A blocked melee blow pushes the attacker back this much.
     pub const SHIELD_KNOCKBACK: f64 = 0.5;
 }
+
+/// Natural spawning, after modern (1.21) `NaturalSpawner`: the categories and
+/// their caps, how often each is tried, and where and in what light a mob
+/// may appear. One table for the numbers; `game/mobs.rs` does the rest.
+pub mod spawning {
+    /// A mob category: its cap per player, and how often its spawn cycle
+    /// runs (every `every` ticks of game time).
+    pub struct Category {
+        pub name: &'static str,
+        pub cap: usize,
+        pub every: u64,
+    }
+
+    pub const MONSTER: Category = Category {
+        name: "monster",
+        cap: 70,
+        every: 1,
+    };
+    /// Animals: tried only once every 400 ticks.
+    pub const CREATURE: Category = Category {
+        name: "creature",
+        cap: 10,
+        every: 400,
+    };
+    pub const AMBIENT: Category = Category {
+        name: "ambient",
+        cap: 15,
+        every: 1,
+    };
+    pub const WATER_CREATURE: Category = Category {
+        name: "water_creature",
+        cap: 5,
+        every: 1,
+    };
+    pub const WATER_AMBIENT: Category = Category {
+        name: "water_ambient",
+        cap: 20,
+        every: 1,
+    };
+    pub const UNDERGROUND_WATER_CREATURE: Category = Category {
+        name: "underground_water_creature",
+        cap: 5,
+        every: 1,
+    };
+    pub const AXOLOTLS: Category = Category {
+        name: "axolotls",
+        cap: 5,
+        every: 1,
+    };
+
+    /// The cap that applies is `cap × chunks ÷ CAP_CHUNKS`, where `chunks`
+    /// are the loaded chunks near a player (17 × 17 with one player).
+    pub const CAP_CHUNKS: usize = 289;
+    /// Chunks this far from a player (Chebyshev) take part.
+    pub const CHUNK_RADIUS: i32 = 8;
+    /// Never closer than this to a player or the world spawn, and never
+    /// farther than `MAX_DISTANCE` from the player.
+    pub const MIN_DISTANCE: f64 = 24.0;
+    pub const MAX_DISTANCE: f64 = 128.0;
+    /// At each random spot: this many packs, each of at most this many steps
+    /// of `rand(0..STEP) − rand(0..STEP)` blocks on x and z.
+    pub const PACKS: u32 = 3;
+    pub const PACK_STEPS: u32 = 4;
+    pub const PACK_STEP: u32 = 6;
+    /// Animals need more block or sky light than this.
+    pub const ANIMAL_LIGHT_ABOVE: u8 = 8;
+    /// Monsters need block light at most this, and a light level at most a
+    /// uniform random number below `MONSTER_LIGHT_BELOW`.
+    pub const MONSTER_BLOCK_LIGHT: u8 = 0;
+    pub const MONSTER_LIGHT_BELOW: u32 = 8;
+    /// The chance a new chunk gets a pack of animals; snowy plains and
+    /// badlands have their own.
+    pub const CHUNK_PACK_CHANCE: f32 = 0.1;
+    pub const SNOWY_PLAINS_PACK_CHANCE: f32 = 0.07;
+    pub const BADLANDS_PACK_CHANCE: f32 = 0.03;
+}
