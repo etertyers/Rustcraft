@@ -223,4 +223,10 @@
     (name: "carrot", texture: "carrot", food: (hunger: 3, saturation: 0.6)),
     (name: "golden_carrot", texture: "golden_carrot", food: (hunger: 6, saturation: 1.2)),
     (name: "pufferfish", texture: "pufferfish", food: (hunger: 1, saturation: 0.1)),
+    // M28
+    (name: "elytra", texture: "elytra", max_stack: 1, durability: 432),
+    (name: "shulker_shell", texture: "shulker_shell"),
+    (name: "chorus_fruit", texture: "chorus_fruit", food: (hunger: 4, saturation: 0.3, always_edible: true)),
+    (name: "popped_chorus_fruit", texture: "popped_chorus_fruit"),
+    (name: "firework_rocket", texture: "firework_rocket"),
 ]

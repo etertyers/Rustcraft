@@ -1610,6 +1610,9 @@ mod tests {
             "warped_wart_block",
             "weeping_vines",
             "weeping_vines_plant",
+            "purpur_block",
+            "purpur_pillar",
+            "purpur_pillar_top",
         ] {
             expected.push(format!("block/{name}"));
         }

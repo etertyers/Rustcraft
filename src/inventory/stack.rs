@@ -35,6 +35,10 @@ pub struct Extra {
     pub name: Option<String>,
     /// Times the anvil has worked on it (modern `RepairCost` is 2^n − 1).
     pub work: u8,
+    /// What a shulker box item holds (M28); saved after the rest, flagged
+    /// in the damage so older saves read back unchanged.
+    #[serde(skip)]
+    pub contents: Vec<Option<ItemStack>>,
 }
 
 impl ItemStack {
@@ -125,6 +129,21 @@ impl ItemStack {
         self.tidy();
     }
 
+    /// The slots a shulker box item carries, if it has any.
+    pub fn contents(&self) -> &[Option<ItemStack>] {
+        self.extra.as_ref().map_or(&[], |extra| &extra.contents)
+    }
+
+    /// Sets what a shulker box item carries.
+    pub fn set_contents(&mut self, contents: Vec<Option<ItemStack>>) {
+        if contents.iter().any(Option::is_some) {
+            self.extra.get_or_insert_with(Default::default).contents = contents;
+        } else if let Some(extra) = self.extra.as_mut() {
+            extra.contents.clear();
+        }
+        self.tidy();
+    }
+
     /// Drops `extra` once it holds nothing, so plain stacks compare and
     /// save as plain.
     fn tidy(&mut self) {
@@ -138,17 +157,27 @@ impl ItemStack {
 /// made before enchanting (bincode, with no length for the fields) read
 /// back unchanged.
 const HAS_EXTRA: u8 = 0x80;
+/// Set in a saved stack's damage when its contents follow the extra (a
+/// shulker box item); no tool wears out that far.
+const HAS_CONTENTS: u16 = 0x8000;
 
 impl Serialize for ItemStack {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut out =
-            serializer.serialize_struct("ItemStack", 3 + self.extra.is_some() as usize)?;
+        let held = !self.contents().is_empty();
+        let mut out = serializer.serialize_struct(
+            "ItemStack",
+            3 + self.extra.is_some() as usize + held as usize,
+        )?;
         out.serialize_field("id", &self.id)?;
         let flag = if self.extra.is_some() { HAS_EXTRA } else { 0 };
         out.serialize_field("count", &(self.count | flag))?;
-        out.serialize_field("damage", &self.damage)?;
+        let damage = self.damage | if held { HAS_CONTENTS } else { 0 };
+        out.serialize_field("damage", &damage)?;
         if let Some(extra) = &self.extra {
             out.serialize_field("extra", extra)?;
+        }
+        if held {
+            out.serialize_field("contents", self.contents())?;
         }
         out.end()
     }
@@ -169,40 +198,50 @@ impl<'de> Deserialize<'de> for ItemStack {
                 let missing = |field| serde::de::Error::missing_field(field);
                 let id = seq.next_element()?.ok_or_else(|| missing("id"))?;
                 let count: u8 = seq.next_element()?.ok_or_else(|| missing("count"))?;
-                let damage = seq.next_element()?.ok_or_else(|| missing("damage"))?;
-                let extra = if count & HAS_EXTRA != 0 {
+                let damage: u16 = seq.next_element()?.ok_or_else(|| missing("damage"))?;
+                let mut extra: Option<Box<Extra>> = if count & HAS_EXTRA != 0 {
                     Some(Box::new(
                         seq.next_element()?.ok_or_else(|| missing("extra"))?,
                     ))
                 } else {
                     None
                 };
+                if damage & HAS_CONTENTS != 0 {
+                    let contents = seq.next_element()?.ok_or_else(|| missing("contents"))?;
+                    extra.get_or_insert_with(Default::default).contents = contents;
+                }
                 Ok(ItemStack {
                     id,
                     count: count & !HAS_EXTRA,
-                    damage,
+                    damage: damage & !HAS_CONTENTS,
                     extra,
                 })
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ItemStack, A::Error> {
                 let (mut id, mut count, mut damage, mut extra) = (None, None, None, None);
+                let mut contents: Option<Vec<Option<ItemStack>>> = None;
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "id" => id = Some(map.next_value()?),
                         "count" => count = Some(map.next_value::<u8>()?),
                         "damage" => damage = Some(map.next_value()?),
                         "extra" => extra = Some(Box::new(map.next_value::<Extra>()?)),
+                        "contents" => contents = Some(map.next_value()?),
                         _ => {
                             map.next_value::<serde::de::IgnoredAny>()?;
                         }
                     }
                 }
                 let missing = |field| serde::de::Error::missing_field(field);
+                let mut extra: Option<Box<Extra>> = extra;
+                if let Some(contents) = contents {
+                    extra.get_or_insert_with(Default::default).contents = contents;
+                }
                 Ok(ItemStack {
                     id: id.ok_or_else(|| missing("id"))?,
                     count: count.ok_or_else(|| missing("count"))? & !HAS_EXTRA,
-                    damage: damage.unwrap_or(0),
+                    damage: damage.unwrap_or(0u16) & !HAS_CONTENTS,
                     extra,
                 })
             }
@@ -210,7 +249,7 @@ impl<'de> Deserialize<'de> for ItemStack {
 
         deserializer.deserialize_struct(
             "ItemStack",
-            &["id", "count", "damage", "extra"],
+            &["id", "count", "damage", "extra", "contents"],
             StackVisitor,
         )
     }

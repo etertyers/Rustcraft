@@ -77,6 +77,8 @@ pub enum DamageSource {
     Magic,
     /// The Wither effect (M26).
     Wither,
+    /// Gliding into a wall on elytra (M28).
+    FlyIntoWall,
 }
 
 impl DamageSource {
@@ -97,6 +99,7 @@ impl DamageSource {
             DamageSource::Fireball => "was fireballed by Ghast",
             DamageSource::Magic => "was killed by magic",
             DamageSource::Wither => "withered away",
+            DamageSource::FlyIntoWall => "experienced kinetic energy",
         }
     }
 
@@ -116,6 +119,7 @@ impl DamageSource {
             | DamageSource::Fire
             | DamageSource::Magic
             | DamageSource::Wither
+            | DamageSource::FlyIntoWall
             | DamageSource::Starving => 0.0,
         }
     }
@@ -177,6 +181,14 @@ pub struct Stats {
     /// Extra health from Absorption, used up before health (M26).
     #[serde(default)]
     pub absorption: f32,
+    /// Armor points and toughness worn, set each tick from the armor slots
+    /// (M28), and the damage armor has taken since the pieces last wore.
+    #[serde(skip)]
+    pub armor: f32,
+    #[serde(skip)]
+    pub toughness: f32,
+    #[serde(skip)]
+    pub armor_wear: f32,
 }
 
 impl Default for Stats {
@@ -198,6 +210,9 @@ impl Default for Stats {
             enchant_seed: 0,
             effects: Effects::default(),
             absorption: 0.0,
+            armor: 0.0,
+            toughness: 0.0,
+            armor_wear: 0.0,
         }
     }
 }
@@ -255,6 +270,23 @@ impl Stats {
         );
         if fiery && self.effects.has(Effect::FireResistance) {
             return false;
+        }
+        // Armor cuts most hits, and wears for it; falling, drowning,
+        // hunger, poison and the Wither get through (modern
+        // `bypasses_armor`).
+        let mut amount = amount;
+        if !matches!(
+            source,
+            DamageSource::Fall
+                | DamageSource::Drowning
+                | DamageSource::Starving
+                | DamageSource::Magic
+                | DamageSource::Wither
+                | DamageSource::FlyIntoWall
+        ) && self.armor > 0.0
+        {
+            self.armor_wear += amount;
+            amount = crate::inventory::armor::reduce(amount, self.armor, self.toughness);
         }
         // Resistance takes its share, then absorption soaks up the rest
         // first (modern `getDamageAfterMagicAbsorb`, `actuallyHurt`).

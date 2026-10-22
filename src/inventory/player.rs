@@ -15,7 +15,13 @@ pub const HOTBAR_SLOTS: usize = 9;
 pub const MAIN_SLOTS: usize = 36;
 /// The off-hand slot, after them (modern Minecraft's slot 40).
 pub const OFFHAND: usize = 36;
-pub const SLOTS: usize = 37;
+/// The armor slots, after the off-hand: boots, leggings, chestplate and
+/// helmet (modern's slots 36–39 in this order).
+pub const ARMOR_FEET: usize = 37;
+pub const ARMOR_LEGS: usize = 38;
+pub const ARMOR_CHEST: usize = 39;
+pub const ARMOR_HEAD: usize = 40;
+pub const SLOTS: usize = 41;
 
 /// A hand: items are used from the main hand, or the off-hand when the
 /// main hand has nothing to do.
@@ -35,9 +41,21 @@ impl Hand {
     }
 }
 
+/// Whether `index` is one of the four armor slots.
+pub fn is_armor_slot(index: usize) -> bool {
+    (ARMOR_FEET..=ARMOR_HEAD).contains(&index)
+}
+
+/// The armor slot `stack` goes in, if it's armor.
+pub fn armor_slot_of(items: &Items, stack: &ItemStack) -> Option<usize> {
+    let def = items.item(stack.id)?;
+    super::armor::armor_of(&def.name).map(|armor| armor.slot.index())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inventory {
-    /// `SLOTS` long: 0–8 are the hotbar, 9–35 the rest, 36 the off-hand.
+    /// `SLOTS` long: 0–8 are the hotbar, 9–35 the rest, 36 the off-hand and
+    /// 37–40 the armor.
     slots: Vec<Option<ItemStack>>,
     /// Selected hotbar slot.
     pub selected: usize,
@@ -177,7 +195,28 @@ impl Inventory {
         if click == Click::Shift {
             return self.transfer(index, items);
         }
+        // An armor slot takes only its own kind of piece.
+        if is_armor_slot(index)
+            && cursor
+                .as_ref()
+                .is_some_and(|held| armor_slot_of(items, held) != Some(index))
+        {
+            return;
+        }
         slots::click(&mut self.slots[index], click, cursor, items);
+    }
+
+    /// Puts the armor in slot `from` on, swapping with what is worn there
+    /// (right-click with it in hand). Returns whether it was armor.
+    pub fn equip(&mut self, from: usize, items: &Items) -> bool {
+        let Some(slot) = self.slots[from]
+            .as_ref()
+            .and_then(|stack| armor_slot_of(items, stack))
+        else {
+            return false;
+        };
+        self.slots.swap(from, slot);
+        true
     }
 
     /// Shift-click: moves a hotbar stack into the rest of the inventory,
@@ -186,7 +225,17 @@ impl Inventory {
         let Some(stack) = self.slots[index].take() else {
             return;
         };
-        let target = if index < HOTBAR_SLOTS {
+        // Armor goes on if its place is free; worn armor comes off.
+        if index < MAIN_SLOTS
+            && let Some(slot) = armor_slot_of(items, &stack)
+            && self.slots[slot].is_none()
+        {
+            self.slots[slot] = Some(stack);
+            return;
+        }
+        let target = if is_armor_slot(index) {
+            0..MAIN_SLOTS
+        } else if index < HOTBAR_SLOTS {
             HOTBAR_SLOTS..MAIN_SLOTS
         } else if index == OFFHAND {
             0..MAIN_SLOTS

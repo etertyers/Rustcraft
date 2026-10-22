@@ -84,8 +84,12 @@ impl Game {
         if Self::is_drink(stack.id)
             || matches!(
                 stack.id,
-                items::SPLASH_POTION | items::GLASS_BOTTLE | items::ENDER_EYE
+                items::SPLASH_POTION
+                    | items::GLASS_BOTTLE
+                    | items::ENDER_EYE
+                    | items::FIREWORK_ROCKET
             )
+            || crate::inventory::player::armor_slot_of(&self.items, stack).is_some()
         {
             return true;
         }
@@ -183,6 +187,23 @@ impl Game {
         {
             let slot = self.held_slot();
             self.throw_potion(slot);
+            self.break_clicked = false;
+            self.place_clicked = false;
+            return;
+        }
+        // A firework rocket boosts a glide, once per click.
+        if hand.is_some()
+            && self.place_clicked
+            && self.held().is_some_and(|s| s.id == items::FIREWORK_ROCKET)
+        {
+            self.use_rocket();
+            self.break_clicked = false;
+            self.place_clicked = false;
+            return;
+        }
+        // Armor is put on, once per click.
+        if hand.is_some() && self.place_clicked && self.equip_held() {
+            self.view.swing();
             self.break_clicked = false;
             self.place_clicked = false;
             return;
@@ -426,11 +447,29 @@ impl Game {
         }
         // A chest or furnace spills what it held, in every game mode (1.0.0).
         for &(at, _) in &edits {
-            let Some(entity) = self.chunks.set_block_entity(at, None) else {
-                continue;
-            };
+            let broken = self.chunks.world().block(at.x, at.y, at.z);
+            let entity = self.chunks.set_block_entity(at, None);
             let rng = &mut self.rng;
             let mut random = || rng.next_f64() as f32;
+            // A shulker box comes out whole, with what it held inside; an
+            // empty one drops in survival only.
+            if let Some(block) = broken
+                && block.def().name.ends_with("shulker_box")
+                && let Some(item) = self.items.items.of_block(block.id())
+            {
+                let mut stack = ItemStack::new(item, 1);
+                if let Some(entity) = &entity {
+                    stack.set_contents(entity.slots().to_vec());
+                }
+                if self.mode.drops_items() || !stack.contents().is_empty() {
+                    self.entities
+                        .push(ItemEntity::from_block(stack, at, &mut random));
+                }
+                continue;
+            }
+            let Some(entity) = entity else {
+                continue;
+            };
             for stack in entity.contents() {
                 self.entities
                     .push(ItemEntity::from_block(stack, at, &mut random));
@@ -798,6 +837,17 @@ impl Game {
             return;
         };
         self.edit(&edits);
+        // A shulker box put down keeps what the item held.
+        if !stack.contents().is_empty()
+            && let Some(&(at, _)) = edits.iter().find(|(_, state)| state.id() == block.id())
+        {
+            let mut slots = stack.contents().to_vec();
+            slots.resize(crate::world::block_entity::CHEST_SLOTS, None);
+            self.chunks.set_block_entity(
+                at,
+                Some(crate::world::block_entity::BlockEntity::Chest(slots)),
+            );
+        }
         self.view.swing();
         if self.mode.uses_up_items() {
             self.inventory.take(self.held_slot(), 1);

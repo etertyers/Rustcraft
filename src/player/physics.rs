@@ -143,6 +143,12 @@ pub struct Body {
     pub speed_factor: f64,
     pub jump_bonus: f64,
     pub slow_falling: bool,
+    /// Gliding on elytra (M28): a lying 0.6-block body steered by where
+    /// it looks, which Game starts and stops.
+    pub fall_flying: bool,
+    /// How hard the last glide tick hit a wall: modern's kinetic energy,
+    /// `(speed lost) × 10 − 3`, when above 0.
+    pub glide_impact: f64,
     pose: Pose,
     /// Whether this is the player, who has poses (mobs stay standing).
     has_poses: bool,
@@ -193,6 +199,8 @@ impl Body {
             speed_factor: 1.0,
             jump_bonus: 0.0,
             slow_falling: false,
+            fall_flying: false,
+            glide_impact: 0.0,
         }
     }
 
@@ -294,9 +302,17 @@ impl Body {
             self.update_flight(input.jump);
         }
         self.sneaking = input.sneak && !self.flying;
+        if self.fall_flying && (self.flying || self.on_ground || self.liquid.is_some()) {
+            self.fall_flying = false;
+        }
+        self.glide_impact = 0.0;
         let eyes_in_water = self.eyes_in_water(world);
         self.update_swimming(eyes_in_water);
         self.update_pose(world);
+        if self.fall_flying {
+            self.glide(yaw, input.look_y, world);
+            return;
+        }
 
         let mut forward = input.forward.clamp(-1.0, 1.0);
         let mut strafe = input.strafe.clamp(-1.0, 1.0);
@@ -375,6 +391,43 @@ impl Body {
             return;
         }
         self.walk_or_fly(input, friction, world);
+    }
+
+    /// One tick of gliding (modern `LivingEntity.updateFallFlying`'s travel):
+    /// gravity eased by the lift of the look angle, diving trades height
+    /// for speed, climbing trades speed for height, and the heading
+    /// follows the look.
+    fn glide(&mut self, yaw: f32, look_y: f64, world: &impl Collider) {
+        self.liquid = self.find_liquid(world);
+        let (sin_yaw, cos_yaw) = (yaw as f64).sin_cos();
+        let cos_pitch = (1.0 - look_y * look_y).max(0.0).sqrt();
+        let look = DVec3::new(sin_yaw * cos_pitch, look_y, -cos_yaw * cos_pitch);
+        let flat_look = cos_pitch;
+        let flat_speed = self.velocity.x.hypot(self.velocity.z);
+        let lift = cos_pitch * cos_pitch;
+        let mut v = self.velocity;
+        v.y += GRAVITY * (-1.0 + lift * 0.75);
+        if v.y < 0.0 && flat_look > 0.0 {
+            let d = v.y * -0.1 * lift;
+            v += DVec3::new(look.x * d / flat_look, d, look.z * d / flat_look);
+        }
+        if look_y > 0.0 && flat_look > 0.0 {
+            let d = flat_speed * look_y * 0.04;
+            v += DVec3::new(-look.x * d / flat_look, d * 3.2, -look.z * d / flat_look);
+        }
+        if flat_look > 0.0 {
+            v.x += (look.x / flat_look * flat_speed - v.x) * 0.1;
+            v.z += (look.z / flat_look * flat_speed - v.z) * 0.1;
+        }
+        self.velocity = DVec3::new(v.x * 0.99, v.y * 0.98, v.z * 0.99);
+        self.move_by(self.velocity, world);
+        if self.collided_horizontally {
+            let after = self.velocity.x.hypot(self.velocity.z);
+            self.glide_impact = ((flat_speed - after) * 10.0 - 3.0).max(0.0);
+        }
+        if self.on_ground {
+            self.fall_flying = false;
+        }
     }
 
     /// Ground, air, ladders and flight: one tick of the rest of
@@ -479,7 +532,7 @@ impl Body {
         if !fits(Pose::Swimming) {
             return;
         }
-        let wanted = if self.swimming {
+        let wanted = if self.swimming || self.fall_flying {
             Pose::Swimming
         } else if self.sneaking {
             Pose::Crouching

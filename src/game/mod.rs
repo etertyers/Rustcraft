@@ -3,12 +3,14 @@
 //! owns at most one.
 
 mod animals;
+mod armor;
 mod benches;
 mod capture;
 mod combat;
 mod containers;
 mod dimensions;
 mod dragon;
+mod elytra;
 mod end_portal;
 #[cfg(test)]
 mod end_tests;
@@ -250,6 +252,11 @@ pub struct Game {
     pub breath: Vec<crate::entity::breath::BreathCloud>,
     /// Ticks the poem and credits have rolled, while they do.
     credits: Option<u32>,
+    /// Gliding on elytra: ticks so far, ticks of a rocket's push left,
+    /// and whether jump was held last tick.
+    glide_ticks: u32,
+    rocket: u32,
+    jump_was: bool,
 }
 
 /// A world's folder and its level data, kept for the next save.
@@ -352,6 +359,9 @@ impl Game {
             dragon_fireballs: Vec::new(),
             breath: Vec::new(),
             credits: None,
+            glide_ticks: 0,
+            rocket: 0,
+            jump_was: false,
         }
     }
 
@@ -721,8 +731,11 @@ impl Game {
             } else if self.is_riding() {
                 self.ride_cart();
             } else {
+                self.tick_elytra();
                 self.move_player();
+                self.glide_impact();
             }
+            self.tick_armor();
             let health = self.stats.health;
             self.tick_stats();
             // Getting hurt wakes a sleeping player (1.0.0).

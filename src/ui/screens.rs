@@ -7,7 +7,7 @@ use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 use super::gui::{self, GuiTextures, SlotView};
 use crate::inventory::{
     brewing, furnace,
-    player::{HOTBAR_SLOTS, MAIN_SLOTS, OFFHAND},
+    player::{ARMOR_FEET, ARMOR_HEAD, HOTBAR_SLOTS, MAIN_SLOTS, OFFHAND, is_armor_slot},
     slots::{Click, SlotRef},
     stack::ItemStack,
 };
@@ -198,7 +198,11 @@ const CHEST_ROWS: usize = 3;
 /// An inventory slot's top-left in panel pixels, on a 166-pixel-tall
 /// screen.
 fn inventory_slot(index: usize) -> [f32; 2] {
-    if index == OFFHAND {
+    if is_armor_slot(index) {
+        // Helmet at the top of the column left of the crafting grid, down
+        // to the boots.
+        [8.0, 8.0 + (ARMOR_HEAD - index) as f32 * 18.0]
+    } else if index == OFFHAND {
         // The off-hand slot beside the crafting grid, in the survival screen.
         [77.0, 62.0]
     } else if index < HOTBAR_SLOTS {
@@ -262,6 +266,7 @@ fn layout(screen: &Screen) -> Vec<(SlotRef, [f32; 2])> {
             .into_iter()
             .chain(inventory)
             .chain([(SlotRef::Inventory(OFFHAND), inventory_slot(OFFHAND))])
+            .chain((ARMOR_FEET..=ARMOR_HEAD).map(|i| (SlotRef::Inventory(i), inventory_slot(i))))
             .collect(),
         Screen::Crafting => crafting_slots(3, [30.0, 17.0], [124.0, 35.0])
             .into_iter()
