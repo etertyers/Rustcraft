@@ -124,6 +124,9 @@ src/
   world/{end_portal,worldgen/end}.rs, entity/{dragon,crystal,breath,eye}.rs   # the End portal's ring of frames, the End's island/pillars/podium, the ender dragon (phases and parts), crystals, fireballs and breath clouds, eyes of ender
   game/{dragon,end_portal}.rs, render/dragon.rs, credits.rs   # the fight (breaking blocks, healing, death, exit portal), eyes/portal travel/credits, the dragon and crystal models, the poem and credits text
   inventory/armor.rs, game/{armor,elytra,gateways,shulkers}.rs, entity/bullet.rs, world/structure/end.rs   # armor slots and protection, elytra gliding and rockets, End gateways, shulkers' bullets and shulker boxes, End cities and ships
+  cli.rs, worldlist.rs   # the command line (flags in §3, usage text), the Select World list read on a background thread from each world's small world.meta.ron
+  ui/{stack,geometry,doll,creative,recipe_book}.rs   # the open screens that own the mouse, where panels and slots are, the player's picture in the inventory, the tabbed creative screen, the recipe book panel
+  inventory/{creative,book}.rs, assets/data/creative_tabs.ron   # creative tabs' contents, search and click rules; the recipe book's recipes, categories and placing
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
@@ -451,14 +454,14 @@ Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the plann
   - [x] Vanilla 26.3 textures, models, sounds and lang as a git-ignored fallback layer (scripts/fetch-vanilla-assets.sh)
   - [x] Every missing vanilla block and item registered as a placeholder (docs/placeholders.md)
   - [x] Eye of ender shows in the End portal frame
-- [ ] **Session 2: menus and UI**
-  - [ ] Clicking Singleplayer opens the world list instantly; worlds load only when picked
-  - [ ] `--creative` works from the terminal
-  - [ ] Clicking in the advancements screen (or any screen) doesn't move the camera
-  - [ ] Inventory slot highlight lines up at every window size and Retina scale; the "crafting" text box is gone
-  - [ ] Steve appears in the inventory and follows the mouse
-  - [ ] Modern creative inventory with tabs and a search bar
-  - [ ] Recipe book sidebar in the crafting table and the inventory
+- [x] **Session 2: menus and UI**
+  - [x] Clicking Singleplayer opens the world list instantly; worlds load only when picked
+  - [x] `--creative` works from the terminal
+  - [x] Clicking in the advancements screen (or any screen) doesn't move the camera
+  - [x] Inventory slot highlight lines up at every window size and Retina scale; the "crafting" text box is gone
+  - [x] Steve appears in the inventory and follows the mouse
+  - [x] Modern creative inventory with tabs and a search bar
+  - [x] Recipe book sidebar in the crafting table and the inventory
 - [ ] **Session 3: player and world**
   - [ ] Sneaking stops at vanilla's edge, and standing up there doesn't make you fall
   - [ ] Walk between path, farmland and full blocks without jumping
