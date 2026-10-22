@@ -67,6 +67,9 @@ pub struct BlockModel {
     pub faces: [FaceTexture; 6],
     /// The boxes it's drawn as, for shapes drawn from boxes.
     pub boxes: Option<Vec<Cuboid>>,
+    /// Faces of each of `boxes` when they have textures of their own (a
+    /// model's elements); otherwise every box takes `faces`.
+    pub part_faces: Vec<[FaceTexture; 6]>,
 }
 
 /// Block models for every block state, resolved against the texture atlas.
@@ -232,6 +235,38 @@ fn build_model(
             _ => {}
         }
     }
+    // A model's boxes each wear their own textures, turned with the block.
+    let part_faces: Vec<[FaceTexture; 6]> = def
+        .parts_for(state)
+        .iter()
+        .map(|part| {
+            let mut faces = Face::ALL.map(|face| FaceTexture {
+                uv: part
+                    .textures
+                    .get(face)
+                    .and_then(|name| uv(&texture_location(name)))
+                    .unwrap_or(missing_uv),
+                tint: FaceTint::None,
+                rotation: 0,
+            });
+            // The sides of the block turn with its box.
+            if state.has(Prop::Facing) {
+                for _ in 0..crate::world::shape::turns_of(state.face(Prop::Facing)) {
+                    let before = faces;
+                    for face in [Face::North, Face::East, Face::South, Face::West] {
+                        faces[face.rotate_cw().index()] = before[face.index()];
+                    }
+                }
+            }
+            faces
+        })
+        .collect();
+    if let (true, Some(first)) = (
+        def.textures.is_none() && def.shape == Shape::Model,
+        part_faces.first(),
+    ) {
+        faces = *first;
+    }
     BlockModel {
         shape: def.shape,
         opaque_cube: def.is_opaque_cube_state(state),
@@ -243,6 +278,7 @@ fn build_model(
         stops_fluid: def.stops_fluid(),
         faces,
         boxes: shape::render_boxes(state),
+        part_faces,
     }
 }
 
@@ -956,6 +992,7 @@ fn mesh_box(
     tints: &Tints,
     block: BlockState,
     model: &BlockModel,
+    faces: &[FaceTexture; 6],
     b: Cuboid,
 ) {
     let [x, y, z] = cell;
@@ -977,7 +1014,7 @@ fn mesh_box(
         }
         let corners = face_corners(face)
             .map(|c| [0, 1, 2].map(|i| if c[i] > 0.5 { b.max[i] } else { b.min[i] }));
-        let texture = model.faces[face.index()];
+        let texture = faces[face.index()];
         let [u0, v0, u1, v1] = texture.uv;
         let uvs = if full {
             texture.corner_uvs()
@@ -1293,6 +1330,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 &tints,
                                 block,
                                 model,
+                                &model.faces,
                                 Cuboid::FULL,
                             );
                         }
@@ -1326,10 +1364,11 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         }
                         _ => {
                             let cell = [x as i32, y as i32, z as i32];
-                            for &b in model.boxes.iter().flatten() {
+                            for (i, &b) in model.boxes.iter().flatten().enumerate() {
+                                let faces = model.part_faces.get(i).unwrap_or(&model.faces);
                                 mesh_box(
                                     &mut mesh, models, area, light, cell, origin, &tints, block,
-                                    model, b,
+                                    model, faces, b,
                                 );
                             }
                         }

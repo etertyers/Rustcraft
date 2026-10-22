@@ -68,6 +68,26 @@ impl Cuboid {
     }
 }
 
+/// The boxes of the model `state` is drawn from (`BlockDef::model` or a
+/// variant's), turned to the way the block faces.
+pub fn part_boxes(state: BlockState) -> Vec<Cuboid> {
+    let def = state.def();
+    let t = if state.has(Prop::Facing) {
+        turns(state.face(Prop::Facing))
+    } else {
+        0
+    };
+    def.parts_for(state)
+        .iter()
+        .map(|part| part.cuboid().rotated(t))
+        .collect()
+}
+
+/// Quarter turns clockwise from north to `face`.
+pub fn turns_of(face: Face) -> u8 {
+    turns(face)
+}
+
 /// Quarter turns clockwise from north to `face`.
 fn turns(face: Face) -> u8 {
     match face {
@@ -415,6 +435,14 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
             }
             boxes
         }
+        Shape::Model => {
+            let boxes = part_boxes(state);
+            if boxes.is_empty() {
+                one(Cuboid::FULL)
+            } else {
+                boxes
+            }
+        }
         Shape::DragonEgg => one(Cuboid::px(1.0, 0.0, 1.0, 15.0, 16.0, 15.0)),
         Shape::Bamboo => one(Cuboid::px(6.5, 0.0, 6.5, 9.5, 16.0, 9.5)),
         Shape::Lectern => vec![
@@ -479,6 +507,10 @@ fn outline_of(state: BlockState) -> Vec<Cuboid> {
 pub fn render_boxes(state: BlockState) -> Option<Vec<Cuboid>> {
     let def = state.def();
     let facing = || state.face(Prop::Facing);
+    let parts = part_boxes(state);
+    if !parts.is_empty() {
+        return Some(parts);
+    }
     Some(match def.shape {
         Shape::None
         | Shape::Cube
@@ -631,6 +663,8 @@ fn collision_of(state: BlockState, outline: &[Cuboid]) -> Vec<Cuboid> {
             }
         }
         Shape::Cactus => vec![Cuboid::px(1.0, 0.0, 1.0, 15.0, 15.0, 15.0)],
+        // One box round all the model's boxes.
+        Shape::Model => Cuboid::bounds(outline).into_iter().collect(),
         // A funnel: a bowl of walls over a narrow neck.
         Shape::Hopper => vec![
             Cuboid::px(0.0, 10.0, 0.0, 16.0, 11.0, 16.0),

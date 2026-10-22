@@ -574,6 +574,8 @@ pub enum Shape {
     DragonEgg,
     /// A 3×3-pixel stalk (bamboo).
     Bamboo,
+    /// Drawn from the boxes in `BlockDef::model` (placeholder blocks).
+    Model,
 }
 
 /// How placing a block picks its state (modern `getStateForPlacement`).
@@ -720,10 +722,35 @@ pub enum RenderLayer {
     Translucent,
 }
 
+/// One box of a block's model: a model element of vanilla's JSON.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPart {
+    /// Corners in pixels (sixteenths of a block) from the cell's minimum.
+    pub from: (f32, f32, f32),
+    pub to: (f32, f32, f32),
+    pub textures: Textures,
+}
+
+impl ModelPart {
+    pub fn cuboid(&self) -> crate::world::shape::Cuboid {
+        crate::world::shape::Cuboid::px(
+            self.from.0,
+            self.from.1,
+            self.from.2,
+            self.to.0,
+            self.to.1,
+            self.to.2,
+        )
+    }
+}
+
 /// Overrides for the states meeting a condition.
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Variant {
+    /// Replaces the boxes it is drawn from (the End portal frame's eye).
+    pub model: Option<Vec<ModelPart>>,
     /// Replaces the faces it names.
     pub textures: Option<Textures>,
     pub tint: Option<Tint>,
@@ -738,6 +765,19 @@ pub struct BlockDef {
     pub id: BlockId,
     /// Modern Minecraft's name, without the namespace.
     pub name: String,
+    /// A block registered from vanilla's data with no behavior of its
+    /// own (`assets/data/placeholder_blocks.ron`, listed in
+    /// `docs/placeholders.md`).
+    #[serde(default)]
+    pub placeholder: bool,
+    /// Its name as shown ("Andesite Slab"), where the name made readable
+    /// isn't enough (placeholders take theirs from vanilla's language file).
+    #[serde(default)]
+    pub display: Option<String>,
+    /// Boxes it is drawn from, each with its own textures (placeholder
+    /// models, the End portal frame's eye). Empty for most blocks.
+    #[serde(default)]
+    pub model: Vec<ModelPart>,
     /// Mining hardness from 1.0.0; negative means unbreakable.
     pub hardness: f32,
     /// Its properties, in the order states list them.
@@ -885,12 +925,32 @@ impl BlockDef {
             .is_some_and(|condition| state.matches(condition))
     }
 
+    /// Every set of textures the block names: its own, its variants', and
+    /// those of its model's boxes.
+    pub fn all_textures(&self) -> impl Iterator<Item = &Textures> {
+        let parts = self.model.iter().map(|p| &p.textures);
+        let variants = self.variants.iter().flat_map(|(_, v)| {
+            v.textures
+                .iter()
+                .chain(v.model.iter().flatten().map(|p| &p.textures))
+        });
+        self.textures.iter().chain(variants).chain(parts)
+    }
+
     pub fn textures_for(&self, state: BlockState) -> Option<Textures> {
         let mut textures = self.textures.clone();
         for over in self.variants_of(state).filter_map(|v| v.textures.as_ref()) {
             textures = Some(textures.unwrap_or_default().overlaid(over));
         }
         textures
+    }
+
+    /// The boxes `state` is drawn from, if it has a model of its own.
+    pub fn parts_for(&self, state: BlockState) -> &[ModelPart] {
+        self.variants_of(state)
+            .filter_map(|v| v.model.as_deref())
+            .last()
+            .unwrap_or(&self.model)
     }
 
     pub fn tint_for(&self, state: BlockState) -> Tint {
@@ -1049,15 +1109,21 @@ pub struct BlockRegistry {
 /// names are compiled in as constants, see build.rs).
 pub fn registry() -> &'static BlockRegistry {
     static REGISTRY: LazyLock<BlockRegistry> = LazyLock::new(|| {
-        BlockRegistry::from_ron(include_str!("../../assets/data/blocks.ron"))
-            .expect("assets/data/blocks.ron is valid")
+        BlockRegistry::from_ron(&[
+            include_str!("../../assets/data/blocks.ron"),
+            include_str!("../../assets/data/placeholder_blocks.ron"),
+        ])
+        .expect("assets/data/blocks.ron and placeholder_blocks.ron are valid")
     });
     &REGISTRY
 }
 
 impl BlockRegistry {
-    fn from_ron(text: &str) -> Result<Self> {
-        let mut blocks: Vec<BlockDef> = ron::from_str(text)?;
+    fn from_ron(texts: &[&str]) -> Result<Self> {
+        let mut blocks: Vec<BlockDef> = Vec::new();
+        for text in texts {
+            blocks.extend(ron::from_str::<Vec<BlockDef>>(text)?);
+        }
         if blocks.len() != super::blocks::COUNT {
             bail!(
                 "blocks.ron has {} blocks but the game was built with {}",
@@ -1167,7 +1233,10 @@ impl BlockRegistry {
 
     /// A readable name like "oak planks" or "orange wool".
     pub fn display_name(&self, block: BlockState) -> String {
-        self.def(block.id).name.replace('_', " ")
+        let def = self.def(block.id);
+        def.display
+            .clone()
+            .unwrap_or_else(|| def.name.replace('_', " "))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &BlockDef> {
@@ -1178,11 +1247,7 @@ impl BlockRegistry {
     /// Every texture location (`block/stone`) the blocks name.
     pub fn texture_locations(&self) -> std::collections::BTreeSet<String> {
         self.iter()
-            .flat_map(|def| {
-                def.textures
-                    .iter()
-                    .chain(def.variants.iter().filter_map(|(_, v)| v.textures.as_ref()))
-            })
+            .flat_map(BlockDef::all_textures)
             .flat_map(|textures| Face::ALL.map(|face| textures.get(face)))
             .flatten()
             .map(|name| texture_location(name).into_owned())
@@ -1194,12 +1259,19 @@ impl BlockRegistry {
         &self,
         exists: impl Fn(&str) -> bool,
     ) -> std::collections::BTreeSet<String> {
+        self.missing_textures_in(exists, false)
+    }
+
+    /// Like `missing_textures`, counting the placeholder blocks too if
+    /// `placeholders` (they get their textures from the vanilla layer).
+    pub fn missing_textures_in(
+        &self,
+        exists: impl Fn(&str) -> bool,
+        placeholders: bool,
+    ) -> std::collections::BTreeSet<String> {
         self.iter()
-            .flat_map(|def| {
-                def.textures
-                    .iter()
-                    .chain(def.variants.iter().filter_map(|(_, v)| v.textures.as_ref()))
-            })
+            .filter(|def| placeholders || !def.placeholder)
+            .flat_map(BlockDef::all_textures)
             .flat_map(|textures| Face::ALL.map(|face| textures.get(face)))
             .flatten()
             .map(texture_location)
@@ -1403,9 +1475,15 @@ mod tests {
     /// Keep in sync with the missing-texture list in docs/DECISIONS.md.
     #[test]
     fn only_known_block_textures_are_missing() {
-        let base = crate::pack::Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let base =
+            crate::pack::Resources::load_with(&crate::assets::dir(), Vec::new(), false).unwrap();
         let missing = registry().missing_textures(|name| base.texture(name).is_some());
-        let mut expected = vec!["block/sign".to_owned()];
+        // The sign is an entity in modern Minecraft; the eye of the End
+        // portal frame is only in vanilla's and the packs' textures.
+        let mut expected = vec![
+            "block/sign".to_owned(),
+            "block/end_portal_frame_eye".to_owned(),
+        ];
         // Concrete isn't in Kenzo's textures; a resource pack brings it.
         for color in [
             "white",

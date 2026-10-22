@@ -300,7 +300,14 @@
     (name: "water_cauldron", hardness: 2.0, props: [LevelCauldron], item: false, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: "cauldron")]), shape: Cauldron, layer: Cutout, textures: (top: "cauldron_top", bottom: "cauldron_bottom", side: "cauldron_side")),
     // Minecraft draws the portal as a starfield effect; here its texture (entity/end_portal.png) is scaled to a tile.
     (name: "end_portal", hardness: -1.0, item: false, drops: Nothing, shape: EndPortal, solid: false, light: 15, textures: (all: "end_portal")),
-    (name: "end_portal_frame", hardness: -1.0, placement: Facing, props: [Eye, Facing], shape: EndPortalFrame, light: 1, textures: (top: "end_portal_frame_top", bottom: "end_stone", side: "end_portal_frame_side")),
+    // The frame is 13/16 tall; with an eye in it, an 8×3×8 box on top wears
+    // the eye texture (vanilla's end_portal_frame_filled model).
+    (name: "end_portal_frame", hardness: -1.0, placement: Facing, props: [Eye, Facing], shape: EndPortalFrame, light: 1, textures: (top: "end_portal_frame_top", bottom: "end_stone", side: "end_portal_frame_side"),
+        model: [(from: (0, 0, 0), to: (16, 13, 16), textures: (top: "end_portal_frame_top", bottom: "end_stone", side: "end_portal_frame_side"))],
+        variants: [("eye=true", (model: [
+            (from: (0, 0, 0), to: (16, 13, 16), textures: (top: "end_portal_frame_top", bottom: "end_stone", side: "end_portal_frame_side")),
+            (from: (4, 13, 4), to: (12, 16, 12), textures: (all: "end_portal_frame_eye")),
+        ]))]),
     (name: "end_stone", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "end_stone")),
     (name: "end_gateway", hardness: -1.0, item: false, drops: Nothing, solid: false, light: 15, textures: (all: "end_gateway")),
     (name: "dragon_egg", hardness: 3.0, falls: true, shape: DragonEgg, light: 1, textures: (all: "dragon_egg")),

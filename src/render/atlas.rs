@@ -353,6 +353,7 @@ mod tests {
             image: strip,
             animation: None,
             layer: 0,
+            vanilla: false,
         };
         let frames = Frames::of(texture);
         assert_eq!(frames.frames, [solid(16, 16, [0, 255, 0, 255])]);
@@ -371,6 +372,7 @@ mod tests {
             image: strip,
             animation: Animation::parse(r#"{"animation": {"frametime": 3}}"#).unwrap(),
             layer: 1,
+            vanilla: false,
         };
         let mut atlas = Atlas::pack_frames(vec![
             ("water".into(), Frames::of(texture)),

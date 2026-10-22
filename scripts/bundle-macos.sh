@@ -37,8 +37,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/rustcraft "$APP/Contents/MacOS/rustcraft"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-# The assets, without the icon's source.
-rsync -a --exclude '.DS_Store' --exclude '*.svg' assets/ "$APP/Contents/Resources/assets/"
+# The assets, without the icon's source and the vanilla checkout's git data
+# (assets/vanilla is the local fallback layer from scripts/fetch-vanilla-assets.sh;
+# it goes into this local build only and is never committed).
+rsync -a --exclude '.DS_Store' --exclude '*.svg' --exclude '/vanilla/.git' assets/ "$APP/Contents/Resources/assets/"
 
 cat >"$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
