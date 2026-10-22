@@ -1861,6 +1861,7 @@ mod tests {
             }
         }
         let per_tick = spent / ticks;
+        println!("50 mobs thinking: {per_tick:?} a tick");
         assert!(
             per_tick < std::time::Duration::from_millis(2),
             "50 mobs thinking took {per_tick:?} a tick"
