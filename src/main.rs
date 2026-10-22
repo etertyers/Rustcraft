@@ -208,9 +208,32 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Parsed> {
         let out = out.unwrap_or_else(|| format!("docs/screenshots/{}.png", shot.name).into());
         (shot, out)
     });
-    if bench.is_some() {
+    let bench_world = bench.as_mut().map(|bench| {
+        use rustcraft::world::dimension::Dimension;
         let seed = seed.unwrap_or(bench::SEED);
-        return Ok((Some(app::WorldKind::Generated { seed }), bench, None, view));
+        let (dimension, kind) = if nether {
+            (Dimension::Nether, app::WorldKind::Nether { seed })
+        } else if end {
+            (Dimension::End, app::WorldKind::End { seed })
+        } else {
+            (Dimension::Overworld, app::WorldKind::Generated { seed })
+        };
+        bench.dimension = dimension;
+        // Each dimension's report has its own file.
+        if let Some(path) = bench.perf_report.as_mut() {
+            let suffix = match dimension {
+                Dimension::Overworld => "",
+                Dimension::Nether => "-nether",
+                Dimension::End => "-end",
+            };
+            if !suffix.is_empty() {
+                *path = format!("docs/perf/m{}{suffix}.md", bench::PERF_MILESTONE).into();
+            }
+        }
+        kind
+    });
+    if let Some(kind) = bench_world {
+        return Ok((Some(kind), bench, None, view));
     }
     let world = match (world, seed) {
         _ if nether => Some(app::WorldKind::Nether {

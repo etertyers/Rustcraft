@@ -55,7 +55,7 @@ cargo clippy -- -D warnings    # must pass before every commit
 cargo fmt                      # must be applied before every commit
 RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
-cargo run --release -- --perf-test   # the performance gate: writes docs/perf/m<N>.md (§7.2)
+cargo run --release -- --perf-test [--nether|--end]   # the performance gate: writes docs/perf/m<N>.md (§7.2)
 cargo bench                    # chunk generation, lighting, meshing and fluid benchmarks
 cargo run --release -- --end         # an unsaved test world in the End, dragon circling (also --nether)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
@@ -435,7 +435,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Recipe sweep: every block and item has its modern crafting, smelting, stonecutter and smithing recipes, with any missing workstation blocks added. List anything intentionally skipped in `DECISIONS.md`.
 - **Done when:** a survival playthrough unlocks advancements as expected, and an automated test confirms every craftable item has a recipe.
 
-### - [ ] M30 — v1.1 performance and release
+### - [x] M30 — v1.1 performance and release
 - Profile with all content loaded (Overworld, Nether, End), and fix hot spots.
 - Rebuild the `.app`, set its version to 1.1.0, tag `v1.1.0`.
 - **Done when:** 60+ FPS at render distance 9 in each dimension on the Mac mini, and the new `.app` launches by double-click and opens v1.0 worlds. **Stop: Checkpoint D.**

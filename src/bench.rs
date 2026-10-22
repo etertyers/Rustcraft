@@ -18,10 +18,31 @@ pub const DEFAULT_SECONDS: f32 = 60.0;
 pub const SPEED: f64 = 10.9;
 /// Feet height for the flight, above most hills.
 pub const HEIGHT: f64 = 100.0;
+
+impl Bench {
+    /// Feet height for this dimension's flight: the Nether's caverns are
+    /// between y 40 and 100; the outer End's islands lie between 55 and 75.
+    pub fn height(&self) -> f64 {
+        use crate::world::dimension::Dimension;
+        match self.dimension {
+            Dimension::Overworld => HEIGHT,
+            Dimension::Nether => 72.0,
+            Dimension::End => 90.0,
+        }
+    }
+
+    /// Where the flight starts, if not where the world puts the player:
+    /// the End's begins 550 blocks out so the minute of flight crosses the
+    /// outer islands and a city.
+    pub fn start(&self) -> Option<[f64; 3]> {
+        use crate::world::dimension::Dimension;
+        (self.dimension == Dimension::End).then_some([27.5, self.height(), -550.0])
+    }
+}
 /// The window's size: a 1080p screen.
 pub const WINDOW_SIZE: (u32, u32) = (1920, 1080);
 /// The milestone `--perf-test` writes up (`docs/perf/m<N>.md`).
-pub const PERF_MILESTONE: u32 = 29;
+pub const PERF_MILESTONE: u32 = 30;
 /// `--perf-test`'s flight length and render distance.
 pub const PERF_SECONDS: f32 = 60.0;
 pub const PERF_DISTANCE: i32 = 9;
@@ -56,6 +77,10 @@ pub struct Bench {
     pub distance: Option<i32>,
     /// `--perf-test`: where to write the report.
     pub perf_report: Option<std::path::PathBuf>,
+    /// Which dimension's flight this is (M30): the Overworld's is the
+    /// default; the Nether's and the End's fly where there is something to
+    /// see.
+    pub dimension: crate::world::dimension::Dimension,
     elapsed: f32,
     warm_up: Vec<FrameTimes>,
     frames: Vec<FrameTimes>,
@@ -67,6 +92,7 @@ impl Bench {
             seconds,
             distance: None,
             perf_report: None,
+            dimension: Default::default(),
             elapsed: 0.0,
             warm_up: Vec::new(),
             frames: Vec::new(),
@@ -150,13 +176,18 @@ impl Bench {
         };
         let pass =
             f.average_fps >= MIN_AVERAGE_FPS && f.one_percent_low_fps >= MIN_ONE_PERCENT_LOW_FPS;
+        let flag = match self.dimension {
+            crate::world::dimension::Dimension::Overworld => "",
+            crate::world::dimension::Dimension::Nether => " --nether",
+            crate::world::dimension::Dimension::End => " --end",
+        };
         let memory = run
             .memory_mib
             .map_or("unknown".to_owned(), |m| format!("{m:.0} MiB"));
         format!(
             "# M{PERF_MILESTONE} performance\n\n\
-             `cargo run --release -- --perf-test`: seed {SEED}, a {:.0} s flight north at \
-             {SPEED} blocks/s and feet height {HEIGHT}, render distance {render_distance}, \
+             `cargo run --release -- --perf-test{flag}`: seed {SEED}, a {:.0} s flight north at \
+             {SPEED} blocks/s and feet height {}, render distance {render_distance}, \
              {}×{}, vsync off, after {WARM_UP:.0} s of warm-up.\n\n{about}\n\n\
              | Measure | Value |\n|---|---|\n\
              | Average FPS | {:.0} |\n\
@@ -168,6 +199,7 @@ impl Bench {
              | Memory (resident) | {memory} |\n\n\
              Gate (average ≥ {MIN_AVERAGE_FPS:.0}, 1% low ≥ {MIN_ONE_PERCENT_LOW_FPS:.0}): **{}**\n",
             self.seconds,
+            self.height(),
             WINDOW_SIZE.0,
             WINDOW_SIZE.1,
             f.average_fps,
