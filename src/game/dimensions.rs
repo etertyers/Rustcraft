@@ -22,7 +22,7 @@ use crate::{
         fluid::Fluids,
         manager::{ChunkManager, ChunkSource},
         redstone::Redstone,
-        worldgen::{nether::Nether, terrain::Terrain},
+        worldgen::{end::End, nether::Nether, terrain::Terrain},
     },
 };
 
@@ -53,6 +53,9 @@ impl Game {
     pub fn starting_in(mut self, dimension: Dimension) -> Self {
         self.dimension = dimension;
         self.fluids.warm = dimension == Dimension::Nether;
+        if dimension == Dimension::End {
+            self.start_fight();
+        }
         self
     }
 
@@ -108,6 +111,9 @@ impl Game {
         self.arrows.clear();
         self.fireballs.clear();
         self.thrown.clear();
+        self.eyes.clear();
+        self.dragon_fireballs.clear();
+        self.breath.clear();
         self.particles.clear();
         self.effects.clear();
         self.falling.clear();
@@ -233,8 +239,8 @@ const ARRIVAL_TIMEOUT: u32 = 10 * crate::config::TICKS_PER_SECOND;
 pub fn source_for(dimension: Dimension, seed: u64) -> ChunkSource {
     match dimension {
         Dimension::Nether => ChunkSource::Nether(Box::new(Nether::new(seed))),
-        // The End comes in M27; until then it's the Overworld's land.
-        Dimension::Overworld | Dimension::End => ChunkSource::Terrain(Box::new(Terrain::new(seed))),
+        Dimension::End => ChunkSource::End(Box::new(End::new(seed))),
+        Dimension::Overworld => ChunkSource::Terrain(Box::new(Terrain::new(seed))),
     }
 }
 

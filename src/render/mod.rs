@@ -3,6 +3,7 @@
 pub mod atlas;
 pub mod camera;
 pub mod crack;
+pub mod dragon;
 pub mod entities;
 pub mod frustum;
 pub mod hand;

@@ -34,6 +34,9 @@ use crate::{
 pub const ARROW_TEXTURE: &str = "entity/projectiles/arrow";
 /// The minecart's texture, after the arrow's.
 pub const MINECART_TEXTURE: &str = "entity/minecart";
+/// The ender dragon's and the end crystal's, after the minecart's.
+pub const DRAGON_TEXTURE: &str = "entity/enderdragon/dragon";
+pub const CRYSTAL_TEXTURE: &str = "entity/endercrystal/endercrystal";
 
 pub struct Look {
     pub res: Resources,
@@ -105,6 +108,7 @@ impl Look {
         textures.insert(entities::CRIT_TEXTURE.to_owned());
         textures.extend((0..SWEEP_FRAMES).map(entities::sweep_texture));
         textures.extend((0..entities::ORB_ICONS).map(entities::orb_texture));
+        textures.extend(entities::END_TEXTURES.map(str::to_owned));
         let atlas = Atlas::build(&res, textures);
 
         let colors = BiomeColors::load(&res).unwrap_or_else(|err| {
@@ -126,13 +130,21 @@ impl Look {
             crit: atlas.uv_or_missing(entities::CRIT_TEXTURE),
             sweep: std::array::from_fn(|i| atlas.uv_or_missing(&entities::sweep_texture(i))),
             orb: std::array::from_fn(|i| atlas.uv_or_missing(&entities::orb_texture(i))),
+            dragon_fireball: atlas.uv_or_missing(entities::DRAGON_FIREBALL_TEXTURE),
+            crystal_beam: atlas.uv_or_missing(entities::CRYSTAL_BEAM_TEXTURE),
+            gateway_beam: atlas.uv_or_missing(entities::GATEWAY_BEAM_TEXTURE),
         };
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);
         let mut mob_textures: Vec<RgbaImage> = mobs
             .textures()
             .into_iter()
-            .chain([ARROW_TEXTURE, MINECART_TEXTURE])
+            .chain([
+                ARROW_TEXTURE,
+                MINECART_TEXTURE,
+                DRAGON_TEXTURE,
+                CRYSTAL_TEXTURE,
+            ])
             .map(|name| {
                 res.image(name).unwrap_or_else(|| {
                     warn!("no layer has {name}");
@@ -226,8 +238,8 @@ mod tests {
         assert_eq!(look.atlas.tile_size(), 16);
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());
-        // The mobs, the arrow and the skin.
-        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 3);
+        // The mobs, then the arrow, cart, dragon and crystal, and the skin.
+        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 5);
         assert!(look.atlas.has("block/grass_block_top"));
         assert!(look.atlas.has("block/destroy_stage_9"));
         // Concrete has no texture without a pack.

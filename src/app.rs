@@ -46,7 +46,8 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_effects, add_falling_blocks, add_fireballs, add_orbs,
+            EffectUvs, add_cart_blocks, add_crystal_beams, add_dragon_fireballs, add_effects,
+            add_eyes, add_falling_blocks, add_fireballs, add_gateway_beams, add_orbs,
             add_particles, add_primed_tnt, item_mesh,
         },
         held::HeldCache,
@@ -68,7 +69,7 @@ use crate::{
         manager::{ChunkManager, ChunkSource},
         mesh::{BlockModels, Mesh},
         shape::Cuboid,
-        worldgen::{gallery, nether::Nether, terrain::Terrain},
+        worldgen::{end::End, gallery, nether::Nether, terrain::Terrain},
     },
 };
 
@@ -90,6 +91,9 @@ pub enum WorldKind {
     Gallery,
     /// The Nether of a seed, starting there (`--nether`).
     Nether { seed: u64 },
+    /// The End of a seed, starting there with the dragon circling
+    /// (`--end`).
+    End { seed: u64 },
 }
 
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
@@ -350,6 +354,24 @@ impl App {
                 let game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0);
                 return Ok(game.starting_in(crate::world::dimension::Dimension::Nether));
             }
+            // On the island, a little way from its middle.
+            WorldKind::End { seed } => {
+                let end = End::new(seed);
+                let top = end
+                    .top(24, 6)
+                    .unwrap_or(crate::world::worldgen::end::SURFACE_Y);
+                let spawn = DVec3::new(24.5, top as f64 + 1.0, 6.5);
+                let chunks = ChunkManager::new(
+                    ChunkSource::End(Box::new(end)),
+                    models,
+                    config::RENDER_DISTANCE,
+                    chunk_workers(),
+                );
+                let mut game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0)
+                    .starting_in(crate::world::dimension::Dimension::End);
+                game.camera.yaw = -std::f32::consts::FRAC_PI_2;
+                return Ok(game);
+            }
             // On the grass at the origin.
             WorldKind::Flat => (ChunkSource::Flat, DVec3::new(0.5, ground, 0.5), 0.0, 0.0),
             // In front of the first gallery row, looking south along it.
@@ -419,7 +441,18 @@ impl App {
         };
         let pressed = event.state == ElementState::Pressed;
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
-        if key == KeyCode::Escape && pressed && sleeping {
+        let rolling = self
+            .game
+            .as_ref()
+            .is_some_and(|g| g.credits_ticks().is_some());
+        if key == KeyCode::Escape && pressed && !event.repeat && rolling {
+            // Skipping the poem and credits goes home.
+            if let Some(game) = self.game.as_mut() {
+                game.finish_credits();
+            }
+        } else if rolling {
+            // Nothing else works while they roll.
+        } else if key == KeyCode::Escape && pressed && sleeping {
             if let Some(game) = self.game.as_mut() {
                 game.wake();
             }
@@ -839,6 +872,28 @@ impl App {
                     &view_camera,
                     game.tick_alpha(),
                 );
+                add_eyes(
+                    &mut mesh,
+                    &game.eyes,
+                    icons,
+                    &view_camera,
+                    game.tick_alpha(),
+                );
+                add_dragon_fireballs(
+                    &mut mesh,
+                    &game.dragon_fireballs,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                );
+                add_crystal_beams(
+                    &mut mesh,
+                    &game.crystals,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                );
+                add_gateway_beams(&mut mesh, &game.gateways(), &self.effect_uvs, &view_camera);
                 add_particles(
                     &mut mesh,
                     &game.particles,
@@ -937,7 +992,8 @@ impl App {
             }
             let mob_kinds = game.mob_defs().texture_count();
             meshes.push((mob_kinds, arrows));
-            // The minecart texture follows the arrow's, and the skin it.
+            // The minecart texture follows the arrow's, then the dragon's and
+            // the crystal's, and the skin them.
             let mut carts = Mesh::default();
             for cart in &game.carts {
                 add_minecart(
@@ -948,13 +1004,27 @@ impl App {
                 );
             }
             meshes.push((mob_kinds + 1, carts));
+            // The dragon and the crystals, in the End.
+            let mut dragon = Mesh::default();
+            let mut crystals = Mesh::default();
+            if game.dimension() == crate::world::dimension::Dimension::End {
+                if let Some(d) = &game.dragon {
+                    crate::render::dragon::add_dragon(&mut dragon, d, alpha, light_at(d.position));
+                }
+                for crystal in &game.crystals {
+                    let light = light_at(crystal.center());
+                    crate::render::dragon::add_crystal(&mut crystals, crystal, alpha, light);
+                }
+            }
+            meshes.push((mob_kinds + 2, dragon));
+            meshes.push((mob_kinds + 3, crystals));
             // Invisible players aren't drawn (modern draws their armor).
             let invisible = game
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility);
             meshes.push((
-                mob_kinds + 2,
+                mob_kinds + 4,
                 if invisible {
                     Default::default()
                 } else {
@@ -1014,6 +1084,8 @@ impl App {
             message: game.message.as_ref().map(|(text, _)| text.clone()),
             portal: game.portal_swirl(),
             loading: game.is_arriving(),
+            boss: game.dragon_bar(),
+            credits: game.credits_ticks(),
             effects: game
                 .stats
                 .effects

@@ -401,3 +401,8 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 | Huge crimson / warped fungi (stem 4–13, doubled 1 in 12, thick 6%; wart cap with shroomlight, weeping vines under crimson caps) | forests on nylium | 8 |
 
 Generating a Nether chunk takes 1.38 ms (`cargo bench`), about what an Overworld one does. `cargo test --release nether_slice -- --ignored` with `NETHER_SLICE=out.png` draws a side view, and `nether_views` finds open spots in each biome for screenshots.
+
+## The End (M27)
+
+`world/worldgen/end.rs`. One disc of end stone about 150 blocks across (see DECISIONS for the numbers), flat on its top at y 63 and rounded underneath, with the ten obsidian pillars of modern's `SpikeFeature` and the bedrock podium of `EndPodiumFeature` (a hole until the dragon dies). Everything is a function of the position and the seed, so chunks agree across borders; pillars and the podium are written clipped to the chunk. Generating an End chunk takes 0.04 ms (`cargo bench`). The outer islands, chorus plants and End cities come in M28.
+

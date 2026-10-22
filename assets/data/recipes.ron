@@ -10,7 +10,7 @@
 // recipes; anything made of planks takes any planks.
 //
 // Left out, because their systems aren't in the game (see DECISIONS.md):
-// boat, map, painting, cake (no milk), eye of ender. Enchanting (M22),
+// boat, map, painting and cake (no milk). Enchanting (M22),
 // the Nether's (M24, M25) and brewing's (M26) came with their milestones.
 #![enable(implicit_some)]
 (
@@ -36,6 +36,8 @@
         "wool": ["white_wool", "orange_wool", "magenta_wool", "light_blue_wool", "yellow_wool", "lime_wool", "pink_wool", "gray_wool", "light_gray_wool", "cyan_wool", "purple_wool", "blue_wool", "brown_wool", "green_wool", "red_wool", "black_wool"],
     },
     shaped: [
+        // M27
+        (result: (item: "end_crystal", count: 1), pattern: ["GGG", "GEG", "GTG"], key: {'G': (item: "glass"), 'E': (item: "ender_eye"), 'T': (item: "ghast_tear")}),
         // Wood and basics
         (result: (item: "stick", count: 4), pattern: ["#", "#"], key: {'#': (tag: "planks")}),  // sticks
         (result: (item: "crafting_table", count: 1), pattern: ["##", "##"], key: {'#': (tag: "planks")}),  // crafting table
@@ -372,6 +374,8 @@
         (result: (item: "warped_fungus_on_a_stick", count: 1), pattern: ["# ", " X"], key: {'#': (item: "fishing_rod"), 'X': (item: "warped_fungus")}),
     ],
     shapeless: [
+        // M27
+        (result: (item: "ender_eye", count: 1), ingredients: [(item: "ender_pearl"), (item: "blaze_powder")]),
         (result: (item: "wheat", count: 9), ingredients: [(item: "hay_block")]),
         (result: (item: "redstone", count: 9), ingredients: [(item: "redstone_block")]),  // redstone from its block
         (result: (item: "stone_button", count: 1), ingredients: [(item: "stone")]),  // stone button

@@ -3,6 +3,7 @@
 pub mod biome_map;
 pub mod biome_source;
 pub mod climate;
+pub mod end;
 pub mod features;
 pub mod flat;
 pub mod gallery;

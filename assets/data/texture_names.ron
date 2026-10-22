@@ -69,6 +69,8 @@
     "block/detector_rail": ["blocks/rail_detector"],
     "block/detector_rail_on": ["blocks/rail_detector_powered"],
     "block/dispenser_front": ["blocks/dispenser_front_horizontal"],
+    "block/end_portal": ["entity/end_portal"],
+    "block/end_gateway": ["entity/end_portal"],
     "block/end_portal_frame_side": ["blocks/endframe_side"],
     "block/end_portal_frame_top": ["blocks/endframe_top"],
     "block/farmland": ["blocks/farmland_dry"],

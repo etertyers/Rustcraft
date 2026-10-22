@@ -2,7 +2,7 @@
 //! `RenderItem`: blocks are spinning quarter-size cubes, other items are
 //! half-size pictures turned toward the camera, and both bob up and down.
 
-use glam::{DVec3, Vec3};
+use glam::{DVec3, IVec3, Vec3};
 
 use super::{
     camera::Camera,
@@ -104,6 +104,153 @@ pub fn add_fireballs(
         );
     }
 }
+
+/// Adds eyes of ender in flight: the item's picture facing the camera.
+pub fn add_eyes(
+    mesh: &mut Mesh,
+    eyes: &[crate::entity::eye::EyeOfEnder],
+    icons: &ItemIcons,
+    camera: &Camera,
+    alpha: f64,
+) {
+    let stack = crate::inventory::stack::ItemStack::new(crate::inventory::items::ENDER_EYE, 1);
+    let ItemIcon::Flat(face) = icons.icon(&stack) else {
+        return;
+    };
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin()) * EYE_HALF;
+    let up = Vec3::Y * EYE_HALF;
+    for eye in eyes {
+        let center = eye.position_between_ticks(alpha).as_vec3();
+        mesh.quad(
+            [
+                center - right - up,
+                center + right - up,
+                center + right + up,
+                center - right + up,
+            ]
+            .map(|p| p.to_array()),
+            face.uv,
+            [face.color; 4],
+            [[15.0, 15.0]; 4],
+        );
+    }
+}
+
+/// Half an eye of ender's drawn width.
+const EYE_HALF: f32 = 0.2;
+
+/// Adds the dragon's fireballs: its picture facing the camera, fully lit.
+pub fn add_dragon_fireballs(
+    mesh: &mut Mesh,
+    balls: &[crate::entity::breath::DragonFireball],
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+) {
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin()) * DRAGON_FIREBALL_HALF;
+    let up = Vec3::Y * DRAGON_FIREBALL_HALF;
+    for ball in balls {
+        let center = ball.position_between_ticks(alpha).as_vec3();
+        mesh.quad(
+            [
+                center - right - up,
+                center + right - up,
+                center + right + up,
+                center - right + up,
+            ]
+            .map(|p| p.to_array()),
+            uvs.dragon_fireball,
+            [[1.0; 3]; 4],
+            [[15.0, 15.0]; 4],
+        );
+    }
+}
+
+/// Half the width a dragon fireball is drawn.
+const DRAGON_FIREBALL_HALF: f32 = 0.9;
+
+/// Adds the beams from crystals to the dragon they heal: ribbons turned
+/// to face the camera, a picture of the beam every two blocks.
+pub fn add_crystal_beams(
+    mesh: &mut Mesh,
+    crystals: &[crate::entity::crystal::EndCrystal],
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+) {
+    let eye = camera.position;
+    for crystal in crystals {
+        let Some(to) = crystal.beam_to else {
+            continue;
+        };
+        let from = (crystal.center() + DVec3::Y * f64::from(crystal.bob(alpha as f32))).as_vec3();
+        let to = to.as_vec3();
+        let span = to - from;
+        let length = span.length();
+        if length < 0.5 {
+            continue;
+        }
+        let dir = span / length;
+        let toward_camera = eye - (from + to) / 2.0;
+        let side = dir.cross(toward_camera).normalize_or_zero() * BEAM_HALF;
+        let segments = (length / BEAM_SEGMENT).ceil().max(1.0) as usize;
+        for i in 0..segments {
+            let a = from + dir * (i as f32 * BEAM_SEGMENT);
+            let b = from + dir * ((i + 1) as f32 * BEAM_SEGMENT).min(length);
+            mesh.quad(
+                [a - side, a + side, b + side, b - side].map(|p| p.to_array()),
+                uvs.crystal_beam,
+                [[1.0; 3]; 4],
+                [[15.0, 15.0]; 4],
+            );
+        }
+    }
+}
+
+/// Half the width of a crystal's beam, and how long one picture of it is.
+const BEAM_HALF: f32 = 0.35;
+const BEAM_SEGMENT: f32 = 2.0;
+
+/// Adds the pillar of light over each opened End gateway: four sides, from
+/// the gateway up to the top of the world.
+pub fn add_gateway_beams(mesh: &mut Mesh, gateways: &[IVec3], uvs: &EffectUvs, camera: &Camera) {
+    let top = crate::config::WORLD_HEIGHT as f32;
+    for at in gateways {
+        let center = Vec3::new(at.x as f32 + 0.5, 0.0, at.z as f32 + 0.5);
+        // Skip beams on the far side of the world.
+        if (center - camera.position).length() > 400.0 {
+            continue;
+        }
+        let bottom = at.y as f32 + 0.5;
+        let h = GATEWAY_BEAM_HALF;
+        let corners = [
+            Vec3::new(-h, 0.0, -h),
+            Vec3::new(h, 0.0, -h),
+            Vec3::new(h, 0.0, h),
+            Vec3::new(-h, 0.0, h),
+        ];
+        for i in 0..4 {
+            let (p, q) = (corners[i], corners[(i + 1) % 4]);
+            let at_y = |c: Vec3, y: f32| center + c + Vec3::Y * y;
+            let mut quad = [at_y(q, bottom), at_y(p, bottom), at_y(p, top), at_y(q, top)];
+            // Wound to face away from the middle.
+            let normal = (quad[1] - quad[0]).cross(quad[2] - quad[1]);
+            let outward = (quad[0] + quad[2]) / 2.0 - Vec3::new(center.x, quad[0].y, center.z);
+            if normal.dot(outward) < 0.0 {
+                quad = [quad[1], quad[0], quad[3], quad[2]];
+            }
+            mesh.quad(
+                quad.map(|c| c.to_array()),
+                uvs.gateway_beam,
+                [[1.0; 3]; 4],
+                [[15.0, 15.0]; 4],
+            );
+        }
+    }
+}
+
+/// Half the width of a gateway's beam.
+const GATEWAY_BEAM_HALF: f32 = 0.3;
 
 /// Half a fireball's drawn width, and a blaze's small one's.
 const FIREBALL_HALF: f32 = 0.75;
@@ -252,7 +399,21 @@ pub struct EffectUvs {
     pub sweep: [[f32; 4]; SWEEP_FRAMES],
     /// The experience orb's 11 pictures, small to big.
     pub orb: [[f32; 4]; ORB_ICONS],
+    /// The dragon's fireball, the crystal's beam and the gateway's beam.
+    pub dragon_fireball: [f32; 4],
+    pub crystal_beam: [f32; 4],
+    pub gateway_beam: [f32; 4],
 }
+
+/// The End's pictures that are drawn from the atlas.
+pub const DRAGON_FIREBALL_TEXTURE: &str = "item/dragon_fireball";
+pub const CRYSTAL_BEAM_TEXTURE: &str = "entity/endercrystal/endercrystal_beam";
+pub const GATEWAY_BEAM_TEXTURE: &str = "entity/end_gateway_beam";
+pub const END_TEXTURES: [&str; 3] = [
+    DRAGON_FIREBALL_TEXTURE,
+    CRYSTAL_BEAM_TEXTURE,
+    GATEWAY_BEAM_TEXTURE,
+];
 
 pub const ORB_ICONS: usize = 11;
 
@@ -444,6 +605,54 @@ mod tests {
             let (u0, u1) = (mesh.vertices[0].uv[0], mesh.vertices[1].uv[0]);
             assert!(((u1 - u0) - 0.25).abs() < 1e-6);
             assert_eq!(mesh.vertices[0].color, [0.6; 3]);
+        }
+    }
+
+    #[test]
+    fn gateway_beams_face_outward_on_all_four_sides() {
+        let uvs = EffectUvs::default();
+        let camera = Camera::new(Vec3::new(0.0, 80.0, 0.0), 0.0, 0.0);
+        let mut mesh = Mesh::default();
+        let at = IVec3::new(20, 75, 20);
+        add_gateway_beams(&mut mesh, &[at], &uvs, &camera);
+        assert_eq!(mesh.indices.len(), 4 * 6);
+        let center = Vec3::new(20.5, 100.0, 20.5);
+        for quad in mesh.vertices.chunks(4) {
+            let p: Vec<Vec3> = quad.iter().map(|v| Vec3::from(v.position)).collect();
+            let normal = (p[1] - p[0]).cross(p[2] - p[1]);
+            let out = (p[0] + p[2]) / 2.0 - center;
+            assert!(normal.dot(Vec3::new(out.x, 0.0, out.z)) > 0.0);
+        }
+    }
+
+    #[test]
+    fn crystal_beams_run_from_the_crystal_to_the_dragon_and_face_the_camera() {
+        let uvs = EffectUvs::default();
+        let camera = Camera::new(Vec3::new(0.0, 70.0, 30.0), 0.0, 0.0);
+        let mut crystal =
+            crate::entity::crystal::EndCrystal::new(DVec3::new(0.0, 80.0, 0.0), false);
+        let mut mesh = Mesh::default();
+        add_crystal_beams(
+            &mut mesh,
+            std::slice::from_ref(&crystal),
+            &uvs,
+            &camera,
+            0.0,
+        );
+        assert!(mesh.vertices.is_empty(), "no beam without a dragon to heal");
+        crystal.beam_to = Some(DVec3::new(0.0, 80.0, -10.0));
+        add_crystal_beams(
+            &mut mesh,
+            std::slice::from_ref(&crystal),
+            &uvs,
+            &camera,
+            0.0,
+        );
+        assert!(mesh.vertices.len() >= 4);
+        for quad in mesh.vertices.chunks(4) {
+            let p: Vec<Vec3> = quad.iter().map(|v| Vec3::from(v.position)).collect();
+            let normal = (p[1] - p[0]).cross(p[2] - p[1]);
+            assert!(normal.dot(camera.position - p[0]) > 0.0, "faces the camera");
         }
     }
 

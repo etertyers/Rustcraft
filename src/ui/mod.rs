@@ -68,6 +68,10 @@ pub struct Hud {
     pub loading: bool,
     /// The player's status effects (M26).
     pub effects: Vec<EffectView>,
+    /// The dragon's health as a fraction, for the boss bar (M27).
+    pub boss: Option<f32>,
+    /// Ticks the poem and credits have rolled, while they do (M27).
+    pub credits: Option<u32>,
 }
 
 /// A status effect as the HUD shows it: its icon (by place in
@@ -200,8 +204,14 @@ impl DebugUi {
             if let Some(message) = &hud.message {
                 paint_message(ui.painter(), full, message);
             }
+            if let Some(health) = hud.boss {
+                paint_boss_bar(ui.painter(), full, "Ender Dragon", health);
+            }
             if hud.loading {
                 show_loading_screen(ui.ctx());
+            }
+            if let Some(ticks) = hud.credits {
+                show_credits(ui.ctx(), ticks);
             }
             if let Some(message) = &hud.death
                 && show_death_screen(ui.ctx(), message)
@@ -387,6 +397,81 @@ fn paint_portal(ctx: &egui::Context, strength: f32) {
         full,
         0.0,
         Color32::from_rgba_unmultiplied(110, 30, 170, alpha as u8),
+    );
+}
+
+/// A boss's name over a bar across the top of the screen (modern's boss
+/// bar: purple for the dragon), `health` of it full.
+fn paint_boss_bar(painter: &egui::Painter, full: egui::Rect, name: &str, health: f32) {
+    let scale = gui::gui_scale(full);
+    let width = 182.0 * scale;
+    let left = full.center().x - width / 2.0;
+    let top = 12.0 * scale;
+    painter.text(
+        egui::pos2(full.center().x, top - 2.0 * scale),
+        Align2::CENTER_BOTTOM,
+        name,
+        egui::FontId::proportional(8.0 * scale),
+        Color32::WHITE,
+    );
+    let bar = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 5.0 * scale));
+    painter.rect_filled(bar.expand(scale), 0.0, Color32::from_rgb(20, 8, 30));
+    painter.rect_filled(bar, 0.0, Color32::from_rgb(58, 30, 78));
+    let filled = egui::Rect::from_min_size(
+        bar.min,
+        egui::vec2(width * health.clamp(0.0, 1.0), 5.0 * scale),
+    );
+    painter.rect_filled(filled, 0.0, Color32::from_rgb(168, 60, 214));
+    // Notches every tenth, as the notched style has.
+    for tenth in 1..10 {
+        let x = left + width * tenth as f32 / 10.0;
+        painter.line_segment(
+            [egui::pos2(x, bar.top()), egui::pos2(x, bar.bottom())],
+            egui::Stroke::new(scale.max(1.0) * 0.5, Color32::from_rgb(20, 8, 30)),
+        );
+    }
+}
+
+/// The poem and credits: white-on-black lines scrolling up the screen
+/// (modern's `WinScreen`). `ticks` is how long they have rolled.
+fn show_credits(ctx: &egui::Context, ticks: u32) {
+    use crate::credits::{LINE_TICKS, LINES, Line};
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::unique("credits"),
+    ));
+    painter.rect_filled(full, 0.0, Color32::BLACK);
+    let scale = gui::gui_scale(full);
+    let step = 12.0 * scale;
+    // Line `i` enters at the bottom at tick `i * LINE_TICKS` and climbs a
+    // line's height every `LINE_TICKS`.
+    let rolled = ticks as f32 / LINE_TICKS as f32 * step;
+    for (i, line) in LINES.iter().enumerate() {
+        let y = full.bottom() + i as f32 * step - rolled;
+        if y < -step || y > full.bottom() + step {
+            continue;
+        }
+        let (text, size, color) = match *line {
+            Line::Poem(text) => (text, 8.0, Color32::from_rgb(170, 205, 170)),
+            Line::Heading(text) => (text, 12.0, Color32::from_rgb(255, 214, 100)),
+            Line::Credit(text) => (text, 8.0, Color32::WHITE),
+            Line::Gap => continue,
+        };
+        painter.text(
+            egui::pos2(full.center().x, y),
+            Align2::CENTER_TOP,
+            text,
+            egui::FontId::proportional(size * scale),
+            color,
+        );
+    }
+    painter.text(
+        egui::pos2(full.right() - 4.0 * scale, full.bottom() - 4.0 * scale),
+        Align2::RIGHT_BOTTOM,
+        "Esc to skip",
+        egui::FontId::proportional(6.0 * scale),
+        Color32::from_rgb(110, 110, 110),
     );
 }
 

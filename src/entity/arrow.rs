@@ -177,18 +177,7 @@ impl Arrow {
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((index, _)) = target {
-            // Power adds half a point and half a point a level to the base
-            // damage (modern `baseDamage += power × 0.5 + 0.5`).
-            let bonus = if self.power > 0 {
-                f64::from(self.power) * 0.5 + 0.5
-            } else {
-                0.0
-            };
-            let mut damage = (speed * (DAMAGE_PER_SPEED + bonus)).ceil() as i32;
-            if self.critical {
-                damage += (random() * (damage / 2 + 2) as f32) as i32;
-            }
-            let damage = damage as f32;
+            let damage = self.damage_at(speed, random);
             // 1.0.0 removes an arrow that hits; it doesn't stick in mobs.
             self.ticks_stuck = STUCK_LIFETIME;
             self.stuck = true;
@@ -210,6 +199,31 @@ impl Arrow {
         self.velocity *= drag;
         self.velocity.y -= GRAVITY;
         None
+    }
+
+    /// What a hit at `speed` does: power adds half a point and half a
+    /// point a level to the base damage (modern `baseDamage += power × 0.5
+    /// + 0.5`), and a critical shot adds a random extra.
+    fn damage_at(&self, speed: f64, random: &mut impl FnMut() -> f32) -> f32 {
+        let bonus = if self.power > 0 {
+            f64::from(self.power) * 0.5 + 0.5
+        } else {
+            0.0
+        };
+        let mut damage = (speed * (DAMAGE_PER_SPEED + bonus)).ceil() as i32;
+        if self.critical {
+            damage += (random() * (damage / 2 + 2) as f32) as i32;
+        }
+        damage as f32
+    }
+
+    /// Hits something that isn't a mob (the dragon, a crystal): the arrow
+    /// is spent, and the damage is what it did.
+    pub fn hit_other(&mut self, random: &mut impl FnMut() -> f32) -> f32 {
+        let damage = self.damage_at(self.velocity.length(), random);
+        self.ticks_stuck = STUCK_LIFETIME;
+        self.stuck = true;
+        damage
     }
 
     /// Whether the player's box reaches a stuck arrow they may pick up.

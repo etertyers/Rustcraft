@@ -30,16 +30,16 @@ impl Game {
         let p = self.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();
         let view = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
-        let mut environment = if self.dimension == Dimension::Nether {
-            nether(
+        let mut environment = match self.dimension {
+            Dimension::Nether => nether(
                 self.time,
                 self.tick_alpha() as f32,
                 biome,
                 view,
                 self.eye_in(),
-            )
-        } else {
-            self.overworld_environment(biome, view)
+            ),
+            Dimension::End => end(self.time, self.tick_alpha() as f32, view, self.eye_in()),
+            Dimension::Overworld => self.overworld_environment(biome, view),
         };
         // Night vision lights everything, flickering in its last 10 s
         // (modern `GameRenderer.getNightVisionScale`).
@@ -156,6 +156,39 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
     }
 }
 
+/// The End's: no sun, moon, stars or clouds, a near-black purple sky and
+/// fog (modern `EndEffects`, fog 0x181318), and bright light (modern's
+/// `forceBrightLightmap`, here a high ambient light) since the End has no
+/// sky light. `view` is the render distance in blocks.
+pub fn end(time: u64, partial: f32, view: f32, eye: Option<Fluid>) -> Environment {
+    let dark = Vec3::new(0x18 as f32, 0x13 as f32, 0x18 as f32) / 255.0;
+    let (fog_density, fog_color) = match eye {
+        None => (0.0, dark),
+        Some(Fluid::Water) => WATER_FOG,
+        Some(Fluid::Lava) => LAVA_FOG,
+    };
+    Environment {
+        time: time as f32 + partial,
+        celestial_angle: 0.0,
+        sky_color: dark,
+        fog_color,
+        fog_start: view * FOG_START,
+        fog_end: view,
+        fog_density,
+        sun_brightness: 0.0,
+        star_brightness: 0.0,
+        moon_phase: 0,
+        sunrise: None,
+        cloud_height: CLOUD_HEIGHT,
+        sky: false,
+        ambient: END_AMBIENT,
+    }
+}
+
+/// How much the End's dark is lifted: its blocks are lit as if by a soft
+/// glow from everywhere, though it has no sky light.
+const END_AMBIENT: f32 = 0.6;
+
 /// Modern thick fog: from 5% of the render distance to half of it (at
 /// most 192 blocks).
 const NETHER_FOG_START: f32 = 0.05;
@@ -201,6 +234,17 @@ mod tests {
         let valley = nether(6000, 0.0, Biome::SoulSandValley, 144.0, None);
         assert!(valley.fog_color.z > valley.fog_color.x, "bluish");
         assert!(environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None).sky);
+    }
+
+    #[test]
+    fn the_end_has_no_sky_a_dark_purple_fog_and_bright_light() {
+        let end = end(6000, 0.0, 144.0, None);
+        assert!(!end.sky);
+        assert_eq!(end.sun_brightness, 0.0);
+        assert!(end.fog_color.length() < 0.2);
+        assert!(end.fog_color.z >= end.fog_color.y, "purplish");
+        assert!(end.ambient > 0.4);
+        assert_eq!(end.fog_end, 144.0);
     }
 
     #[test]

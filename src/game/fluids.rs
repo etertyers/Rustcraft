@@ -28,7 +28,7 @@ impl Game {
 
     /// Sets blocks the world changed on its own, remeshing their chunks in
     /// the background.
-    fn edit_later(&mut self, edits: &[(IVec3, BlockState)]) {
+    pub(super) fn edit_later(&mut self, edits: &[(IVec3, BlockState)]) {
         self.chunks.set_blocks_later(edits);
         self.wake_around(edits);
     }

@@ -188,7 +188,7 @@ impl Game {
     }
 
     /// The attacker's situation this tick.
-    fn stance(&self, charge: f32) -> Stance {
+    pub(super) fn stance(&self, charge: f32) -> Stance {
         let (walked, speed) = self.view.walk_step();
         Stance {
             charge,

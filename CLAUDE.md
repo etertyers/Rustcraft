@@ -57,6 +57,7 @@ RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
 cargo run --release -- --perf-test   # the performance gate: writes docs/perf/m<N>.md (§7.2)
 cargo bench                    # chunk generation, lighting, meshing and fluid benchmarks
+cargo run --release -- --end         # an unsaved test world in the End, dragon circling (also --nether)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
@@ -115,6 +116,8 @@ src/
   game/{dimensions,portals,nether_mobs}.rs, entity/fireball.rs   # switching dimensions, lighting and travelling through portals, ghasts' and blazes' fireballs, bartering, striders
   world/structure/{nether,fortress,bastion}.rs, inventory/smithing.rs   # the Nether's structures (placement, fortresses, bastions and its ruined portals), the netherite upgrade
   player/effects.rs, inventory/{potion,brewing}.rs, entity/thrown.rs, game/potions.rs   # status effects, potions and the brewing tree, the brewing stand, splash potions, drinking/cauldrons/food effects
+  world/{end_portal,worldgen/end}.rs, entity/{dragon,crystal,breath,eye}.rs   # the End portal's ring of frames, the End's island/pillars/podium, the ender dragon (phases and parts), crystals, fireballs and breath clouds, eyes of ender
+  game/{dragon,end_portal}.rs, render/dragon.rs, credits.rs   # the fight (breaking blocks, healing, death, exit portal), eyes/portal travel/credits, the dragon and crystal models, the poem and credits text
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
@@ -411,7 +414,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 
 #### Checkpoint D — The End and release
 
-### - [ ] M27 — The End and beating the game
+### - [x] M27 — The End and beating the game
 - **Eyes of ender:** crafted from ender pearl + blaze powder, thrown to point toward the nearest stronghold, sometimes breaking.
 - End portal activation by filling all 12 frames.
 - The End: main island of end stone, obsidian pillars with **end crystals** (some caged), the **ender dragon** (circling, strafing, perching on the fountain, dragon breath, healing from crystals, modern health and phases).

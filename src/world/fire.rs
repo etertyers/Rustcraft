@@ -11,14 +11,15 @@ use glam::IVec3;
 use super::{
     World,
     block::{BlockDef, BlockRegistry, BlockState, Shape},
-    blocks::{FIRE, LAVA, NETHERRACK, SOUL_FIRE, SOUL_SAND, SOUL_SOIL},
+    blocks::{BEDROCK, FIRE, LAVA, NETHERRACK, SOUL_FIRE, SOUL_SAND, SOUL_SOIL},
     chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
     fast_hash::{FastMap, FastSet},
     props::Prop,
 };
 use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
 
-// Netherrack burns forever (modern `#infiniburn_overworld`).
+// Netherrack burns forever (modern `#infiniburn_overworld`), and so does
+// anything on bedrock (`#infiniburn_end`: the crystals' pillars).
 const MAX_AGE: u8 = 15;
 /// Normal difficulty, which makes fire spread a little faster.
 const DIFFICULTY: i32 = 2;
@@ -255,7 +256,9 @@ impl Step<'_> {
         let delay = self.delay();
         self.fires.schedule(at, self.time + delay);
         let below = at - IVec3::Y;
-        let forever = self.get(below).is_some_and(|b| b.id() == NETHERRACK);
+        let forever = self
+            .get(below)
+            .is_some_and(|b| b.id() == NETHERRACK || b.id() == BEDROCK);
         // It ages, but this update goes by the age it had.
         let age = block.number(Prop::Age15);
         let older = (age + (self.random)(3) as u8 / 2).min(MAX_AGE);

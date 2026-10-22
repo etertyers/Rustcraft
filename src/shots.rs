@@ -372,6 +372,46 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: portals,
     },
+    Shot {
+        name: "m27-island",
+        about: "the End's main island from its edge: end stone, the obsidian pillars with their crystals (two caged), the fountain, and the dragon",
+        world: Some(WorldKind::End { seed: 20111118 }),
+        view: Some(([0.5, 64.0, 12.5], 0.0, 0.3)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: end_island,
+    },
+    Shot {
+        name: "m27-dragon",
+        about: "the ender dragon close up, mouth open, with the boss bar over it",
+        world: Some(WorldKind::End { seed: 20111118 }),
+        view: Some(([24.5, 64.0, 6.5], -1.57, 0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: end_dragon,
+    },
+    Shot {
+        name: "m27-end-portal",
+        about: "a ring of twelve end portal frames, each holding an eye, round a lit portal",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 66.0, 9.5], 0.0, 0.35)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: end_portal,
+    },
+    Shot {
+        name: "m27-credits",
+        about: "the poem scrolling up the black screen after the exit portal",
+        world: Some(WorldKind::End { seed: 20111118 }),
+        view: None,
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: end_credits,
+    },
 ];
 
 /// Puts `item` in the hotbar's first slot and selects it, settling the
@@ -571,6 +611,54 @@ fn portals(game: &mut Game) {
     }
     game.set_blocks(&edits);
     game.run_ticks(5);
+}
+
+/// The island with the dragon circling over it, high up and near.
+fn end_island(game: &mut Game) {
+    if let Some(dragon) = game.dragon.as_mut() {
+        // Over the north of the island, coming back toward the fountain.
+        let spot = glam::DVec3::new(0.5, 84.0, -18.0);
+        dragon.position = spot;
+        dragon.prev_position = spot;
+        dragon.yaw = std::f32::consts::PI;
+        dragon.prev_yaw = std::f32::consts::PI;
+    }
+    game.run_ticks(2);
+}
+
+/// The dragon right in front of the player, jaws open.
+fn end_dragon(game: &mut Game) {
+    if let Some(dragon) = game.dragon.as_mut() {
+        let spot = glam::DVec3::new(-2.0, 78.0, 6.5);
+        dragon.position = spot;
+        dragon.prev_position = spot;
+        dragon.yaw = 2.2;
+        dragon.prev_yaw = 2.2;
+        dragon.hurt(crate::entity::dragon::Part::Head, 40.0);
+    }
+    game.run_ticks(1);
+}
+
+/// Twelve frames with eyes and the portal between them.
+fn end_portal(game: &mut Game) {
+    let center = at(0, 63, 0);
+    let mut edits = Vec::new();
+    for (cell, face) in crate::world::end_portal::ring(center) {
+        edits.push((
+            cell,
+            facing(END_PORTAL_FRAME, face).with_bool(Prop::Eye, true),
+        ));
+    }
+    for cell in crate::world::end_portal::middle(center) {
+        edits.push((cell, BlockState::of(END_PORTAL)));
+    }
+    game.set_blocks(&edits);
+    game.run_ticks(2);
+}
+
+/// Part-way through the credits.
+fn end_credits(game: &mut Game) {
+    game.stage_credits(crate::credits::TICKS / 3);
 }
 
 fn at(x: i32, y: i32, z: i32) -> IVec3 {

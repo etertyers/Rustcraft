@@ -565,7 +565,7 @@ mod tests {
         }
         // Every surface biome Rustcraft has comes up somewhere.
         for biome in Biome::ALL {
-            if !biome.is_cave() && !biome.is_nether() {
+            if !biome.is_cave() && !biome.is_nether() && !biome.is_end() {
                 assert!(seen.contains(&biome), "{biome:?} never picked");
             }
         }

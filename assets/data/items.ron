@@ -162,6 +162,7 @@
     (name: "blaze_powder", texture: "blaze_powder"),
     (name: "magma_cream", texture: "magma_cream"),
     (name: "ender_eye", texture: "ender_eye"),
+    (name: "end_crystal", texture: "end_crystal"),
     (name: "glistering_melon_slice", texture: "glistering_melon_slice"),
     (name: "music_disc_13", texture: "music_disc_13", max_stack: 1),
     (name: "music_disc_cat", texture: "music_disc_cat", max_stack: 1),

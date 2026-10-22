@@ -31,13 +31,14 @@ use super::{
     light::{ChunkLight, light_chunk},
     mesh::{BlockModels, ChunkArea, Mesh, mesh_chunk},
     save::{RegionStore, SaveError},
-    worldgen::{flat, nether::Nether, terrain::Terrain},
+    worldgen::{end::End, flat, nether::Nether, terrain::Terrain},
 };
 
 /// Where new chunks come from.
 pub enum ChunkSource {
     Terrain(Box<Terrain>),
     Nether(Box<Nether>),
+    End(Box<End>),
     Flat,
     /// Fixed chunks (the block gallery); anywhere else is empty.
     Fixed(HashMap<ChunkPos, Chunk>),
@@ -48,6 +49,7 @@ impl ChunkSource {
         match self {
             ChunkSource::Terrain(terrain) => terrain.generate(pos),
             ChunkSource::Nether(nether) => nether.generate(pos),
+            ChunkSource::End(end) => end.generate(pos),
             ChunkSource::Flat => flat::flat_chunk(pos),
             ChunkSource::Fixed(chunks) => {
                 chunks.get(&pos).cloned().unwrap_or_else(|| Chunk::new(pos))
@@ -59,6 +61,7 @@ impl ChunkSource {
         match self {
             ChunkSource::Terrain(terrain) => Some(terrain.seed()),
             ChunkSource::Nether(nether) => Some(nether.world_seed()),
+            ChunkSource::End(end) => Some(end.world_seed()),
             _ => None,
         }
     }

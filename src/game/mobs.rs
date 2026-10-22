@@ -681,6 +681,10 @@ impl Game {
         if biome == Biome::MushroomFields {
             return None;
         }
+        // The End's only monsters are endermen, in groups of four.
+        if biome.is_end() {
+            return self.mob_defs.find("enderman").map(|kind| (kind, 15, 4));
+        }
         let seed = self.chunks.seed().unwrap_or(0);
         let mut options: Vec<(MobKind, u8, u8, u32)> = Vec::new();
         let nether = biome.is_nether();
@@ -778,6 +782,12 @@ impl Game {
         }
         let Some((sky, block)) = self.chunks.light_at(cell.x, cell.y, cell.z) else {
             return false;
+        };
+        // The End has no sky light (modern `hasSkyLight` is false there).
+        let sky = if self.dimension == crate::world::dimension::Dimension::End {
+            0
+        } else {
+            sky
         };
         let subtracted = daytime::sky_light_subtracted(self.celestial_angle());
         let sky = sky.saturating_sub(subtracted);

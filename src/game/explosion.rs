@@ -153,6 +153,8 @@ impl Game {
                 mob.body.velocity += push;
             }
         }
+        // The End's crystals and dragon.
+        self.blast_end(center, power);
         // Lit TNT is thrown; items take damage and may burn up.
         for index in 0..self.primed.len() {
             let tnt = &self.primed[index];
