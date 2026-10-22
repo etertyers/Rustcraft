@@ -270,6 +270,8 @@ pub struct Game {
     /// What the world has done, the toasts on screen, and where the
     /// player was when Levitation began.
     progress: crate::advancements::Progress,
+    /// The recipe book's open state and filter, kept with the world.
+    pub recipe_book: crate::inventory::book::Settings,
     toasts: Vec<advance::Toast>,
     levitation_from: Option<f64>,
     shot_tab: Option<usize>,
@@ -382,6 +384,7 @@ impl Game {
             jump_was: false,
             gateway_cooldown: 0,
             progress: Default::default(),
+            recipe_book: Default::default(),
             toasts: Vec::new(),
             levitation_from: None,
             shot_tab: None,
@@ -434,6 +437,7 @@ impl Game {
         game.portals = level.portals.clone();
         game.end = level.end.clone();
         game.progress = level.advancements.clone();
+        game.recipe_book = level.recipe_book.clone();
         game.restore_fight(level.end.dragon);
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
@@ -480,6 +484,7 @@ impl Game {
         let (away_mobs, away_populated) = self.away_for_saving();
         let crystals = self.fight_for_saving();
         let progress = self.progress.clone();
+        let recipe_book = self.recipe_book.clone();
         let dragon = self.dragon.as_ref().map(|d| d.save());
         if self.saved.is_none() {
             return Ok(());
@@ -524,6 +529,7 @@ impl Game {
         saved.level.portals = self.portals.clone();
         saved.level.end = self.end.clone();
         saved.level.advancements = progress;
+        saved.level.recipe_book = recipe_book;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
         saved.dir.save_level(&saved.level)?;

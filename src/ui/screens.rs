@@ -8,6 +8,7 @@ use super::creative::{self, CreativeTab, TabView};
 use super::doll;
 use super::geometry::Geometry;
 use super::gui::{self, GuiTextures, SlotView};
+use super::recipe_book::{self, Host};
 use crate::inventory::{
     brewing, furnace,
     player::{ARMOR_FEET, ARMOR_HEAD, HOTBAR_SLOTS, MAIN_SLOTS, OFFHAND, is_armor_slot},
@@ -74,6 +75,8 @@ pub enum ScreenAction {
     CreativeDestroy {
         shift: bool,
     },
+    /// Used the recipe book.
+    Book(super::recipe_book::BookAction),
     /// The death screen's Respawn button.
     Respawn,
     /// The sleep screen's Leave Bed button.
@@ -178,6 +181,8 @@ pub struct ScreenView<'a> {
     /// Poses and builds the player's model for the inventory's picture of
     /// them, given how it should turn.
     pub doll: Option<&'a dyn Fn(doll::DollAngles) -> doll::Doll>,
+    /// The recipe book, on the screens that have one.
+    pub book: Option<recipe_book::BookView<'a>>,
 }
 
 /// A drag across slots in progress: the button held and the slots crossed.
@@ -443,7 +448,15 @@ pub fn show(
     let size = egui::Vec2::from(panel_size(screen));
     // The one place that says where things are: drawing, the highlight and
     // hit testing all use it.
-    let geo = Geometry::new(full, ctx.pixels_per_point(), panel_size(screen), 0.0);
+    let host = match screen {
+        Screen::Inventory => Some(Host::Inventory),
+        Screen::Crafting => Some(Host::Table),
+        _ => None,
+    };
+    let book = host.and(view.book.as_ref());
+    // An open recipe book pushes the screen to the right.
+    let book_shift = book.map_or(0.0, |book| recipe_book::shift(book.settings.open, full));
+    let geo = Geometry::new(full, ctx.pixels_per_point(), panel_size(screen), book_shift);
     let (origin, scale, panel) = (geo.origin, geo.scale, geo.panel());
     let slot_rect = |at: [f32; 2]| geo.slot_rect(at);
     let mut actions = Vec::new();
@@ -530,18 +543,18 @@ pub fn show(
         );
     }
     let mut over_creative = false;
+    let input = creative::Input {
+        pointer,
+        left,
+        right,
+        middle: ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle)),
+        shift,
+        wheel,
+        left_down,
+        events: ctx.input(|i| i.events.clone()),
+        time: now,
+    };
     if let Screen::Creative { tab, scroll } = screen {
-        let input = creative::Input {
-            pointer,
-            left,
-            right,
-            middle: ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle)),
-            shift,
-            wheel,
-            left_down,
-            events: ctx.input(|i| i.events.clone()),
-            time: now,
-        };
         let out = creative::show(
             ctx,
             &painter,
@@ -573,6 +586,18 @@ pub fn show(
         }
         if dragged || hovered == Some(slot) {
             painter.rect_filled(rect, 0.0, Color32::from_white_alpha(80));
+        }
+    }
+    let mut over_book = false;
+    if let (Some(host), Some(book)) = (host, book) {
+        let free = |cell: usize| (view.slot)(SlotRef::Grid(cell)).is_none();
+        let out = recipe_book::show(
+            ctx, &painter, &geo, full, host, book, &free, &input, textures,
+        );
+        actions.extend(out.actions);
+        over_book = out.inside;
+        if out.tooltip.is_some() {
+            tooltip = out.tooltip;
         }
     }
     if let (Screen::Merchant, Some(merchant)) = (*screen, &view.merchant) {
@@ -642,7 +667,8 @@ pub fn show(
     });
 
     if let Some(pos) = pointer {
-        if click.is_some() && !panel.contains(pos) && !over_creative && view.cursor.is_some() {
+        let outside = !panel.contains(pos) && !over_creative && !over_book;
+        if click.is_some() && outside && view.cursor.is_some() {
             actions.push(ScreenAction::Throw { all: left });
         }
         if let Some(cursor) = &view.cursor {
@@ -1207,6 +1233,7 @@ mod tests {
             bench: None,
             merchant: None,
             doll: None,
+            book: None,
         };
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(854.0, 480.0))),

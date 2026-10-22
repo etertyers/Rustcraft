@@ -67,6 +67,10 @@ pub struct Level {
     /// What the world has done (added in M29).
     #[serde(default)]
     pub advancements: crate::advancements::Progress,
+    /// Whether the recipe book is open and how it filters (added with
+    /// the book).
+    #[serde(default)]
+    pub recipe_book: crate::inventory::book::Settings,
 }
 
 /// The End as the world remembers it (added in M27).
@@ -149,6 +153,7 @@ impl Level {
             portals: Vec::new(),
             end: EndData::default(),
             advancements: Default::default(),
+            recipe_book: Default::default(),
         }
     }
 }
@@ -455,6 +460,38 @@ mod tests {
         worlds.sort_by_key(|w| std::cmp::Reverse(w.meta.last_played));
         let modes: Vec<GameMode> = worlds.iter().map(|w| w.meta.game_mode).collect();
         assert_eq!(modes, [GameMode::Creative, GameMode::Survival]);
+    }
+
+    #[test]
+    fn the_recipe_books_state_is_saved_with_the_world_and_old_worlds_start_closed() {
+        use crate::inventory::book::{Category, Settings};
+        let saves = TempDir::new("book");
+        let mut level = Level::new("Book", 1, GameMode::Survival, [0.0; 3]);
+        assert_eq!(level.recipe_book, Settings::default());
+        level.recipe_book = Settings {
+            open: true,
+            craftable_only: true,
+            category: Category::Redstone,
+        };
+        let dir = WorldDir::create(saves.path(), &level).unwrap();
+        assert_eq!(dir.load_level().unwrap().recipe_book, level.recipe_book);
+        // A level from before the book has no such field.
+        let text = ron::ser::to_string_pretty(&level, ron::ser::PrettyConfig::default()).unwrap();
+        let mut kept = Vec::new();
+        let mut skipping = false;
+        for line in text.lines() {
+            if line.starts_with("    recipe_book:") {
+                skipping = true;
+            }
+            if !skipping {
+                kept.push(line);
+            }
+            if skipping && line.starts_with("    ),") {
+                skipping = false;
+            }
+        }
+        let old: Level = ron::from_str(&kept.join("\n")).unwrap();
+        assert_eq!(old.recipe_book, Settings::default());
     }
 
     #[test]

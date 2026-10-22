@@ -670,6 +670,7 @@ mod tests {
                 bench: None,
                 merchant: None,
                 doll: None,
+                book: None,
             };
             let input = egui::RawInput {
                 screen_rect: Some(window(WINDOWS[0])),

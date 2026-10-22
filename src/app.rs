@@ -156,6 +156,12 @@ pub struct App {
     catalog: Vec<(ItemStack, SlotView, String)>,
     /// The creative inventory's tab buttons.
     tab_views: Vec<crate::ui::creative::TabView>,
+    /// Every crafting recipe, for the recipe book.
+    book_recipes: Arc<Vec<crate::inventory::book::BookRecipe>>,
+    /// The icons on the recipe book's category tabs.
+    book_tab_icons: Vec<SlotView>,
+    /// The recipe the book shows the missing ingredients of in the grid.
+    book_ghost: Option<usize>,
     /// The tab the creative inventory opens on: the last one used.
     creative_tab: CreativeTab,
     /// The screens open over the game; the one place that decides whether
@@ -217,6 +223,9 @@ impl App {
             animation_start: Instant::now(),
             catalog: Vec::new(),
             tab_views: Vec::new(),
+            book_recipes: Arc::new(Vec::new()),
+            book_tab_icons: Vec::new(),
+            book_ghost: None,
             creative_tab: CreativeTab::Items(0),
             stack: ScreenStack::default(),
             last_frame: Instant::now(),
@@ -306,7 +315,9 @@ impl App {
             &look.res,
         )?);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
-        self.items = Some(Items::new().with_recipes(Arc::new(recipes)));
+        let items = Items::new().with_recipes(Arc::new(recipes));
+        self.book_recipes = Arc::new(crate::inventory::book::all(&items.recipes, &items));
+        self.items = Some(items);
         self.mob_defs = Some(mob_defs);
         self.install_look(look);
         match self.world_kind.clone() {
@@ -529,14 +540,21 @@ impl App {
     /// A text box on the open screen has the keyboard: the anvil's name
     /// box, or the creative inventory's search box on its Search tab.
     fn types_into_a_box(&self) -> bool {
-        matches!(
-            self.screen,
-            Some(Screen::Anvil)
-                | Some(Screen::Creative {
-                    tab: CreativeTab::Search,
-                    ..
-                })
-        )
+        let book_search = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting))
+            && self.game.as_ref().is_some_and(|g| g.recipe_book.open)
+            && self
+                .debug_ui
+                .as_ref()
+                .is_some_and(|ui| crate::ui::recipe_book::search_focused(ui.context()));
+        book_search
+            || matches!(
+                self.screen,
+                Some(Screen::Anvil)
+                    | Some(Screen::Creative {
+                        tab: CreativeTab::Search,
+                        ..
+                    })
+            )
     }
 
     fn open_advancements(&mut self) {
@@ -553,12 +571,18 @@ impl App {
 
     /// Shows an inventory or container screen.
     fn show_container(&mut self, screen: Screen) {
+        if matches!(screen, Screen::Inventory | Screen::Crafting)
+            && let Some(debug_ui) = self.debug_ui.as_ref()
+        {
+            crate::ui::recipe_book::reset(debug_ui.context());
+        }
         self.screen = Some(screen);
         self.stack.push(Layer::Container);
         self.apply_grab();
     }
 
     fn hide_container(&mut self) {
+        self.book_ghost = None;
         // The creative inventory opens on the tab it was left on.
         if let Some(Screen::Creative { tab, .. }) = self.screen {
             self.creative_tab = tab;
@@ -678,6 +702,16 @@ impl App {
         if let Some(items) = &self.items {
             self.catalog = crate::ui::creative::catalog(items, &look.icons);
             self.tab_views = crate::ui::creative::tab_views(items, &look.icons, &self.catalog);
+            use crate::inventory::items as ids;
+            self.book_tab_icons = [
+                ids::COMPASS,
+                ids::IRON_SWORD,
+                ids::BRICK,
+                ids::LAVA_BUCKET,
+                ids::REDSTONE,
+            ]
+            .map(|id| SlotView::of(&ItemStack::new(id, 1), &look.icons, items))
+            .to_vec();
         }
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
@@ -886,6 +920,25 @@ impl App {
                     pick,
                     &items,
                 );
+            }
+            ScreenAction::Book(action) => {
+                use crate::ui::recipe_book::BookAction;
+                match action {
+                    BookAction::Open(open) => {
+                        game.recipe_book.open = open;
+                        self.book_ghost = None;
+                    }
+                    BookAction::Filter(only) => game.recipe_book.craftable_only = only,
+                    BookAction::Category(category) => game.recipe_book.category = category,
+                    BookAction::Place { index, max } => {
+                        let recipes = self.book_recipes.clone();
+                        if let Some(recipe) = recipes.get(index) {
+                            game.place_recipe(recipe, max);
+                        }
+                        self.book_ghost = None;
+                    }
+                    BookAction::Ghost(index) => self.book_ghost = Some(index),
+                }
             }
             ScreenAction::CreativeDestroy { shift } => {
                 crate::inventory::creative::destroy(&mut game.cursor, &mut game.inventory, shift);
@@ -1329,6 +1382,56 @@ impl App {
             }
             _ => crate::ui::doll::Doll::default(),
         };
+        // The recipe book's entries, built only while it is open.
+        let (entries, ghost) = match (&self.screen, self.icons.as_deref()) {
+            (Some(Screen::Inventory | Screen::Crafting), Some(icons)) if game.recipe_book.open => {
+                let grid = game.crafting_grid().unwrap_or(&[]);
+                let items = game.items();
+                let entries: Vec<_> = self
+                    .book_recipes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, recipe)| {
+                        let stack = ItemStack::new(recipe.result.item, 1);
+                        crate::ui::recipe_book::RecipeEntry {
+                            index,
+                            icon: SlotView::of(&stack, icons, items),
+                            name: items.name(&stack),
+                            craftable: recipe.craftable(&game.inventory, grid),
+                            category: recipe.category,
+                            fits_small: recipe.fits(2),
+                        }
+                    })
+                    .collect();
+                let ghost = self
+                    .book_ghost
+                    .and_then(|index| self.book_recipes.get(index))
+                    .map(|recipe| crate::ui::recipe_book::Ghost {
+                        cells: recipe
+                            .placements(game.crafting_size().unwrap_or(2))
+                            .into_iter()
+                            .map(|(cell, ingredient)| {
+                                let choices = ingredient
+                                    .items()
+                                    .iter()
+                                    .map(|&id| SlotView::of(&ItemStack::new(id, 1), icons, items))
+                                    .collect();
+                                (cell, choices)
+                            })
+                            .collect(),
+                    });
+                (entries, ghost)
+            }
+            _ => (Vec::new(), None),
+        };
+        let book = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting)).then(|| {
+            crate::ui::recipe_book::BookView {
+                settings: &game.recipe_book,
+                entries: &entries,
+                ghost: ghost.as_ref(),
+                tab_icons: &self.book_tab_icons,
+            }
+        });
         let view = ScreenView {
             slot: &slot,
             furnace: game.furnace_progress(),
@@ -1339,6 +1442,7 @@ impl App {
             bench: bench_view(game, self.icons.as_deref()),
             merchant: merchant_view(game, self.icons.as_deref()),
             doll: Some(&doll),
+            book,
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();

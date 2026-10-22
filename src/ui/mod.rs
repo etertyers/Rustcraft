@@ -9,6 +9,7 @@ pub mod gui;
 pub mod menu;
 pub mod packs;
 pub mod pause;
+pub mod recipe_book;
 pub mod screens;
 pub mod stack;
 

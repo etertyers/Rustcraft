@@ -57,6 +57,9 @@ pub struct GuiTextures {
     pub anvil: TextureHandle,
     pub grindstone: TextureHandle,
     pub brewing: TextureHandle,
+    /// The recipe book's panel, tabs and buttons, and the green book button.
+    pub recipe_book: TextureHandle,
+    pub recipe_button: TextureHandle,
     /// The player's skin, for the figure in the inventory.
     pub skin: TextureHandle,
     /// Falls back to the anvil's sheet: Kenzo's 1.12 GUI has no smithing
@@ -167,6 +170,8 @@ impl GuiTextures {
             anvil: sheet("gui/container/anvil", &[])?,
             grindstone: sheet("gui/container/grindstone", &[])?,
             brewing: sheet("gui/container/brewing_stand", &[])?,
+            recipe_book: sheet("gui/recipe_book", &[])?,
+            recipe_button: sheet("gui/recipe_button", &[])?,
             skin: load("skin", skin),
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,

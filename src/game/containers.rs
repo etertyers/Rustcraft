@@ -722,6 +722,34 @@ impl Game {
         self.cursor = Some(held);
     }
 
+    /// The recipe book's click: moves the ingredients of `recipe` from the
+    /// inventory into the open crafting grid (one set, or with `max` as
+    /// many as there are). False if no grid is open or the recipe can't
+    /// be placed.
+    pub fn place_recipe(&mut self, recipe: &crate::inventory::book::BookRecipe, max: bool) -> bool {
+        let Some(Container::Crafting { size, grid }) = &mut self.container else {
+            return false;
+        };
+        let size = *size;
+        crate::inventory::book::place(recipe, size, &mut self.inventory, grid, &self.items, max)
+    }
+
+    /// The size of the open crafting grid (2 or 3), if one is open.
+    pub fn crafting_size(&self) -> Option<usize> {
+        match &self.container {
+            Some(Container::Crafting { size, .. }) => Some(*size),
+            _ => None,
+        }
+    }
+
+    /// What the open crafting grid holds, row by row.
+    pub fn crafting_grid(&self) -> Option<&[Option<ItemStack>]> {
+        match &self.container {
+            Some(Container::Crafting { grid, .. }) => Some(grid),
+            _ => None,
+        }
+    }
+
     /// Takes one item from every filled grid cell after crafting.
     fn use_up_grid(&mut self) {
         let Some(Container::Crafting { grid, .. }) = &mut self.container else {
@@ -820,6 +848,36 @@ mod tests {
         game.click_slot(SlotRef::Result, Click::Left);
         assert_eq!(game.cursor, Some(ItemStack::new(items::DIRT, 1)));
         assert_eq!(grid_of(&game)[3], Some(ItemStack::new(items::OAK_LOG, 1)));
+    }
+
+    #[test]
+    fn the_recipe_book_fills_the_open_grid_and_the_result_follows() {
+        use crate::inventory::book;
+        let mut game = flat_game(GameMode::Survival);
+        let list = book::all(&game.items.recipes, &game.items);
+        let sticks = list.iter().find(|r| r.result.item == items::STICK).unwrap();
+        // No grid open: nothing happens.
+        assert!(!game.place_recipe(sticks, false));
+        game.open_inventory();
+        assert_eq!(game.crafting_size(), Some(2));
+        game.inventory
+            .set(3, Some(ItemStack::new(items::OAK_PLANKS, 6)));
+        assert!(game.place_recipe(sticks, false));
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::STICK, 4))
+        );
+        assert_eq!(
+            game.inventory.slot(3),
+            Some(&ItemStack::new(items::OAK_PLANKS, 4))
+        );
+        // Shift fills it with all the planks there are (three sets).
+        assert!(game.place_recipe(sticks, true));
+        assert_eq!(game.inventory.slot(3), None);
+        assert_eq!(game.crafting_grid().unwrap()[0].as_ref().unwrap().count, 3);
+        // Closing returns everything to the player.
+        game.close_container();
+        assert!(game.crafting_grid().is_none());
     }
 
     #[test]
