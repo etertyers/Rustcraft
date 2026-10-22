@@ -1176,7 +1176,7 @@ pub(crate) mod tests {
             .with_mobs(crate::game::tests::mob_registry());
         load_player_chunk(&mut game);
         game.run_ticks(40);
-        assert!(game.chunks.world().len() > 0);
+        assert!(!game.chunks.world().is_empty());
         game.save().unwrap();
         // The upgrade kept a backup of the old files beside the new ones.
         assert!(saves.path().join(name).read_dir().unwrap().count() > 2);
