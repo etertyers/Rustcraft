@@ -1226,6 +1226,24 @@ impl App {
                 _ => PlayerMeshes::default(),
             };
             mesh.append(&player.items);
+            if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
+                let fig = Figure {
+                    icons,
+                    item_models,
+                    atlas: atlas.image(),
+                    slim: self.skin_slim,
+                };
+                let eye = game.camera.position.as_dvec3();
+                figure::add_mob_items(
+                    &mut mesh,
+                    game,
+                    &mut self.held,
+                    &fig,
+                    game.tick_alpha() as f32,
+                    |mob| mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE,
+                    light_at,
+                );
+            }
             renderer.set_entities(&mesh);
             renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
             let alpha = game.tick_alpha() as f32;

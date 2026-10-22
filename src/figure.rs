@@ -191,6 +191,42 @@ pub fn add_body(
     }
 }
 
+/// Adds what mobs hold in their main hands to `mesh` (textured with the
+/// atlas), for those `draw` approves: a skeleton's bow, drawn back while it
+/// draws, a piglin's sword.
+pub fn add_mob_items(
+    mesh: &mut Mesh,
+    game: &Game,
+    held: &mut HeldCache,
+    fig: &Figure,
+    alpha: f32,
+    draw: impl Fn(&crate::entity::mob::Mob) -> bool,
+    light_at: impl Fn(glam::DVec3) -> (u8, u8),
+) {
+    let defs = game.mob_defs();
+    for mob in game.mobs.iter().filter(|mob| draw(mob)) {
+        let Some(id) = mob.data.held else {
+            continue;
+        };
+        if mob.is_gone() {
+            continue;
+        }
+        let def = defs.get(mob.kind);
+        let Some(mount) = crate::render::models::hand_mount(mob, def, alpha) else {
+            continue;
+        };
+        let stack = ItemStack::new(id, 1);
+        let icon = match mob.ai.draw {
+            0 => fig.icons.icon(&stack),
+            ticks => fig.icons.icon_drawn(&stack, ticks as f32),
+        };
+        let geometry = held.get(&icon, fig.atlas);
+        let display = third_person_display(fig, &stack, false, false);
+        let matrix = mount * display_matrix(&display, false);
+        geometry.add_to(mesh, &matrix, [1.0; 3], light_at(mob.eye()));
+    }
+}
+
 /// A shield's own display transforms: it is held as a plate, flat to the
 /// front, lowered at rest and raised in front of the player blocking.
 /// (The inventory picture is extruded, so these stand in for the shield
@@ -478,5 +514,64 @@ mod tests {
         game.stats.health = 0.0;
         let m = build(&game, &mut held, &fig, (15, 0), (15, 0));
         assert!(m.hand_arm.is_empty() && m.body.is_empty());
+    }
+
+    #[test]
+    fn a_skeleton_spawns_with_a_bow_that_is_drawn_in_its_hand() {
+        let look = look();
+        let fig = Figure {
+            icons: &look.icons,
+            item_models: &look.item_models,
+            atlas: look.atlas.image(),
+            slim: false,
+        };
+        let mut held = HeldCache::default();
+        let mut game = crate::game::tests::lit_flat_game(GameMode::Creative);
+        let kind = game.mob_defs().find("skeleton").unwrap();
+        let at = glam::DVec3::new(0.5, 64.0, 5.5);
+        let mob = crate::entity::mob::Mob::new(kind, game.mob_defs().get(kind), at, 0.0);
+        assert_eq!(mob.data.held, Some(items::BOW), "a new skeleton has a bow");
+        game.mobs.push(mob);
+        let mut mesh = Mesh::default();
+        add_mob_items(
+            &mut mesh,
+            &game,
+            &mut held,
+            &fig,
+            1.0,
+            |_| true,
+            |_| (15, 0),
+        );
+        assert!(!mesh.is_empty(), "the bow is drawn");
+        // Within arm's reach of the skeleton, at about waist height.
+        let (min, max) = bounds(&mesh);
+        let middle = (min + max) / 2.0 - at.as_vec3();
+        assert!(middle.length() < 1.2, "{middle}");
+        assert!(middle.y > 0.3 && middle.y < 1.7, "{middle}");
+
+        // Without it, nothing is drawn; with a sword it holds that.
+        game.mobs[0].data.held = None;
+        let mut mesh = Mesh::default();
+        add_mob_items(
+            &mut mesh,
+            &game,
+            &mut held,
+            &fig,
+            1.0,
+            |_| true,
+            |_| (15, 0),
+        );
+        assert!(mesh.is_empty());
+        game.mobs[0].data.held = Some(items::STONE_SWORD);
+        add_mob_items(
+            &mut mesh,
+            &game,
+            &mut held,
+            &fig,
+            1.0,
+            |_| true,
+            |_| (15, 0),
+        );
+        assert!(!mesh.is_empty());
     }
 }
