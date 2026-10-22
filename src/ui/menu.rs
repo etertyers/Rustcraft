@@ -16,9 +16,10 @@ use super::{
     pause::{OptionsAction, options_page},
 };
 use crate::{
-    level::{self, Level, WorldDir},
+    level::{self, WorldDir},
     options::Options,
     player::mode::GameMode,
+    worldlist::{WorldInfo, WorldScan},
 };
 
 /// What the player chose.
@@ -41,11 +42,20 @@ enum Screen {
     CreateWorld,
 }
 
+/// A world in the list, and its icon once it is a texture.
+struct WorldRow {
+    info: WorldInfo,
+    icon: Option<egui::TextureHandle>,
+}
+
 pub struct Menu {
     saves: PathBuf,
     screen: Screen,
-    worlds: Vec<(WorldDir, Level)>,
-    selected: Option<usize>,
+    /// The worlds read so far, newest first; `scan` is still adding more
+    /// while it is `Some`.
+    worlds: Vec<WorldRow>,
+    scan: Option<WorldScan>,
+    selected: Option<PathBuf>,
     name: String,
     seed: String,
     mode: GameMode,
@@ -63,6 +73,7 @@ impl Menu {
             saves,
             screen: Screen::Title,
             worlds: Vec::new(),
+            scan: None,
             selected: None,
             name: String::new(),
             seed: String::new(),
@@ -132,7 +143,9 @@ impl Menu {
             .add_sized(BUTTON, Button::new("Singleplayer"))
             .clicked_with_sound()
         {
-            self.worlds = level::list_worlds(&self.saves);
+            // The folder is read on another thread; the list fills in.
+            self.worlds.clear();
+            self.scan = Some(WorldScan::start(self.saves.clone()));
             self.selected = None;
             self.screen = Screen::SelectWorld;
         }
@@ -156,7 +169,30 @@ impl Menu {
             .then_some(MenuAction::Quit)
     }
 
+    /// Takes the worlds the scan has read since the last frame.
+    fn collect_worlds(&mut self, ctx: &egui::Context) {
+        let Some(scan) = self.scan.as_mut() else {
+            return;
+        };
+        let mut arrived = Vec::new();
+        let done = scan.poll(&mut arrived);
+        for info in arrived {
+            let icon = info.icon.as_ref().map(|image| {
+                let size = [image.width() as usize, image.height() as usize];
+                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+                ctx.load_texture("world-icon", pixels, egui::TextureOptions::NEAREST)
+            });
+            self.worlds.push(WorldRow { info, icon });
+        }
+        self.worlds
+            .sort_by_key(|row| std::cmp::Reverse(row.info.meta.last_played));
+        if done {
+            self.scan = None;
+        }
+    }
+
     fn select_world(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
+        self.collect_worlds(ui.ctx());
         heading(ui, "Select World");
         let mut play = None;
         let list_height = (ui.available_height() - 120.0).max(80.0);
@@ -164,31 +200,40 @@ impl Menu {
             .max_height(list_height)
             .max_width(420.0)
             .show(ui, |ui| {
-                if self.worlds.is_empty() {
-                    ui.label(RichText::new("No worlds yet").color(GRAY));
-                }
                 let now = unix_now();
-                for (i, (dir, level)) in self.worlds.iter().enumerate() {
+                for row in &self.worlds {
+                    let (dir, meta) = (&row.info.dir, &row.info.meta);
                     let folder = dir
                         .path()
                         .file_name()
                         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
                     let text = format!(
-                        "{}\n{folder} ({})\n{} Mode",
-                        level.name,
-                        played_ago(level.last_played, now),
-                        level.game_mode.name()
+                        "{}\n{folder} ({}, {})\n{} Mode",
+                        meta.name,
+                        played_ago(meta.last_played, now),
+                        megabytes(row.info.size),
+                        meta.game_mode.name()
                     );
-                    let row = ui.add_sized(
-                        [400.0, 56.0],
-                        Button::selectable(self.selected == Some(i), text),
-                    );
-                    if row.clicked_with_sound() {
-                        self.selected = Some(i);
+                    let chosen = self.selected.as_deref() == Some(dir.path());
+                    let response = ui
+                        .horizontal(|ui| {
+                            if let Some(icon) = &row.icon {
+                                ui.image((icon.id(), egui::vec2(48.0, 48.0)));
+                            }
+                            ui.add_sized([400.0, 56.0], Button::selectable(chosen, text))
+                        })
+                        .inner;
+                    if response.clicked_with_sound() {
+                        self.selected = Some(dir.path().to_owned());
                     }
-                    if row.double_clicked() {
-                        play = Some(i);
+                    if response.double_clicked() {
+                        play = Some(dir.clone());
                     }
+                }
+                if self.scan.is_some() {
+                    ui.label(RichText::new("Loading worlds…").color(GRAY));
+                } else if self.worlds.is_empty() {
+                    ui.label(RichText::new("No worlds yet").color(GRAY));
                 }
             });
         ui.add_space(12.0);
@@ -202,7 +247,7 @@ impl Menu {
                 )
                 .clicked_with_sound()
             {
-                play = self.selected;
+                play = self.selected.clone().map(WorldDir::new);
             }
             if ui
                 .add(Button::new("Create New World").min_size(BUTTON.into()))
@@ -221,8 +266,7 @@ impl Menu {
         {
             self.screen = Screen::Title;
         }
-        let i = play?;
-        Some(MenuAction::Open(self.worlds[i].0.clone()))
+        Some(MenuAction::Open(play?))
     }
 
     fn create_world(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
@@ -277,6 +321,11 @@ fn mode_description(mode: GameMode) -> &'static str {
         GameMode::Survival => "Search for resources, crafting, gain levels, health and hunger",
         GameMode::Creative => "Unlimited resources, free flying and destroy blocks instantly",
     }
+}
+
+/// A size on disk, as the world list shows it.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_048_576.0)
 }
 
 fn unix_now() -> u64 {
