@@ -18,7 +18,7 @@ v1.1 keeps everything from v1.0 and moves the game toward **modern Minecraft Jav
 
 - **Faithfulness from M14 on:** match modern Java Edition behavior and values, not 1.0.0. Where 1.0.0 and modern differ (sprinting, hitboxes, combat, recipes), modern wins. Record each switch in `docs/DECISIONS.md`.
 - **New content gets added with its recipes.** Each milestone adds crafting/smelting recipes for the blocks and items it introduces. M29 does a final sweep for anything still missing.
-- **Mojang's files:** don't download or bundle Minecraft's own assets. Textures come from Kenzo's assets or resource packs Kenzo provides (M15). Mob models and structure layouts are hand-built in code/data to match vanilla shapes.
+- **Mojang's files:** vanilla textures, models, sounds and language files are downloaded from InventivetalentDev/minecraft-assets (branch 26.3) by scripts/fetch-vanilla-assets.sh into the git-ignored assets/vanilla/ folder, and used only as the lowest fallback layer, below Kenzo's assets and any resource pack. Never commit them. They are bundled into the local .app build.
 - **Still out of scope in v1.1:** multiplayer, commands/cheats, mods, Windows/Linux, comparators and observers, the Wither, and ocean monuments.
 
 ## 2. Tech stack
@@ -434,6 +434,37 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - Modern advancements: the Minecraft, Nether, The End, Adventure and Husbandry tabs, covering everything implemented. Toast pop-ups, an advancements screen (L), saved per world.
 - Recipe sweep: every block and item has its modern crafting, smelting, stonecutter and smithing recipes, with any missing workstation blocks added. List anything intentionally skipped in `DECISIONS.md`.
 - **Done when:** a survival playthrough unlocks advancements as expected, and an automated test confirms every craftable item has a recipe.
+
+#### Pre-release bug fixes (before M30)
+
+Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the planning folder's bugfix-prompt.md. Vanilla values are written into each prompt. Each fix gets a unit test where the logic is testable without a GPU.
+
+- [ ] **Session 1: assets**
+  - [ ] Vanilla 26.3 textures, models, sounds and lang as a git-ignored fallback layer (scripts/fetch-vanilla-assets.sh)
+  - [ ] Every missing vanilla block and item registered as a placeholder (docs/placeholders.md)
+  - [ ] Eye of ender shows in the End portal frame
+- [ ] **Session 2: menus and UI**
+  - [ ] Clicking Singleplayer opens the world list instantly; worlds load only when picked
+  - [ ] `--creative` works from the terminal
+  - [ ] Clicking in the advancements screen (or any screen) doesn't move the camera
+  - [ ] Inventory slot highlight lines up at every window size and Retina scale; the "crafting" text box is gone
+  - [ ] Steve appears in the inventory and follows the mouse
+  - [ ] Modern creative inventory with tabs and a search bar
+  - [ ] Recipe book sidebar in the crafting table and the inventory
+- [ ] **Session 3: player and world**
+  - [ ] Sneaking stops at vanilla's edge, and standing up there doesn't make you fall
+  - [ ] Walk between path, farmland and full blocks without jumping
+  - [ ] Using food interacts with blocks and mobs first, and eats only when there's nothing to interact with
+  - [ ] Overworld mob spawning matches vanilla caps and rules
+  - [ ] Plains flowers at vanilla density (flower forests unchanged)
+  - [ ] Chorus plants use chorus_plant stems with chorus_flower tips, and drop chorus fruit
+- [ ] **Session 4: mobs and the End**
+  - [ ] Hostile mobs use real pathfinding and vanilla attack behavior
+  - [ ] Mobs show their held items (skeletons hold bows)
+  - [ ] Horse texture fixed
+  - [ ] Endermen teleport randomly and teleport and run toward you when angry
+  - [ ] The dragon doesn't knock back or target creative players
+  - [ ] The dying dragon flies to the exit portal before it rises and explodes
 
 ### - [x] M30 — v1.1 performance and release
 - Profile with all content loaded (Overworld, Nether, End), and fix hot spots.
