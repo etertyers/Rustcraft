@@ -252,6 +252,12 @@ impl Game {
         if !matches!(def.name.as_str(), "wolf") && !def.variants.is_empty() {
             data.variant = self.rng.below(def.variants.len() as u32 + 1) as u8;
         }
+        if def.name == "horse" {
+            // Half have markings, of the four kinds.
+            if self.rng.below(2) == 0 {
+                data.markings = 1 + self.rng.below(4) as u8;
+            }
+        }
         Mob::with_data(kind, def, feet, yaw, data)
     }
 

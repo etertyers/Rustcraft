@@ -1111,3 +1111,30 @@ fn a_mob_holds_what_it_spawns_with_and_what_it_picks_up_and_saves_it() {
     let loaded = Mob::with_data(kind, game.mob_defs.get(kind), DVec3::ZERO, 0.0, old);
     assert_eq!(loaded.data.held, Some(items::BOW));
 }
+
+#[test]
+fn a_tame_horse_wears_armor_and_some_new_horses_have_markings() {
+    let mut game = lit_flat_game(GameMode::Survival);
+    let id = spawn(&mut game, "horse", 3.5, 0.5);
+    let index = game.mobs.iter().position(|m| m.id == id).unwrap();
+    game.inventory
+        .set(0, Some(ItemStack::new(items::IRON_HORSE_ARMOR, 1)));
+    game.inventory.selected = 0;
+    // A wild horse takes none; a tame one does, once.
+    game.use_mob(index);
+    assert_eq!(game.mobs[index].data.armor, 0);
+    game.mobs[index].data.tamed = true;
+    assert!(game.use_mob(index));
+    assert_eq!(game.mobs[index].data.armor, 2, "iron");
+    assert!(game.inventory.slot(0).is_none());
+    // Spawned horses come bare and with or without markings, in all four
+    // kinds across a herd.
+    let mut seen = [false; 5];
+    for _ in 0..200 {
+        let kind = game.mob_defs.find("horse").unwrap();
+        let horse = game.new_mob(kind, DVec3::new(9.5, 64.0, 9.5), 0.0);
+        assert_eq!(horse.data.armor, 0);
+        seen[usize::from(horse.data.markings)] = true;
+    }
+    assert!(seen.iter().all(|&s| s), "{seen:?}");
+}

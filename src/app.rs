@@ -1272,6 +1272,8 @@ impl App {
                     if (layer.wool && mob.data.sheared)
                         || (layer.saddle && !mob.data.saddled)
                         || layer.only_variant.is_some_and(|v| v != mob.data.variant)
+                        || layer.only_marking.is_some_and(|m| m != mob.data.markings)
+                        || layer.only_armor.is_some_and(|a| a != mob.data.armor)
                     {
                         continue;
                     }

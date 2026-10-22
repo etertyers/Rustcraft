@@ -56,6 +56,13 @@ pub struct MobData {
     /// Ticks left in love mode after being fed breeding food.
     #[serde(default)]
     pub love: u32,
+    /// A horse's markings (0 none, 1 white, 2 white field, 3 white dots,
+    /// 4 black dots) and armor (0 none, 1 leather, 2 iron, 3 gold,
+    /// 4 diamond).
+    #[serde(default)]
+    pub markings: u8,
+    #[serde(default)]
+    pub armor: u8,
     /// What it holds in its main hand, and whether its kind's starting
     /// item has been given (so a mob that dropped or lost it stays empty,
     /// and one saved before mobs held things gets its own).

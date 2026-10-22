@@ -231,22 +231,43 @@ pub fn load_skin(res: &Resources, assets: &Path) -> (RgbaImage, bool) {
 /// versions change some layouts, and a different size means different
 /// UVs), else it is skipped with a log line, and `None` is returned.
 pub fn mob_texture(res: &Resources, name: &str, size: Option<(u32, u32)>) -> Option<RgbaImage> {
-    let Some(texture) = res.texture(name) else {
-        warn!("no layer has {name}");
-        return None;
+    let Some(found) = size else {
+        return res.texture(name).map(|t| t.first_frame());
     };
-    let dims = texture.image.dimensions();
-    if texture.vanilla && size.is_some_and(|size| size != dims) {
+    // The first layer, from the top, whose texture fits the model's UVs:
+    // the vanilla fallback and Kenzo's base layer must be exactly the
+    // size (an older layout is a different size), a pack's may be any
+    // multiple of it (an HD pack).
+    let fits = |layer: usize, dims: (u32, u32)| {
+        if layer == res.vanilla_layer() || layer == 0 {
+            dims == found
+        } else {
+            dims.0 * found.1 == dims.1 * found.0
+        }
+    };
+    let mut first = None;
+    for layer in res.priority() {
+        let Some(texture) = res.texture_in(layer, name) else {
+            continue;
+        };
+        let dims = texture.image.dimensions();
+        if fits(layer, dims) {
+            return Some(texture.first_frame());
+        }
         warn!(
-            "skipping vanilla {name}: it is {}×{} but the model wants {}×{}",
-            dims.0,
-            dims.1,
-            size.map_or(0, |s| s.0),
-            size.map_or(0, |s| s.1)
+            "skipping {name} from layer {layer}: it is {}×{} but the model wants {}×{}",
+            dims.0, dims.1, found.0, found.1
         );
-        return None;
+        first.get_or_insert(texture);
     }
-    Some(texture.first_frame())
+    if first.is_none() {
+        warn!("no layer has {name}");
+    }
+    // Nothing fits the layout: a vanilla one is skipped (it's never the
+    // base look), any other is used as is, as before.
+    first
+        .filter(|texture| !texture.vanilla)
+        .map(|t| t.first_frame())
 }
 
 /// `mob_texture`, or the checkerboard.
@@ -310,6 +331,71 @@ mod tests {
             mob_image(&res, "entity/cow", Some((64, 32))),
             missing_image()
         );
+    }
+
+    #[test]
+    fn a_base_texture_in_an_older_layout_gives_way_to_the_vanilla_one_that_fits() {
+        let dir = crate::world::save::TempDir::new("base-horse");
+        let base = dir.path().join("textures/entity");
+        let vanilla = dir.path().join("vanilla/assets/minecraft/textures/entity");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&vanilla).unwrap();
+        let save = |root: &std::path::Path, name: &str, size: u32| {
+            RgbaImage::from_pixel(size, size, image::Rgba([9, 9, 9, 255]))
+                .save(root.join(format!("{name}.png")))
+                .unwrap();
+        };
+        // Kenzo's horse is 128×128, vanilla 1.21's 64×64; his cow has no
+        // vanilla twin.
+        save(&base, "horse", 128);
+        save(&vanilla, "horse", 64);
+        save(&base, "cow", 128);
+        let res = Resources::new(
+            Pack::base(dir.path()),
+            Vec::new(),
+            std::collections::HashMap::new(),
+        )
+        .with_vanilla(Pack::vanilla(&dir.path().join("vanilla")).unwrap());
+        assert_eq!(
+            mob_image(&res, "entity/horse", Some((64, 64))).dimensions(),
+            (64, 64),
+            "the horse model is laid out for 64×64"
+        );
+        assert_eq!(
+            mob_image(&res, "entity/cow", Some((64, 64))).dimensions(),
+            (128, 128),
+            "nothing else fits, so the base look stays"
+        );
+    }
+
+    #[test]
+    fn the_horse_and_its_overlays_load_in_the_64_by_64_layout_when_vanilla_is_there() {
+        let assets = crate::assets::dir();
+        if !assets.join("vanilla").is_dir() {
+            return;
+        }
+        let mobs = mobs();
+        let look = Look::build_with(&assets, Vec::new(), &mobs, true).unwrap();
+        let kind = mobs.find("horse").unwrap();
+        let horse = mobs.get(kind);
+        assert_eq!(
+            look.mob_textures[mobs.texture_slot(kind, 0)].dimensions(),
+            (64, 64)
+        );
+        for variant in 0..=horse.variants.len() as u8 {
+            assert_eq!(
+                look.mob_textures[mobs.texture_slot(kind, variant)].dimensions(),
+                (64, 64)
+            );
+        }
+        for (i, layer) in horse.layers.iter().enumerate() {
+            assert_eq!(
+                look.mob_textures[mobs.layer_slot(kind, i)].dimensions(),
+                (64, 64),
+                "{}",
+                layer.texture
+            );
+        }
     }
 
     #[test]
