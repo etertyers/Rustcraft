@@ -405,6 +405,7 @@ impl Game {
             .load_now(ChunkPos::of_block(gateway.x, gateway.z));
         self.edit(&end::gateway(gateway));
         self.say("The Ender Dragon has been defeated");
+        self.note(crate::advancements::Event::Used("kill_dragon".to_owned()));
         if let Err(err) = self.save() {
             log::error!("saving after the dragon's death: {err}");
         }

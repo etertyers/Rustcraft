@@ -43,8 +43,16 @@ impl Game {
         self.container = Some(Container::Bench(Bench {
             kind,
             at,
-            slots: vec![None; if kind == BenchKind::Smithing { 3 } else { 2 }],
+            slots: vec![
+                None;
+                match kind {
+                    BenchKind::Smithing => 3,
+                    BenchKind::Stonecutter => 1,
+                    _ => 2,
+                }
+            ],
             name: String::new(),
+            choice: 0,
         }));
         self.release_input();
     }
@@ -64,6 +72,27 @@ impl Game {
                 stack.id == items::LAPIS_LAZULI
             }
             _ => true,
+        }
+    }
+
+    /// What the open stonecutter can cut its input into.
+    pub fn stonecutter_cuts(&self) -> Vec<crate::inventory::crafting::Output> {
+        let Some(bench) = self.bench().filter(|b| b.kind == BenchKind::Stonecutter) else {
+            return Vec::new();
+        };
+        bench
+            .slots
+            .first()
+            .and_then(Option::as_ref)
+            .map_or_else(Vec::new, |input| self.items.recipes.stonecutting(input.id))
+    }
+
+    /// Chooses cut `index` on the open stonecutter, if it's there.
+    pub fn choose_cut(&mut self, index: usize) {
+        if index < self.stonecutter_cuts().len()
+            && let Some(Container::Bench(bench)) = &mut self.container
+        {
+            bench.choice = index;
         }
     }
 
@@ -182,6 +211,7 @@ impl Game {
             self.stats.experience.spend_levels(price);
         }
         self.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
+        self.note(crate::advancements::Event::Used("enchant".to_owned()));
         true
     }
 
@@ -217,6 +247,11 @@ impl Game {
                 let slot = |i: usize| bench.slots.get(i).and_then(Option::as_ref);
                 smithing::upgrade(&self.items, slot(0), slot(1), slot(2))
             }
+            BenchKind::Stonecutter => {
+                let cuts = self.stonecutter_cuts();
+                cuts.get(bench.choice)
+                    .map(crate::inventory::crafting::Output::stack)
+            }
         }
     }
 
@@ -251,7 +286,7 @@ impl Game {
                 let xp = made.experience(&mut self.rng);
                 (made.output, 0, u8::MAX, xp)
             }
-            BenchKind::Smithing => {
+            BenchKind::Smithing | BenchKind::Stonecutter => {
                 let Some(output) = self.bench_result() else {
                     return;
                 };
@@ -286,6 +321,16 @@ impl Game {
                 }
             }
             bench.slots[1] = None;
+        } else if let Some(Container::Bench(bench)) = &mut self.container
+            && kind == BenchKind::Stonecutter
+        {
+            // One of the input is cut.
+            if let Some(stack) = bench.slots[0].as_mut() {
+                stack.count -= 1;
+                if stack.count == 0 {
+                    bench.slots[0] = None;
+                }
+            }
         } else if let Some(Container::Bench(bench)) = &mut self.container {
             bench.slots[0] = None;
             if let Some(right) = bench.slots[1].as_mut() {
@@ -624,6 +669,56 @@ mod tests {
         // Efficiency V (41) and Mending (34) at least: 38 + up to 37 more.
         assert!((38..=75).contains(&paid), "{paid}");
         assert!(game.bench().unwrap().slots.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn a_stonecutter_offers_cuts_of_its_input_and_makes_the_chosen_one_a_block_at_a_time() {
+        let mut game = flat_game(GameMode::Survival);
+        let cutter = IVec3::new(4, 64, 3);
+        game.chunks
+            .set_blocks(&[(cutter, BlockState::of(blocks::STONECUTTER))]);
+        game.open_bench(BenchKind::Stonecutter, cutter);
+        assert!(game.stonecutter_cuts().is_empty());
+        assert!(game.slot_stack(SlotRef::Result).is_none());
+        if let Some(Container::Bench(bench)) = &mut game.container {
+            bench.slots[0] = Some(ItemStack::new(items::COBBLESTONE, 3));
+        }
+        let cuts: Vec<_> = game
+            .stonecutter_cuts()
+            .iter()
+            .map(|o| (o.item, o.count))
+            .collect();
+        assert_eq!(
+            cuts,
+            [
+                (items::COBBLESTONE_SLAB, 2),
+                (items::COBBLESTONE_STAIRS, 1),
+                (items::COBBLESTONE_WALL, 1)
+            ]
+        );
+        // The first is chosen to begin with; choosing another changes the result.
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::COBBLESTONE_SLAB, 2))
+        );
+        game.choose_cut(2);
+        game.choose_cut(9);
+        assert_eq!(
+            game.slot_stack(SlotRef::Result),
+            Some(ItemStack::new(items::COBBLESTONE_WALL, 1))
+        );
+        game.click_slot(SlotRef::Result, Click::Left);
+        assert_eq!(
+            game.cursor,
+            Some(ItemStack::new(items::COBBLESTONE_WALL, 1))
+        );
+        assert_eq!(game.bench().unwrap().slots[0].as_ref().unwrap().count, 2);
+        // A second one stacks onto the cursor; the last one empties the slot.
+        game.click_slot(SlotRef::Result, Click::Left);
+        game.click_slot(SlotRef::Result, Click::Left);
+        assert_eq!(game.cursor.as_ref().unwrap().count, 3);
+        assert!(game.bench().unwrap().slots[0].is_none());
+        assert!(game.slot_stack(SlotRef::Result).is_none());
     }
 
     #[test]

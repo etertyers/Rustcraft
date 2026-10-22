@@ -399,6 +399,11 @@ impl Game {
     /// Removes the block at `cell` and whatever it held up, dropping items
     /// and wearing the tool as the game mode says.
     pub(super) fn break_block(&mut self, cell: IVec3) {
+        let mined = self
+            .chunks
+            .world()
+            .block(cell.x, cell.y, cell.z)
+            .map(|block| block.def().name.clone());
         let world = self.chunks.world();
         let edits = interaction::break_block(world, self.items.blocks, cell);
         if edits.is_empty() {
@@ -484,6 +489,9 @@ impl Game {
             self.wear_selected(wear);
         }
         self.edit(&edits);
+        if let Some(name) = mined {
+            self.note(crate::advancements::Event::Mined(name));
+        }
     }
 
     /// Draws a bow while `using` (right-click held) with ammunition, and
@@ -627,6 +635,7 @@ impl Game {
                         stats.fire = stats.fire.max(crate::config::combat::FLAME_TICKS);
                     }
                     if !arrow.hostile {
+                        self.note(crate::advancements::Event::Used("shoot".to_owned()));
                         self.mobs[index].hit_by_player();
                         self.rally(index);
                     }
@@ -700,6 +709,7 @@ impl Game {
         };
         self.inventory.take(slot, 1);
         self.stats.eat(food.hunger, food.saturation);
+        self.note(crate::advancements::Event::Ate(stack.id.name().to_owned()));
         self.food_effects(stack.id);
         if stack.id == items::CHORUS_FRUIT {
             self.chorus_teleport();
@@ -781,6 +791,7 @@ impl Game {
             Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
             Activate::Smithing => self.open_bench(BenchKind::Smithing, cell),
             Activate::Brewing => self.open_brewing(cell),
+            Activate::Stonecutter => self.open_bench(BenchKind::Stonecutter, cell),
             Activate::Redstone => {
                 self.use_redstone_block(cell);
             }
@@ -840,6 +851,7 @@ impl Game {
             return;
         };
         self.edit(&edits);
+        self.note(crate::advancements::Event::Placed(block.def().name.clone()));
         // A shulker box put down keeps what the item held.
         if !stack.contents().is_empty()
             && let Some(&(at, _)) = edits.iter().find(|(_, state)| state.id() == block.id())

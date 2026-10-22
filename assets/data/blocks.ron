@@ -759,4 +759,9 @@
     (name: "green_shulker_box", hardness: 2.0, activate: Chest, tool: Pickaxe, drops: Nothing, textures: (all: "green_shulker_box")),
     (name: "red_shulker_box", hardness: 2.0, activate: Chest, tool: Pickaxe, drops: Nothing, textures: (all: "red_shulker_box")),
     (name: "black_shulker_box", hardness: 2.0, activate: Chest, tool: Pickaxe, drops: Nothing, textures: (all: "black_shulker_box")),
+    // M29: more workstations. The stonecutter works; the rest are only blocks.
+    (name: "stonecutter", hardness: 3.5, activate: Stonecutter, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (top: "stonecutter_top", bottom: "stonecutter_bottom", side: "stonecutter_side")),
+    (name: "loom", hardness: 2.5, tool: Axe, burns: (encourage: 5, catch: 20), textures: (top: "loom_top", bottom: "loom_bottom", side: "loom_side", south: "loom_front")),
+    (name: "cartography_table", hardness: 2.5, tool: Axe, burns: (encourage: 5, catch: 20), textures: (top: "cartography_table_top", bottom: "cartography_table_side3", side: "cartography_table_side2", south: "cartography_table_side1")),
+    (name: "fletching_table", hardness: 2.5, tool: Axe, burns: (encourage: 5, catch: 20), textures: (top: "fletching_table_top", bottom: "fletching_table_front", side: "fletching_table_side", south: "fletching_table_front")),
 ]

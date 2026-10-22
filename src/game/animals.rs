@@ -177,6 +177,7 @@ impl Game {
     fn shear_sheep(&mut self, index: usize) {
         let color = usize::from(self.mobs[index].data.color) % 16;
         self.mobs[index].data.sheared = true;
+        self.note(crate::advancements::Event::Used("shear".to_owned()));
         let count = 1 + self.rng.below(3) as u8;
         if let Some(wool) = items::by_name(WOOL[color]) {
             let at = self.mobs[index].cell();
@@ -222,6 +223,9 @@ impl Game {
                     mob.data.variant = 1;
                     mob.stats.health = TAMED_WOLF_HEALTH;
                 }
+            }
+            if self.mobs[index].data.tamed {
+                self.note(crate::advancements::Event::Used("tame".to_owned()));
             }
             return true;
         }
@@ -277,6 +281,7 @@ impl Game {
             let temper = u32::from(mob.data.temper);
             if self.rng.below(100) < temper {
                 self.mobs[index].data.tamed = true;
+                self.note(crate::advancements::Event::Used("tame".to_owned()));
             } else if self.rng.below(3) == 0 {
                 // It throws its rider.
                 self.dismount_mob(index, true);

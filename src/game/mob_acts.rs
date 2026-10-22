@@ -285,6 +285,13 @@ impl Game {
     /// Everything a dead mob leaves: its drops, a sheep's wool, the block
     /// an enderman held, and a slime's smaller slimes.
     pub(super) fn on_mob_death(&mut self, mob: &Mob) {
+        if mob.player_hit > 0 {
+            let (name, hostile) = {
+                let def = self.mob_defs.get(mob.kind);
+                (def.name.clone(), def.ai.is_monster())
+            };
+            self.note(crate::advancements::Event::Killed { mob: name, hostile });
+        }
         let def = self.mob_defs.get(mob.kind);
         let cell = mob.cell();
         // Looting counts when the player made the kill.

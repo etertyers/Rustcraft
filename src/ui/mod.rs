@@ -72,6 +72,56 @@ pub struct Hud {
     pub boss: Option<f32>,
     /// Ticks the poem and credits have rolled, while they do (M27).
     pub credits: Option<u32>,
+    /// Advancement toasts, newest last (M29).
+    pub toasts: Vec<ToastView>,
+    /// The advancements screen, while it is open.
+    pub advancements: Option<AdvView>,
+}
+
+/// An advancement just made, as its toast shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastView {
+    pub header: &'static str,
+    pub title: String,
+    pub icon: Option<SlotView>,
+    pub frame: crate::advancements::Frame,
+    /// 0 when it has just slid out of the screen's edge, 1 fully in.
+    pub slide: f32,
+}
+
+/// One tab along the top of the advancements screen.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabView {
+    pub title: &'static str,
+    pub icon: Option<SlotView>,
+    pub done: usize,
+    pub total: usize,
+}
+
+/// A node of the open tab's tree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeView {
+    pub column: u32,
+    pub row: f32,
+    pub icon: Option<SlotView>,
+    pub frame: crate::advancements::Frame,
+    pub title: String,
+    pub description: String,
+    pub done: bool,
+    /// Its parent isn't done yet.
+    pub locked: bool,
+    /// Criteria met and how many there are.
+    pub met: (usize, usize),
+    /// Index in `nodes` of its parent.
+    pub parent: Option<usize>,
+}
+
+/// The advancements screen: the tabs, which is open and its nodes.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AdvView {
+    pub tabs: Vec<TabView>,
+    pub current: usize,
+    pub nodes: Vec<NodeView>,
 }
 
 /// A status effect as the HUD shows it: its icon (by place in
@@ -206,6 +256,14 @@ impl DebugUi {
             }
             if let Some(health) = hud.boss {
                 paint_boss_bar(ui.painter(), full, "Ender Dragon", health);
+            }
+            if !hud.toasts.is_empty() {
+                paint_toasts(ui.painter(), full, &hud.toasts, textures);
+            }
+            if let Some(view) = &hud.advancements
+                && let Some(tab) = show_advancements(ui.ctx(), view, textures)
+            {
+                actions.push(screens::ScreenAction::AdvTab(tab));
             }
             if hud.loading {
                 show_loading_screen(ui.ctx());
@@ -398,6 +456,261 @@ fn paint_portal(ctx: &egui::Context, strength: f32) {
         0.0,
         Color32::from_rgba_unmultiplied(110, 30, 170, alpha as u8),
     );
+}
+
+/// The advancement toasts stacked down the top right corner (modern
+/// `ToastComponent`): a dark card with the header in yellow, the title
+/// under it and the icon at the left.
+fn paint_toasts(
+    painter: &egui::Painter,
+    full: egui::Rect,
+    toasts: &[ToastView],
+    tex: &GuiTextures,
+) {
+    let scale = gui::gui_scale(full);
+    let (w, h) = (160.0 * scale, 32.0 * scale);
+    for (i, toast) in toasts.iter().rev().take(5).enumerate() {
+        let x = full.right() - w * toast.slide.clamp(0.0, 1.0);
+        let top = 4.0 * scale + i as f32 * (h + 2.0 * scale);
+        let card = egui::Rect::from_min_size(egui::pos2(x, top), egui::vec2(w, h));
+        painter.rect_filled(card, 0.0, Color32::from_rgb(34, 34, 34));
+        painter.rect_stroke(
+            card,
+            0.0,
+            egui::Stroke::new(scale, frame_color(toast.frame)),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            card.min + egui::vec2(30.0, 7.0) * scale,
+            Align2::LEFT_TOP,
+            toast.header,
+            egui::FontId::proportional(7.0 * scale),
+            if toast.frame == crate::advancements::Frame::Challenge {
+                Color32::from_rgb(255, 85, 255)
+            } else {
+                Color32::from_rgb(255, 255, 85)
+            },
+        );
+        painter.text(
+            card.min + egui::vec2(30.0, 18.0) * scale,
+            Align2::LEFT_TOP,
+            &toast.title,
+            egui::FontId::proportional(7.0 * scale),
+            Color32::WHITE,
+        );
+        if let Some(icon) = &toast.icon {
+            gui::paint_slot(
+                painter,
+                card.min + egui::vec2(8.0, 8.0) * scale,
+                icon,
+                scale,
+                tex.atlas.id(),
+            );
+        }
+    }
+}
+
+/// The frame's color: gray for a task, gold for a goal, purple for a
+/// challenge.
+fn frame_color(frame: crate::advancements::Frame) -> Color32 {
+    match frame {
+        crate::advancements::Frame::Task => Color32::from_rgb(160, 160, 160),
+        crate::advancements::Frame::Goal => Color32::from_rgb(230, 190, 60),
+        crate::advancements::Frame::Challenge => Color32::from_rgb(170, 70, 210),
+    }
+}
+
+/// The advancements screen (L): tabs along the top with what's done in
+/// each, the open tab's tree of framed icons joined by lines, and a card
+/// for the one under the mouse. Returns a tab the player clicked.
+fn show_advancements(ctx: &egui::Context, view: &AdvView, tex: &GuiTextures) -> Option<usize> {
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::unique("advancements"),
+    ));
+    painter.rect_filled(full, 0.0, Color32::from_black_alpha(200));
+    let scale = gui::gui_scale(full);
+    let pointer = ctx.input(|i| i.pointer.hover_pos());
+    let pressed = ctx.input(|i| i.pointer.primary_pressed());
+    // The window grows to hold the tree (nodes 28 across and 26 down), as far
+    // as the screen allows.
+    let columns = view.nodes.iter().map(|n| n.column).max().unwrap_or(0) as f32;
+    let rows = view.nodes.iter().map(|n| n.row).fold(0.0_f32, f32::max);
+    let width = (columns * 28.0 + 22.0 + 28.0)
+        .max(252.0)
+        .min(full.width() / scale - 16.0);
+    let height = (rows * 26.0 + 22.0 + 46.0)
+        .max(140.0)
+        .min(full.height() / scale - 64.0);
+    let window = egui::Rect::from_center_size(
+        full.center() + egui::vec2(0.0, 12.0 * scale),
+        egui::vec2(width, height) * scale,
+    );
+    painter.rect_filled(window, 0.0, Color32::from_rgb(28, 24, 36));
+    painter.rect_stroke(
+        window,
+        0.0,
+        egui::Stroke::new(scale, Color32::from_rgb(90, 80, 110)),
+        egui::StrokeKind::Outside,
+    );
+    let mut clicked = None;
+    // The tabs, left to right above the window.
+    for (i, tab) in view.tabs.iter().enumerate() {
+        let rect = egui::Rect::from_min_size(
+            window.min + egui::vec2(i as f32 * 29.0, -29.0) * scale,
+            egui::vec2(28.0, 28.0) * scale,
+        );
+        let selected = i == view.current;
+        painter.rect_filled(
+            rect,
+            0.0,
+            if selected {
+                Color32::from_rgb(70, 60, 90)
+            } else {
+                Color32::from_rgb(40, 36, 52)
+            },
+        );
+        if let Some(icon) = &tab.icon {
+            gui::paint_slot(
+                &painter,
+                rect.min + egui::vec2(6.0, 6.0) * scale,
+                icon,
+                scale,
+                tex.atlas.id(),
+            );
+        }
+        if pointer.is_some_and(|p| rect.contains(p)) {
+            painter.rect_filled(rect, 0.0, Color32::from_white_alpha(40));
+            if pressed {
+                clicked = Some(i);
+            }
+        }
+    }
+    if let Some(tab) = view.tabs.get(view.current) {
+        painter.text(
+            window.min + egui::vec2(8.0, 6.0) * scale,
+            Align2::LEFT_TOP,
+            format!("{}  {}/{}", tab.title, tab.done, tab.total),
+            egui::FontId::proportional(8.0 * scale),
+            Color32::WHITE,
+        );
+    }
+    // The tree, nodes 28 pixels across and 27 down, squeezed to fit.
+    let step_x = (28.0_f32).min((width - 50.0) / columns.max(1.0));
+    let step_y = (26.0_f32).min((height - 46.0 - 22.0) / rows.max(1.0));
+    let at = |n: &NodeView| {
+        window.min + egui::vec2(14.0 + n.column as f32 * step_x, 30.0 + n.row * step_y) * scale
+    };
+    for node in &view.nodes {
+        if let Some(parent) = node.parent.and_then(|p| view.nodes.get(p)) {
+            let (a, b) = (
+                at(parent) + egui::vec2(11.0, 11.0) * scale,
+                at(node) + egui::vec2(11.0, 11.0) * scale,
+            );
+            let color = if node.done {
+                Color32::from_rgb(230, 230, 230)
+            } else {
+                Color32::from_rgb(80, 70, 100)
+            };
+            painter.line_segment(
+                [a, egui::pos2(b.x - (b.x - a.x) / 2.0, a.y)],
+                egui::Stroke::new(2.0 * scale, color),
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(b.x - (b.x - a.x) / 2.0, a.y),
+                    egui::pos2(b.x - (b.x - a.x) / 2.0, b.y),
+                ],
+                egui::Stroke::new(2.0 * scale, color),
+            );
+            painter.line_segment(
+                [egui::pos2(b.x - (b.x - a.x) / 2.0, b.y), b],
+                egui::Stroke::new(2.0 * scale, color),
+            );
+        }
+    }
+    let mut hovered = None;
+    for (i, node) in view.nodes.iter().enumerate() {
+        let rect = egui::Rect::from_min_size(at(node), egui::vec2(22.0, 22.0) * scale);
+        let color = if node.done {
+            frame_color(node.frame)
+        } else if node.locked {
+            Color32::from_rgb(50, 46, 60)
+        } else {
+            Color32::from_rgb(90, 84, 110)
+        };
+        painter.rect_filled(rect, 0.0, Color32::from_rgb(20, 18, 26));
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(2.0 * scale, color),
+            egui::StrokeKind::Inside,
+        );
+        if let Some(icon) = &node.icon {
+            gui::paint_slot(
+                &painter,
+                rect.min + egui::vec2(3.0, 3.0) * scale,
+                icon,
+                scale,
+                tex.atlas.id(),
+            );
+        }
+        if !node.done {
+            painter.rect_filled(
+                rect,
+                0.0,
+                Color32::from_black_alpha(if node.locked { 150 } else { 90 }),
+            );
+        }
+        if pointer.is_some_and(|p| rect.contains(p)) {
+            hovered = Some(i);
+        }
+    }
+    if let Some(node) = hovered.and_then(|i| view.nodes.get(i)) {
+        let text = format!(
+            "{}\n{}{}",
+            node.title,
+            node.description,
+            if node.met.1 > 1 {
+                format!("\n{}/{}", node.met.0, node.met.1)
+            } else {
+                String::new()
+            }
+        );
+        if let Some(p) = pointer {
+            let galley = painter.layout(
+                text,
+                egui::FontId::proportional(8.0 * scale),
+                Color32::WHITE,
+                160.0 * scale,
+            );
+            let card = egui::Rect::from_min_size(
+                p + egui::vec2(8.0, 8.0) * scale,
+                galley.size() + egui::vec2(8.0, 6.0) * scale,
+            );
+            painter.rect_filled(card, 0.0, Color32::from_rgb(16, 10, 24));
+            painter.rect_stroke(
+                card,
+                0.0,
+                egui::Stroke::new(scale, frame_color(node.frame)),
+                egui::StrokeKind::Inside,
+            );
+            painter.galley(
+                card.min + egui::vec2(4.0, 3.0) * scale,
+                galley,
+                Color32::WHITE,
+            );
+        }
+    }
+    painter.text(
+        egui::pos2(full.center().x, window.bottom() + 6.0 * scale),
+        Align2::CENTER_TOP,
+        "L or Esc to close",
+        egui::FontId::proportional(6.0 * scale),
+        Color32::from_gray(120),
+    );
+    clicked
 }
 
 /// A boss's name over a bar across the top of the screen (modern's boss

@@ -117,6 +117,8 @@ pub struct App {
     game: Option<Game>,
     /// An inventory screen open over the game.
     screen: Option<Screen>,
+    /// The advancements screen (L), with the tab it shows.
+    advancements: Option<usize>,
     /// Whether the player was in bed last frame.
     sleeping: bool,
     /// The player's settings, from `options.ron`.
@@ -183,6 +185,7 @@ impl App {
             menu: None,
             game: None,
             screen: None,
+            advancements: None,
             sleeping: false,
             options: Options::load(&Options::path()),
             pause: None,
@@ -445,7 +448,27 @@ impl App {
             .game
             .as_ref()
             .is_some_and(|g| g.credits_ticks().is_some());
-        if key == KeyCode::Escape && pressed && !event.repeat && rolling {
+        if self.advancements.is_some()
+            && pressed
+            && !event.repeat
+            && matches!(key, KeyCode::Escape | KeyCode::KeyL)
+        {
+            self.advancements = None;
+            self.set_cursor_grab(true);
+        } else if self.advancements.is_some() {
+            // Nothing else works while it is open.
+        } else if key == KeyCode::KeyL
+            && pressed
+            && !event.repeat
+            && self.playing()
+            && self.screen.is_none()
+            && self.pause.is_none()
+            && !sleeping
+            && !rolling
+        {
+            self.advancements = Some(0);
+            self.set_cursor_grab(false);
+        } else if key == KeyCode::Escape && pressed && !event.repeat && rolling {
             // Skipping the poem and credits goes home.
             if let Some(game) = self.game.as_mut() {
                 game.finish_credits();
@@ -654,6 +677,7 @@ impl App {
                 BenchKind::Anvil => Screen::Anvil,
                 BenchKind::Grindstone => Screen::Grindstone,
                 BenchKind::Smithing => Screen::Smithing,
+                BenchKind::Stonecutter => Screen::Stonecutter,
             },
             Container::Cart(index) => match self.game.as_ref().and_then(|g| g.carts.get(*index)) {
                 Some(cart) if cart.kind == crate::entity::minecart::CartKind::Hopper => {
@@ -704,6 +728,8 @@ impl App {
             ScreenAction::Trade(index) => {
                 game.trade(index);
             }
+            ScreenAction::Choose(index) => game.choose_cut(index),
+            ScreenAction::AdvTab(tab) => self.advancements = Some(tab),
             ScreenAction::Respawn => {
                 game.respawn();
                 self.set_cursor_grab(true);
@@ -1094,6 +1120,11 @@ impl App {
             loading: game.is_arriving(),
             boss: game.dragon_bar(),
             credits: game.credits_ticks(),
+            toasts: toast_views(game, self.icons.as_deref()),
+            advancements: self
+                .advancements
+                .or(game.shot_advancements())
+                .and_then(|tab| advancements_view(game, self.icons.as_deref(), tab)),
             effects: game
                 .stats
                 .effects
@@ -1124,7 +1155,7 @@ impl App {
             brewing: game.brewing_progress(),
             cursor: game.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
-            bench: bench_view(game),
+            bench: bench_view(game, self.icons.as_deref()),
             merchant: merchant_view(game, self.icons.as_deref()),
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
@@ -1389,7 +1420,7 @@ fn merchant_view(
 
 /// What the enchanting table, anvil or grindstone screen shows besides
 /// its slots.
-fn bench_view(game: &Game) -> Option<BenchView> {
+fn bench_view(game: &Game, icons: Option<&ItemIcons>) -> Option<BenchView> {
     use crate::{
         inventory::{anvil::Refusal, enchant::roman},
         ui::screens::{AnvilStatus, OfferView},
@@ -1429,6 +1460,20 @@ fn bench_view(game: &Game) -> Option<BenchView> {
                 Some(Err(Refusal::TooExpensive)) => AnvilStatus::TooExpensive,
                 _ => AnvilStatus::Nothing,
             };
+        }
+        BenchKind::Stonecutter => {
+            if let Some(icons) = icons {
+                let items = game.items();
+                view.choice = bench.choice;
+                view.cuts = game
+                    .stonecutter_cuts()
+                    .iter()
+                    .map(|cut| {
+                        let stack = cut.stack();
+                        (SlotView::of(&stack, icons, items), items.tooltip(&stack))
+                    })
+                    .collect();
+            }
         }
         BenchKind::Grindstone | BenchKind::Smithing => {}
     }
@@ -1479,4 +1524,167 @@ fn lock_cursor(window: &Window) -> Result<(), ExternalError> {
     window
         .set_cursor_grab(CursorGrabMode::Locked)
         .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
+}
+
+/// The icon of an item or block called `name`.
+fn named_icon(name: &str, game: &Game, icons: &ItemIcons) -> Option<SlotView> {
+    let id = crate::inventory::items::by_name(name)?;
+    Some(SlotView::of(&ItemStack::new(id, 1), icons, game.items()))
+}
+
+/// The toasts on screen, sliding in and out at the edges.
+fn toast_views(game: &Game, icons: Option<&ItemIcons>) -> Vec<crate::ui::ToastView> {
+    let Some(icons) = icons else {
+        return Vec::new();
+    };
+    let registry = crate::advancements::registry();
+    let total = crate::game::advance::TOAST_TICKS as f32;
+    game.toasts()
+        .iter()
+        .map(|toast| {
+            let def = &registry.defs[toast.index];
+            let age = total - toast.ticks as f32;
+            let slide = (age / 8.0).min(toast.ticks as f32 / 8.0).clamp(0.0, 1.0);
+            crate::ui::ToastView {
+                header: def.frame.toast(),
+                title: def.title.clone(),
+                icon: named_icon(&def.icon, game, icons),
+                frame: def.frame,
+                slide,
+            }
+        })
+        .collect()
+}
+
+/// The advancements screen's tabs and the tree of `tab`.
+fn advancements_view(
+    game: &Game,
+    icons: Option<&ItemIcons>,
+    tab: usize,
+) -> Option<crate::ui::AdvView> {
+    use crate::{
+        advancements::Tab,
+        ui::{AdvView, NodeView, TabView},
+    };
+    let icons = icons?;
+    let registry = crate::advancements::registry();
+    let progress = game.progress();
+    let tabs = Tab::ALL
+        .iter()
+        .map(|&t| {
+            let (done, total) = progress.tally(registry, t);
+            TabView {
+                title: t.title(),
+                icon: named_icon(t.icon(), game, icons)
+                    .or_else(|| named_icon("compass", game, icons)),
+                done,
+                total,
+            }
+        })
+        .collect();
+    let current = tab.min(Tab::ALL.len() - 1);
+    let members: Vec<usize> = registry.in_tab(Tab::ALL[current]).collect();
+    let nodes = members
+        .iter()
+        .map(|&i| {
+            let def = &registry.defs[i];
+            let place = registry.place(i);
+            let parent = def
+                .parent
+                .as_ref()
+                .and_then(|p| registry.index(p))
+                .and_then(|p| members.iter().position(|&m| m == p));
+            let locked = def.parent.as_ref().is_some_and(|p| !progress.is_done(p));
+            NodeView {
+                column: place.column,
+                row: place.row,
+                icon: named_icon(&def.icon, game, icons),
+                frame: def.frame,
+                title: def.title.clone(),
+                description: def.description.clone(),
+                done: progress.is_done(&def.id),
+                locked,
+                met: (progress.met(def), def.criteria.len()),
+                parent,
+            }
+        })
+        .collect();
+    Some(AdvView {
+        tabs,
+        current,
+        nodes,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{advancements::Event, game::tests::flat_game, look::Look, player::mode::GameMode};
+
+    fn icons() -> crate::render::icons::ItemIcons {
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
+        Look::build(&crate::assets::dir(), Vec::new(), &mobs)
+            .unwrap()
+            .icons
+    }
+
+    #[test]
+    fn the_advancements_screen_shows_every_tab_with_its_tree_and_what_is_done() {
+        let icons = icons();
+        let mut game = flat_game(GameMode::Survival);
+        game.run_ticks(2);
+        game.note(Event::Used("trade".into()));
+        let story = advancements_view(&game, Some(&icons), 0).unwrap();
+        assert_eq!(story.tabs.len(), 5);
+        assert!(story.tabs.iter().all(|t| t.icon.is_some() && t.total >= 6));
+        assert_eq!(story.tabs[0].done, 1, "the root");
+        assert_eq!(story.tabs[3].done, 1, "trading, but not the root yet");
+        assert!(story.nodes.iter().all(|n| n.icon.is_some()));
+        // One root without a parent; every parent index points into the tab.
+        assert_eq!(story.nodes.iter().filter(|n| n.parent.is_none()).count(), 1);
+        assert!(
+            story
+                .nodes
+                .iter()
+                .filter_map(|n| n.parent)
+                .all(|p| p < story.nodes.len())
+        );
+        // The root is done, what hangs off it open, what's under that locked.
+        let by_title = |t: &str| story.nodes.iter().find(|n| n.title == t).unwrap();
+        assert!(by_title("Minecraft").done);
+        assert!(!by_title("Stone Age").done && !by_title("Stone Age").locked);
+        assert!(by_title("Getting an Upgrade").locked);
+        let adventure = advancements_view(&game, Some(&icons), 3).unwrap();
+        let deal = adventure
+            .nodes
+            .iter()
+            .find(|n| n.title == "What a Deal!")
+            .unwrap();
+        assert!(deal.done, "made even though its root hasn't been");
+        // A tab out of range shows the last one.
+        assert_eq!(
+            advancements_view(&game, Some(&icons), 99).unwrap().current,
+            4
+        );
+    }
+
+    #[test]
+    fn toasts_slide_in_stay_and_slide_out() {
+        let icons = icons();
+        let mut game = flat_game(GameMode::Survival);
+        game.run_ticks(2);
+        game.note(Event::Used("trade".into()));
+        let first = toast_views(&game, Some(&icons));
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].title, "What a Deal!");
+        assert_eq!(first[0].header, "Advancement Made!");
+        assert!(first[0].slide < 0.2, "just arriving");
+        game.run_ticks(30);
+        assert_eq!(toast_views(&game, Some(&icons))[0].slide, 1.0);
+        game.run_ticks(65);
+        let leaving = toast_views(&game, Some(&icons));
+        assert!(leaving.is_empty() || leaving[0].slide < 1.0);
+    }
 }

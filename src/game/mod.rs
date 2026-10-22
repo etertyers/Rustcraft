@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+pub mod advance;
 mod animals;
 mod armor;
 mod benches;
@@ -263,6 +264,12 @@ pub struct Game {
     jump_was: bool,
     /// Ticks before an End gateway works for the player again.
     gateway_cooldown: u32,
+    /// What the world has done, the toasts on screen, and where the
+    /// player was when Levitation began.
+    progress: crate::advancements::Progress,
+    toasts: Vec<advance::Toast>,
+    levitation_from: Option<f64>,
+    shot_tab: Option<usize>,
 }
 
 /// A world's folder and its level data, kept for the next save.
@@ -370,6 +377,10 @@ impl Game {
             rocket: 0,
             jump_was: false,
             gateway_cooldown: 0,
+            progress: Default::default(),
+            toasts: Vec::new(),
+            levitation_from: None,
+            shot_tab: None,
         }
     }
 
@@ -418,6 +429,7 @@ impl Game {
         game.fluids.warm = level.dimension == crate::world::dimension::Dimension::Nether;
         game.portals = level.portals.clone();
         game.end = level.end.clone();
+        game.progress = level.advancements.clone();
         game.restore_fight(level.end.dragon);
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
@@ -463,6 +475,7 @@ impl Game {
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
         let (away_mobs, away_populated) = self.away_for_saving();
         let crystals = self.fight_for_saving();
+        let progress = self.progress.clone();
         let dragon = self.dragon.as_ref().map(|d| d.save());
         if self.saved.is_none() {
             return Ok(());
@@ -506,6 +519,7 @@ impl Game {
         saved.level.dimension = self.dimension;
         saved.level.portals = self.portals.clone();
         saved.level.end = self.end.clone();
+        saved.level.advancements = progress;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
         saved.dir.save_level(&saved.level)?;
@@ -778,6 +792,7 @@ impl Game {
         self.tick_bullets();
         self.tick_eyes();
         self.tick_end();
+        self.tick_advancements();
         self.swirl_effects();
         self.tick_mobs();
         self.tick_spawners();

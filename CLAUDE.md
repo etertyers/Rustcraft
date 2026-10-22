@@ -119,6 +119,7 @@ src/
   world/{end_portal,worldgen/end}.rs, entity/{dragon,crystal,breath,eye}.rs   # the End portal's ring of frames, the End's island/pillars/podium, the ender dragon (phases and parts), crystals, fireballs and breath clouds, eyes of ender
   game/{dragon,end_portal}.rs, render/dragon.rs, credits.rs   # the fight (breaking blocks, healing, death, exit portal), eyes/portal travel/credits, the dragon and crystal models, the poem and credits text
   inventory/armor.rs, game/{armor,elytra,gateways,shulkers}.rs, entity/bullet.rs, world/structure/end.rs   # armor slots and protection, elytra gliding and rockets, End gateways, shulkers' bullets and shulker boxes, End cities and ships
+  advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/
 assets/
@@ -429,7 +430,7 @@ Same build rules as v1.0 (small commits, screenshots, one PR per milestone), but
 - **Elytra:** found in End ships; gliding physics, firework rocket boosting, repair with phantom membranes, shown on the player model.
 - **Done when:** you can reach an End city, take an elytra from an End ship, and glide and rocket-boost back.
 
-### - [ ] M29 — Advancements and the recipe sweep
+### - [x] M29 — Advancements and the recipe sweep
 - Modern advancements: the Minecraft, Nether, The End, Adventure and Husbandry tabs, covering everything implemented. Toast pop-ups, an advancements screen (L), saved per world.
 - Recipe sweep: every block and item has its modern crafting, smelting, stonecutter and smithing recipes, with any missing workstation blocks added. List anything intentionally skipped in `DECISIONS.md`.
 - **Done when:** a survival playthrough unlocks advancements as expected, and an automated test confirms every craftable item has a recipe.
