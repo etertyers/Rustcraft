@@ -244,7 +244,9 @@ fn an_enderman_is_angered_by_a_stare_and_teleports_out_of_water() {
     game.camera.yaw = std::f32::consts::FRAC_PI_2;
     game.camera.pitch = ((2.5f64 - 1.62) / 8.0).atan() as f32;
     run(&mut game, 2);
-    assert!(mob(&game, id).ai.angry > 0, "angered by being looked at");
+    assert_eq!(mob(&game, id).ai.angry, 0, "a glance isn't enough");
+    run(&mut game, 5);
+    assert!(mob(&game, id).ai.angry > 0, "angered by a look of 5 ticks");
     // Calm one beside water: it leaves.
     let mut wet = night_game(GameMode::Survival);
     wet.game_facing_away();
@@ -1079,4 +1081,60 @@ fn hostiles_need_block_light_zero() {
     };
     assert!(tries(&mut game, dark) > 0, "the dark spot spawns at night");
     assert_eq!(tries(&mut game, lit), 0, "never beside a torch");
+}
+
+#[test]
+fn a_mob_holds_what_it_spawns_with_and_what_it_picks_up_and_saves_it() {
+    let mut game = night_game(GameMode::Creative);
+    let id = spawn(&mut game, "skeleton", 6.5, 6.5);
+    assert_eq!(mob(&game, id).data.held, Some(items::BOW));
+    // It loses the bow and finds a sword on the ground.
+    game.mobs.iter_mut().find(|m| m.id == id).unwrap().data.held = None;
+    game.entities.push(crate::entity::item::ItemEntity::new(
+        ItemStack::new(items::IRON_SWORD, 1),
+        DVec3::new(6.5, 64.2, 6.5),
+        DVec3::ZERO,
+        0.0,
+    ));
+    run(&mut game, 60);
+    assert_eq!(mob(&game, id).data.held, Some(items::IRON_SWORD));
+    assert!(game.entities.is_empty(), "the sword was taken");
+    // Held items are part of what's saved, and a mob saved before they
+    // existed gets its kind's own.
+    let data = mob(&game, id).data.clone();
+    let text = ron::to_string(&data).unwrap();
+    let back: crate::entity::mob::MobData = ron::from_str(&text).unwrap();
+    assert_eq!(back.held, Some(items::IRON_SWORD));
+    let old: crate::entity::mob::MobData = ron::from_str("(variant: 0)").unwrap();
+    assert_eq!(old.held, None);
+    let kind = game.mob_defs.find("skeleton").unwrap();
+    let loaded = Mob::with_data(kind, game.mob_defs.get(kind), DVec3::ZERO, 0.0, old);
+    assert_eq!(loaded.data.held, Some(items::BOW));
+}
+
+#[test]
+fn a_tame_horse_wears_armor_and_some_new_horses_have_markings() {
+    let mut game = lit_flat_game(GameMode::Survival);
+    let id = spawn(&mut game, "horse", 3.5, 0.5);
+    let index = game.mobs.iter().position(|m| m.id == id).unwrap();
+    game.inventory
+        .set(0, Some(ItemStack::new(items::IRON_HORSE_ARMOR, 1)));
+    game.inventory.selected = 0;
+    // A wild horse takes none; a tame one does, once.
+    game.use_mob(index);
+    assert_eq!(game.mobs[index].data.armor, 0);
+    game.mobs[index].data.tamed = true;
+    assert!(game.use_mob(index));
+    assert_eq!(game.mobs[index].data.armor, 2, "iron");
+    assert!(game.inventory.slot(0).is_none());
+    // Spawned horses come bare and with or without markings, in all four
+    // kinds across a herd.
+    let mut seen = [false; 5];
+    for _ in 0..200 {
+        let kind = game.mob_defs.find("horse").unwrap();
+        let horse = game.new_mob(kind, DVec3::new(9.5, 64.0, 9.5), 0.0);
+        assert_eq!(horse.data.armor, 0);
+        seen[usize::from(horse.data.markings)] = true;
+    }
+    assert!(seen.iter().all(|&s| s), "{seen:?}");
 }

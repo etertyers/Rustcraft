@@ -4,7 +4,7 @@
 //! model is turned to the mob's facing, tinted red when hurt and tipped
 //! over when dead.
 
-use glam::{Mat3, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 use crate::{
     entity::{
@@ -25,6 +25,53 @@ const FEET_Y: f32 = 24.0;
 /// (sky, block) `light`.
 pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8, u8)) {
     add_mob_model(mesh, mob, def, &def.model, alpha, light, [1.0; 3]);
+}
+
+/// Where a mob's main hand is, as a matrix from item space to the world
+/// (vanilla's `ItemInHandLayer`: out to the end of the arm, laid along it,
+/// then a nudge to the palm), `alpha` of the way between ticks. `None` if
+/// the model has no hand.
+pub fn hand_mount(mob: &Mob, def: &MobDef, alpha: f32) -> Option<Mat4> {
+    let part = def.model.parts.iter().find(|part| part.hand)?;
+    let (feet, yaw, limb_amount) = mob.pose(alpha);
+    let pose = Pose {
+        swing: mob.limb_swing,
+        amount: limb_amount,
+        head_yaw: angle_difference(mob.head_yaw, yaw),
+        pitch: mob.pitch,
+        time: mob.age as f32 + alpha,
+        aggressive: mob.aggressive,
+        airborne: !mob.body.on_ground,
+        sitting: mob.data.sitting,
+    };
+    let death = if mob.is_dead() {
+        let f = ((mob.death_time as f32 + alpha - 1.0) / DEATH_TICKS as f32 * 1.6)
+            .max(0.0)
+            .sqrt()
+            .min(1.0);
+        f * std::f32::consts::FRAC_PI_2
+    } else {
+        0.0
+    };
+    let turn = Mat3::from_rotation_y(-yaw) * Mat3::from_rotation_z(death);
+    let mut scale = def.scale;
+    if mob.data.size > 0 {
+        scale *= f32::from(mob.data.size);
+    }
+    let (rx, ry, rz, pivot) = animate(part, &pose);
+    let rotation =
+        Mat3::from_rotation_z(rz) * Mat3::from_rotation_y(ry) * Mat3::from_rotation_x(rx);
+    // Model pixels become blocks with y pointing down from the feet at
+    // 1.5 blocks, as `place` does for the body.
+    let to_world = Mat4::from_translation(feet.as_vec3())
+        * Mat4::from_mat3(turn)
+        * Mat4::from_scale(Vec3::new(-scale, -scale, scale))
+        * Mat4::from_translation(Vec3::new(0.0, -FEET_Y / PIXELS, 0.0));
+    let arm = Mat4::from_translation(pivot / PIXELS) * Mat4::from_mat3(rotation);
+    let palm = Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+        * Mat4::from_rotation_y(std::f32::consts::PI)
+        * Mat4::from_translation(Vec3::new(1.0 / 16.0, 0.125, -0.625));
+    Some(to_world * arm * palm)
 }
 
 /// The 16 dye colors a sheep's wool takes, in wool order (modern

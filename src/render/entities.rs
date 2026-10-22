@@ -241,6 +241,53 @@ pub fn add_crystal_beams(
 const BEAM_HALF: f32 = 0.35;
 const BEAM_SEGMENT: f32 = 2.0;
 
+/// Adds the beams of light that stream out of a dying dragon's body and
+/// grow over its 200 ticks of death (modern `DragonDeathPhase`'s rays):
+/// ribbons turned to the camera, up to sixty in the last tick.
+pub fn add_death_beams(
+    mesh: &mut Mesh,
+    dragon: &crate::entity::dragon::EnderDragon,
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+) {
+    if !dragon.in_death_sequence() {
+        return;
+    }
+    let f = ((f64::from(dragon.death_ticks) + alpha)
+        / f64::from(crate::entity::dragon::DEATH_TICKS))
+    .min(1.0) as f32;
+    let count = ((f + f * f) / 2.0 * 60.0) as usize;
+    let from = dragon.position_between_ticks(alpha).as_vec3() + Vec3::Y * 2.0;
+    // Each ray has its own direction and length, fixed by its number.
+    let hash = |i: usize, k: f32| {
+        ((i as f32 * 12.9898 + k * 78.233).sin() * 43758.547)
+            .fract()
+            .abs()
+    };
+    for i in 0..count {
+        let dir = Vec3::new(
+            hash(i, 1.0) * 2.0 - 1.0,
+            hash(i, 2.0) * 2.0 - 1.0,
+            hash(i, 3.0) * 2.0 - 1.0,
+        )
+        .normalize_or(Vec3::Y);
+        let length = (hash(i, 4.0) * 20.0 + 5.0 + hash(i, 5.0) * 2.0) * f;
+        let to = from + dir * length;
+        let toward_camera = camera.position - (from + to) / 2.0;
+        let side = dir.cross(toward_camera).normalize_or_zero() * DEATH_BEAM_HALF * f.max(0.3);
+        mesh.quad(
+            [from - side, from + side, to + side, to - side].map(|p| p.to_array()),
+            uvs.crystal_beam,
+            [[1.0; 3]; 4],
+            [[15.0, 15.0]; 4],
+        );
+    }
+}
+
+/// Half the width of a ray of a dying dragon's light.
+const DEATH_BEAM_HALF: f32 = 0.4;
+
 /// Adds the pillar of light over each opened End gateway: four sides, from
 /// the gateway up to the top of the world.
 pub fn add_gateway_beams(mesh: &mut Mesh, gateways: &[IVec3], uvs: &EffectUvs, camera: &Camera) {

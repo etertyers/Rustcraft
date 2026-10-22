@@ -17,10 +17,23 @@ pub trait Terrain {
     fn water(&self, cell: IVec3) -> bool;
     /// The cell is lava, which mobs never enter.
     fn lava(&self, cell: IVec3) -> bool;
+    /// Standing in the cell burns or pricks (fire, cactus, sweet berry
+    /// bushes, powder snow), or standing on it does (magma): mobs path
+    /// around it.
+    fn hazard(&self, _cell: IVec3) -> bool {
+        false
+    }
+    /// Standing on this cell's top burns (magma blocks).
+    fn hot_floor(&self, _cell: IVec3) -> bool {
+        false
+    }
 }
 
-/// Cells searched before giving up (1.0.0 searches a bounded area too).
-const MAX_NODES: usize = 400;
+/// Cells searched per block of follow range before giving up (1.0.0
+/// searches a bounded area too), within these limits.
+const NODES_PER_BLOCK: f32 = 30.0;
+const MIN_NODES: usize = 400;
+const MAX_NODES: usize = 1200;
 /// Furthest drop a path takes (1.0.0's `getSafePoint`).
 const MAX_DROP: i32 = 3;
 
@@ -28,12 +41,18 @@ const MAX_DROP: i32 = 3;
 fn fits(terrain: &impl Terrain, cell: IVec3, height: i32) -> bool {
     (0..height).all(|dy| {
         let c = cell + IVec3::Y * dy;
-        terrain.passable(c) && !terrain.lava(c)
-    })
+        terrain.passable(c) && !terrain.lava(c) && !terrain.hazard(c)
+    }) && !terrain.hot_floor(cell - IVec3::Y)
 }
 
 /// Where a mob moving from `from` one cell sideways by `step` ends up.
-fn step_to(terrain: &impl Terrain, from: IVec3, step: IVec3, height: i32) -> Option<IVec3> {
+fn step_to(
+    terrain: &impl Terrain,
+    from: IVec3,
+    step: IVec3,
+    height: i32,
+    max_drop: i32,
+) -> Option<IVec3> {
     let mut cell = from + step;
     if !fits(terrain, cell, height) {
         // Jump up onto the block if it's solid with room above it, and
@@ -47,14 +66,16 @@ fn step_to(terrain: &impl Terrain, from: IVec3, step: IVec3, height: i32) -> Opt
     }
     // Drop down to the ground, or stay up in water.
     let mut dropped = 0;
-    while !terrain.water(cell) && fits(terrain, cell - IVec3::Y, 1) {
+    let open = |c: IVec3| terrain.passable(c) && !terrain.lava(c);
+    while !terrain.water(cell) && open(cell - IVec3::Y) {
         cell -= IVec3::Y;
         dropped += 1;
-        if dropped > MAX_DROP || cell.y < 0 {
+        if dropped > max_drop || cell.y < 0 {
             return None;
         }
     }
-    Some(cell)
+    // Where it lands must be safe to stand in.
+    fits(terrain, cell, height).then_some(cell)
 }
 
 #[derive(PartialEq)]
@@ -87,6 +108,19 @@ pub fn find_path(
     height: i32,
     max_distance: f32,
 ) -> Vec<IVec3> {
+    find_path_dropping(terrain, start, goal, height, max_distance, MAX_DROP)
+}
+
+/// `find_path` with a limit on how far one step may drop (a mob that is
+/// only wandering stays off cliffs).
+pub fn find_path_dropping(
+    terrain: &impl Terrain,
+    start: IVec3,
+    goal: IVec3,
+    height: i32,
+    max_distance: f32,
+    max_drop: i32,
+) -> Vec<IVec3> {
     let estimate = |cell: IVec3| (goal - cell).as_vec3().length();
     let mut open = BinaryHeap::new();
     let mut came_from: FastMap<IVec3, IVec3> = FastMap::default();
@@ -98,6 +132,7 @@ pub fn find_path(
     walked.insert(start, 0.0);
     let mut closest = start;
     let mut searched = 0;
+    let max_nodes = ((max_distance * NODES_PER_BLOCK) as usize).clamp(MIN_NODES, MAX_NODES);
     while let Some(Open { cell, .. }) = open.pop() {
         if cell == goal {
             closest = cell;
@@ -107,11 +142,11 @@ pub fn find_path(
             closest = cell;
         }
         searched += 1;
-        if searched > MAX_NODES {
+        if searched > max_nodes {
             break;
         }
         for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
-            let Some(next) = step_to(terrain, cell, step, height) else {
+            let Some(next) = step_to(terrain, cell, step, height, max_drop) else {
                 continue;
             };
             if (next - start).as_vec3().length() > max_distance {
@@ -154,6 +189,8 @@ pub mod tests {
         pub solid: HashSet<IVec3>,
         pub water: HashSet<IVec3>,
         pub lava: HashSet<IVec3>,
+        pub hazard: HashSet<IVec3>,
+        pub hot: HashSet<IVec3>,
     }
 
     impl Grid {
@@ -177,6 +214,12 @@ pub mod tests {
         }
         fn lava(&self, cell: IVec3) -> bool {
             self.lava.contains(&cell)
+        }
+        fn hazard(&self, cell: IVec3) -> bool {
+            self.hazard.contains(&cell)
+        }
+        fn hot_floor(&self, cell: IVec3) -> bool {
+            self.hot.contains(&cell)
         }
     }
 
@@ -229,5 +272,42 @@ pub mod tests {
             path.iter().all(|c| c.x < 1),
             "a 5-block drop is too far: {path:?}"
         );
+    }
+
+    #[test]
+    fn goes_round_a_one_block_trench_it_cannot_drop_into() {
+        // A trench one block wide and five deep across the way: the
+        // path goes round its end rather than into it.
+        let mut grid = Grid::floor();
+        for z in -6..=6 {
+            grid.solid.remove(&IVec3::new(2, 63, z));
+        }
+        let path = find_path(&grid, START, IVec3::new(4, 64, 0), 2, 20.0);
+        assert_eq!(*path.last().unwrap(), IVec3::new(4, 64, 0), "{path:?}");
+        assert!(path.iter().all(|c| c.x != 2 || c.z.abs() > 6), "{path:?}");
+    }
+
+    #[test]
+    fn keeps_off_fire_cactus_berries_and_magma() {
+        let mut grid = Grid::floor();
+        for z in -3..=3 {
+            // A cactus and a fire standing in the way, and magma floor.
+            grid.hazard.insert(IVec3::new(2, 64, z));
+            grid.hot.insert(IVec3::new(3, 63, z));
+        }
+        let path = find_path(&grid, START, IVec3::new(5, 64, 0), 2, 20.0);
+        assert_eq!(*path.last().unwrap(), IVec3::new(5, 64, 0), "{path:?}");
+        assert!(
+            path.iter()
+                .all(|c| !grid.hazard.contains(c) && !grid.hot.contains(&(*c - IVec3::Y))),
+            "{path:?}"
+        );
+    }
+
+    #[test]
+    fn a_long_path_within_a_35_block_follow_range_is_found() {
+        let grid = Grid::floor();
+        let path = find_path(&grid, START, IVec3::new(28, 64, 0), 2, 35.0);
+        assert_eq!(*path.last().unwrap(), IVec3::new(28, 64, 0));
     }
 }

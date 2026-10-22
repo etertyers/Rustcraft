@@ -11,7 +11,7 @@ use super::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    inventory::stack::ItemStack,
+    inventory::{item::ItemId, stack::ItemStack},
     player::{
         collision::Collider,
         physics::{Body, MoveInput},
@@ -56,6 +56,20 @@ pub struct MobData {
     /// Ticks left in love mode after being fed breeding food.
     #[serde(default)]
     pub love: u32,
+    /// A horse's markings (0 none, 1 white, 2 white field, 3 white dots,
+    /// 4 black dots) and armor (0 none, 1 leather, 2 iron, 3 gold,
+    /// 4 diamond).
+    #[serde(default)]
+    pub markings: u8,
+    #[serde(default)]
+    pub armor: u8,
+    /// What it holds in its main hand, and whether its kind's starting
+    /// item has been given (so a mob that dropped or lost it stays empty,
+    /// and one saved before mobs held things gets its own).
+    #[serde(default)]
+    pub held: Option<ItemId>,
+    #[serde(default)]
+    pub armed: bool,
     /// A villager's job, trades, bed and so on (added in M23).
     #[serde(default)]
     pub villager: Option<Box<super::villager::VillagerData>>,
@@ -107,6 +121,8 @@ pub struct Mob {
     pub player_hit: u32,
     /// Fire and lava don't hurt it (from its kind).
     pub fire_immune: bool,
+    /// Teleports away from projectiles instead of being hit.
+    pub dodges: bool,
     /// What the sound code has already heard of it.
     pub heard: Heard,
 }
@@ -130,7 +146,17 @@ impl Mob {
 
     /// A mob with the given traits; a slime's size sets its hitbox and
     /// health.
-    pub fn with_data(kind: MobKind, def: &MobDef, feet: DVec3, yaw: f32, data: MobData) -> Self {
+    pub fn with_data(
+        kind: MobKind,
+        def: &MobDef,
+        feet: DVec3,
+        yaw: f32,
+        mut data: MobData,
+    ) -> Self {
+        if !data.armed {
+            data.armed = true;
+            data.held = data.held.or(def.holds);
+        }
         let size = f64::from(data.size.max(1));
         let (width, height) = if data.size > 0 {
             (def.width * size, def.height * size)
@@ -169,6 +195,7 @@ impl Mob {
             ridden: false,
             player_hit: 0,
             fire_immune: def.fire_immune,
+            dodges: def.dodges,
             heard: Heard {
                 health: health as f32,
                 ..Heard::default()
@@ -227,6 +254,10 @@ impl Mob {
     /// knockback). Returns true for a fresh hit; the AI reacts to it.
     pub fn hurt(&mut self, amount: f32, attacker: Option<DVec3>, source: DamageSource) -> bool {
         if self.is_dead() {
+            return false;
+        }
+        if self.dodges && source == DamageSource::Arrow {
+            self.ai.dodge();
             return false;
         }
         let fresh = self.stats.damage(amount, source);

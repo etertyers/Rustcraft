@@ -383,6 +383,10 @@ fn the_dragon_breaks_what_it_flies_through_but_not_obsidian_bedrock_or_end_stone
     assert!(block(&game, at + IVec3::Y).is(blocks::BEDROCK));
 }
 
+/// More than the longest flight a dying dragon makes (10 seconds) and a
+/// couple of ticks over.
+const FLIGHT_TICKS: u32 = 205;
+
 #[test]
 fn the_dragons_head_hurts_the_player_and_its_wings_throw_them() {
     let mut game = end_game(GameMode::Survival);
@@ -452,7 +456,7 @@ fn killing_the_dragon_lights_the_fountain_and_lays_the_egg_and_a_gateway_and_rai
     game.crystals.clear();
     assert!(game.dragon.as_mut().unwrap().hurt(Part::Head, 9999.0));
     assert_eq!(game.dragon_bar(), Some(0.0));
-    for _ in 0..dragon::DEATH_TICKS + 2 {
+    for _ in 0..dragon::DEATH_TICKS + FLIGHT_TICKS {
         game.tick_end();
     }
     assert!(game.dragon.is_none());
@@ -476,7 +480,7 @@ fn a_second_kill_gives_less_xp_and_no_egg() {
     game.dragon = Some(EnderDragon::new(DVec3::new(0.0, 100.0, 0.0), 0.0, 5));
     game.crystals.clear();
     game.dragon.as_mut().unwrap().hurt(Part::Head, 9999.0);
-    for _ in 0..dragon::DEATH_TICKS + 2 {
+    for _ in 0..dragon::DEATH_TICKS + FLIGHT_TICKS {
         game.tick_end();
     }
     let xp: u32 = game.orbs.iter().map(|o| o.value).sum();
@@ -690,4 +694,76 @@ fn a_chest_under_the_crosshair_takes_the_eyes_right_click_instead_of_a_throw() {
     assert!(game.container.is_some(), "the chest opened");
     assert!(game.eyes.is_empty());
     assert_eq!(game.inventory.slot(0).unwrap().count, 2);
+}
+
+/// A game in the End with a player standing beside a wing of the dragon.
+fn beside_a_wing(mode: GameMode) -> (Game, EnderDragon) {
+    let mut game = end_game(mode);
+    let mut dragon = game.dragon.take().unwrap();
+    dragon.position = DVec3::new(0.0, 100.0, 0.0);
+    let wing = dragon
+        .parts()
+        .iter()
+        .find(|(p, _)| *p == Part::Wing)
+        .map(|(_, bb)| (bb.min + bb.max) / 2.0)
+        .unwrap();
+    game.body.set_position(wing + DVec3::new(0.0, -1.0, 0.0));
+    game.body.velocity = DVec3::ZERO;
+    (game, dragon)
+}
+
+#[test]
+fn creative_players_are_neither_pushed_nor_targeted_by_the_dragon_but_survival_ones_are() {
+    let (mut creative, dragon) = beside_a_wing(GameMode::Creative);
+    creative.dragon_hurts_things(&dragon);
+    assert_eq!(creative.body.velocity, DVec3::ZERO, "no push in a wing");
+    assert!(
+        creative.dragon_senses().player.is_none(),
+        "never its target"
+    );
+    let (mut survival, dragon) = beside_a_wing(GameMode::Survival);
+    survival.dragon_hurts_things(&dragon);
+    assert!(survival.body.velocity.length() > 0.5, "pushed");
+    assert!(survival.dragon_senses().player.is_some());
+    // Not for ten ticks after the dragon was hurt.
+    let (mut hurt, mut dragon) = beside_a_wing(GameMode::Survival);
+    assert!(dragon.hurt(Part::Head, 1.0));
+    hurt.dragon_hurts_things(&dragon);
+    assert_eq!(hurt.body.velocity, DVec3::ZERO);
+}
+
+#[test]
+fn a_dragon_killed_far_away_flies_to_the_portal_and_the_portal_and_egg_come_after() {
+    let mut game = end_game(GameMode::Creative);
+    game.crystals.clear();
+    game.dragon.as_mut().unwrap().position = DVec3::new(80.0, 100.0, 0.0);
+    assert!(game.dragon.as_mut().unwrap().hurt(Part::Head, 9999.0));
+    let origin = end::PODIUM;
+    let mut start = None;
+    let mut ticks = 0;
+    while game.dragon.is_some() {
+        let dragon = game.dragon.as_ref().unwrap();
+        if dragon.in_death_sequence() && start.is_none() {
+            start = Some(dragon.position);
+        }
+        assert!(
+            !block(&game, origin + IVec3::X).is(blocks::END_PORTAL)
+                && !block(&game, origin + IVec3::new(0, 4, 0)).is(blocks::DRAGON_EGG),
+            "no portal or egg while it's alive, at tick {ticks}"
+        );
+        game.tick_end();
+        ticks += 1;
+        assert!(
+            ticks < 450,
+            "it dies within 10 s of flight and 10 s of dying"
+        );
+    }
+    let start = start.expect("the death sequence began");
+    let flat = (start.x - f64::from(origin.x) - 0.5).hypot(start.z - f64::from(origin.z) - 0.5);
+    assert!(
+        flat < 3.0,
+        "it died over the portal, not {flat} off: {start}"
+    );
+    assert!(block(&game, origin + IVec3::X).is(blocks::END_PORTAL));
+    assert!(block(&game, origin + IVec3::new(0, 4, 0)).is(blocks::DRAGON_EGG));
 }

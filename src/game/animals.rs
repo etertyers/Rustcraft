@@ -287,6 +287,28 @@ impl Game {
 
     /// Sitting on a horse, or saddling a tame one.
     fn use_horse(&mut self, index: usize, held: Option<ItemStack>, survival: bool) -> bool {
+        // Horse armor goes on a tame horse that has none.
+        if let Some(stack) = &held {
+            let armor = [
+                items::LEATHER_HORSE_ARMOR,
+                items::IRON_HORSE_ARMOR,
+                items::GOLDEN_HORSE_ARMOR,
+                items::DIAMOND_HORSE_ARMOR,
+            ]
+            .iter()
+            .position(|&id| id == stack.id);
+            if let Some(kind) = armor
+                && self.mobs[index].data.tamed
+                && self.mobs[index].data.armor == 0
+            {
+                self.mobs[index].data.armor = kind as u8 + 1;
+                crate::audio::play("entity.horse.armor", self.mobs[index].feet());
+                if survival {
+                    self.inventory.take(self.held_slot(), 1);
+                }
+                return true;
+            }
+        }
         if let Some(stack) = held
             && stack.id == items::SADDLE
             && !self.mobs[index].data.saddled

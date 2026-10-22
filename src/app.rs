@@ -1184,6 +1184,15 @@ impl App {
                     game.tick_alpha(),
                 );
                 add_gateway_beams(&mut mesh, &game.gateways(), &self.effect_uvs, &view_camera);
+                if let Some(dragon) = &game.dragon {
+                    crate::render::entities::add_death_beams(
+                        &mut mesh,
+                        dragon,
+                        &self.effect_uvs,
+                        &view_camera,
+                        game.tick_alpha(),
+                    );
+                }
                 add_particles(
                     &mut mesh,
                     &game.particles,
@@ -1226,6 +1235,24 @@ impl App {
                 _ => PlayerMeshes::default(),
             };
             mesh.append(&player.items);
+            if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
+                let fig = Figure {
+                    icons,
+                    item_models,
+                    atlas: atlas.image(),
+                    slim: self.skin_slim,
+                };
+                let eye = game.camera.position.as_dvec3();
+                figure::add_mob_items(
+                    &mut mesh,
+                    game,
+                    &mut self.held,
+                    &fig,
+                    game.tick_alpha() as f32,
+                    |mob| mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE,
+                    light_at,
+                );
+            }
             renderer.set_entities(&mesh);
             renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
             let alpha = game.tick_alpha() as f32;
@@ -1254,6 +1281,8 @@ impl App {
                     if (layer.wool && mob.data.sheared)
                         || (layer.saddle && !mob.data.saddled)
                         || layer.only_variant.is_some_and(|v| v != mob.data.variant)
+                        || layer.only_marking.is_some_and(|m| m != mob.data.markings)
+                        || layer.only_armor.is_some_and(|a| a != mob.data.armor)
                     {
                         continue;
                     }

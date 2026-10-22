@@ -473,13 +473,13 @@ Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the plann
   - [x] Overworld mob spawning matches vanilla caps and rules
   - [x] Plains flowers at vanilla density (flower forests unchanged)
   - [x] Chorus plants use chorus_plant stems with chorus_flower tips, and drop chorus fruit
-- [ ] **Session 4: mobs and the End**
-  - [ ] Hostile mobs use real pathfinding and vanilla attack behavior
-  - [ ] Mobs show their held items (skeletons hold bows)
-  - [ ] Horse texture fixed
-  - [ ] Endermen teleport randomly and teleport and run toward you when angry
-  - [ ] The dragon doesn't knock back or target creative players
-  - [ ] The dying dragon flies to the exit portal before it rises and explodes
+- [x] **Session 4: mobs and the End**
+  - [x] Hostile mobs use real pathfinding and vanilla attack behavior
+  - [x] Mobs show their held items (skeletons hold bows)
+  - [x] Horse texture fixed
+  - [x] Endermen teleport randomly and teleport and run toward you when angry
+  - [x] The dragon doesn't knock back or target creative players
+  - [x] The dying dragon flies to the exit portal before it rises and explodes
 
 ### - [x] M30 — v1.1 performance and release
 - Profile with all content loaded (Overworld, Nether, End), and fix hot spots.

@@ -31,6 +31,8 @@ const MAX_BROKEN: usize = 6000;
 const RAM_DAMAGE: f32 = 5.0;
 const BITE_DAMAGE: f32 = 10.0;
 const WING_PUSH: f64 = 1.3;
+/// The dragon dies this far above the top block of the exit's column.
+const EXIT_HOVER: f64 = 2.0;
 /// How far wings reach beyond their boxes.
 const WING_GROW: DVec3 = DVec3::new(3.0, 1.0, 3.0);
 /// What a crystal's blast does to the dragon, and how far it reaches.
@@ -104,13 +106,32 @@ impl Game {
     }
 
     /// What the dragon senses: the player, the crystals, the fountain.
-    fn dragon_senses(&self) -> Senses {
+    pub(super) fn dragon_senses(&self) -> Senses {
         let podium = end::PODIUM.as_dvec3() + DVec3::new(0.5, 1.0, 0.5);
         Senses {
-            player: (!self.stats.is_dead()).then(|| self.body.position()),
+            // Creative players are never its target.
+            player: (!self.stats.is_dead() && self.mode.is_vulnerable())
+                .then(|| self.body.position()),
             crystals: self.crystals.len(),
             podium,
+            exit: self.exit_point(),
         }
+    }
+
+    /// The point above the highest block of the exit portal's column, where
+    /// the dragon dies (the top of the fountain, or its torches, at 0, 0).
+    fn exit_point(&self) -> DVec3 {
+        let (x, z) = (end::PODIUM.x, end::PODIUM.z);
+        let world = self.chunks.world();
+        let top = (0..crate::config::WORLD_HEIGHT as i32)
+            .rev()
+            .find(|&y| world.block(x, y, z).is_some_and(|b| !b.is_air()))
+            .unwrap_or(end::PODIUM.y);
+        DVec3::new(
+            f64::from(x) + 0.5,
+            f64::from(top) + EXIT_HOVER,
+            f64::from(z) + 0.5,
+        )
     }
 
     /// One tick of everything in the End's fight; nothing happens while
@@ -132,7 +153,9 @@ impl Game {
         self.dragon_sounds(&dragon);
         self.heal_from_crystals(&mut dragon);
         self.dragon_breaks_blocks(&dragon);
-        if !dragon.is_dying() {
+        // Dying, it still throws players on the way to the portal, but
+        // not once the death sequence starts.
+        if !dragon.in_death_sequence() {
             self.dragon_hurts_things(&dragon);
         }
         let mut finished = false;
@@ -170,7 +193,7 @@ impl Game {
         if dragon.is_dying() {
             let ticks = dragon.death_ticks;
             let xp = EnderDragon::kill_xp(!self.end.dragon_killed);
-            if ticks > 150 && ticks % 5 == 0 {
+            if ticks >= dragon::DEATH_XP_FROM && ticks % 5 == 4 {
                 self.spawn_xp((xp as f32 * 0.08) as u32, dragon.position);
             }
             if finished {
@@ -236,6 +259,10 @@ impl Game {
 
     /// Its head and neck hurt what they touch; its wings throw it.
     pub(super) fn dragon_hurts_things(&mut self, dragon: &EnderDragon) {
+        // Not for ten ticks after it was hurt (modern: `hurtTime == 0`).
+        if dragon.hurt_ticks > 0 {
+            return;
+        }
         let from = dragon.position;
         let strikers: Vec<Aabb> = dragon
             .parts()
@@ -261,7 +288,9 @@ impl Game {
                     axe: false,
                 });
             }
-            if !sitting && wings.iter().any(|bb| bb.intersects(&body)) {
+            // Creative players are neither pushed nor hurt.
+            if !sitting && self.mode.is_vulnerable() && wings.iter().any(|bb| bb.intersects(&body))
+            {
                 let away = self.body.position() - from;
                 let flat = DVec3::new(away.x, 0.0, away.z).normalize_or_zero();
                 self.body.velocity += flat * WING_PUSH + DVec3::Y * 0.3;

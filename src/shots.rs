@@ -343,6 +343,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "fixes4-bow-and-horse",
+        about: "third person: a skeleton holding its bow beside a saddled, armored horse with markings",
+        world: Some(WorldKind::Flat),
+        view: Some(([-0.5, 64.0, 8.5], 0.0, 0.05)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: bow_and_horse,
+    },
+    Shot {
         name: "m25-mobs",
         about: "a blaze, a wither skeleton and a piglin brute",
         world: Some(WorldKind::Flat),
@@ -608,6 +618,22 @@ fn effects_scene(game: &mut Game) {
     }
     game.set_blocks(&lava);
     game.run_ticks(40);
+}
+
+/// A skeleton with its bow beside a horse, seen over the player's shoulder.
+fn bow_and_horse(game: &mut Game) {
+    let south = std::f32::consts::PI;
+    game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
+    if let Some(skeleton) = game.summon("skeleton", glam::DVec3::new(1.2, 64.0, 3.0), south) {
+        skeleton.fire_immune = true;
+    }
+    if let Some(horse) = game.summon("horse", glam::DVec3::new(4.0, 64.0, 3.0), south + 0.4) {
+        horse.data.variant = 2;
+        horse.data.markings = 3;
+        horse.data.saddled = true;
+        horse.data.armor = 2;
+    }
+    game.run_ticks(2);
 }
 
 /// The fortresses' and bastions' mobs.

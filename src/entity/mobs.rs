@@ -28,6 +28,20 @@ pub struct MobDef {
     pub ai: Ai,
     #[serde(default)]
     pub burns_in_daylight: bool,
+    /// Walking speed while angry, if it differs (an enderman's 0.45 against
+    /// 0.3 calm, in this table's units).
+    #[serde(default)]
+    pub angry_speed: Option<f64>,
+    /// Teleports away from a projectile instead of being hit (endermen).
+    #[serde(default)]
+    pub dodges: bool,
+    /// What it holds in its main hand when it spawns (a skeleton's bow).
+    #[serde(default)]
+    pub holds: Option<ItemId>,
+    /// How far it notices a player it can see, and how far its paths
+    /// reach (modern `FOLLOW_RANGE`: 35 for the zombie family, else 16).
+    #[serde(default = "follow_range")]
+    pub follow_range: f64,
     #[serde(default)]
     pub drops: Vec<MobDrop>,
     pub spawn: Spawn,
@@ -70,6 +84,10 @@ pub struct MobDef {
     pub eye: f64,
 }
 
+fn follow_range() -> f64 {
+    16.0
+}
+
 fn one() -> f32 {
     1.0
 }
@@ -83,7 +101,18 @@ fn eye_fraction() -> f64 {
 #[serde(deny_unknown_fields)]
 pub struct Layer {
     pub texture: String,
+    /// Its own model, or (with `like_body`) the body's, grown.
+    #[serde(default)]
     pub model: Model,
+    /// Drawn with the body's model, every box grown by this many pixels
+    /// (horse markings, saddle and armor, laid out like the body).
+    #[serde(default)]
+    pub like_body: Option<f32>,
+    /// Only drawn on a horse with these markings (1–4) or this armor (1–4).
+    #[serde(default)]
+    pub only_marking: Option<u8>,
+    #[serde(default)]
+    pub only_armor: Option<u8>,
     /// Whether it takes the mob's color (a dyed sheep's wool).
     #[serde(default)]
     pub dyed: bool,
@@ -166,6 +195,19 @@ impl Ai {
     /// and don't count against the monster cap.
     pub fn is_creature(self) -> bool {
         !self.is_monster()
+    }
+
+    /// Walkers that go after the player within their `follow_range`.
+    pub fn has_follow_range(self) -> bool {
+        matches!(
+            self,
+            Ai::Hostile { .. }
+                | Ai::Spider { .. }
+                | Ai::Archer { .. }
+                | Ai::Creeper { .. }
+                | Ai::ZombifiedPiglin { .. }
+                | Ai::Hoglin { .. }
+        )
     }
 
     /// Mobs that spawn in the dark and despawn.
@@ -272,7 +314,7 @@ fn hundred() -> u32 {
 
 /// A box model in Minecraft's model coordinates: pixels, y pointing down,
 /// the feet at y 24.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Model {
     pub texture_size: (f32, f32),
@@ -305,6 +347,10 @@ pub struct Part {
     /// over a body, a robe).
     #[serde(default)]
     pub grow: f32,
+    /// What the mob holds in its main hand is drawn at the bottom of this
+    /// part (its right arm).
+    #[serde(default)]
+    pub hand: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -360,7 +406,27 @@ impl MobRegistry {
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let mobs = ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let mut mobs: Vec<MobDef> =
+            ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        for mob in &mut mobs {
+            for layer in &mut mob.layers {
+                if let Some(grow) = layer.like_body {
+                    layer.model = Model {
+                        texture_size: mob.model.texture_size,
+                        parts: mob
+                            .model
+                            .parts
+                            .iter()
+                            .map(|part| Part {
+                                grow: part.grow + grow,
+                                hand: false,
+                                ..part.clone()
+                            })
+                            .collect(),
+                    };
+                }
+            }
+        }
         Ok(Self { mobs })
     }
 
@@ -529,6 +595,11 @@ mod tests {
                 .chain(&mob.variants)
                 .chain(mob.layers.iter().map(|l| &l.texture));
             for texture in own {
+                // Armor and saddles of the newer layout come from the
+                // vanilla fallback only.
+                if texture.starts_with("entity/equipment/") {
+                    continue;
+                }
                 let missing = base.texture(texture).is_none();
                 assert_eq!(
                     missing,
@@ -553,6 +624,34 @@ mod tests {
             for (l, layer) in mob.layers.iter().enumerate() {
                 assert_eq!(names[mobs.layer_slot(kind, l)], layer.texture);
             }
+        }
+    }
+
+    #[test]
+    fn the_horse_model_fits_vanillas_64_by_64_layout_and_its_layers_grow_on_the_body() {
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let horse = mobs.get(mobs.find("horse").unwrap());
+        let (width, height) = horse.model.texture_size;
+        assert_eq!((width, height), (64.0, 64.0));
+        for part in &horse.model.parts {
+            for (uv, size) in std::iter::once((part.uv, part.size))
+                .chain(part.extra.iter().map(|b| (b.uv, b.size)))
+            {
+                let right = uv.0 + 2.0 * (size.0 + size.2);
+                let bottom = uv.1 + size.2 + size.1;
+                assert!(right <= width && bottom <= height, "{uv:?} {size:?}");
+            }
+        }
+        // Markings (1–4), armor (1–4) and the saddle are the body's boxes,
+        // grown, with their own textures.
+        let marks: Vec<_> = horse.layers.iter().filter_map(|l| l.only_marking).collect();
+        let armor: Vec<_> = horse.layers.iter().filter_map(|l| l.only_armor).collect();
+        assert_eq!((marks, armor), (vec![1, 2, 3, 4], vec![1, 2, 3, 4]));
+        assert!(horse.layers.iter().any(|l| l.saddle));
+        for layer in &horse.layers {
+            assert_eq!(layer.model.parts.len(), horse.model.parts.len());
+            assert_eq!(layer.model.texture_size, horse.model.texture_size);
+            assert!(layer.model.parts.iter().all(|p| p.grow > 0.0));
         }
     }
 }

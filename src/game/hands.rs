@@ -699,14 +699,14 @@ impl Game {
                         self.rally(index);
                     }
                 }
-                Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from)),
+                Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from, arrow.slows)),
                 None => {}
             }
         }
         for (target, damage) in end_hits {
             self.arrow_strikes_end(target, damage);
         }
-        for (damage, from) in hits {
+        for (damage, from, slows) in hits {
             if self.mode.is_vulnerable() {
                 let strike = super::combat::Strike {
                     amount: damage,
@@ -716,6 +716,13 @@ impl Game {
                     axe: false,
                 };
                 self.hurt_player(strike);
+                if slows {
+                    self.stats.effects.add(crate::player::effects::Active::new(
+                        crate::player::effects::Effect::Slowness,
+                        0,
+                        super::mob_acts::STRAY_SLOWNESS_TICKS,
+                    ));
+                }
             }
         }
         arrows.retain(|arrow| {

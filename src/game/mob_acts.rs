@@ -34,10 +34,16 @@ const WITCH_POWER: f32 = 0.5;
 /// Blocks an arrow arcs up per block of distance, so shots carry (modern
 /// adds 0.2 per block).
 const ARROW_LOB: f64 = 0.2;
+/// Mobs' bows scatter by 14 less 4 a level of difficulty (Normal is 2).
+const MOB_INACCURACY: f64 = 14.0 - 4.0 * 2.0;
+/// Ticks of Slowness a stray's arrow gives (modern: 30 seconds).
+pub(super) const STRAY_SLOWNESS_TICKS: u32 = 600;
 /// Endermen look for a block within this far, and for a place to
 /// teleport within this far.
 const TAKE_REACH: i32 = 2;
 const TELEPORT_RANGE: f64 = 32.0;
+/// An enderman teleporting toward its target jumps this far along the way.
+const TELEPORT_STEP: f64 = 16.0;
 /// Wool colors by dye number, in vanilla's order.
 pub const WOOL: [&str; 16] = [
     "white_wool",
@@ -211,7 +217,16 @@ impl Game {
         };
         let rng = &mut self.rng;
         let mut random = || rng.next_f64();
-        let mut arrow = Arrow::shoot(from, aim, power, DVec3::ZERO, false, &mut random);
+        let mut arrow = Arrow::shoot_inaccurately(
+            from,
+            aim,
+            power,
+            DVec3::ZERO,
+            false,
+            MOB_INACCURACY,
+            &mut random,
+        );
+        arrow.slows = self.mob_defs.get(mob.kind).name == "stray";
         crate::audio::play(
             if matches!(self.mob_defs.get(mob.kind).ai, Ai::Witch) {
                 "entity.witch.throw"
@@ -229,18 +244,25 @@ impl Game {
     /// asked for.
     fn teleport_mob(&mut self, mob: &mut Mob, kind: Teleport) {
         let feet = mob.feet();
-        for _ in 0..16 {
+        let tries = if kind == Teleport::Frantic { 64 } else { 16 };
+        for _ in 0..tries {
             let (x, y, z) = match kind {
-                Teleport::Random => (
+                // Within 32 blocks along each axis (modern `teleport()`).
+                Teleport::Random | Teleport::Frantic => (
                     feet.x + (self.rng.next_f64() - 0.5) * TELEPORT_RANGE * 2.0,
-                    feet.y + (self.rng.next_f64() - 0.5) * 16.0,
+                    feet.y + (self.rng.next_f64() - 0.5) * TELEPORT_RANGE * 2.0,
                     feet.z + (self.rng.next_f64() - 0.5) * TELEPORT_RANGE * 2.0,
                 ),
-                Teleport::Near(point) => (
-                    point.x + (self.rng.next_f64() - 0.5) * 16.0,
-                    point.y + (self.rng.next_f64() - 0.5) * 6.0,
-                    point.z + (self.rng.next_f64() - 0.5) * 16.0,
-                ),
+                // 16 blocks along the line to the point, give or take 4
+                // (modern `teleportTowards`).
+                Teleport::Near(point) => {
+                    let toward = (point - feet).with_y(0.0).normalize_or_zero();
+                    (
+                        feet.x + toward.x * TELEPORT_STEP + (self.rng.next_f64() - 0.5) * 8.0,
+                        point.y + (self.rng.next_f64() - 0.5) * 8.0,
+                        feet.z + toward.z * TELEPORT_STEP + (self.rng.next_f64() - 0.5) * 8.0,
+                    )
+                }
             };
             let mut cell = DVec3::new(x, y, z).floor().as_ivec3();
             let terrain = WorldTerrain {

@@ -10,7 +10,7 @@ use glam::{DVec3, IVec3};
 use super::{
     mob::{Mob, angle_difference},
     mobs::{Ai, MobDef},
-    path::{Terrain, find_path},
+    path::{Terrain, find_path, find_path_dropping},
 };
 use crate::player::{collision::Aabb, physics::MoveInput};
 
@@ -18,21 +18,47 @@ use crate::player::{collision::Aabb, physics::MoveInput};
 const FLEE_TICKS: u32 = 60;
 /// Ticks between a hostile mob's hits (1.0.0's `attackTime`).
 const ATTACK_COOLDOWN: u32 = 20;
-/// A hostile mob notices a player it can see this close.
-const NOTICE_RANGE: f64 = 16.0;
-/// ...and gives up beyond this.
-const GIVE_UP_RANGE: f64 = 32.0;
+/// A hostile mob forgets a target it hasn't seen for this long (modern
+/// `NearestAttackableTargetGoal`'s `unseenMemoryTicks` of 60).
+const FORGET_TICKS: u32 = 60;
+/// A melee mob's hitbox is grown this much sideways to reach (modern
+/// `getAttackBoundingBox`).
+const MELEE_GROW: f64 = 0.83;
+/// Paths are recomputed every 4 to 11 ticks while the target moves.
+const REPATH_MIN: f32 = 4.0;
+const REPATH_SPREAD: f32 = 8.0;
+/// A walker that hasn't left its cell for this long on a path is stuck.
+const STUCK_TICKS: u32 = 20;
+/// Idle mobs look at a player this close, and wander a spot about once
+/// in this many ticks (modern `RandomStrollGoal` interval).
+const LOOK_RANGE: f64 = 8.0;
+const WANDER_INTERVAL: f32 = 120.0;
 /// Turning speed, radians per tick (1.0.0's 30°).
 const TURN: f32 = std::f32::consts::PI / 6.0;
 /// Wandering picks the best of this many spots within these offsets.
 const WANDER_TRIES: usize = 10;
 const WANDER_SPREAD: (i32, i32) = (6, 3);
 const WANDER_DISTANCE: f32 = 10.0;
+/// A wandering mob steps down at most this far (it stays off cliffs).
+const WANDER_DROP: i32 = 1;
 /// Ticks a neutral mob stays angry after being hurt.
 const ANGER_TICKS: u32 = 400;
 /// An archer wants to be between these distances, and shoots within the
 /// larger (modern `RangedBowAttackGoal`).
 const ARCHER_RANGE: f64 = 15.0;
+/// Endermen: ticks of a look that angers one; how long they stay angry
+/// without seeing the player (40 seconds); how far a stare freezes one and
+/// how near a frozen one flinches away; ticks between teleports toward the
+/// player (30 to 40) and the calm that daylight teleports follow (600).
+const ENDERMAN_STARE_TICKS: u32 = 5;
+const ENDERMAN_ANGER: u32 = 800;
+const ENDERMAN_FREEZE_RANGE: f64 = 16.0;
+const ENDERMAN_FLINCH_RANGE: f64 = 4.0;
+const TELEPORT_DELAY_MIN: u32 = 30;
+const TELEPORT_DELAY_SPREAD: f32 = 11.0;
+const ENDERMAN_SUN_TICKS: u32 = 600;
+/// A skeleton without a bow hits for this (modern: 2 on Normal).
+const SKELETON_MELEE: f32 = 2.0;
 /// A bow takes this long to draw.
 pub const DRAW_TICKS: u32 = 20;
 /// Creepers start swelling this close and swell for this long.
@@ -68,6 +94,25 @@ const ORBIT_HEIGHT: f64 = 15.0;
 #[derive(Debug, Default, Clone)]
 pub struct AiState {
     path: Vec<IVec3>,
+    /// Ticks until the path may be recomputed, the cell the target was in
+    /// when it was, and how long the mob has stood in one cell on a path.
+    repath: u32,
+    path_goal: Option<IVec3>,
+    stuck_cell: IVec3,
+    stuck: u32,
+    /// Ticks the target has been out of sight.
+    unseen: u32,
+    /// Endermen: ticks stared at, ticks angry and calm in a row, ticks
+    /// until the next teleport toward the player, and a hit or dodged shot
+    /// that sends it somewhere else.
+    stare: u32,
+    rage: u32,
+    calm: u32,
+    teleport_timer: u32,
+    dodge: bool,
+    /// Idle looking about: ticks left and the angle off straight ahead.
+    glance: u32,
+    glance_yaw: f32,
     /// Hostile: chasing its target.
     pub chasing: bool,
     /// Passive: ticks left running away.
@@ -100,6 +145,11 @@ pub struct AiState {
 impl AiState {
     pub fn on_hurt(&mut self) {
         self.hurt = true;
+    }
+
+    /// A shot that an enderman would rather step aside from than take.
+    pub fn dodge(&mut self) {
+        self.dodge = true;
     }
 
     pub fn clear_path(&mut self) {
@@ -150,6 +200,8 @@ pub struct Env {
     pub day: bool,
     /// The cell the mob is in is water.
     pub in_water: bool,
+    /// Sky light there, 0–15 (15 in the open under the day sky).
+    pub sky: u8,
 }
 
 /// What a mob can find out about the world.
@@ -206,6 +258,8 @@ pub enum Teleport {
     Random,
     /// To a spot near this point.
     Near(DVec3),
+    /// Hurt or shot at: up to 64 tries at a random spot.
+    Frantic,
 }
 
 /// What the mob does this tick.
@@ -269,6 +323,39 @@ fn reaches(
     from.distance_squared(target_feet) <= reach_sq && (def.height > 0.0)
 }
 
+/// Whether the mob's hitbox, grown sideways by `MELEE_GROW`, touches the
+/// target's (modern `isWithinMeleeAttackRange`).
+fn in_melee_reach(feet: DVec3, size: (f64, f64), target: &Aabb) -> bool {
+    let half = size.0 / 2.0 + MELEE_GROW;
+    feet.x - half <= target.max.x
+        && feet.x + half >= target.min.x
+        && feet.z - half <= target.max.z
+        && feet.z + half >= target.min.z
+        && feet.y <= target.max.y
+        && feet.y + size.1 >= target.min.y
+}
+
+/// Picks up or keeps a target: seen within the follow range it's chased,
+/// and it's forgotten after `FORGET_TICKS` out of sight or beyond range.
+/// Returns whether the mob is chasing.
+fn track(state: &mut AiState, def: &MobDef, target: &Target, distance: f64) -> bool {
+    if target.visible {
+        state.unseen = 0;
+        if distance < def.follow_range {
+            state.chasing = true;
+        }
+    } else if state.chasing {
+        state.unseen += 1;
+        if state.unseen > FORGET_TICKS {
+            state.chasing = false;
+        }
+    }
+    if distance > def.follow_range {
+        state.chasing = false;
+    }
+    state.chasing
+}
+
 /// Decides a mob's tick, turning it to face where it's going.
 pub fn think<T: Terrain>(
     mob: &mut Mob,
@@ -312,11 +399,16 @@ pub fn think<T: Terrain>(
                 state.fleeing = FLEE_TICKS;
                 state.path.clear();
             }
+            Ai::Enderman { .. } => {
+                // Hurt, it teleports and turns on whoever it can see.
+                state.angry = ANGER_TICKS;
+                state.dodge = true;
+                state.chasing = view.player.is_some();
+            }
             Ai::Neutral { .. }
             | Ai::Spider { .. }
             | Ai::Wolf { .. }
             | Ai::Bee { .. }
-            | Ai::Enderman { .. }
             | Ai::Phantom { .. }
             | Ai::ZombifiedPiglin { .. }
             | Ai::Piglin { .. }
@@ -360,11 +452,18 @@ pub fn think<T: Terrain>(
                 Goal::Idle
             }
         }
-        Ai::Archer { interval } => archer(mob, view, interval, random, &mut intent),
-        Ai::Creeper { power } => creeper(mob, view, power, &mut intent),
-        Ai::Enderman { attack } => enderman(mob, def, view, attack, random, &mut intent),
+        Ai::Archer { interval } => {
+            if mob.data.held == Some(crate::inventory::items::BOW) {
+                archer(mob, def, view, interval, random, &mut intent)
+            } else {
+                // No bow in hand: it fights like a zombie.
+                melee(mob, def, view, SKELETON_MELEE, true, &mut intent)
+            }
+        }
+        Ai::Creeper { power } => creeper(mob, def, view, power, &mut intent),
+        Ai::Enderman { attack } => enderman(mob, view, attack, random, &mut intent),
         Ai::Slime => slime(mob, def, view, &mut intent),
-        Ai::Witch => witch(mob, view, &mut intent),
+        Ai::Witch => witch(mob, def, view, &mut intent),
         Ai::Phantom { attack } => phantom(mob, def, view, attack, &mut intent),
         Ai::Swimmer => swimmer(mob, view, random),
         Ai::Wolf { attack } => wolf(mob, def, view, attack, &mut intent),
@@ -413,17 +512,11 @@ fn melee<T: Terrain>(
         return Goal::Idle;
     };
     let distance = target.feet.distance(feet);
-    if distance < NOTICE_RANGE && target.visible {
-        state.chasing = true;
-    } else if distance > GIVE_UP_RANGE {
-        state.chasing = false;
-    }
-    if !state.chasing {
+    if !track(state, def, target, distance) {
         return Goal::Idle;
     }
     mob.aggressive = true;
-    let target_width = target.aabb.max.x - target.aabb.min.x;
-    let in_reach = reaches(def, feet, size, target.feet, target_width);
+    let in_reach = in_melee_reach(feet, size, &target.aabb);
     if mob.ai.attack_cooldown == 0 && in_reach && (target.visible || !needs_sight) {
         intent.hit = Some(Strike {
             victim: Victim::Player,
@@ -481,7 +574,7 @@ fn spider_leap<T: Terrain>(mob: &mut Mob, view: &View<T>, intent: &mut Intent) {
     let away = target.feet - mob.feet();
     let flat = DVec3::new(away.x, 0.0, away.z);
     let d = flat.length();
-    if (2.0..6.0).contains(&d) {
+    if (2.0..4.0).contains(&d) {
         let v = flat / d * 0.4 + mob.body.velocity * 0.2;
         intent.leap = Some(DVec3::new(v.x, 0.4, v.z));
         mob.ai.leap_cooldown = 20;
@@ -493,6 +586,7 @@ fn spider_leap<T: Terrain>(mob: &mut Mob, view: &View<T>, intent: &mut Intent) {
 /// second and shooting every two (modern `RangedBowAttackGoal`).
 fn archer<T: Terrain>(
     mob: &mut Mob,
+    def: &MobDef,
     view: &View<T>,
     interval: u32,
     random: &mut impl FnMut() -> f32,
@@ -506,12 +600,7 @@ fn archer<T: Terrain>(
         return Goal::Idle;
     };
     let distance = target.feet.distance(feet);
-    if distance < NOTICE_RANGE + 8.0 && target.visible {
-        state.chasing = true;
-    } else if distance > GIVE_UP_RANGE {
-        state.chasing = false;
-    }
-    if !state.chasing {
+    if !track(state, def, target, distance) {
         state.draw = 0;
         return Goal::Idle;
     }
@@ -532,11 +621,9 @@ fn archer<T: Terrain>(
             }
             state.strafe_time = 0;
         }
-        if distance > ARCHER_RANGE * 0.75 {
-            state.strafe_back = false;
-        } else if distance < ARCHER_RANGE * 0.25 {
-            state.strafe_back = true;
-        }
+        // Backs away from anything nearer than three quarters of the
+        // range, and closes in again beyond it.
+        state.strafe_back = distance < ARCHER_RANGE * 0.75;
         Goal::Strafe {
             around: target.feet,
             clockwise: state.strafe_clockwise,
@@ -572,7 +659,13 @@ fn archer<T: Terrain>(
 /// Creepers: swell while the player is within 3 blocks (and keep swelling
 /// to 7), go off at 30 ticks, back off when the player goes (modern
 /// `SwellGoal`); otherwise chase without a blow.
-fn creeper<T: Terrain>(mob: &mut Mob, view: &View<T>, power: f32, intent: &mut Intent) -> Goal {
+fn creeper<T: Terrain>(
+    mob: &mut Mob,
+    def: &MobDef,
+    view: &View<T>,
+    power: f32,
+    intent: &mut Intent,
+) -> Goal {
     let feet = mob.feet();
     // A cat in sight sends it running.
     if let Some(cat) = view
@@ -589,11 +682,7 @@ fn creeper<T: Terrain>(mob: &mut Mob, view: &View<T>, power: f32, intent: &mut I
         return Goal::Idle;
     };
     let distance = target.feet.distance(feet);
-    if distance < NOTICE_RANGE && target.visible {
-        mob.ai.chasing = true;
-    } else if distance > GIVE_UP_RANGE {
-        mob.ai.chasing = false;
-    }
+    track(&mut mob.ai, def, target, distance);
     let swelling = mob.swell > 0;
     let close = distance < SWELL_RANGE && target.visible;
     let holding = swelling && distance < SWELL_STOP_RANGE && target.visible;
@@ -613,54 +702,102 @@ fn creeper<T: Terrain>(mob: &mut Mob, view: &View<T>, power: f32, intent: &mut I
     }
 }
 
-/// Endermen: calm until looked at in the head, then they chase and hit for
-/// 7, teleporting to keep up; water hurts them and they teleport out of
-/// it; at times they pick up and put down blocks.
+/// Endermen (modern `EnderMan` and its goals): calm until a player looks at
+/// their head for 5 ticks (or hits them), then they scream and sprint at the
+/// player and hit for 7. Far off they teleport closer every 30 to 40
+/// ticks; stared at within 16 blocks they freeze, and teleport away from a
+/// player closer than 4. They teleport out of water, when hurt or shot at,
+/// and in full daylight; they give up on a player unseen for 40 seconds.
 fn enderman<T: Terrain>(
     mob: &mut Mob,
-    def: &MobDef,
     view: &View<T>,
     attack: f32,
     random: &mut impl FnMut() -> f32,
     intent: &mut Intent,
 ) -> Goal {
-    if let Some(target) = &view.player
-        && target.stares
-        && mob.ai.angry == 0
-    {
-        mob.ai.enrage();
+    let state = &mut mob.ai;
+    state.teleport_timer = state.teleport_timer.saturating_sub(1);
+    // A look at its head, held for 5 ticks, angers it.
+    match &view.player {
+        Some(target) if target.stares && state.angry == 0 => {
+            state.stare += 1;
+            if state.stare >= ENDERMAN_STARE_TICKS {
+                state.enrage();
+            }
+        }
+        _ => state.stare = 0,
+    }
+    if state.angry > 0 && state.rage == 0 {
+        // Just angered, by a look or a hit: it sprints from now on.
+        state.angry = ENDERMAN_ANGER;
+        state.teleport_timer = TELEPORT_DELAY_MIN + (random() * TELEPORT_DELAY_SPREAD) as u32;
+    }
+    if state.angry > 0 {
+        state.rage += 1;
+        state.calm = 0;
+    } else {
+        state.rage = 0;
+        state.calm += 1;
+    }
+    // Hurt (or a shot dodged): up to 64 tries for somewhere to be.
+    if std::mem::take(&mut state.dodge) {
+        intent.teleport = Some(Teleport::Frantic);
     }
     if view.env.in_water {
         intent.teleport = Some(Teleport::Random);
     }
-    if mob.ai.angry == 0 {
+    // Full daylight under the open sky sends it off, calm or angry for
+    // half a minute (modern: 15 sky light, 600 ticks since its target
+    // changed).
+    let sunlit = view.env.day && view.env.sky >= 15;
+    let since = state.calm.max(state.rage);
+    if sunlit
+        && since >= ENDERMAN_SUN_TICKS
+        && random() * 30.0 < (view.env.brightness - 0.4) * 2.0
+        && intent.teleport.is_none()
+    {
+        state.angry = 0;
+        state.chasing = false;
+        intent.teleport = Some(Teleport::Random);
+    }
+    if state.angry == 0 {
         mob.ai.chasing = false;
-        // Idle: now and then move a block about, and drift about.
+        // Idle: now and then move a block about.
         if random() < 1.0 / 20.0 && mob.carrying.is_none() {
             intent.block = Some(BlockAction::Take);
         } else if random() < 1.0 / 2000.0 && mob.carrying.is_some() {
             intent.block = Some(BlockAction::Place);
         }
-        if random() < 1.0 / 400.0 && !view.env.day {
-            intent.teleport = Some(Teleport::Random);
-        }
         return Goal::Idle;
     }
     let Some(target) = &view.player else {
-        mob.ai.angry = 0;
+        mob.ai.angry = mob.ai.angry.saturating_sub(1);
         return Goal::Idle;
     };
-    mob.ai.chasing = true;
+    let state = &mut mob.ai;
+    state.chasing = true;
+    // Forgets a player it can't see after 40 seconds, and stays angry
+    // while it can.
+    if target.visible {
+        state.angry = ENDERMAN_ANGER;
+    }
     mob.aggressive = true;
     let distance = target.feet.distance(mob.feet());
-    if (distance > 16.0 && random() < 1.0 / 30.0) || (!target.visible && random() < 1.0 / 60.0) {
+    if target.stares && distance <= ENDERMAN_FREEZE_RANGE {
+        // Frozen by the stare, until the player comes too near.
+        if distance < ENDERMAN_FLINCH_RANGE && intent.teleport.is_none() {
+            intent.teleport = Some(Teleport::Random);
+        }
+        return Goal::Stand(Some(target.feet));
+    }
+    if distance > ENDERMAN_FREEZE_RANGE && mob.ai.teleport_timer == 0 && intent.teleport.is_none() {
         intent.teleport = Some(Teleport::Near(target.feet));
+        mob.ai.teleport_timer = TELEPORT_DELAY_MIN + (random() * TELEPORT_DELAY_SPREAD) as u32;
     }
     let size = mob.size();
-    let width = target.aabb.max.x - target.aabb.min.x;
     if mob.ai.attack_cooldown == 0
         && target.visible
-        && reaches(def, mob.feet(), size, target.feet, width)
+        && in_melee_reach(mob.feet(), size, &target.aabb)
     {
         intent.hit = Some(Strike {
             victim: Victim::Player,
@@ -682,12 +819,7 @@ fn slime<T: Terrain>(mob: &mut Mob, def: &MobDef, view: &View<T>, intent: &mut I
         return Goal::Idle;
     };
     let distance = target.feet.distance(feet);
-    if distance < NOTICE_RANGE && target.visible {
-        mob.ai.chasing = true;
-    } else if distance > GIVE_UP_RANGE {
-        mob.ai.chasing = false;
-    }
-    if !mob.ai.chasing {
+    if !track(&mut mob.ai, def, target, distance) {
         return Goal::Idle;
     }
     mob.aggressive = true;
@@ -707,7 +839,7 @@ fn slime<T: Terrain>(mob: &mut Mob, def: &MobDef, view: &View<T>, intent: &mut I
 }
 
 /// Witches stay about ten blocks off and pelt the player.
-fn witch<T: Terrain>(mob: &mut Mob, view: &View<T>, intent: &mut Intent) -> Goal {
+fn witch<T: Terrain>(mob: &mut Mob, def: &MobDef, view: &View<T>, intent: &mut Intent) -> Goal {
     let feet = mob.feet();
     let state = &mut mob.ai;
     let Some(target) = &view.player else {
@@ -715,12 +847,7 @@ fn witch<T: Terrain>(mob: &mut Mob, view: &View<T>, intent: &mut Intent) -> Goal
         return Goal::Idle;
     };
     let distance = target.feet.distance(feet);
-    if distance < NOTICE_RANGE && target.visible {
-        state.chasing = true;
-    } else if distance > GIVE_UP_RANGE {
-        state.chasing = false;
-    }
-    if !state.chasing {
+    if !track(state, def, target, distance) {
         return Goal::Idle;
     }
     mob.aggressive = true;
@@ -1142,9 +1269,22 @@ fn steer<T: Terrain>(
             let state = &mut mob.ai;
             if mob.body.liquid.is_some() && def.ai.is_monster() {
                 direct = Some(point);
-            } else if state.path.is_empty() || random() < 0.05 {
+            } else {
+                // Every 4 to 11 ticks the path is made anew if the target
+                // has moved to another cell, or the path has run out or
+                // is blocked (modern `ticksUntilNextPathRecalculation`).
+                state.repath = state.repath.saturating_sub(1);
                 let goal = (point + DVec3::Y * 0.5).floor().as_ivec3();
-                state.path = find_path(view.terrain, cell, goal, height, NOTICE_RANGE as f32);
+                let blocked = state.stuck >= STUCK_TICKS;
+                if state.repath == 0
+                    && (state.path.is_empty() || state.path_goal != Some(goal) || blocked)
+                {
+                    state.path =
+                        find_path(view.terrain, cell, goal, height, def.follow_range as f32);
+                    state.path_goal = Some(goal);
+                    state.repath = (REPATH_MIN + random() * REPATH_SPREAD) as u32;
+                    state.stuck = 0;
+                }
             }
         }
         Goal::Face(point) => face = Some(point),
@@ -1176,9 +1316,17 @@ fn steer<T: Terrain>(
     let idle = matches!(goal, Goal::Idle);
     if idle && !mob.data.sitting {
         let state = &mut mob.ai;
-        let wants = state.path.is_empty() && random() < 1.0 / 180.0;
-        let restless = random() < 1.0 / 120.0;
-        let running = state.fleeing > 0 && state.path.is_empty();
+        let monster = def.ai.is_monster();
+        let wants = !monster && state.path.is_empty() && random() < 1.0 / 180.0;
+        let restless = random() < 1.0 / if monster { WANDER_INTERVAL } else { 120.0 };
+        // Burning in the sun, it looks for shade: the darkest spot near
+        // (the monsters' wander weight is darkness).
+        let sunburnt = def.burns_in_daylight
+            && view.env.day
+            && view.env.brightness >= 0.5
+            && state.path.is_empty()
+            && random() < 0.2;
+        let running = (state.fleeing > 0 && state.path.is_empty()) || sunburnt;
         if (wants || restless || running) && !def.flies && !def.swims {
             wander(mob, height, view, random);
         }
@@ -1202,8 +1350,17 @@ fn steer<T: Terrain>(
         }
         state.path.remove(0);
     }
+    // A mob that stays in one cell while it has somewhere to go is stuck.
+    if state.path.is_empty() || state.stuck_cell != cell {
+        state.stuck_cell = cell;
+        state.stuck = 0;
+    } else {
+        state.stuck += 1;
+    }
     let speed = if state.fleeing > 0 || flee_from.is_some() {
         def.speed * 2.0
+    } else if state.angry > 0 {
+        def.angry_speed.unwrap_or(def.speed)
     } else {
         def.speed
     };
@@ -1258,13 +1415,43 @@ fn steer<T: Terrain>(
         let wanted = yaw_toward(feet, toward);
         mob.yaw += angle_difference(wanted, mob.yaw).clamp(-TURN, TURN);
     }
-    mob.head_yaw = face.map_or(mob.yaw, |target| yaw_toward(feet, target));
+    mob.head_yaw = match face {
+        Some(target) => yaw_toward(feet, target),
+        None if def.ai.is_monster() => idle_gaze(mob, view, feet, random),
+        None => mob.yaw,
+    };
     if mob.body.liquid.is_some() && !def.swims && random() < 0.8 {
         intent.input.jump = true;
     }
     if intent.input.forward > 0.0 && mob.body.collided_horizontally() {
         intent.input.jump = true;
     }
+}
+
+/// Where an idle monster's head points: at a player within 8 blocks, else
+/// now and then a glance to one side (modern `LookAtPlayerGoal` and
+/// `RandomLookAroundGoal`).
+fn idle_gaze<T: Terrain>(
+    mob: &mut Mob,
+    view: &View<T>,
+    feet: DVec3,
+    random: &mut impl FnMut() -> f32,
+) -> f32 {
+    if let Some(target) = &view.player
+        && target.eye.distance(mob.eye()) < LOOK_RANGE
+    {
+        return yaw_toward(feet, target.eye);
+    }
+    let state = &mut mob.ai;
+    if state.glance > 0 {
+        state.glance -= 1;
+        return mob.yaw + state.glance_yaw;
+    }
+    if random() < 0.02 {
+        state.glance = 20 + (random() * 20.0) as u32;
+        state.glance_yaw = (random() - 0.5) * 2.0 * 1.2;
+    }
+    mob.yaw
 }
 
 /// Picks the best-liked of a few nearby spots and paths to it (1.0.0's
@@ -1287,7 +1474,14 @@ fn wander<T: Terrain>(
         }
     }
     if let Some((_, spot)) = best {
-        mob.ai.path = find_path(view.terrain, start, spot, height, WANDER_DISTANCE);
+        mob.ai.path = find_path_dropping(
+            view.terrain,
+            start,
+            spot,
+            height,
+            WANDER_DISTANCE,
+            WANDER_DROP,
+        );
     }
 }
 
@@ -1428,6 +1622,411 @@ mod tests {
         let near = player_at(DVec3::new(0.5, 64.0, 2.0));
         let intents = run_intents(&mut zombie, def, &grid, Some(near), Env::default(), &[], 1);
         assert!(intents[0].hit.is_none(), "1.5 blocks away is out of reach");
+    }
+
+    fn skeleton_distance_after(start: f64, ticks: u32, follow_range: f64) -> f64 {
+        let mobs = registry();
+        let kind = mobs.find("skeleton").unwrap();
+        let mut def = mobs.get(kind).clone();
+        def.follow_range = follow_range;
+        let def = &def;
+        let grid = Grid::floor();
+        let mut skeleton = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        assert_eq!(skeleton.data.held, Some(crate::inventory::items::BOW));
+        let player = player_at(DVec3::new(0.5, 64.0, 0.5 + start));
+        run_intents(
+            &mut skeleton,
+            def,
+            &grid,
+            Some(player),
+            Env::default(),
+            &[],
+            ticks,
+        );
+        skeleton.feet().distance(player.feet)
+    }
+
+    #[test]
+    fn a_skeleton_backs_away_from_5_blocks_and_closes_in_from_25() {
+        let near = skeleton_distance_after(5.0, 100, 16.0);
+        assert!(near > 5.5, "backed away to {near}");
+        // Past its follow range (16) a skeleton doesn't notice the player;
+        // given the range to see one at 25, it walks toward them.
+        let unaware = skeleton_distance_after(25.0, 40, 16.0);
+        assert!(unaware > 24.0, "doesn't close in: {unaware}");
+        let far = skeleton_distance_after(25.0, 40, 35.0);
+        assert!(far < 24.0, "closed in to {far}");
+    }
+
+    #[test]
+    fn a_skeleton_without_a_bow_fights_like_a_zombie() {
+        let mobs = registry();
+        let kind = mobs.find("skeleton").unwrap();
+        let def = mobs.get(kind);
+        let mut skeleton = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        skeleton.data.held = Some(crate::inventory::items::STONE_SWORD);
+        let player = player_at(DVec3::new(6.5, 64.0, 0.5));
+        let intents = run_intents(
+            &mut skeleton,
+            def,
+            &Grid::floor(),
+            Some(player),
+            Env::default(),
+            &[],
+            200,
+        );
+        assert!(intents.iter().all(|i| i.shot.is_none()), "never shoots");
+        assert!(intents.iter().any(|i| i.hit.is_some()), "hits in melee");
+    }
+
+    #[test]
+    fn a_creeper_swells_within_3_blocks_and_cancels_beyond_7() {
+        let mobs = registry();
+        let kind = mobs.find("creeper").unwrap();
+        let def = mobs.get(kind);
+        let grid = Grid::floor();
+        let mut creeper = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        let near = player_at(DVec3::new(0.5, 64.0, 2.5));
+        run_intents(
+            &mut creeper,
+            def,
+            &grid,
+            Some(near),
+            Env::default(),
+            &[],
+            10,
+        );
+        assert_eq!(creeper.swell, 10, "fuse lit at 2 blocks");
+        let far = player_at(DVec3::new(8.5, 64.0, 0.5));
+        let before = creeper.swell;
+        run_intents(&mut creeper, def, &grid, Some(far), Env::default(), &[], 1);
+        assert_eq!(creeper.swell, before - 1, "fuse cancelled at 8 blocks");
+    }
+
+    #[test]
+    fn a_zombie_behind_a_wall_paths_around_it_and_still_cannot_hit_through() {
+        let mobs = registry();
+        let kind = mobs.find("zombie").unwrap();
+        let def = mobs.get(kind);
+        let mut grid = Grid::floor();
+        for z in -4..=4 {
+            for y in 64..66 {
+                grid.solid.insert(IVec3::new(2, y, z));
+            }
+        }
+        let mut zombie = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        let mut player = player_at(DVec3::new(4.5, 64.0, 0.5));
+        // It sees the player once, then the wall hides them.
+        run_intents(
+            &mut zombie,
+            def,
+            &grid,
+            Some(player),
+            Env::default(),
+            &[],
+            2,
+        );
+        player.visible = false;
+        let intents = run_intents(
+            &mut zombie,
+            def,
+            &grid,
+            Some(player),
+            Env::default(),
+            &[],
+            58,
+        );
+        assert!(zombie.ai.chasing, "remembers the target for 60 ticks");
+        assert!(
+            intents.iter().all(|i| i.hit.is_none()),
+            "no hit without a line of sight"
+        );
+        // Going around, it's past the wall's end, not pressed against it.
+        let z = zombie.feet().z;
+        assert!(z.abs() > 0.5 || zombie.feet().x < 2.0, "{}", zombie.feet());
+        let wall_x = zombie.feet().x;
+        assert!(
+            wall_x < 2.0 || z.abs() > 4.0,
+            "never through the wall: {}",
+            zombie.feet()
+        );
+    }
+
+    #[test]
+    fn a_target_out_of_sight_for_60_ticks_is_forgotten() {
+        let mobs = registry();
+        let kind = mobs.find("zombie").unwrap();
+        let def = mobs.get(kind);
+        let grid = Grid::floor();
+        let mut zombie = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        let mut player = player_at(DVec3::new(20.5, 64.0, 0.5));
+        run_intents(
+            &mut zombie,
+            def,
+            &grid,
+            Some(player),
+            Env::default(),
+            &[],
+            2,
+        );
+        assert!(zombie.ai.chasing, "notices at 20 blocks (follow range 35)");
+        player.visible = false;
+        run_intents(
+            &mut zombie,
+            def,
+            &grid,
+            Some(player),
+            Env::default(),
+            &[],
+            55,
+        );
+        assert!(zombie.ai.chasing);
+        run_intents(
+            &mut zombie,
+            def,
+            &grid,
+            Some(player),
+            Env::default(),
+            &[],
+            10,
+        );
+        assert!(!zombie.ai.chasing);
+    }
+
+    #[test]
+    fn mobs_beyond_16_blocks_ignore_a_player_unless_a_zombie() {
+        let mobs = registry();
+        let grid = Grid::floor();
+        for (name, expect) in [("zombie", true), ("spider", false)] {
+            let kind = mobs.find(name).unwrap();
+            let def = mobs.get(kind);
+            let mut mob = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+            let player = player_at(DVec3::new(25.5, 64.0, 0.5));
+            let env = Env {
+                brightness: 0.0,
+                ..Env::default()
+            };
+            run_intents(&mut mob, def, &grid, Some(player), env, &[], 2);
+            assert_eq!(mob.ai.chasing, expect, "{name}");
+        }
+    }
+
+    #[test]
+    fn fifty_pathing_mobs_cost_under_2_ms_a_tick() {
+        let mobs = registry();
+        let kind = mobs.find("zombie").unwrap();
+        let def = mobs.get(kind);
+        let mut grid = Grid::floor();
+        for x in (-20..20).step_by(6) {
+            for z in -20..20 {
+                if z % 9 != 0 {
+                    grid.solid.insert(IVec3::new(x, 64, z));
+                    grid.solid.insert(IVec3::new(x, 65, z));
+                }
+            }
+        }
+        let mut crowd: Vec<Mob> = (0..50)
+            .map(|i| {
+                let at = DVec3::new(-25.0 + (i % 10) as f64, 64.0, -20.0 + (i / 10) as f64 * 8.0);
+                Mob::new(kind, def, at, 0.0)
+            })
+            .collect();
+        let weight = |_: IVec3| 0.0;
+        let mut seed = 0.37f32;
+        let mut random = || {
+            seed = (seed * 997.0 + 0.123).fract();
+            seed
+        };
+        let player = player_at(DVec3::new(25.5, 64.0, 0.5));
+        let mut spent = std::time::Duration::ZERO;
+        let ticks = 100;
+        for _ in 0..ticks {
+            for mob in &mut crowd {
+                let view = View {
+                    terrain: &grid,
+                    player: Some(player),
+                    weight: &weight,
+                    env: Env::default(),
+                    others: &[],
+                    owner: None,
+                    threat: None,
+                    errand: None,
+                };
+                let started = std::time::Instant::now();
+                let intent = think(mob, def, &view, &mut random);
+                spent += started.elapsed();
+                // Advance a little without the slow test collider.
+                let step = DVec3::X * intent.input.forward * 0.1;
+                mob.body.set_position(mob.feet() + step);
+            }
+        }
+        let per_tick = spent / ticks;
+        println!("50 mobs thinking: {per_tick:?} a tick");
+        assert!(
+            per_tick < std::time::Duration::from_millis(2),
+            "50 mobs thinking took {per_tick:?} a tick"
+        );
+    }
+
+    fn enderman() -> (Mob, MobDef) {
+        let mobs = registry();
+        let kind = mobs.find("enderman").unwrap();
+        let def = mobs.get(kind).clone();
+        (Mob::new(kind, &def, DVec3::new(0.5, 64.0, 0.5), 0.0), def)
+    }
+
+    fn teleports(intents: &[Intent]) -> Vec<Teleport> {
+        intents.iter().filter_map(|i| i.teleport).collect()
+    }
+
+    #[test]
+    fn an_angry_enderman_30_blocks_off_teleports_toward_the_player_within_40_ticks() {
+        let (mut mob, def) = enderman();
+        mob.ai.enrage();
+        let player = player_at(DVec3::new(0.5, 64.0, 30.5));
+        let intents = run_intents(
+            &mut mob,
+            &def,
+            &Grid::floor(),
+            Some(player),
+            Env::default(),
+            &[],
+            40,
+        );
+        assert!(
+            teleports(&intents).contains(&Teleport::Near(player.feet)),
+            "{:?}",
+            teleports(&intents)
+        );
+        // And not before 30 ticks have passed.
+        let first = intents.iter().position(|i| i.teleport.is_some()).unwrap();
+        assert!(first >= 29, "teleported at tick {first}");
+    }
+
+    #[test]
+    fn an_enderman_in_water_teleports_out_and_a_shot_makes_it_step_aside() {
+        let (mut mob, def) = enderman();
+        let wet = Env {
+            in_water: true,
+            ..Env::default()
+        };
+        let intents = run_intents(&mut mob, &def, &Grid::floor(), None, wet, &[], 1);
+        assert_eq!(teleports(&intents), [Teleport::Random]);
+
+        let (mut mob, def) = enderman();
+        let health = mob.stats.health;
+        let hit = mob.hurt(
+            6.0,
+            Some(DVec3::new(9.0, 64.0, 0.5)),
+            crate::player::stats::DamageSource::Arrow,
+        );
+        assert!(!hit && mob.stats.health == health, "the arrow does no harm");
+        let intents = run_intents(&mut mob, &def, &Grid::floor(), None, Env::default(), &[], 1);
+        assert_eq!(teleports(&intents), [Teleport::Frantic]);
+
+        // Hurt by anything else, it teleports too, and turns angry.
+        let (mut mob, def) = enderman();
+        mob.hurt(1.0, None, crate::player::stats::DamageSource::Mob);
+        let player = player_at(DVec3::new(0.5, 64.0, 6.5));
+        let intents = run_intents(
+            &mut mob,
+            &def,
+            &Grid::floor(),
+            Some(player),
+            Env::default(),
+            &[],
+            1,
+        );
+        assert_eq!(teleports(&intents), [Teleport::Frantic]);
+        assert!(mob.ai.angry > 0);
+    }
+
+    #[test]
+    fn a_stare_of_5_ticks_angers_an_enderman_which_then_sprints_at_0_45() {
+        let (mut mob, def) = enderman();
+        let mut player = player_at(DVec3::new(0.5, 64.0, 10.5));
+        player.stares = true;
+        let grid = Grid::floor();
+        run_intents(&mut mob, &def, &grid, Some(player), Env::default(), &[], 4);
+        assert_eq!(mob.ai.angry, 0, "not yet");
+        run_intents(&mut mob, &def, &grid, Some(player), Env::default(), &[], 1);
+        assert!(mob.ai.angry > 0, "angry after 5 ticks");
+        // Frozen while stared at within 16 blocks.
+        let intents = run_intents(&mut mob, &def, &grid, Some(player), Env::default(), &[], 3);
+        assert!(intents.iter().all(|i| i.input.forward == 0.0), "frozen");
+        // Looking away, it runs, at 0.45 against 0.3 calm.
+        player.stares = false;
+        let intents = run_intents(&mut mob, &def, &grid, Some(player), Env::default(), &[], 1);
+        assert_eq!(intents[0].input.forward, def.angry_speed.unwrap());
+        assert!((def.angry_speed.unwrap() / def.speed - 0.45 / 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_frozen_enderman_flinches_away_from_a_player_within_4_blocks() {
+        let (mut mob, def) = enderman();
+        mob.ai.enrage();
+        let mut player = player_at(DVec3::new(0.5, 64.0, 3.0));
+        player.stares = true;
+        let intents = run_intents(
+            &mut mob,
+            &def,
+            &Grid::floor(),
+            Some(player),
+            Env::default(),
+            &[],
+            1,
+        );
+        assert_eq!(teleports(&intents), [Teleport::Random]);
+    }
+
+    #[test]
+    fn endermen_teleport_in_full_daylight_and_forget_a_player_unseen_for_40_seconds() {
+        let (mut mob, def) = enderman();
+        let day = Env {
+            day: true,
+            sky: 15,
+            brightness: 1.0,
+            ..Env::default()
+        };
+        let intents = run_intents(&mut mob, &def, &Grid::floor(), None, day, &[], 1000);
+        assert!(!teleports(&intents).is_empty(), "teleports out of the sun");
+        // In a cave it doesn't.
+        let (mut mob, def) = enderman();
+        let intents = run_intents(
+            &mut mob,
+            &def,
+            &Grid::floor(),
+            None,
+            Env::default(),
+            &[],
+            1000,
+        );
+        assert!(teleports(&intents).is_empty());
+
+        let (mut mob, def) = enderman();
+        mob.ai.enrage();
+        let mut player = player_at(DVec3::new(0.5, 64.0, 6.5));
+        player.visible = false;
+        run_intents(
+            &mut mob,
+            &def,
+            &Grid::floor(),
+            Some(player),
+            Env::default(),
+            &[],
+            790,
+        );
+        assert!(mob.ai.angry > 0, "still angry at 39.5 seconds");
+        run_intents(
+            &mut mob,
+            &def,
+            &Grid::floor(),
+            Some(player),
+            Env::default(),
+            &[],
+            20,
+        );
+        assert_eq!(mob.ai.angry, 0, "calm after 40");
     }
 
     #[test]
