@@ -729,7 +729,12 @@ fn paint_doll(
             mesh, texture, feet, per_block,
         )));
     }
-    let glint = doll::project(&figure.armor_glint, textures.armor.id(), feet, per_block);
+    let glint = doll::project(
+        &figure.armor_glint,
+        textures.armor_mask.id(),
+        feet,
+        per_block,
+    );
     super::glint::paint_mesh(&painter, glint);
     painter.add(egui::Shape::mesh(doll::project(
         &figure.items,
@@ -1201,7 +1206,9 @@ fn paint_brewing_progress(
 
 /// 1.0.0's item name tooltip: white text on a dark box above-right of the mouse.
 fn paint_tooltip(painter: &Painter, pointer: Pos2, name: &str, scale: f32) {
-    let job = |shadow| super::font::job(name, 8.0 * scale, Color32::WHITE, shadow);
+    // The name, then the rest (enchantments, effects) in vanilla's gray.
+    let text = name.replace('\n', "\n§7");
+    let job = |shadow| super::font::job(&text, 8.0 * scale, Color32::WHITE, shadow);
     let galley = painter.layout_job(job(false));
     let at = pointer + vec2(12.0, -12.0) * scale;
     let rect = Rect::from_min_size(at, galley.size()).expand(3.0 * scale);

@@ -239,7 +239,8 @@ pub fn truetype(glyphs: &BTreeMap<char, Glyph>) -> Vec<u8> {
     let units = |px: f32| (px * UNITS_PER_PIXEL).round() as i16;
     // Glyph 0 is the empty .notdef; then one per character, in order.
     let mut glyf = Vec::new();
-    let mut loca = vec![0u32];
+    // .notdef starts and ends at 0.
+    let mut loca = vec![0u32, 0];
     let mut hmtx = vec![0u8; 4];
     let (mut max_points, mut max_contours, mut max_advance) = (0u16, 0u16, 0u16);
     let (mut x_min, mut y_min, mut x_max, mut y_max) = (0i16, 0i16, 0i16, 0i16);
@@ -489,7 +490,8 @@ pub struct Style {
 /// Splits `text` at its `§` codes: colors (`0`–`9`, `a`–`f`, which also
 /// end the formats), bold `l`, italic `o`, underline `n`, strikethrough
 /// `m` and reset `r`. `§k` (obfuscated) is dropped. Each run starts in
-/// `color` unless a code says otherwise.
+/// `color` unless a code says otherwise, and so does each new line (a
+/// tooltip's lines are separate texts in vanilla).
 pub fn runs(text: &str, color: Color32) -> Vec<(String, Style)> {
     let plain = Style {
         color,
@@ -502,6 +504,9 @@ pub fn runs(text: &str, color: Color32) -> Vec<(String, Style)> {
     let mut out: Vec<(String, Style)> = Vec::new();
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
+        if ch == '\n' {
+            style = plain;
+        }
         if ch == '§' {
             let Some(code) = chars.next() else { break };
             match code.to_ascii_lowercase() {
@@ -691,11 +696,47 @@ mod tests {
         assert_eq!(runs[2].0, " plain ?");
         assert_eq!(runs[2].1.color, white);
         assert!(!runs[2].1.bold);
+        // A new line starts plain.
+        let lines = super::runs("§6§lName\nSharpness", white);
+        assert_eq!(lines.last().unwrap().1.color, white);
+        assert!(!lines.last().unwrap().1.bold);
         // A color ends bold.
         assert!(!super::runs("§lA§aB", white)[1].1.bold);
         assert_eq!(
             shadow_color(Color32::from_rgb(200, 100, 40)),
             Color32::from_rgb(50, 25, 10)
         );
+    }
+
+    /// Reads back the box of the glyph the font maps `ch` to.
+    fn glyph_box(font: &[u8], ch: char) -> [i16; 4] {
+        let u16_at = |at: usize| u16::from_be_bytes([font[at], font[at + 1]]);
+        let u32_at = |at: usize| u32::from_be_bytes(font[at..at + 4].try_into().unwrap());
+        let table = |tag: &[u8; 4]| {
+            (0..u16_at(4) as usize)
+                .map(|i| 12 + 16 * i)
+                .find(|&r| &font[r..r + 4] == tag)
+                .map(|r| u32_at(r + 8) as usize)
+                .unwrap()
+        };
+        let (cmap, loca, glyf) = (table(b"cmap"), table(b"loca"), table(b"glyf"));
+        let sub = cmap + u32_at(cmap + 8) as usize;
+        let glyph = (0..u32_at(sub + 12) as usize)
+            .map(|g| sub + 16 + 12 * g)
+            .find(|&g| u32_at(g) == ch as u32)
+            .map(|g| u32_at(g + 8) as usize)
+            .unwrap();
+        let at = glyf + u32_at(loca + 4 * glyph) as usize;
+        std::array::from_fn(|i| u16_at(at + 2 + 2 * i) as i16)
+    }
+
+    #[test]
+    fn each_character_maps_to_its_own_outline() {
+        let mut glyphs = BTreeMap::new();
+        super::glyphs(&builtin_ascii(), &sheet(), &mut glyphs);
+        let font = truetype(&glyphs);
+        // 'A' is 5 pixels wide, 'i' 1; both 7 tall from the baseline.
+        assert_eq!(glyph_box(&font, 'A'), [0, 0, 640, 896]);
+        assert_eq!(glyph_box(&font, 'i'), [0, 0, 128, 896]);
     }
 }

@@ -96,8 +96,20 @@ pub fn overlay(tile: &RgbaImage, pattern: &RgbaImage, seconds: f64) -> ColorImag
     ColorImage::from_rgba_premultiplied([w as usize, h as usize], &bytes)
 }
 
-/// Paints the pattern over `mesh`'s triangles (already projected onto the
-/// screen), scrolling across the rectangle they cover.
+/// The mask the inventory figure's armor glint is drawn through: white
+/// where the armor has a pixel, nothing elsewhere, with no alpha, so the
+/// pattern is added only to the armor itself.
+pub fn mask(image: &RgbaImage) -> ColorImage {
+    let bytes: Vec<u8> = image
+        .pixels()
+        .flat_map(|p| if p[3] > 0 { [255, 255, 255, 0] } else { [0; 4] })
+        .collect();
+    ColorImage::from_rgba_premultiplied([image.width() as usize, image.height() as usize], &bytes)
+}
+
+/// Paints the pattern over `mesh`'s small triangles (already projected
+/// onto the screen and textured with a [`mask`]): each corner takes the
+/// pattern's color there, scrolling across the rectangle they cover.
 pub fn paint_mesh(painter: &Painter, mut mesh: Mesh) {
     STATE.with(|cell| {
         let state = cell.borrow();
@@ -114,18 +126,11 @@ pub fn paint_mesh(painter: &Painter, mut mesh: Mesh) {
         };
         let seconds = painter.ctx().input(|input| input.time);
         let side = rect.width().max(rect.height()).max(1.0);
-        let tint = Color32::from_rgba_premultiplied(
-            (TINT[0] * 255.0) as u8,
-            (TINT[1] * 255.0) as u8,
-            (TINT[2] * 255.0) as u8,
-            0,
-        );
-        mesh.texture_id = state.texture.id();
         for v in &mut mesh.vertices {
             let p = [(v.pos.x - rect.min.x) / side, (v.pos.y - rect.min.y) / side];
-            let [u, w] = pattern_uv(p, seconds);
-            v.uv = Pos2::new(u, w);
-            v.color = tint;
+            let [r, g, b] = sample(&state.pattern, pattern_uv(p, seconds));
+            let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0) as u8;
+            v.color = Color32::from_rgba_premultiplied(byte(r), byte(g), byte(b), 0);
         }
         painter.add(Shape::mesh(mesh));
     });
@@ -277,5 +282,17 @@ mod tests {
         let _ = v0;
         // Sampling wraps.
         assert_eq!(sample(&pattern, [0.1, 0.1]), sample(&pattern, [5.1, -3.9]));
+    }
+
+    #[test]
+    fn the_armor_mask_adds_only_where_the_armor_has_pixels() {
+        let mut armor = RgbaImage::new(2, 1);
+        armor.put_pixel(0, 0, image::Rgba([10, 20, 30, 255]));
+        let mask = mask(&armor);
+        assert_eq!(
+            mask.pixels[0],
+            Color32::from_rgba_premultiplied(255, 255, 255, 0)
+        );
+        assert_eq!(mask.pixels[1], Color32::TRANSPARENT);
     }
 }
