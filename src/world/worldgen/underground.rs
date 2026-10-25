@@ -393,9 +393,12 @@ pub fn geode_at(terrain: &Terrain, source: ChunkPos) -> Option<Geode> {
         radius,
         seed: rng.next_u64(),
     };
-    let open = geode
-        .shell()
-        .filter(|p| open_at(terrain, p.x, p.y, p.z))
+    let shell: Vec<glam::IVec3> = geode.shell().collect();
+    let worms = terrain.in_worms(&shell);
+    let open = shell
+        .iter()
+        .zip(worms)
+        .filter(|&(p, worm)| worm || open_at(terrain, p.x, p.y, p.z))
         .count();
     (open <= GEODE_INVALID_THRESHOLD).then_some(geode)
 }

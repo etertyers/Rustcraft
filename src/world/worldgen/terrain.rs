@@ -536,6 +536,45 @@ impl Terrain {
         trilinear(&c, t) > 0.0
     }
 
+    /// Which of `points` a worm tunnel or ravine runs through (ignoring
+    /// how high a column lets caves reach and what fills them).
+    pub fn in_worms(&self, points: &[glam::IVec3]) -> Vec<bool> {
+        let mut hit = vec![false; points.len()];
+        let Some(first) = points.first() else {
+            return hit;
+        };
+        let (lo, hi) = points
+            .iter()
+            .fold((*first, *first), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+        let center = ChunkPos::of_block((lo.x + hi.x) / 2, (lo.z + hi.z) / 2);
+        for sz in center.z - CARVER_REACH..=center.z + CARVER_REACH {
+            for sx in center.x - CARVER_REACH..=center.x + CARVER_REACH {
+                for worm in worms(self.seed, sx, sz) {
+                    for &([px, py, pz], across, up) in &worm.steps {
+                        if px + across < lo.x as f64
+                            || px - across > hi.x as f64 + 1.0
+                            || pz + across < lo.z as f64
+                            || pz - across > hi.z as f64 + 1.0
+                            || py + up < lo.y as f64
+                            || py - up > hi.y as f64 + 1.0
+                        {
+                            continue;
+                        }
+                        for (i, p) in points.iter().enumerate() {
+                            let dx = (p.x as f64 + 0.5 - px) / across;
+                            let dy = (p.y as f64 + 0.5 - py) / up;
+                            let dz = (p.z as f64 + 0.5 - pz) / across;
+                            if dy >= -0.7 && dx * dx + dy * dy + dz * dz < 1.0 {
+                                hit[i] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        hit
+    }
+
     /// The highest block caves may carve in a column.
     fn cave_top(column: &Column) -> i32 {
         if column.height < SEA_LEVEL {
