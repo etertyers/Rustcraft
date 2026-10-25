@@ -42,6 +42,7 @@ Tools: --write-structures, --asset-report, --gen-placeholders,
        --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>],
        --spawn-test [--seed <n>] (one night of mob counts in plains),
        --flower-test [--seed <n>] (flowers per chunk by biome)
+       --structure-test [--seed <n>] (20 ruined portals, 20 geodes and 5 fortresses checked)
 ";
 
 /// Why the command line wasn't used: a mistake, or `--help`.

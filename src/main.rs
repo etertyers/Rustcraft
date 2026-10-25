@@ -45,6 +45,16 @@ fn main() -> Result<()> {
         rustcraft::world::worldgen::flower_stats::print_stats(seed, 400);
         return Ok(());
     }
+    if args.iter().any(|arg| arg == "--structure-test") {
+        let seed = args
+            .iter()
+            .position(|arg| arg == "--seed")
+            .and_then(|i| args.get(i + 1))
+            .map_or(Ok(20111118), |s| s.parse())
+            .context("--seed needs a number")?;
+        let pass = rustcraft::world::structure::check::run(seed);
+        std::process::exit(if pass { 0 } else { 1 });
+    }
     if args.iter().any(|arg| arg == "--spawn-test") {
         let seed = args
             .iter()

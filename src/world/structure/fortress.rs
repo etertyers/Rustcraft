@@ -454,6 +454,11 @@ impl Layout<'_, '_> {
                 (Kind::Corridor, 10),
             ]
         };
+        // Every fortress gets a blaze throne: once half the pieces are down
+        // without one, the next bridge exit takes it.
+        if !exit.castle && self.thrones == 0 && self.pieces.len() >= MAX_PIECES / 2 {
+            return Kind::Throne;
+        }
         if !exit.castle && self.thrones < MAX_THRONES {
             options.push((Kind::Throne, 15));
         }
@@ -536,10 +541,23 @@ pub fn generate(probe: &mut Probe, start: ChunkPos, rng: &mut Rng) -> Option<Vec
             None => layout.cap(&exit),
         }
     }
+    // Still no throne: try one at each open bridge exit before capping.
+    let mut capped = Vec::new();
     for exit in open {
+        if layout.thrones == 0
+            && !exit.castle
+            && let Some(more) = layout.place(Kind::Throne, exit)
+        {
+            capped.extend(more);
+        } else {
+            capped.push(exit);
+        }
+    }
+    for exit in capped {
         layout.cap(&exit);
     }
-    Some(layout.pieces)
+    // A fortress without a blaze spawner isn't one.
+    (layout.thrones > 0).then_some(layout.pieces)
 }
 
 #[cfg(test)]
@@ -549,6 +567,39 @@ mod tests {
         structure::{Kind as StructureKind, nether},
         worldgen::nether::Nether,
     };
+
+    #[test]
+    fn every_fortress_has_a_blaze_spawner() {
+        let world = Nether::new(20111118);
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..12 {
+            for j in 0..3 {
+                let Some(found) = nether::find(
+                    &world,
+                    StructureKind::Fortress,
+                    ChunkPos::new(i * 40 - 240, j * 60 - 60),
+                    30,
+                ) else {
+                    continue;
+                };
+                if !seen.insert(found.start) {
+                    continue;
+                }
+                let blazes = found
+                    .pieces
+                    .iter()
+                    .flat_map(|p| &p.spawners)
+                    .filter(|(_, m)| m == "blaze")
+                    .count();
+                assert!(
+                    blazes >= 1,
+                    "fortress at {:?} has no blaze spawner",
+                    found.start
+                );
+            }
+        }
+        assert!(seen.len() >= 5, "only {} fortresses sampled", seen.len());
+    }
 
     #[test]
     fn a_fortress_has_bridges_on_pillars_blaze_spawners_and_castle_rooms() {

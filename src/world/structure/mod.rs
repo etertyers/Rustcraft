@@ -16,6 +16,7 @@
 
 pub mod bastion;
 pub mod build;
+pub mod check;
 pub mod designs;
 pub mod dungeon;
 pub mod end;
