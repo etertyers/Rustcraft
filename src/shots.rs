@@ -483,6 +483,16 @@ pub static SHOTS: &[Shot] = &[
         stage: torchlit_room,
     },
     Shot {
+        name: "m33-ruined-portal",
+        about: "a ruined portal on the land surface in a forest on seed 20111118: broken obsidian frame, netherrack and stone bricks, its chest, the inside clear",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([199.5, 86.0, 391.5], 0.0, -0.45)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
