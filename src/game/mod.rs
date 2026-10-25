@@ -170,6 +170,7 @@ pub struct Game {
     bed: Option<glam::IVec3>,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
+    pub difficulty: crate::level::Difficulty,
     /// A notice on screen and the ticks it has left (1.0.0's chat lines).
     pub message: Option<(String, u32)>,
     /// The capture tool's two corners (creative).
@@ -350,6 +351,7 @@ impl Game {
             sleep: None,
             bed: None,
             rules: crate::level::GameRules::default(),
+            difficulty: crate::level::Difficulty::default(),
             message: None,
             capture: [None, None],
             entities: Vec::new(),
@@ -462,6 +464,7 @@ impl Game {
         game.stats = player.stats.clone();
         game.bed = player.bed.map(glam::IVec3::from_array);
         game.rules = level.rules.clone();
+        game.difficulty = level.difficulty;
         game.load_boats(&level.boats);
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
@@ -571,6 +574,7 @@ impl Game {
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
         saved.level.rules = self.rules.clone();
+        saved.level.difficulty = self.difficulty;
         saved.level.boats = boats;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
@@ -967,9 +971,13 @@ impl Game {
                 && !self.body.sneaking
                 && self.standing_on(crate::world::blocks::MAGMA_BLOCK),
         };
+        self.stats.difficulty = self.difficulty;
         self.stats.tick(&around, vulnerable);
         if vulnerable {
             self.stats.tick_food();
+            if self.difficulty == crate::level::Difficulty::Peaceful {
+                self.stats.tick_peaceful(self.time);
+            }
         }
         self.body.can_sprint = !vulnerable || self.stats.can_sprint();
     }
