@@ -604,7 +604,7 @@ impl Terrain {
                     if trilinear(&c, (tx, ty, tz)) <= 0.0 {
                         continue;
                     }
-                    self.carve(chunk, x, y, z, column.height);
+                    self.carve(chunk, x, y, z);
                 }
             }
         }
@@ -613,13 +613,13 @@ impl Terrain {
 
     /// Carves one block of a cave, if it isn't bedrock, with what the
     /// aquifer holds there.
-    fn carve(&self, chunk: &mut Chunk, x: usize, y: i32, z: usize, surface: i32) {
+    fn carve(&self, chunk: &mut Chunk, x: usize, y: i32, z: usize) {
         if chunk.get(x, y, z) == BEDROCK {
             return;
         }
         let (min_x, min_z) = chunk.pos.min_block();
         let (wx, wz) = (min_x + x as i32, min_z + z as i32);
-        if let Some(block) = self.caves.fill(wx, y, wz, surface).block() {
+        if let Some(block) = self.caves.fill(wx, y, wz).block() {
             chunk.set(x, y, z, block);
         }
     }
@@ -663,7 +663,7 @@ impl Terrain {
                                         continue;
                                     }
                                     let (lx, lz) = ((wx - min_x) as usize, (wz - min_z) as usize);
-                                    self.carve(chunk, lx, y, lz, column.height);
+                                    self.carve(chunk, lx, y, lz);
                                 }
                             }
                         }

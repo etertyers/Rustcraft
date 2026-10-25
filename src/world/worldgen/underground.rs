@@ -136,32 +136,51 @@ fn lava_pools(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
     let cy = MIN_Y + 10 + rng.below((top - MIN_Y - 10) as u32) as i32;
     let (rx, ry, rz) = (2.0 + rng.next_f64() * 2.0, 2.0, 2.0 + rng.next_f64() * 2.0);
     let lava = BlockState::of(blocks::LAVA);
+    let inside = |dx: i32, dy: i32, dz: i32| {
+        (dx as f64 / rx).powi(2) + (dy as f64 / ry).powi(2) + (dz as f64 / rz).powi(2) < 1.0
+    };
+    // The pool's lower half is lava where every side and the floor are
+    // lava or rock (so nothing flows when the chunk loads); the rest is
+    // hollowed out.
+    let wet = |dx: i32, dy: i32, dz: i32| inside(dx, dy, dz) && dy <= 0;
+    let mut edits = Vec::new();
     for dx in -4i32..=4 {
         for dz in -4i32..=4 {
             for dy in -2i32..=2 {
-                let d =
-                    (dx as f64 / rx).powi(2) + (dy as f64 / ry).powi(2) + (dz as f64 / rz).powi(2);
-                if d >= 1.0 {
+                if !inside(dx, dy, dz) {
                     continue;
                 }
                 let (lx, y, lz) = ((cx + dx) as usize, cy + dy, (cz + dz) as usize);
                 if chunk.get(lx, y, lz) == BlockState::of(blocks::BEDROCK) {
                     continue;
                 }
-                // Lava in the lower half, on rock; air above it.
-                let floor = rock(chunk.get(lx, y - 1, lz)) || dy < 0;
-                chunk.set(
-                    lx,
-                    y,
-                    lz,
-                    if dy <= 0 && floor {
-                        lava
-                    } else {
-                        BlockState::AIR
-                    },
-                );
+                let held = |ox: i32, oy: i32, oz: i32| {
+                    wet(dx + ox, dy + oy, dz + oz)
+                        || (!inside(dx + ox, dy + oy, dz + oz)
+                            && rock(chunk.get(
+                                (cx + dx + ox) as usize,
+                                cy + dy + oy,
+                                (cz + dz + oz) as usize,
+                            )))
+                };
+                let block = if wet(dx, dy, dz)
+                    && [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)]
+                        .into_iter()
+                        .all(|(ox, oy, oz)| held(ox, oy, oz))
+                {
+                    lava
+                } else if wet(dx, dy, dz) {
+                    // Rock where lava would spill.
+                    continue;
+                } else {
+                    BlockState::AIR
+                };
+                edits.push((lx, y, lz, block));
             }
         }
+    }
+    for (lx, y, lz, block) in edits {
+        chunk.set(lx, y, lz, block);
     }
 }
 

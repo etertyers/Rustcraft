@@ -73,6 +73,7 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
             // Sunlight goes straight down undimmed until something absorbs it.
             let mut level = MAX_LIGHT;
             let mut open = true;
+
             for y in (0..height).rev() {
                 let state = area
                     .get(ax, y as i32 + MIN_Y, az)
@@ -82,16 +83,17 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
                     continue;
                 }
                 let model = models.get(state);
+                let (block_opacity, emission) = (model.opacity, model.emission);
                 let i = area_index(x, y, z);
-                opacity[i] = model.opacity;
-                level = level.saturating_sub(model.opacity);
+                opacity[i] = block_opacity;
+                level = level.saturating_sub(block_opacity);
                 sky[i] = level;
-                if open && model.opacity > 0 {
+                if open && block_opacity > 0 {
                     open = false;
                     open_from[z * AREA + x] = y + 1;
                 }
-                if model.emission > 0 {
-                    block[i] = model.emission;
+                if emission > 0 {
+                    block[i] = emission;
                     block_queue.push_back(i as u32);
                 }
             }
@@ -119,6 +121,12 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
     }
 
     spread(&mut sky, &opacity, sky_queue, height);
+    // An emitter boxed in by rock and emitters as bright (deep lava) can't
+    // light anything its neighbors don't already: leave it out.
+    let block_queue: VecDeque<u32> = block_queue
+        .into_iter()
+        .filter(|&i| lights_a_neighbor(i as usize, &block, &opacity, height))
+        .collect();
     spread(&mut block, &opacity, block_queue, height);
 
     let mut cells = vec![0u8; BORDER * BORDER * height];
@@ -132,6 +140,36 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
         }
     }
     ChunkLight { cells, height }
+}
+
+/// Whether the emitter at `i` has a neighbor it could light: one that
+/// isn't opaque and isn't itself an emitter at least as bright.
+fn lights_a_neighbor(i: usize, levels: &[u8], opacity: &[u8], height: usize) -> bool {
+    let (x, z, y) = (i % AREA, (i / AREA) % AREA, i / (AREA * AREA));
+    let own = levels[i];
+    let mut neighbors = [None; 6];
+    if x > 0 {
+        neighbors[0] = Some(i - 1);
+    }
+    if x + 1 < AREA {
+        neighbors[1] = Some(i + 1);
+    }
+    if z > 0 {
+        neighbors[2] = Some(i - AREA);
+    }
+    if z + 1 < AREA {
+        neighbors[3] = Some(i + AREA);
+    }
+    if y > 0 {
+        neighbors[4] = Some(i - AREA * AREA);
+    }
+    if y + 1 < height {
+        neighbors[5] = Some(i + AREA * AREA);
+    }
+    neighbors
+        .into_iter()
+        .flatten()
+        .any(|n| opacity[n] < 15 && levels[n] < own)
 }
 
 /// Floods light outward from the queued cells: each step loses 1, or the

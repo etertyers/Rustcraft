@@ -30,8 +30,9 @@ const CELL_XZ: i32 = 16;
 const CELL_Y: i32 = 12;
 /// Share of aquifer cells (below the surface's reach) that hold water.
 const FLOODED: u32 = 28;
-/// Cells this high or higher stay dry, so caves near the surface aren't
-/// flooded unless the sea comes in.
+/// Cells reaching this high stay dry, so caves near the surface aren't
+/// flooded. A cell is flooded or dry as a whole, whatever the land above
+/// each of its columns, so water never stands beside air in one cell.
 const DRY_ABOVE: i32 = SEA_LEVEL - 8;
 
 /// What fills a carved block.
@@ -145,18 +146,18 @@ impl Caves {
     /// What a carved block at (x, y, z) holds: its aquifer cell's water up
     /// to that cell's level, lava at the bottom of the world, otherwise
     /// air, and rock where a flooded cell meets a dry one.
-    pub fn fill(&self, x: i32, y: i32, z: i32, surface: i32) -> Fill {
+    pub fn fill(&self, x: i32, y: i32, z: i32) -> Fill {
         if y <= LAVA_LEVEL {
             return Fill::Lava;
         }
-        let own = self.cell_fill(x, y, z, surface);
+        let own = self.cell_fill(x, y, z);
         // A wall a block thick at the faces of cells that disagree.
         for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)] {
             let (nx, ny, nz) = (x + dx, y + dy, z + dz);
             if cell(nx, ny, nz) == cell(x, y, z) {
                 continue;
             }
-            let theirs = self.cell_fill(nx, ny, nz, surface);
+            let theirs = self.cell_fill(nx, ny, nz);
             let wet = |f: Fill| f == Fill::Water;
             // Water beside air, or water over air below it, would pour.
             if wet(own) != wet(theirs) && (dy == 0 || wet(own)) {
@@ -167,13 +168,13 @@ impl Caves {
     }
 
     /// The fluid a cell holds at height `y`.
-    fn cell_fill(&self, x: i32, y: i32, z: i32, surface: i32) -> Fill {
+    fn cell_fill(&self, x: i32, y: i32, z: i32) -> Fill {
         if y <= LAVA_LEVEL {
             return Fill::Lava;
         }
         let (cx, cy, cz) = cell(x, y, z);
         let bottom = cy * CELL_Y;
-        if bottom + CELL_Y >= DRY_ABOVE.min(surface - 8) {
+        if bottom + CELL_Y >= DRY_ABOVE {
             return Fill::Air;
         }
         let mut rng = Rng::for_chunk(mix(self.seed ^ 0xA9), cx, cz, cy as u64);
@@ -313,16 +314,16 @@ mod tests {
     #[test]
     fn the_bottom_is_lava_and_flooded_cells_are_walled_off() {
         let caves = Caves::new(7);
-        assert_eq!(caves.fill(3, -58, 3, 70), Fill::Lava);
+        assert_eq!(caves.fill(3, -58, 3), Fill::Lava);
         // Above the dry line nothing floods.
-        assert_eq!(caves.fill(3, SEA_LEVEL, 3, 120), Fill::Air);
+        assert_eq!(caves.fill(3, SEA_LEVEL, 3), Fill::Air);
         // Some cells hold water; next to a dry cell at the same height the
         // edge block stays rock.
         let mut water = 0;
         let mut walls = 0;
         for x in 0..256 {
             for y in -40..40 {
-                match caves.fill(x, y, 5, 100) {
+                match caves.fill(x, y, 5) {
                     Fill::Water => water += 1,
                     Fill::Rock => walls += 1,
                     _ => {}
@@ -333,9 +334,9 @@ mod tests {
         assert!(walls > 0);
         for x in 0..256 {
             for y in -40..40 {
-                if caves.fill(x, y, 5, 100) == Fill::Water {
+                if caves.fill(x, y, 5) == Fill::Water {
                     for (dx, dy) in [(1, 0), (-1, 0), (0, -1)] {
-                        assert_ne!(caves.fill(x + dx, y + dy, 5, 100), Fill::Air, "{x} {y}");
+                        assert_ne!(caves.fill(x + dx, y + dy, 5), Fill::Air, "{x} {y}");
                     }
                 }
             }
