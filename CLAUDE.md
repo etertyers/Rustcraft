@@ -1,6 +1,6 @@
 # CLAUDE.md — Rustcraft (a simplified Minecraft clone)
 
-> v1.0 (M0–M13) is complete and shipped as a macOS app. **v1.1 (M14–M30)** moves the game toward modern Minecraft; see §1.1, §7.2 and the decisions in §9.
+> v1.0 (M0–M13) and v1.1 (M14–M30) are complete and shipped as a macOS app. **v1.2 (M31–M42)** fixes Kenzo's v1.1 playtest bugs and adds LAN multiplayer, chat and commands, Lua mods, farming and fishing; see §1.2, §7.3 and the decisions in §10.
 
 ## 1. What we're building
 
@@ -21,6 +21,13 @@ v1.1 keeps everything from v1.0 and moves the game toward **modern Minecraft Jav
 - **Mojang's files:** vanilla textures, models, sounds and language files are downloaded from InventivetalentDev/minecraft-assets (branch 26.3) by scripts/fetch-vanilla-assets.sh into the git-ignored assets/vanilla/ folder, and used only as the lowest fallback layer, below Kenzo's assets and any resource pack. Never commit them. They are bundled into the local .app build.
 - **Still out of scope in v1.1:** multiplayer, commands/cheats, mods, Windows/Linux, comparators and observers, the Wither, and ocean monuments.
 
+### 1.2 Version 1.2: fixes, multiplayer, mods
+
+v1.2 keeps everything from v1.1 (still targeting modern Java Edition) and fixes the bugs from Kenzo's v1.1 playtest, then adds an options menu with rebindable keys, LAN multiplayer for up to 8 players, chat with commands, Lua mods (with a bundled Fullbright mod), farming, and fishing. It also extends the world to modern Minecraft's full height, **Y −64 to 319**, so caves and ores can copy modern generation directly. See §7.3 and the decisions in §10.
+
+- **Changed from v1.0/v1.1:** Rustcraft is no longer single-player only (LAN, M37), and commands exist (M38) but only in worlds with **Allow Cheats** on. With cheats on, `/gamemode` can change a world's game mode; with cheats off, the game mode is still fixed as before.
+- **Still out of scope in v1.2:** online (internet) multiplayer, accounts and dedicated servers, running Java (Fabric/Forge) mods, Windows/Linux, comparators and observers, the Wither, and ocean monuments.
+
 ## 2. Tech stack
 
 | Concern | Choice | Why |
@@ -40,6 +47,8 @@ v1.1 keeps everything from v1.0 and moves the game toward **modern Minecraft Jav
 | Logging | `log` + `env_logger` | `RUST_LOG=debug cargo run` |
 | Errors | `anyhow` (app), `thiserror` (modules) | |
 | Benchmarks (v1.1) | `criterion` | Performance gate from M14 on |
+| Lua mods (v1.2) | `mlua` (Lua 5.4, `vendored` feature) | Sandboxed mod scripts from M39 on |
+| Networking (v1.2) | `std::net` (TCP + UDP multicast) + `bincode` | LAN play from M36 on; no async runtime needed |
 
 **Version policy:** At M0, pin the latest stable versions of these crates in `Cargo.toml` and commit `Cargo.lock`. Do not upgrade crates mid-milestone. If an API doesn't match your memory, check the docs for the pinned version (`cargo doc --open` or docs.rs) rather than guessing.
 
@@ -486,6 +495,128 @@ Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the plann
 - Rebuild the `.app`, set its version to 1.1.0, tag `v1.1.0`.
 - **Done when:** 60+ FPS at render distance 9 in each dimension on the Mac mini, and the new `.app` launches by double-click and opens v1.0 worlds. **Stop: Checkpoint D.**
 
+### 7.3 Version 1.2 — fixes, multiplayer, mods
+
+Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone, model recommendation) and the same checkpoint rules as §7.2, with milestones M31–M42:
+
+| Checkpoint | Milestones | Theme |
+|---|---|---|
+| E | M31–M34 | Kenzo's v1.1 playtest bugs, then the deeper world with modern caves |
+| F | M35–M38 | Options and keybinds, the client/server split, LAN multiplayer, chat and commands |
+| G | M39–M42 | Lua mods and Fullbright, farming, fishing, v1.2 release |
+
+**v1.2 rules (override §5 rule 4 and the screenshot rules in §7.2):**
+- **At most ONE screenshot per milestone.** Screenshots use a lot of usage. Verify with `cargo test`, logs, printed counts and test flags (`--perf-test`, `--spawn-test` style tools) instead. Take one screenshot only at the end of the milestone, of the single most visual acceptance criterion, preferably with `--shot`. Open it once to check it. If a milestone has nothing visual (e.g. networking), take none. Never take screenshots while debugging.
+- **Kenzo does the visual checks.** Each PR lists the in-game checks for Kenzo to do by hand, one line each.
+- **Multiplayer-ready from M36 on.** After the client/server split, every new feature (chat, commands, mods, farming, fishing) must run on the server and sync to clients. Each such milestone includes at least one test that runs a server with two in-process clients and checks they agree.
+- **Vanilla values are written into each milestone** where they matter. Use them rather than fetching the wiki. If a value isn't given, use the best-known modern Java value, write it in `docs/DECISIONS.md`, and keep it as a constant in `config.rs`.
+- After M42 merges, tag `v1.2.0` and rebuild the `.app`.
+
+#### Checkpoint E — Bug fixes and the deeper world
+
+### - [ ] M31 — Items, enchanting and UI fixes
+- **Enchantment rules:** swords must not accept Protection (today they do). Use vanilla's per-item lists everywhere: the enchanting table's offers, anvils (item + book and item + item), and `/enchant` later. Swords: Sharpness, Smite, Bane of Arthropods, Knockback, Fire Aspect, Looting, Sweeping Edge, Unbreaking, Mending, Curse of Vanishing. Protection, Fire Protection, Blast Protection and Projectile Protection go on armor only and exclude each other; Sharpness/Smite/Bane exclude each other. Check every other item type against vanilla's tags (`enchantable/sword`, `enchantable/armor`, etc.) and unit-test that the anvil refuses invalid combinations.
+- **Anvil rename box:** the text you type appears in the box as you type (cursor, backspace, select-all, paste, 50-character limit), the result slot shows the new name, and the cost updates.
+- **Stack sizes:** doors stack to 64. Check every item against vanilla's max stack size (e.g. signs, eggs, snowballs, ender pearls, buckets, banners and honey bottles 16; beds, boats, minecarts, tools, armor, potions and saddles 1) and fix all mismatches, with a test over the item table.
+- **Armor on the inventory player:** worn helmets, chestplates, leggings, boots and elytra render on the inventory picture (and in third person, if they don't already), using the armor layer textures (`entity/equipment/humanoid` and `humanoid_leggings` in 26.x, `models/armor/*_layer_1/2` in older packs), with the glint when enchanted and dyed leather tinted.
+- **Inventory head:** the player picture's head no longer sinks into the shoulders. Pivot the head at the neck (the top of the body), clamp its turn like vanilla (yaw within the body's ±50°-ish range, pitch from the mouse), and turn the body to follow past that limit.
+- **Minecraft font:** draw all game UI text (menus, HUD, tooltips, signs, F3, chat later) with vanilla's bitmap font from the resource layers: `font/default.json` providers, `textures/font/ascii.png` and the other bitmap pages, glyph widths measured from the pixel columns, 1 px spacing and the vanilla drop shadow (text color at 25% brightness, offset 1 px right and down). Respect `§` color and format codes in names. Resource packs can replace the font.
+- **Done when:** a sword can't be given Protection by table or anvil, typing in the anvil shows the name, doors stack to 64, armor shows on the inventory player, the head turns without clipping, and all UI text uses the Minecraft font. One screenshot: the inventory with armor on.
+
+### - [ ] M32 — Player, survival and water fixes
+- **Swimming at the surface:** you keep swimming when your head pokes out of the water. "In water" is decided by the hitbox touching water (vanilla's fluid height check), not by the eyes. Holding jump in water adds 0.04 upward per tick so you bob at the surface and can climb out onto a 1-block ledge. Sprint-swimming starts only with the eyes underwater, but continues while the player is in water and sprinting.
+- **Water looks too dark:** match vanilla: the water texture is semi-transparent and tinted by the biome water color (default `#3F76E4`; swamp, warm/cold oceans etc. from the biome table), water lowers light by only 1 per block, and the underwater fog color and distance follow vanilla. Diagnose first whether the tint, the alpha, the light dampening or the fog is wrong, and write the cause in the PR.
+- **Torches too dim:** torches give block light 14 and fall off 1 per block. Use vanilla's lightmap: each light level's brightness is `f / (4 − 3f)` with `f = level / 15`, block light has vanilla's warm tint, and the Brightness option (Moody 0% to Bright 100%) blends toward a brighter curve as vanilla does. Unit-test the curve.
+- **Dying drops your items:** on death in survival, every inventory, hotbar, armor and off-hand item drops at the death spot with vanilla's random scatter, and experience drops as orbs (7 × level, at most 100 points). Items with Curse of Vanishing are destroyed. A `keepInventory` game rule (default off, set by `/gamerule` in M38) keeps everything instead. Items despawn after 5 minutes.
+- **Respawning at your bed:** sleeping in a bed, or right-clicking one during the day, sets your respawn point and shows "Respawn point set". After death you respawn next to the bed (vanilla's search for a free 2-high spot around it). If the bed is gone or blocked, show "You have no home bed or charged respawn anchor, or it was obstructed" and respawn at world spawn. The spawn point saves with the player.
+- **Boats:** boats work and use the modern model and textures (`entity/boat/<wood>.png`, plus `entity/chest_boat/`): every wood type, the bamboo raft and chest boats. Place on water, right-click to board (2 seats; mobs can be pushed in), W/S paddle, A/D turn, Shift to leave, animated paddles. Vanilla speeds: about 8 blocks/s on water, much faster on ice, packed ice and blue ice, slow on land. Breaking a boat drops it as an item (chest boats also drop their contents). Boats don't break from collisions.
+- **Sugar cane placement (vanilla rule):** sugar cane can only be placed on grass, dirt, coarse dirt, rooted dirt, podzol, mycelium, moss, mud, sand, red sand or suspicious sand that has water (or frosted ice) directly beside it on one of the four sides, or on top of another sugar cane. It breaks and drops when that stops being true. Not on gravel. Unit-test the rule.
+- **Done when:** you can swim along the surface and climb out, water and torch light look like vanilla, dying drops your items and XP, you respawn at your bed, boats row and look right, and sugar cane only goes where vanilla allows. One screenshot: a torch-lit room next to water at night.
+
+### - [ ] M33 — World generation fixes
+- **Ruined portals** use vanilla's placements instead of spawning inside the ground: on the land surface (most common), partly buried, underground (inside a cave, never sealed in solid stone), in a mountain, on the ocean floor (underwater), and in the Nether. Pick the placement per biome as vanilla does (desert and jungle variants, ocean → underwater), and air out the portal's interior so its frame and loot chest are reachable. Unit-test that a sample of generated portals has an open interior.
+- **Geodes** no longer float in caves. Place them after carving only where their outer smooth-basalt shell is embedded in solid stone: cancel a geode if more than a small threshold of its shell points are air, water or lava (vanilla's `invalid_blocks_threshold` idea; record the threshold in `DECISIONS.md`). Cave walls may cut into a geode, but no geode hangs in open air.
+- **Blaze spawners:** every Nether fortress has blaze spawners on its spawner platforms (vanilla's stair/"monster throne" piece), and blazes also spawn naturally inside fortress bounds, as do wither skeletons. Unit-test that each generated fortress has at least one blaze spawner.
+- **Done when:** a sample of 20 ruined portals, 20 geodes and 5 fortresses (printed by a `--structure-test` flag) all pass these rules. One screenshot: a surface ruined portal.
+
+### - [ ] M34 — Modern depth and caves
+- **World height Y −64 to 319** (384 blocks, 24 sections), like 1.18+. Sea level stays 63. Bedrock floor at Y −64 to −60. Overworld only; the Nether and End keep their heights.
+- **Migration:** existing worlds keep every block at its current Y. Below Y 0, new deepslate terrain, caves and ores generate as vanilla 1.18 did for old worlds, replacing the old bedrock floor at Y 0–4. New chunks generate at the full height. Save format version bump, migration round-trip test.
+- **Modern caves:** replace the squashed underground with vanilla's noise caves: cheese caves (huge open caverns, often with stone pillars), spaghetti caves (long thin tunnels), noodle caves (very thin, winding), plus the older carver caves and ravines. Aquifers fill some caves with water at local levels; below Y −55 open caves fill with lava. Deepslate replaces stone from Y 0 down (blended between Y 0 and 8), tuff blobs at depth, granite/diorite/andesite blobs, dirt and gravel patches, glow lichen on cave walls, lava pools, dripstone caves and lush caves at their modern heights and biomes. Caves should feel as full and varied as vanilla, not empty.
+- **Surface caves (rare):** occasionally a cheese or carver cave breaks through to the surface as an open entrance or a hole in a hillside. Keep it rare, about vanilla's frequency; record the rate in `DECISIONS.md`.
+- **Ores at modern heights directly:** remove the M21 squashing and use modern Y values: coal 0–320 (peak 96), copper −16–112 (peak 48, more in dripstone caves), iron −64–72 (peak 16) plus a 80–384 mountain band, gold −64–32 (peak −16, extra in badlands), redstone −64–15 (more toward the bottom), diamond −64–16 (more toward the bottom, reduced when exposed to air), lapis −64–64 (peak 0), emerald −16–320 in mountains only. Update the table in `DECISIONS.md` and the per-height ore test.
+- Mobs spawn in the new caves under the M30 spawn rules; F3 shows the cave biome.
+- **Done when:** old worlds open with new depth below them, a new world has big cheese caves, tunnels, aquifers and lava at the bottom, rare surface cave openings exist, ore tests pass, and the perf test still shows 60+ FPS at render distance 9. One screenshot: a deepslate cheese cave lit with torches. **Stop: Checkpoint E.**
+
+#### Checkpoint F — Options and multiplayer
+
+### - [ ] M35 — Options menu and key bindings
+- Vanilla-style Options screen from the main and pause menus: FOV, Difficulty, Skin Customization, Music & Sounds (per category volume sliders), Video Settings (render distance, graphics, smooth lighting, max framerate, vsync, view bobbing, GUI scale, Brightness, clouds, particles, entity shadows), Controls, Chat Settings (M38), Resource Packs, Accessibility, and **player name** (needed for LAN; default "Player").
+- **Controls → Key Binds:** every action listed by category (Movement, Gameplay, Inventory, Multiplayer, Miscellaneous, and a Mods category filled by M39), click to rebind to any key or mouse button, Esc to unbind, "Reset" per key and "Reset Keys" for all, conflicting keys shown in red. Vanilla defaults (WASD, Space, Left Shift sneak, Left Ctrl sprint, E inventory, Q drop, F swap hands, T chat, / command, Tab player list, F1 hide GUI, F2 screenshot, F3 debug, F5 perspective, F11 fullscreen, L advancements, 1–9 hotbar). Remove every hard-coded key check; all input goes through the bindings. Mouse sensitivity and invert Y in Mouse Settings.
+- **Auto-Jump** toggle in Controls (vanilla option, default off): when on, walking into a 1-block step jumps automatically.
+- Options save to `options.ron` beside `saves/` and load at startup; unknown keys are ignored so older files still load.
+- **Done when:** every key can be rebound and the game obeys the new binding, conflicts show red, auto-jump works when toggled, and options survive a restart. One screenshot: the Key Binds screen.
+
+### - [ ] M36 — Client/server split
+- Split the game into a **server** (world, chunks, ticks, mobs, redstone, fluids, dimensions, inventories, saving) and a **client** (rendering, input, UI, sound, prediction), like vanilla's integrated server. Single player runs an in-process server with one client, so there is one code path. Do this as a series of small refactor commits; the game must stay playable at every commit.
+- **Protocol:** versioned message types (`serde` + `bincode` + `lz4_flex` for chunk data) over a transport trait with two implementations: in-process channels (single player) and TCP (LAN, M37). Messages for login, chunk data and block changes, entity spawn/move/remove, player movement, inventory and container updates, sounds and particles, time and weather, dimension change, and disconnect.
+- **Client-side prediction** for the local player's movement and block breaking/placing, corrected by the server, so single player feels exactly like before. 20 ticks/second on the server; entity positions interpolated on the client.
+- **Per-player data:** each player's position, inventory, ender chest, XP, effects, spawn point and advancements save in `saves/<world>/playerdata/<name>.ron`. The world owner's data migrates from the old single-player save.
+- Test: a headless server with two in-process clients places and breaks blocks and both see the same chunk contents.
+- **Done when:** single player plays the same as v1.1 with no lag added (perf test within the §7.2 gate), all old worlds load, and the two-client test passes. No screenshot needed.
+
+### - [ ] M37 — LAN multiplayer (up to 8 players)
+- **Open to LAN** in the pause menu (vanilla screen): game mode for other players, Allow Cheats on/off, port (default random free port). The host's game becomes the server for up to 8 players.
+- **Discovery:** the host announces itself by UDP multicast to `224.0.2.60:4445` every 1.5 s with vanilla's format `[MOTD]<player> - <world>[/MOTD][AD]<port>[/AD]`. A **Multiplayer** button on the title screen lists LAN worlds found, plus "Direct Connect" by IP:port. Add `NSLocalNetworkUsageDescription` to the `.app`'s Info.plist so macOS allows local network access.
+- **Joining:** players are identified by their player name from Options (no accounts); a duplicate name is refused. Each player's skin is sent to the others. Join/leave messages.
+- **Everything syncs, in every dimension:** other players render with their skins, held items, armor and animations; mining, building, containers and chests (shared, with two players able to view one chest), furnaces, brewing, enchanting, anvils, villager trading, redstone, minecarts, boats, fluids, fire, explosions, mobs targeting the nearest player, PvP, dropped items, XP, the Nether and the End (each player in their own dimension, chunks loaded around every player), the dragon fight with several players, and the credits for each player who enters the exit portal.
+- **Sleeping** skips the night only when every player in the Overworld is in bed. Mob spawning and caps count every player as vanilla does. Each player respawns at their own bed.
+- Tab shows the player list. The host leaving or saving and quitting shuts the server down cleanly and saves everyone.
+- Test with two or more instances of the `.app` on the same Mac (`--world`, `--name <player>` and `--join <ip:port>` flags), and a headless `--lan-test <n>` that connects n bot clients that walk, mine and place for 60 s and reports server tick time and bandwidth. Server ticks must stay under 50 ms with 8 bots.
+- **Done when:** a second Mac on the same Wi-Fi finds the world in the Multiplayer list and joins, and two players can build, fight mobs, trade, travel to the Nether together and kill the dragon. One screenshot: two players side by side.
+
+### - [ ] M38 — Chat and commands
+- **Chat:** T opens chat, / opens it with a slash. Messages show as `<name> message`, up to 256 characters, the last 100 lines kept, recent lines fade after 10 s when chat is closed, scroll with the mouse wheel when open, ↑/↓ for your sent history. System lines for deaths (vanilla death messages, e.g. "Kenzo was slain by Zombie"), advancements, join/leave and command output. Chat Settings: visibility, opacity, text size, width, line spacing. Uses the M31 font.
+- **Allow Cheats:** a world option at creation (default off) and in Open to LAN. Without cheats, only harmless commands run: `/help`, `/list`, `/msg` (`/tell`, `/w`), `/me`, `/seed` (host only).
+- **Cheat commands (vanilla syntax, with Tab completion and red error messages):** `/gamemode`, `/give`, `/clear`, `/tp` (`/teleport`), `/time`, `/weather` (if weather exists), `/kill`, `/effect`, `/enchant` (uses the M31 rules), `/xp` (`/experience`), `/summon`, `/setblock`, `/fill`, `/gamerule` (at least `keepInventory`, `doDaylightCycle`, `doMobSpawning`, `mobGriefing`, `doFireTick`, `randomTickSpeed`, `naturalRegeneration`), `/spawnpoint`, `/setworldspawn`, `/locate` (structures and biomes), `/difficulty`, `/kick` (host only). Targets support `@p`, `@a`, `@s`, `@e[type=...]` and player names. Commands run on the server and mods can register more (M39).
+- Unit tests for parsing, selectors and each command's effect.
+- **Done when:** two LAN players can chat, deaths show in chat, a cheats-on world runs every listed command correctly, and a cheats-off world refuses cheat commands. One screenshot: chat with a few messages and a command result. **Stop: Checkpoint F.**
+
+#### Checkpoint G — Mods, farming and fishing
+
+### - [ ] M39 — Lua mods and Fullbright
+- **Mod folders:** `mods/<id>/` beside `saves/`, or a `.zip`. Each has `mod.ron` (id, name, version, authors, description, Rustcraft version, dependencies) and any of: `data/` (blocks, items, recipes, loot tables, creative tabs, mob drops in the same RON formats as `assets/data/`), `assets/` (a resource-pack layer for textures, models, sounds, lang and fonts) and `main.lua`. Mod content uses its own namespace (`<id>:ruby_block`).
+- **Lua API (`mlua`, Lua 5.4):** register blocks and items with callbacks (on use, on place, on break, on random tick), events (server tick, player join/leave, block break/place, entity damage/death, chat message, item crafted), register commands (M38) and key bindings (M35's Mods category), read and set blocks, spawn entities, give items, send chat, run timers, and a small client-side API for HUD text and render settings (brightness override). Documented in `docs/modding.md` with an example mod in `examples/mods/ruby/`.
+- **Sandbox:** no `os`, `io` or `require` outside the mod folder; an instruction-count limit per call so a broken mod can't freeze the game; Lua errors are caught, logged and shown in the Mods screen without crashing.
+- **Mods screen** (title and pause menu): list, enable/disable, load order, details and errors. Each world saves the list of mods it was played with and warns before opening with mods missing; blocks from a missing mod are kept as unknown blocks in the save, not deleted.
+- **Multiplayer:** server-side Lua runs on the host; joining clients must have the same mods (ids and versions). If not, they see which ones differ instead of joining.
+- **Fullbright:** shipped as a bundled Lua mod (`mods/fullbright/`, enabled by default) that registers a **Toggle Fullbright** key (default G, rebindable in Controls → Mods) and sets the brightness override so every light level renders as fully lit; it shows "Fullbright: ON/OFF" above the hotbar. It's client-side only and works on LAN.
+- **Done when:** the example ruby mod adds a block, an item, a recipe, a command and a block-break event; a broken mod shows its error without crashing; Fullbright toggles with G; and a client with a different mod list is refused with a clear message. One screenshot: a cave with Fullbright on.
+
+### - [ ] M40 — Farming, breeding and farmer villagers
+- **Random ticks:** vanilla's `randomTickSpeed` 3 (3 random blocks per 16³ section per tick), used by every crop.
+- **Hoes and farmland:** hoes till grass, dirt and dirt paths into farmland (coarse dirt → dirt, rooted dirt → dirt + hanging roots). Farmland is hydrated when water is within 4 blocks horizontally (same level or one above), dries back to dirt with no crop and no water, and is trampled by a player or mob landing on it from more than 0.5 blocks (chance grows with fall distance).
+- **Crops at vanilla growth rates:** wheat, carrots, potatoes, beetroot (age 0–7, beetroot 0–3), melon and pumpkin stems (fruit on an adjacent free dirt/grass/farmland block), sugar cane and cactus (grow to 3 tall), bamboo (to 12–16), sweet berry bushes, cocoa beans on jungle logs, nether wart on soul sand, kelp, saplings into trees, and mushrooms spreading. Crops need light level 9+ and grow faster on hydrated farmland and in neat rows (vanilla's growth formula). Vanilla drops (seeds, extra potatoes, poisonous potatoes, etc.) with Fortune.
+- **Bone meal** (from bones and composters): advances crops by 2–5 stages, grows saplings, grass and flowers, with green particles. **Composter** with vanilla compost chances, 7 levels, bone meal out.
+- **Breeding:** feed two adult animals their vanilla food to enter love mode for 30 s; they make a baby and can't breed again for 5 minutes. Babies are smaller, grow up in 20 minutes, and feeding them speeds that up by 10%. Foods: cows, sheep and mooshrooms wheat; pigs carrots, potatoes or beetroot; chickens seeds; rabbits dandelions, carrots or golden carrots; wolves (tamed) meat; cats raw cod or salmon; horses golden apples or golden carrots; bees flowers; foxes sweet berries. Animals follow a player holding their food. Breeding drops 1–7 XP.
+- **Farmer villagers** harvest fully grown crops in their village's farms, replant from their inventory, compost extra seeds at their composter, and throw bread/carrots/potatoes/beetroot to other villagers, who breed when they have enough food and free beds (vanilla rules).
+- Everything ticks on the server and syncs on LAN.
+- **Done when:** a hydrated wheat farm grows and replants, bone meal works, each listed animal breeds with its food and the baby grows up, and farmer villagers keep a village farm going. One screenshot: a wheat farm at different growth stages.
+
+### - [ ] M41 — Fishing
+- **Fishing rod:** crafted (3 sticks + 2 string), cast with right-click (bobber thrown with vanilla physics, floats and bobs in water), right-click again to reel in. Durability: 1 per catch, more for reeling in entities.
+- **Bite timing:** wait 5–30 s (100–600 ticks), minus 5 s per level of Lure; rain makes bites a little more frequent. Particles approach the bobber, then it dips with a splash sound; reel within about 1 s to catch.
+- **Loot (vanilla tables):** fish 85%, junk 10%, treasure 5% with no Luck of the Sea; each level of Luck of the Sea lowers junk by about 2% and raises treasure by about 2%. Fish: cod 60%, salmon 25%, pufferfish 13%, tropical fish 2%. Treasure (bows and fishing rods with enchantments, enchanted books, name tags, saddles, nautilus shells) only comes when the bobber is in **open water** (a 5×4×5 area of only water, air or lily pads); otherwise it's rerolled as junk. 1–6 XP per catch.
+- **Hooking entities** pulls mobs, animals and other players (on LAN) toward you. The line renders from the rod to the bobber in first and third person.
+- Fish items: raw and cooked cod and salmon, pufferfish (Poison, Hunger and Nausea when eaten), tropical fish. Luck of the Sea and Lure work from the enchanting table and anvil (M22 already lists them).
+- Advancements "Fishy Business" and "Tactical Fishing" (bucket a fish), if fish mobs exist.
+- **Done when:** fishing catches fish, junk and (in open water) treasure at the vanilla rates in a 1,000-catch simulation test, Lure speeds up bites, and two LAN players can fish side by side. One screenshot: casting into a lake.
+
+### - [ ] M42 — v1.2 performance and release
+- Profile with the 384-tall world, all dimensions, mods loaded and an 8-bot `--lan-test`, and fix hot spots.
+- Rebuild the `.app`, set its version to 1.2.0, tag `v1.2.0`.
+- **Done when:** 60+ FPS at render distance 9 in each dimension on the Mac mini (single player), server ticks under 50 ms with 8 LAN bots, and the new `.app` launches by double-click, opens v1.1 worlds, and hosts and joins LAN games. **Stop: Checkpoint G.**
+
 ## 8. Decisions log (from Kenzo)
 
 - Mobs: pig and zombie in v1.0; many more mobs in v1.1 (M20, M24, M25, M28).
@@ -505,3 +636,17 @@ Found in Kenzo's v1.1 playtest. Four sessions, one PR each, prompts in the plann
 - Reviews: checkpoints A–D instead of every milestone (see §7.2).
 - Added after grilling: accurate block shapes and gravity blocks (M14), a performance test harness (M14) with a gate on every later milestone, line-of-sight mob attacks (M20), height-accurate ore generation (M21), and exact modern sword/axe cooldowns, damage and critical hits (M18).
 - Player skin: a Steve-style 64×64 skin PNG that Kenzo drops into `assets/skins/`.
+
+## 10. v1.2 decisions (from Kenzo's grill-me answers)
+
+- v1.2 is mainly the v1.1 playtest bug fixes (M31–M34), plus options/keybinds, LAN, chat, mods, farming and fishing.
+- The protection bug: swords currently CAN take Protection and must not.
+- Mods: data mods plus Lua scripting (`mlua`), not Java mods. Fullbright ships as a bundled Lua mod with a G toggle key.
+- LAN multiplayer: the full game in every dimension, up to 8 players, via vanilla-style Open to LAN.
+- Chat with full vanilla-style commands, but only in worlds with Allow Cheats on; harmless commands always work.
+- World height extended to modern Y −64 to 319 (M34) so caves and ores copy modern generation; old worlds get new depth below Y 0.
+- Farming: every crop, bone meal and composters, animal breeding, and farmer villagers who harvest and replant.
+- Sugar cane follows the vanilla placement rule (no gravel).
+- The head-clipping bug is the inventory player picture.
+- Order: bug fixes first, then the client/server split and LAN before chat, mods, farming and fishing, so those are built multiplayer-ready.
+- At most one screenshot per milestone (usage cost); Kenzo does the visual checks by hand.
