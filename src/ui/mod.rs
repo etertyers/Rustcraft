@@ -69,6 +69,8 @@ pub struct DebugStats {
 
 /// Always-on HUD pieces.
 pub struct Hud {
+    /// Hide GUI (F1): no crosshair, hotbar, hearts or effects.
+    pub hidden: bool,
     /// Shown while the cursor is grabbed for play.
     pub crosshair: bool,
     /// The swing's recharge under the crosshair.
@@ -266,17 +268,23 @@ impl DebugUi {
         let mut pause = pause;
         let output = self.ctx.run_ui(input, |ui| {
             let full = ui.ctx().content_rect();
-            if hud.crosshair {
+            if hud.crosshair && !hud.hidden {
                 draw_crosshair(ui);
                 if let Some(indicator) = hud.attack {
                     gui::paint_attack_indicator(ui.painter(), full, indicator, textures);
                 }
             }
-            gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
-            if let Some(offhand) = &hud.offhand {
+            if !hud.hidden {
+                gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
+            }
+            if let Some(offhand) = &hud.offhand
+                && !hud.hidden
+            {
                 gui::paint_offhand(ui.painter(), full, offhand, textures);
             }
-            if let Some(survival) = &hud.survival {
+            if let Some(survival) = &hud.survival
+                && !hud.hidden
+            {
                 gui::paint_survival(ui.painter(), full, survival, textures);
             }
             if visible {
@@ -288,7 +296,7 @@ impl DebugUi {
             if hud.portal > 0.0 {
                 paint_portal(ui.ctx(), hud.portal);
             }
-            if !hud.effects.is_empty() {
+            if !hud.effects.is_empty() && !hud.hidden {
                 paint_effects(ui.painter(), full, &hud.effects, textures);
             }
             if let Some(message) = &hud.message {

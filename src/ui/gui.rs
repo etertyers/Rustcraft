@@ -313,8 +313,27 @@ fn resized(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
 /// Minecraft's "auto" GUI scale: the largest whole number of screen points
 /// per GUI pixel that leaves at least 320×240 GUI pixels.
 pub fn gui_scale(screen: Rect) -> f32 {
+    scale_for(
+        screen,
+        CHOSEN_SCALE.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
+/// The GUI Scale option: 0 for Auto.
+static CHOSEN_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_gui_scale(scale: u32) {
+    CHOSEN_SCALE.store(scale, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The largest scale that fits (Auto), or the chosen one if it fits too.
+fn scale_for(screen: Rect, chosen: u32) -> f32 {
     let fit = (screen.width() / 320.0).min(screen.height() / 240.0);
-    fit.floor().max(1.0)
+    let fit = fit.floor().max(1.0);
+    match chosen {
+        0 => fit,
+        n => (n as f32).min(fit),
+    }
 }
 
 /// Draws the `size` region of a 256×256 GUI sheet starting at `from`
@@ -724,5 +743,8 @@ mod tests {
         assert_eq!(gui_scale(screen(1280.0, 720.0)), 3.0);
         assert_eq!(gui_scale(screen(854.0, 480.0)), 2.0);
         assert_eq!(gui_scale(screen(300.0, 200.0)), 1.0);
+        // A chosen scale applies when it fits.
+        assert_eq!(scale_for(screen(1920.0, 1080.0), 2), 2.0);
+        assert_eq!(scale_for(screen(854.0, 480.0), 5), 2.0);
     }
 }

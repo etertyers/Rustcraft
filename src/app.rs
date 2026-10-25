@@ -179,6 +179,8 @@ pub struct App {
     bench: Option<Bench>,
     /// `--shot`: the scene being captured.
     shot: Option<ShotRun>,
+    /// Hide GUI (F1) is on.
+    hide_gui: bool,
 }
 
 /// How far `--shot` has got with its scene.
@@ -213,6 +215,7 @@ impl App {
             audio: None,
             res: None,
             pause: None,
+            hide_gui: false,
             crack_uvs: Vec::new(),
             effect_uvs: EffectUvs::default(),
             atlas: None,
@@ -309,6 +312,7 @@ impl App {
         // The bench measures how fast frames can go.
         renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
+        crate::ui::gui::set_gui_scale(self.options.gui_scale);
         self.debug_ui = Some(DebugUi::new(
             &window,
             look.atlas.image(),
@@ -332,6 +336,7 @@ impl App {
         self.renderer = Some(renderer);
         window.request_redraw();
         self.window = Some(window);
+        self.apply_fullscreen();
         Ok(())
     }
 
@@ -581,9 +586,16 @@ impl App {
         }
     }
 
-    /// A text box on the open screen has the keyboard: the anvil's name
-    /// box, or the creative inventory's search box on its Search tab.
+    /// A text box has the keyboard: the anvil's name box, the creative
+    /// inventory's search box on its Search tab, or a menu's text box.
     fn types_into_a_box(&self) -> bool {
+        if self
+            .debug_ui
+            .as_ref()
+            .is_some_and(|ui| ui.context().text_edit_focused())
+        {
+            return true;
+        }
         let book_search = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting))
             && self.game.as_ref().is_some_and(|g| g.recipe_book.open)
             && self
@@ -704,6 +716,13 @@ impl App {
         } else if self.types_into_a_box() && !is(Action::DebugOverlay) {
             // The anvil's name box or the creative search box has the
             // keyboard (E and the digits are letters).
+        } else if is(Action::Screenshot) && press {
+            self.take_screenshot();
+        } else if is(Action::Fullscreen) && press {
+            self.options.fullscreen = !self.options.fullscreen;
+            self.options_changed();
+        } else if is(Action::HideGui) && press && self.game.is_some() {
+            self.hide_gui = !self.hide_gui;
         } else if is(Action::Inventory)
             && press
             && self.game.is_some()
@@ -866,11 +885,56 @@ impl App {
         }
     }
 
+    /// F2: saves the next frame in `screenshots/` beside the saves, named
+    /// for when it was taken like vanilla's (in UTC).
+    fn take_screenshot(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let name = format!("{}.png", screenshot_stamp(std::time::SystemTime::now()));
+        let dir = level::saves_dir().with_file_name("screenshots");
+        renderer.capture_next_frame(dir.join(&name));
+        info!("saving screenshot {name}");
+        if let Some(game) = self.game.as_mut() {
+            game.message = Some((
+                format!("Saved screenshot as {name}"),
+                SCREENSHOT_MESSAGE_TICKS,
+            ));
+        }
+    }
+
+    /// Fullscreen (F11 or Video Settings), borderless on the window's
+    /// screen. `--bench` and `--shot` keep their window.
+    fn apply_fullscreen(&self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let wanted = self.options.fullscreen && self.bench.is_none() && self.shot.is_none();
+        if wanted != window.fullscreen().is_some() {
+            window.set_fullscreen(wanted.then_some(winit::window::Fullscreen::Borderless(None)));
+        }
+    }
+
+    /// When Max Framerate lets the next frame start, if it holds frames
+    /// back (never for `--bench` and `--shot`).
+    fn next_frame_at(&self) -> Option<Instant> {
+        let limit = self.options.max_framerate;
+        if limit >= crate::options::UNLIMITED_FRAMERATE
+            || self.bench.is_some()
+            || self.shot.is_some()
+        {
+            return None;
+        }
+        Some(self.last_frame + Duration::from_secs_f64(1.0 / f64::from(limit)))
+    }
+
     /// Applies settings changed on the Options screen and saves them.
     fn options_changed(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_vsync(self.options.vsync);
         }
+        crate::ui::gui::set_gui_scale(self.options.gui_scale);
+        self.apply_fullscreen();
         if self.options.resource_packs != self.applied_packs {
             self.apply_resource_packs();
         }
@@ -1287,7 +1351,11 @@ impl App {
                 );
             }
             renderer.set_entities(&mesh);
-            renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
+            if self.hide_gui {
+                renderer.set_hand(None, None);
+            } else {
+                renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
+            }
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();
             let eye = game.camera.position.as_dvec3();
@@ -1416,6 +1484,7 @@ impl App {
             dimension: game.dimension(),
         };
         let hud = Hud {
+            hidden: self.hide_gui,
             crosshair: self.stack.grabbed(),
             attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
@@ -1741,6 +1810,9 @@ impl ApplicationHandler for App {
             // new_events requests the redraw when the wait ends.
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + SKIPPED_FRAME_RETRY));
+        } else if let Some(at) = self.next_frame_at().filter(|&at| Instant::now() < at) {
+            // new_events requests the redraw when the wait ends.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
         } else if let Some(window) = &self.window {
             event_loop.set_control_flow(ControlFlow::Wait);
             window.request_redraw();
@@ -1760,6 +1832,33 @@ impl ApplicationHandler for App {
         self.game = None;
         self.window = None;
     }
+}
+
+/// How long "Saved screenshot as ..." shows.
+const SCREENSHOT_MESSAGE_TICKS: u32 = 60;
+
+/// Vanilla's screenshot name for a moment, `2026-10-25_16.25.42`.
+fn screenshot_stamp(at: std::time::SystemTime) -> String {
+    let secs = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}_{:02}.{:02}.{:02}",
+        rest / 3600,
+        rest / 60 % 60,
+        rest % 60
+    )
 }
 
 /// The Options screen open in the pause menu or on the title screen.
@@ -2059,6 +2158,16 @@ mod tests {
         app.on_scroll(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
             0.0, -90.0,
         )));
+    }
+
+    #[test]
+    fn screenshots_are_named_for_when_they_were_taken() {
+        let at = std::time::UNIX_EPOCH + Duration::from_secs(1_793_028_342);
+        assert_eq!(screenshot_stamp(at), "2026-10-26_15.25.42");
+        assert_eq!(
+            screenshot_stamp(std::time::UNIX_EPOCH),
+            "1970-01-01_00.00.00"
+        );
     }
 
     #[test]
