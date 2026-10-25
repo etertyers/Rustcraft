@@ -820,6 +820,36 @@ impl Terrain {
         }
     }
 
+    /// Gives a chunk saved before M34 (Y 0 to 255) the depth new chunks
+    /// have: everything below Y 0 as this world generates it now, and the
+    /// old bedrock floor at Y 0–4 replaced by what lies there now (modern
+    /// 1.18's upgrade of old worlds). Every block from Y 0 up stays.
+    pub fn deepen(&self, chunk: &mut Chunk) {
+        let fresh = self.generate(chunk.pos);
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in MIN_Y..0 {
+                    chunk.set(x, y, z, fresh.get(x, y, z));
+                    if y % 4 == 0 && x % 4 == 0 && z % 4 == 0 {
+                        let cave = Some(fresh.biome_at(x, y, z)).filter(|b| b.is_cave());
+                        chunk.set_cave_biome(x, y, z, cave);
+                    }
+                }
+                for y in 0..=BEDROCK_RAGGED {
+                    if chunk.get(x, y, z) == BEDROCK {
+                        chunk.set(x, y, z, fresh.get(x, y, z));
+                    }
+                }
+            }
+        }
+        for (at, entity) in fresh.block_entities() {
+            if at[1] < 0 {
+                chunk.set_block_entity(at, Some(entity.clone()));
+            }
+        }
+        chunk.shallow = false;
+    }
+
     /// Generates a chunk: terrain, caves, ores, underground features, trees
     /// and plants.
     pub fn generate(&self, pos: ChunkPos) -> Chunk {

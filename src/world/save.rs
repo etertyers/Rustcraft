@@ -601,6 +601,85 @@ mod tests {
         assert!(chunk.cave_biomes().is_none());
     }
 
+    /// The M34 migration: a version 3 chunk (Y 0 to 255) keeps every block
+    /// and chest at its height, gets the Overworld's new depth under it in
+    /// place of its bedrock floor, and saves as version 4.
+    #[test]
+    fn version_3_chunks_keep_their_blocks_and_get_new_depth() {
+        #[derive(Serialize)]
+        struct V3 {
+            version: u32,
+            x: i32,
+            z: i32,
+            sections: Vec<SectionData>,
+            biomes: Vec<u8>,
+            block_entities: Vec<([u8; 3], BlockEntity)>,
+            post_process: Vec<[u8; 3]>,
+            cave_biomes: Vec<u8>,
+        }
+        let (stone, bedrock, chest) = (
+            BlockState::of(blocks::STONE),
+            BlockState::of(blocks::BEDROCK),
+            BlockState::of(blocks::CHEST),
+        );
+        // Section 0 (Y 0–15): bedrock at the bottom, stone above; a chest
+        // at Y 70 in section 4.
+        let mut bottom = vec![1u16; SECTION_VOLUME];
+        bottom[..256].fill(0);
+        let mut upper = vec![0u16; SECTION_VOLUME];
+        upper[(6 * 16 + 2) * 16 + 2] = 1;
+        let old = V3 {
+            version: 3,
+            x: 2,
+            z: 3,
+            sections: vec![
+                SectionData {
+                    index: 0,
+                    palette: vec![bedrock, stone],
+                    blocks: bottom,
+                },
+                SectionData {
+                    index: 4,
+                    palette: vec![BlockState::AIR, chest],
+                    blocks: upper,
+                },
+            ],
+            biomes: vec![Biome::Plains.id(); CHUNK_SIZE * CHUNK_SIZE],
+            block_entities: vec![([2, 70, 2], BlockEntity::Chest(vec![None; 27]))],
+            post_process: vec![[1, 20, 1]],
+            cave_biomes: Vec::new(),
+        };
+        let bytes = bincode::serde::encode_to_vec(&old, bincode_config()).unwrap();
+        let mut chunk = decode_chunk(&lz4_flex::compress_prepend_size(&bytes)).unwrap();
+        assert!(chunk.shallow);
+        assert_eq!(chunk.get(5, 0, 5), bedrock);
+        assert_eq!(chunk.get(5, 10, 5), stone);
+        assert_eq!(chunk.get(2, 70, 2), chest);
+        assert!(chunk.block_entity([2, 70, 2]).is_some());
+        assert_eq!(chunk.post_process, vec![[1, 20, 1]]);
+        assert!(chunk.get(5, -10, 5).is_air(), "nothing below 0 yet");
+
+        let terrain = crate::world::worldgen::terrain::Terrain::new(9);
+        terrain.deepen(&mut chunk);
+        assert!(!chunk.shallow);
+        assert_eq!(chunk.get(2, 70, 2), chest);
+        assert_eq!(chunk.get(5, 10, 5), stone);
+        assert_eq!(chunk.get(5, crate::config::MIN_Y, 5), bedrock);
+        assert!(
+            (0..16).all(|x| chunk.get(x, 0, 7) != bedrock),
+            "the old floor is gone"
+        );
+        let deep = (crate::config::MIN_Y + 5..0)
+            .filter(|&y| chunk.get(8, y, 8).is(blocks::DEEPSLATE))
+            .count();
+        assert!(deep > 20, "{deep} deepslate under the old floor");
+
+        // Saved again, it's a version 4 chunk that reads back the same.
+        let again = decode_chunk(&encode_chunk(&chunk)).unwrap();
+        assert!(!again.shallow);
+        assert_same_chunk(&again, &chunk);
+    }
+
     #[test]
     fn chests_round_trip() {
         let mut chunk = Chunk::new(ChunkPos::new(1, 1));

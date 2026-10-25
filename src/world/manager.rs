@@ -69,7 +69,15 @@ impl ChunkSource {
     /// The saved chunk if there is one, else a newly generated one.
     fn load_or_generate(&self, store: Option<&RegionStore>, pos: ChunkPos) -> Chunk {
         match store.map(|store| store.load(pos)) {
-            Some(Ok(Some(chunk))) => chunk,
+            Some(Ok(Some(mut chunk))) => {
+                // A chunk saved before M34 gets the new depth under it.
+                if chunk.shallow
+                    && let ChunkSource::Terrain(terrain) = self
+                {
+                    terrain.deepen(&mut chunk);
+                }
+                chunk
+            }
             Some(Err(err)) => {
                 error!("can't load chunk {pos:?}, generating it instead: {err}");
                 self.generate(pos)
