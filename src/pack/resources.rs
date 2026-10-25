@@ -248,6 +248,15 @@ impl Resources {
             .find_map(|layer| self.texture_in(layer, name))
     }
 
+    /// The first of `names` found, looking through the layers from the top
+    /// and trying every name in each: a texture renamed between versions
+    /// (`models/armor/iron_layer_1` and `entity/equipment/humanoid/iron`)
+    /// comes from the highest layer that has it under either name.
+    pub fn texture_named(&self, names: &[&str]) -> Option<Texture> {
+        self.priority()
+            .find_map(|layer| names.iter().find_map(|name| self.texture_in(layer, name)))
+    }
+
     /// A texture from one layer only (`vanilla_layer` is the fallback).
     pub fn texture_in(&self, layer: usize, name: &str) -> Option<Texture> {
         let pack = self.pack_at(layer)?;

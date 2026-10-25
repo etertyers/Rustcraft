@@ -52,6 +52,7 @@ impl Game {
                 }
             ],
             name: String::new(),
+            named: None,
             choice: 0,
         }));
         self.release_input();
@@ -100,6 +101,31 @@ impl Game {
     /// Whether levels and lapis cost nothing (creative).
     fn bench_is_free(&self) -> bool {
         self.mode.has_every_item()
+    }
+
+    /// Fills the anvil's name box with the first item's name when that
+    /// item changes, and empties it when the slot does (vanilla's
+    /// `AnvilMenu.slotsChanged`).
+    pub(super) fn sync_anvil_name(&mut self) {
+        let items = self.items.clone();
+        if let Some(Container::Bench(bench)) = &mut self.container
+            && bench.kind == BenchKind::Anvil
+        {
+            let left = bench.slots[0].clone();
+            let same =
+                |a: &ItemStack, b: &ItemStack| a.id == b.id && a.custom_name() == b.custom_name();
+            match (&left, &bench.named) {
+                (Some(now), Some(was)) if same(now, was) => {}
+                (Some(now), _) => {
+                    bench.name = items.name(now);
+                    bench.named = left;
+                }
+                (None, _) => {
+                    bench.name.clear();
+                    bench.named = None;
+                }
+            }
+        }
     }
 
     /// Types in the anvil's name box.
@@ -357,6 +383,7 @@ impl Game {
                 }
             }
             bench.name.clear();
+            bench.named = None;
         }
         if !free {
             self.stats.experience.spend_levels(cost);
@@ -616,6 +643,33 @@ mod tests {
         assert_eq!(game.stats.experience.level, before - 4);
         assert_eq!(game.slot_stack(SlotRef::Grid(0)), None);
         assert_eq!(game.slot_stack(SlotRef::Grid(1)), None);
+    }
+
+    #[test]
+    fn the_name_box_fills_from_the_item_and_the_cost_follows_the_typing() {
+        let mut game = flat_game(GameMode::Survival);
+        let anvil = IVec3::new(4, 64, 3);
+        game.chunks
+            .set_blocks(&[(anvil, BlockState::of(blocks::ANVIL))]);
+        game.open_bench(BenchKind::Anvil, anvil);
+        game.cursor = Some(ItemStack::new(items::DIAMOND_PICKAXE, 1));
+        game.click_slot(SlotRef::Grid(0), Click::Left);
+        let name = game.bench().unwrap().name.clone();
+        assert_eq!(
+            name,
+            game.items.name(&ItemStack::new(items::DIAMOND_PICKAXE, 1))
+        );
+        // Its own name renames nothing.
+        assert!(game.slot_stack(SlotRef::Result).is_none());
+        game.set_anvil_name("Digger".into());
+        assert_eq!(
+            game.slot_stack(SlotRef::Result).unwrap().custom_name(),
+            Some("Digger")
+        );
+        assert!(matches!(game.anvil_outcome(), Some(Ok(r)) if r.cost == 1));
+        // Taking the pickaxe out empties the box.
+        game.click_slot(SlotRef::Grid(0), Click::Left);
+        assert_eq!(game.bench().unwrap().name, "");
     }
 
     #[test]

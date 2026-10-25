@@ -463,6 +463,16 @@ pub static SHOTS: &[Shot] = &[
         stage: creative_tabs,
     },
     Shot {
+        name: "m31-armor",
+        about: "the survival inventory with armor on the player (an enchanted diamond helmet, an iron chestplate, leather leggings, golden boots), all text in the Minecraft font, and a tooltip with section-sign colors",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: inventory_with_armor,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -777,6 +787,44 @@ fn inventory_with_book(game: &mut Game) {
     game.stage_ui(ShotUi {
         screen: ShotScreen::Inventory,
         hover: Some(SlotRef::Inventory(10)),
+    });
+}
+
+/// The inventory with armor worn and a renamed sword hovered.
+fn inventory_with_armor(game: &mut Game) {
+    use crate::{
+        game::{ShotScreen, ShotUi},
+        inventory::{
+            enchant::Enchantment,
+            items,
+            player::{ARMOR_CHEST, ARMOR_FEET, ARMOR_HEAD, ARMOR_LEGS},
+            slots::SlotRef,
+            stack::ItemStack,
+        },
+    };
+    game.run_ticks(2);
+    let mut helmet = ItemStack::new(items::DIAMOND_HELMET, 1);
+    helmet.enchant(Enchantment::Protection, 4);
+    let mut sword = ItemStack::new(items::IRON_SWORD, 1);
+    sword.set_custom_name(Some("§6Golden §lEdge".to_owned()));
+    sword.enchant(Enchantment::Sharpness, 3);
+    for (slot, stack) in [
+        (ARMOR_HEAD, helmet),
+        (ARMOR_CHEST, ItemStack::new(items::IRON_CHESTPLATE, 1)),
+        (ARMOR_LEGS, ItemStack::new(items::LEATHER_LEGGINGS, 1)),
+        (ARMOR_FEET, ItemStack::new(items::GOLDEN_BOOTS, 1)),
+        (0, sword),
+        (1, ItemStack::new(items::OAK_DOOR, 64)),
+        (2, ItemStack::new(items::OAK_SIGN, 16)),
+        (9, ItemStack::new(items::BUCKET, 16)),
+    ] {
+        game.inventory.set(slot, Some(stack));
+    }
+    game.inventory.selected = 0;
+    game.recipe_book.open = false;
+    game.stage_ui(ShotUi {
+        screen: ShotScreen::Inventory,
+        hover: Some(SlotRef::Inventory(0)),
     });
 }
 

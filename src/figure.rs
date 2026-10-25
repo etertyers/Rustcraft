@@ -17,7 +17,7 @@ use crate::{
         hand::{self, HandInput, HandItem},
         held::{HeldCache, display_matrix},
         icons::ItemIcons,
-        player::{add_player, body_frame, hand_mount, model_matrix, rig},
+        player::{WornArmor, add_armor, add_player, body_frame, hand_mount, model_matrix, rig},
     },
     world::mesh::Mesh,
 };
@@ -39,6 +39,10 @@ pub struct PlayerMeshes {
     pub body: Mesh,
     /// The elytra on its back, textured with its own skin (third person).
     pub elytra: Mesh,
+    /// The armor it wears, textured with the armor sheet (third person).
+    pub armor: Mesh,
+    /// The enchanted pieces of it again, for the inventory's glint.
+    pub armor_glint: Mesh,
     /// What the model holds, textured with the atlas (third person).
     pub items: Mesh,
     /// The first-person arm, textured with the skin, in camera space.
@@ -175,6 +179,29 @@ pub fn add_body(
     {
         crate::render::player::add_elytra(&mut meshes.elytra, pose, feet, yaw, light);
     }
+    let worn = worn_armor(game);
+    let rows = crate::look::ARMOR_MATERIALS.len() * 2;
+    add_armor(
+        &mut meshes.armor,
+        pose,
+        fig.slim,
+        feet,
+        yaw,
+        &worn,
+        rows,
+        light,
+    );
+    let glinting: Vec<_> = worn.iter().copied().filter(|piece| piece.glint).collect();
+    add_armor(
+        &mut meshes.armor_glint,
+        pose,
+        fig.slim,
+        feet,
+        yaw,
+        &glinting,
+        rows,
+        light,
+    );
     let frame = model_matrix(&body_frame(pose, yaw), feet);
     let rig = rig(pose, fig.slim);
     for hand in [Hand::Main, Hand::Off] {
@@ -189,6 +216,81 @@ pub fn add_body(
         let light = crate::render::hand::glinted(light, stack.is_enchanted());
         geometry.add_to(&mut meshes.items, &matrix, [1.0; 3], light);
     }
+}
+
+/// Undyed leather armor's color (vanilla's `DyedItemColor.LEATHER_COLOR`).
+pub const LEATHER_COLOR: u32 = 0xA0_6540;
+
+/// The armor the player wears, as drawn: leather twice (tinted, then its
+/// untinted overlay), the elytra not at all (it has a model of its own).
+pub fn worn_armor(game: &Game) -> Vec<WornArmor> {
+    use crate::inventory::armor::{ArmorSlot, armor_of};
+    let mut worn = Vec::new();
+    for slot in [
+        ArmorSlot::Feet,
+        ArmorSlot::Legs,
+        ArmorSlot::Chest,
+        ArmorSlot::Head,
+    ] {
+        let Some(stack) = game.inventory.slot(slot.index()) else {
+            continue;
+        };
+        let name = stack.id.name();
+        let Some(material) = armor_material(name) else {
+            continue;
+        };
+        if armor_of(name).is_some_and(|armor| armor.glider) {
+            continue;
+        }
+        let layer = usize::from(slot == ArmorSlot::Legs);
+        let glint = stack.is_enchanted();
+        let row = |material| crate::look::armor_row(material, layer);
+        if material == "leather" {
+            let c = LEATHER_COLOR;
+            let tint = [(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF].map(|v| v as f32 / 255.0);
+            worn.extend(row("leather").map(|row| WornArmor {
+                slot,
+                row,
+                tint,
+                glint,
+            }));
+            worn.extend(row("leather_overlay").map(|row| WornArmor {
+                slot,
+                row,
+                tint: [1.0; 3],
+                glint: false,
+            }));
+        } else {
+            worn.extend(row(material).map(|row| WornArmor {
+                slot,
+                row,
+                tint: [1.0; 3],
+                glint,
+            }));
+        }
+    }
+    worn
+}
+
+/// The armor sheet's material for a piece of armor called `name`.
+pub fn armor_material(name: &str) -> Option<&'static str> {
+    if name == "turtle_helmet" {
+        return Some("turtle_scute");
+    }
+    let (prefix, piece) = name.rsplit_once('_')?;
+    if !matches!(piece, "helmet" | "chestplate" | "leggings" | "boots") {
+        return None;
+    }
+    Some(match prefix {
+        "leather" => "leather",
+        "chainmail" => "chainmail",
+        "iron" => "iron",
+        "golden" => "gold",
+        "diamond" => "diamond",
+        "netherite" => "netherite",
+        "copper" => "copper",
+        _ => return None,
+    })
 }
 
 /// Adds what mobs hold in their main hands to `mesh` (textured with the
@@ -573,5 +675,33 @@ mod tests {
             |_| (15, 0),
         );
         assert!(!mesh.is_empty());
+    }
+
+    #[test]
+    fn worn_armor_picks_its_rows_tints_leather_and_glints_when_enchanted() {
+        use crate::inventory::{
+            armor::ArmorSlot,
+            enchant::Enchantment,
+            player::{ARMOR_CHEST, ARMOR_HEAD, ARMOR_LEGS},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        let mut cap = ItemStack::new(items::LEATHER_HELMET, 1);
+        cap.enchant(Enchantment::Protection, 1);
+        game.inventory.set(ARMOR_HEAD, Some(cap));
+        game.inventory
+            .set(ARMOR_LEGS, Some(ItemStack::new(items::IRON_LEGGINGS, 1)));
+        game.inventory
+            .set(ARMOR_CHEST, Some(ItemStack::new(items::ELYTRA, 1)));
+        let worn = worn_armor(&game);
+        assert_eq!(worn.len(), 3, "{worn:?}");
+        let legs = worn.iter().find(|w| w.slot == ArmorSlot::Legs).unwrap();
+        assert_eq!(Some(legs.row), crate::look::armor_row("iron", 1));
+        let caps: Vec<_> = worn.iter().filter(|w| w.slot == ArmorSlot::Head).collect();
+        assert_eq!(caps[0].tint, [160.0 / 255.0, 101.0 / 255.0, 64.0 / 255.0]);
+        assert!(caps[0].glint);
+        assert_eq!(caps[1].tint, [1.0; 3], "the overlay isn't dyed");
+        assert_eq!(armor_material("golden_boots"), Some("gold"));
+        assert_eq!(armor_material("turtle_helmet"), Some("turtle_scute"));
+        assert_eq!(armor_material("iron_sword"), None);
     }
 }

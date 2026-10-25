@@ -311,7 +311,7 @@ impl Menu {
 
 fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(16.0);
-    ui.label(RichText::new(text).size(28.0).color(Color32::WHITE));
+    ui.label(RichText::new(text).size(32.0).color(Color32::WHITE));
     ui.add_space(16.0);
 }
 

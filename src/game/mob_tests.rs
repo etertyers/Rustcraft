@@ -60,11 +60,22 @@ fn a_zombie_in_the_open_hurts_the_player_but_a_barrier_or_fence_stops_it() {
     run(&mut open, 60);
     assert!(open.stats.health < 20.0, "bitten: {}", open.stats.health);
 
-    // The same zombie with an obsidian wall between, as close as can be.
+    // The same zombie with an obsidian wall between, as close as can be,
+    // boxed in on its other sides so it can't path around.
     let mut walled = night_game(GameMode::Survival);
     let wall: Vec<_> = (63..68)
         .flat_map(|y| {
-            (-2..=2).map(move |z| (IVec3::new(1, y, z), BlockState::of(blocks::OBSIDIAN)))
+            [
+                (1, -1),
+                (1, 0),
+                (1, 1),
+                (2, -1),
+                (2, 1),
+                (3, -1),
+                (3, 0),
+                (3, 1),
+            ]
+            .map(|(x, z)| (IVec3::new(x, y, z), BlockState::of(blocks::OBSIDIAN)))
         })
         .collect();
     walled.set_blocks(&wall);

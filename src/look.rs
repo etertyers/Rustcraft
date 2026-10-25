@@ -40,6 +40,71 @@ pub const CRYSTAL_TEXTURE: &str = "entity/endercrystal/endercrystal";
 /// The elytra's, after the crystal's.
 pub const ELYTRA_TEXTURE: &str = "entity/elytra";
 
+/// The armor materials in the armor sheet, two rows each (the outer layer,
+/// then the leggings' inner one): (26.x name, older `models/armor` name).
+pub const ARMOR_MATERIALS: [(&str, &str); 9] = [
+    ("leather", "leather"),
+    ("leather_overlay", "leather"),
+    ("chainmail", "chainmail"),
+    ("iron", "iron"),
+    ("gold", "gold"),
+    ("diamond", "diamond"),
+    ("netherite", "netherite"),
+    ("turtle_scute", "turtle"),
+    ("copper", "copper"),
+];
+
+/// The armor sheet's row for `material`'s layer (0 outer, 1 inner).
+pub fn armor_row(material: &str, layer: usize) -> Option<usize> {
+    let index = ARMOR_MATERIALS.iter().position(|(m, _)| *m == material)?;
+    Some(index * 2 + layer)
+}
+
+/// Every armor layer texture stacked into one picture, a row of 64 × 32
+/// (or the packs' larger size) for each material's layer in
+/// `ARMOR_MATERIALS` order; a layer no pack has is left clear.
+pub fn armor_sheet(res: &Resources) -> RgbaImage {
+    let layers: Vec<Option<RgbaImage>> = ARMOR_MATERIALS
+        .iter()
+        .flat_map(|&(new, old)| {
+            let overlay = new.strip_suffix("_overlay").is_some();
+            [("humanoid", 1), ("humanoid_leggings", 2)].map(|(dir, n)| {
+                let old = if overlay {
+                    format!("models/armor/{old}_layer_{n}_overlay")
+                } else {
+                    format!("models/armor/{old}_layer_{n}")
+                };
+                let new = format!("entity/equipment/{dir}/{new}");
+                res.texture_named(&[&new, &old]).map(|t| t.first_frame())
+            })
+        })
+        .collect();
+    let width = layers
+        .iter()
+        .flatten()
+        .map(RgbaImage::width)
+        .max()
+        .unwrap_or(64);
+    let row = width / 2;
+    let mut sheet = RgbaImage::new(width, row * layers.len() as u32);
+    for (i, layer) in layers.iter().enumerate() {
+        if let Some(image) = layer {
+            let image =
+                image::imageops::resize(image, width, row, image::imageops::FilterType::Nearest);
+            image::imageops::replace(&mut sheet, &image, 0, i64::from(row) * i as i64);
+        }
+    }
+    sheet
+}
+
+/// The skin, armor sheet and elytra, for the figure in the inventory.
+#[derive(Clone, Copy)]
+pub struct FigureImages<'a> {
+    pub skin: &'a RgbaImage,
+    pub armor: &'a RgbaImage,
+    pub elytra: &'a RgbaImage,
+}
+
 pub struct Look {
     pub res: Resources,
     pub atlas: Atlas,
@@ -48,8 +113,9 @@ pub struct Look {
     /// Item model sprites and display transforms (for the held item, M16).
     pub item_models: Arc<ItemModels>,
     pub sky: SkyImages,
-    /// One per mob kind, in registry order, then the arrow's, then the
-    /// player's skin.
+    /// One per mob kind, in registry order, then the arrow's, the cart's,
+    /// the dragon's, the crystal's, the elytra's, the armor sheet and last
+    /// the player's skin.
     pub mob_textures: Vec<RgbaImage>,
     /// Whether the skin has slim (3 pixel) arms.
     pub skin_slim: bool,
@@ -74,6 +140,21 @@ pub fn open_packs(dir: &Path, ids: &[String]) -> Vec<Pack> {
 }
 
 impl Look {
+    /// The pictures the player's figure in the inventory is drawn with.
+    pub fn figure(&self) -> FigureImages<'_> {
+        let n = self.mob_textures.len();
+        FigureImages {
+            skin: self.skin(),
+            armor: self.armor_sheet(),
+            elytra: &self.mob_textures[n - 3],
+        }
+    }
+
+    /// Every armor layer, the mob texture before the skin.
+    pub fn armor_sheet(&self) -> &RgbaImage {
+        &self.mob_textures[self.mob_textures.len() - 2]
+    }
+
     /// The player's skin, the last of the mob textures.
     pub fn skin(&self) -> &RgbaImage {
         self.mob_textures.last().expect("the skin is loaded last")
@@ -170,6 +251,7 @@ impl Look {
             )
             .map(|(name, size)| mob_image(&res, name, size))
             .collect();
+        mob_textures.push(armor_sheet(&res));
         mob_textures.push(skin);
         info!(
             "resources: {} over the defaults, {} blocks re-modeled, built in {} ms",
@@ -405,8 +487,18 @@ mod tests {
         assert_eq!(look.atlas.tile_size(), 16);
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());
-        // The mobs, then the arrow, cart, dragon, crystal and elytra, and the skin.
-        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 6);
+        // The mobs, then the arrow, cart, dragon, crystal, elytra, armor and skin.
+        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 7);
+        // Kenzo's 1.12 armor layers fill the sheet's rows.
+        let sheet = look.armor_sheet();
+        assert_eq!(sheet.height(), sheet.width() / 2 * 18);
+        let row = sheet.width() / 2;
+        let iron = armor_row("iron", 0).unwrap() as u32;
+        let opaque = (0..row)
+            .flat_map(|y| (0..sheet.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| sheet.get_pixel(x, iron * row + y)[3] > 0)
+            .count();
+        assert!(opaque > 100, "iron's outer layer is there: {opaque}");
         assert!(look.atlas.has("block/grass_block_top"));
         assert!(look.atlas.has("block/destroy_stage_9"));
         // Concrete has no texture without a pack.

@@ -98,7 +98,8 @@ pub fn repairs(tool: ItemId, material: ItemId) -> bool {
     }
 }
 
-/// The anvil's work on `left` and `right` with `name` typed in. In
+/// The anvil's work on `left` and `right` with `name` typed in (the
+/// item's own name, or a blank box, renames nothing). In
 /// creative mode (`free`) nothing is too expensive.
 pub fn combine(
     items: &Items,
@@ -169,7 +170,7 @@ pub fn combine(
                 } else {
                     from_right.max(on_left)
                 };
-                let mut fits = free || left_gear == Gear::Book || enchantment.fits(left_gear);
+                let mut fits = enchantment.fits(left_gear);
                 for &(other, _) in &enchants {
                     if other != enchantment && enchantment.conflicts_with(other) {
                         fits = false;
@@ -209,7 +210,7 @@ pub fn combine(
             cost += 1;
             result.set_custom_name(None);
         }
-    } else if left.custom_name() != Some(name) {
+    } else if name != items.name(left) {
         rename_only = 1;
         cost += 1;
         result.set_custom_name(Some(name.to_owned()));
@@ -462,6 +463,86 @@ mod tests {
         let planks = ItemStack::new(items::OAK_PLANKS, 4);
         assert_eq!(
             combine(&items, &planks, None, "", false),
+            Err(Refusal::Nothing)
+        );
+    }
+
+    fn sword() -> ItemStack {
+        ItemStack::new(items::DIAMOND_SWORD, 1)
+    }
+
+    #[test]
+    fn a_sword_never_takes_protection_even_in_creative() {
+        let items = items();
+        for free in [false, true] {
+            for e in [
+                Enchantment::Protection,
+                Enchantment::FireProtection,
+                Enchantment::Efficiency,
+                Enchantment::Power,
+                Enchantment::Thorns,
+            ] {
+                assert_eq!(
+                    combine(&items, &sword(), Some(&book(&[(e, 1)])), "", free),
+                    Err(Refusal::Nothing),
+                    "{e:?} (creative: {free})"
+                );
+            }
+        }
+        // A book with Protection and Sharpness puts only Sharpness on.
+        let made = combine(
+            &items,
+            &sword(),
+            Some(&book(&[
+                (Enchantment::Protection, 4),
+                (Enchantment::Sharpness, 2),
+            ])),
+            "",
+            true,
+        )
+        .unwrap();
+        assert_eq!(made.output.enchantments(), &[(Enchantment::Sharpness, 2)]);
+    }
+
+    #[test]
+    fn exclusive_enchantments_are_refused_on_the_anvil() {
+        let items = items();
+        let mut sharp = sword();
+        sharp.enchant(Enchantment::Sharpness, 3);
+        assert_eq!(
+            combine(
+                &items,
+                &sharp,
+                Some(&book(&[(Enchantment::Smite, 1)])),
+                "",
+                true
+            ),
+            Err(Refusal::Nothing)
+        );
+        let mut chest = ItemStack::new(items::IRON_CHESTPLATE, 1);
+        chest.enchant(Enchantment::Protection, 2);
+        for e in [
+            Enchantment::FireProtection,
+            Enchantment::BlastProtection,
+            Enchantment::ProjectileProtection,
+        ] {
+            assert_eq!(
+                combine(&items, &chest, Some(&book(&[(e, 1)])), "", false),
+                Err(Refusal::Nothing),
+                "{e:?}"
+            );
+        }
+        // Item + item: a sword with Fire Aspect onto a sword with Sharpness
+        // merges; the same two pieces of armor with different protections
+        // keep only the left one's.
+        let mut fiery = sword();
+        fiery.enchant(Enchantment::FireAspect, 1);
+        let made = combine(&items, &sharp, Some(&fiery), "", false).unwrap();
+        assert_eq!(made.output.enchantments().len(), 2);
+        let mut fire = ItemStack::new(items::IRON_CHESTPLATE, 1);
+        fire.enchant(Enchantment::FireProtection, 1);
+        assert_eq!(
+            combine(&items, &chest, Some(&fire), "", false),
             Err(Refusal::Nothing)
         );
     }

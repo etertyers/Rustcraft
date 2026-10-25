@@ -479,6 +479,106 @@ pub fn add_player(
     }
 }
 
+/// A worn piece of armor as drawn: where it's worn, its row in the armor
+/// sheet (`look::armor_row`), its tint (leather's dye) and whether it glints.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WornArmor {
+    pub slot: crate::inventory::armor::ArmorSlot,
+    pub row: usize,
+    pub tint: [f32; 3],
+    pub glint: bool,
+}
+
+/// The armor layers' growth over the limbs, in pixels (vanilla's
+/// `OUTER_ARMOR_DEFORMATION` and `INNER_ARMOR_DEFORMATION`).
+const OUTER_ARMOR_GROW: f32 = 1.0;
+const INNER_ARMOR_GROW: f32 = 0.5;
+
+/// Adds `worn` armor over the model in `pose` (modern
+/// `HumanoidArmorLayer`): the helmet on the head and hat, the chestplate on
+/// the body and arms, the boots on the legs, all from a 64 × 32 outer
+/// layer, and the leggings on the body and legs from the inner layer. The
+/// armor sheet has `rows` such layers stacked.
+#[allow(clippy::too_many_arguments)]
+pub fn add_armor(
+    mesh: &mut Mesh,
+    pose: &PlayerPose,
+    slim: bool,
+    feet: Vec3,
+    yaw: f32,
+    worn: &[WornArmor],
+    rows: usize,
+    light: (u8, u8),
+) {
+    use crate::inventory::armor::ArmorSlot;
+    let rig = rig(pose, slim);
+    let frame = body_frame(pose, yaw);
+    let size = (64.0, 32.0 * rows as f32);
+    for piece in worn {
+        let v = 32.0 * piece.row as f32;
+        let b = |uv: (f32, f32), from: (f32, f32, f32), size: (f32, f32, f32)| PartBox {
+            uv: (uv.0, uv.1 + v),
+            from,
+            size,
+        };
+        let limb_box = |limb: Limb| match limb {
+            Limb::Head => b((0.0, 0.0), (-4.0, -8.0, -4.0), (8.0, 8.0, 8.0)),
+            Limb::Body => b((16.0, 16.0), (-4.0, 0.0, -2.0), (8.0, 12.0, 4.0)),
+            Limb::RightArm => b((40.0, 16.0), (-3.0, -2.0, -2.0), (4.0, 12.0, 4.0)),
+            Limb::LeftArm => b((40.0, 16.0), (-1.0, -2.0, -2.0), (4.0, 12.0, 4.0)),
+            Limb::RightLeg | Limb::LeftLeg => b((0.0, 16.0), (-2.0, 0.0, -2.0), (4.0, 12.0, 4.0)),
+        };
+        let grow = if piece.slot == ArmorSlot::Legs {
+            INNER_ARMOR_GROW
+        } else {
+            OUTER_ARMOR_GROW
+        };
+        let mut parts: Vec<(Limb, PartBox, f32)> = match piece.slot {
+            ArmorSlot::Head => vec![(Limb::Head, limb_box(Limb::Head), grow)],
+            ArmorSlot::Chest => [Limb::Body, Limb::RightArm, Limb::LeftArm]
+                .map(|limb| (limb, limb_box(limb), grow))
+                .to_vec(),
+            ArmorSlot::Legs => [Limb::Body, Limb::RightLeg, Limb::LeftLeg]
+                .map(|limb| (limb, limb_box(limb), grow))
+                .to_vec(),
+            ArmorSlot::Feet => [Limb::RightLeg, Limb::LeftLeg]
+                .map(|limb| (limb, limb_box(limb), grow))
+                .to_vec(),
+        };
+        if piece.slot == ArmorSlot::Head {
+            // The helmet's hat part, grown half a pixel more.
+            let hat = b((32.0, 0.0), (-4.0, -8.0, -4.0), (8.0, 8.0, 8.0));
+            parts.push((Limb::Head, hat, grow + HAT_GROW));
+        }
+        let light = super::hand::glinted(light, piece.glint);
+        let light = [light.0 as f32, light.1 as f32];
+        for (limb, part, grow) in parts {
+            let limb_pose = rig.get(limb);
+            let rotation = Mat3::from_quat(Quat::from_euler(
+                glam::EulerRot::ZYX,
+                limb_pose.rot.z,
+                limb_pose.rot.y,
+                limb_pose.rot.x,
+            ));
+            add_box(
+                mesh,
+                size,
+                &part,
+                BoxStyle {
+                    mirror: matches!(limb, Limb::LeftArm | Limb::LeftLeg),
+                    grow,
+                },
+                |corner| {
+                    let at = limb_pose.pos + rotation * corner;
+                    model_to_world(&frame, feet, at).to_array()
+                },
+                piece.tint,
+                light,
+            );
+        }
+    }
+}
+
 /// Adds the elytra on the player's back, folded at rest and spread out
 /// while gliding (modern `ElytraModel`; 64 × 32 skin), turned and tipped
 /// with the body.
@@ -999,6 +1099,51 @@ mod tests {
             let skin = prepare_skin(image);
             assert_eq!(skin.dimensions(), (64, 64), "{name}");
             assert_eq!(skin.get_pixel(10, 10).0[3], 255, "{name}: face is opaque");
+        }
+    }
+
+    #[test]
+    fn armor_covers_its_limbs_a_little_larger_than_the_skin() {
+        use crate::inventory::armor::ArmorSlot;
+        let pose = PlayerPose::default();
+        let piece = |slot, row| WornArmor {
+            slot,
+            row,
+            tint: [1.0; 3],
+            glint: false,
+        };
+        let mut body = Mesh::default();
+        add_player(&mut body, &pose, false, Vec3::ZERO, 0.0, [1.0; 3], (15, 0));
+        let mut armor = Mesh::default();
+        let worn = [
+            piece(ArmorSlot::Head, 6),
+            piece(ArmorSlot::Chest, 6),
+            piece(ArmorSlot::Legs, 7),
+            piece(ArmorSlot::Feet, 6),
+        ];
+        add_armor(
+            &mut armor,
+            &pose,
+            false,
+            Vec3::ZERO,
+            0.0,
+            &worn,
+            18,
+            (15, 0),
+        );
+        // Head and hat, body and arms, body and legs, legs: 10 boxes.
+        assert_eq!(armor.vertices.len(), 10 * 24);
+        let top = |mesh: &Mesh| {
+            mesh.vertices
+                .iter()
+                .map(|v| v.position[1])
+                .fold(f32::MIN, f32::max)
+        };
+        assert!(top(&armor) > top(&body), "the helmet is over the hat");
+        // Every corner's texture is in its own row of the sheet.
+        for v in &armor.vertices {
+            let rows = v.uv[1] * 18.0;
+            assert!((6.0..=8.0).contains(&rows), "{:?}", v.uv);
         }
     }
 }

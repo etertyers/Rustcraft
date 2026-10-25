@@ -1775,20 +1775,29 @@ pub(crate) mod tests {
         }
         assert!(game.mobs.is_empty(), "nothing spawns on lit grass at noon");
         game.time = 18000;
-        for _ in 0..200 {
-            game.spawn_monsters();
+        // The cap allows only a few at once, so clear them and spawn again
+        // until a zombie has been among them.
+        let mut kinds = std::collections::BTreeSet::new();
+        for _ in 0..40 {
+            for _ in 0..200 {
+                game.spawn_monsters();
+            }
+            assert!(!game.mobs.is_empty(), "monsters at midnight");
+            for monster in &game.mobs {
+                assert!(game.mob_defs.get(monster.kind).ai.is_monster());
+                assert_eq!(monster.feet().y, 64.0, "on the ground");
+                assert!(monster.feet().distance(game.body.position()) >= 24.0);
+            }
+            kinds.extend(
+                game.mobs
+                    .iter()
+                    .map(|m| game.mob_defs.get(m.kind).name.clone()),
+            );
+            if kinds.contains("zombie") {
+                break;
+            }
+            game.mobs.clear();
         }
-        assert!(!game.mobs.is_empty(), "monsters at midnight");
-        for monster in &game.mobs {
-            assert!(game.mob_defs.get(monster.kind).ai.is_monster());
-            assert_eq!(monster.feet().y, 64.0, "on the ground");
-            assert!(monster.feet().distance(game.body.position()) >= 24.0);
-        }
-        let kinds: std::collections::BTreeSet<_> = game
-            .mobs
-            .iter()
-            .map(|m| game.mob_defs.get(m.kind).name.as_str())
-            .collect();
         assert!(kinds.contains("zombie"), "zombies among them: {kinds:?}");
     }
 

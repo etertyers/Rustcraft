@@ -95,6 +95,9 @@ pub enum Gear {
     Shears,
     Bow,
     FishingRod,
+    Elytra,
+    /// Worn on the head but not armor (carved pumpkins, mob heads).
+    Head,
     /// Anything else that wears out (a shield, flint and steel).
     Durable,
     Book,
@@ -133,6 +136,10 @@ impl Gear {
             Gear::Leggings
         } else if kind("_boots") {
             Gear::Boots
+        } else if name == "elytra" {
+            Gear::Elytra
+        } else if name == "carved_pumpkin" || kind("_head") || kind("_skull") {
+            Gear::Head
         } else if name == "bow" {
             Gear::Bow
         } else if name == "fishing_rod" {
@@ -162,7 +169,7 @@ impl Gear {
         match self {
             Gear::Book => 1,
             Gear::Bow | Gear::FishingRod => 1,
-            Gear::Shears | Gear::Durable | Gear::Plain => 0,
+            Gear::Shears | Gear::Elytra | Gear::Head | Gear::Durable | Gear::Plain => 0,
             gear if gear.is_armor() => match () {
                 _ if material("leather") => 15,
                 _ if material("chainmail") => 12,
@@ -329,7 +336,9 @@ impl Enchantment {
         self != other && group(self).is_some() && group(self) == group(other)
     }
 
-    /// Whether the enchantment can go on this gear at an anvil.
+    /// Whether the enchantment can go on this gear, by vanilla's
+    /// `enchantable/*` item tags. The table, the anvil and `/enchant` all
+    /// ask this; an anvil in creative mode does too (see DECISIONS.md).
     pub fn fits(self, gear: Gear) -> bool {
         if gear == Gear::Book {
             return true;
@@ -349,11 +358,11 @@ impl Enchantment {
             E::SilkTouch | E::Fortune => {
                 matches!(gear, Gear::Axe | Gear::Pickaxe | Gear::Shovel | Gear::Hoe)
             }
-            E::Unbreaking | E::Mending => gear != Gear::Plain,
+            E::Unbreaking | E::Mending => !matches!(gear, Gear::Plain | Gear::Head),
             E::Power | E::Punch | E::Flame | E::Infinity => gear == Gear::Bow,
             E::LuckOfTheSea | E::Lure => gear == Gear::FishingRod,
             E::VanishingCurse => gear != Gear::Plain,
-            E::BindingCurse => gear.is_armor(),
+            E::BindingCurse => gear.is_armor() || matches!(gear, Gear::Elytra | Gear::Head),
         }
     }
 
@@ -639,5 +648,96 @@ mod tests {
                 .iter()
                 .all(Option::is_none)
         );
+    }
+
+    /// Every gear's enchantments, as vanilla's `enchantable/*` tags give them.
+    #[test]
+    fn each_gear_takes_exactly_vanillas_list() {
+        let common = [E::Unbreaking, E::Mending, E::VanishingCurse];
+        let armor = [
+            E::Protection,
+            E::FireProtection,
+            E::BlastProtection,
+            E::ProjectileProtection,
+            E::Thorns,
+            E::BindingCurse,
+        ];
+        let tool = [E::Efficiency, E::SilkTouch, E::Fortune];
+        let cases: Vec<(Gear, Vec<Enchantment>)> = vec![
+            (
+                Gear::Helmet,
+                [&armor[..], &[E::Respiration, E::AquaAffinity]].concat(),
+            ),
+            (Gear::Chestplate, armor.to_vec()),
+            (Gear::Leggings, armor.to_vec()),
+            (
+                Gear::Boots,
+                [&armor[..], &[E::FeatherFalling, E::DepthStrider]].concat(),
+            ),
+            (
+                Gear::Sword,
+                vec![
+                    E::Sharpness,
+                    E::Smite,
+                    E::BaneOfArthropods,
+                    E::Knockback,
+                    E::FireAspect,
+                    E::Looting,
+                    E::SweepingEdge,
+                ],
+            ),
+            (
+                Gear::Axe,
+                [&tool[..], &[E::Sharpness, E::Smite, E::BaneOfArthropods]].concat(),
+            ),
+            (Gear::Pickaxe, tool.to_vec()),
+            (Gear::Shovel, tool.to_vec()),
+            (Gear::Hoe, tool.to_vec()),
+            (Gear::Shears, vec![E::Efficiency]),
+            (Gear::Bow, vec![E::Power, E::Punch, E::Flame, E::Infinity]),
+            (Gear::FishingRod, vec![E::LuckOfTheSea, E::Lure]),
+            (Gear::Elytra, vec![E::BindingCurse]),
+            (Gear::Durable, vec![]),
+        ];
+        for (gear, own) in cases {
+            for e in ALL {
+                let expected = own.contains(&e) || common.contains(&e);
+                assert_eq!(e.fits(gear), expected, "{e:?} on {gear:?}");
+            }
+        }
+        for e in ALL {
+            assert!(e.fits(Gear::Book));
+            assert!(!e.fits(Gear::Plain));
+            let on_head = matches!(e, E::VanishingCurse | E::BindingCurse);
+            assert_eq!(e.fits(Gear::Head), on_head, "{e:?} on a head");
+        }
+    }
+
+    #[test]
+    fn items_map_to_their_gear() {
+        let items = Items::new();
+        use crate::inventory::items as i;
+        assert_eq!(Gear::of(&items, i::DIAMOND_SWORD), Gear::Sword);
+        assert_eq!(Gear::of(&items, i::ELYTRA), Gear::Elytra);
+        assert_eq!(Gear::of(&items, i::TURTLE_HELMET), Gear::Helmet);
+        assert_eq!(Gear::of(&items, i::SHIELD), Gear::Durable);
+        assert_eq!(Gear::of(&items, i::CARVED_PUMPKIN), Gear::Head);
+    }
+
+    #[test]
+    fn the_table_never_offers_protection_on_a_sword() {
+        let items = Items::new();
+        for sword in [
+            crate::inventory::items::WOODEN_SWORD,
+            crate::inventory::items::DIAMOND_SWORD,
+        ] {
+            for seed in 0..300 {
+                for power in [0, 8, 15] {
+                    for offer in offers(&items, sword, power, seed).into_iter().flatten() {
+                        assert!(offer.enchants.iter().all(|&(e, _)| e.fits(Gear::Sword)));
+                    }
+                }
+            }
+        }
     }
 }

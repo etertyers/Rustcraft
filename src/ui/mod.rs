@@ -2,6 +2,7 @@
 
 pub mod creative;
 pub mod doll;
+pub mod font;
 mod fps;
 pub mod geometry;
 pub mod glint;
@@ -12,6 +13,7 @@ pub mod pause;
 pub mod recipe_book;
 pub mod screens;
 pub mod stack;
+pub mod text_field;
 
 use std::time::Instant;
 
@@ -170,11 +172,12 @@ impl DebugUi {
     pub fn new(
         window: &Window,
         atlas: &image::RgbaImage,
-        skin: &image::RgbaImage,
+        figure: crate::look::FigureImages,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<Self> {
         let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, atlas, skin, res)?;
+        let textures = GuiTextures::load(&ctx, atlas, figure, res)?;
+        font::install(&ctx, res);
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,
@@ -196,10 +199,11 @@ impl DebugUi {
     pub fn set_textures(
         &mut self,
         atlas: &image::RgbaImage,
-        skin: &image::RgbaImage,
+        figure: crate::look::FigureImages,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<()> {
-        self.textures = GuiTextures::load(&self.ctx, atlas, skin, res)?;
+        self.textures = GuiTextures::load(&self.ctx, atlas, figure, res)?;
+        font::install(&self.ctx, res);
         Ok(())
     }
 
@@ -465,7 +469,7 @@ fn paint_effects(
             egui::pos2(frame_rect.center().x, icon.bottom() + 1.0 * scale),
             Align2::CENTER_TOP,
             &effect.timer,
-            egui::FontId::proportional(6.0 * scale),
+            egui::FontId::proportional(8.0 * scale),
             Color32::WHITE,
         );
     }
@@ -515,7 +519,7 @@ fn paint_toasts(
             card.min + egui::vec2(30.0, 7.0) * scale,
             Align2::LEFT_TOP,
             toast.header,
-            egui::FontId::proportional(7.0 * scale),
+            egui::FontId::proportional(8.0 * scale),
             if toast.frame == crate::advancements::Frame::Challenge {
                 Color32::from_rgb(255, 85, 255)
             } else {
@@ -526,7 +530,7 @@ fn paint_toasts(
             card.min + egui::vec2(30.0, 18.0) * scale,
             Align2::LEFT_TOP,
             &toast.title,
-            egui::FontId::proportional(7.0 * scale),
+            egui::FontId::proportional(8.0 * scale),
             Color32::WHITE,
         );
         if let Some(icon) = &toast.icon {
@@ -738,7 +742,7 @@ fn show_advancements(ctx: &egui::Context, view: &AdvView, tex: &GuiTextures) -> 
         egui::pos2(full.center().x, window.bottom() + 6.0 * scale),
         Align2::CENTER_TOP,
         "L or Esc to close",
-        egui::FontId::proportional(6.0 * scale),
+        egui::FontId::proportional(8.0 * scale),
         Color32::from_gray(120),
     );
     clicked
@@ -798,7 +802,7 @@ fn show_credits(ctx: &egui::Context, ticks: u32) {
         }
         let (text, size, color) = match *line {
             Line::Poem(text) => (text, 8.0, Color32::from_rgb(170, 205, 170)),
-            Line::Heading(text) => (text, 12.0, Color32::from_rgb(255, 214, 100)),
+            Line::Heading(text) => (text, 16.0, Color32::from_rgb(255, 214, 100)),
             Line::Credit(text) => (text, 8.0, Color32::WHITE),
             Line::Gap => continue,
         };
@@ -814,7 +818,7 @@ fn show_credits(ctx: &egui::Context, ticks: u32) {
         egui::pos2(full.right() - 4.0 * scale, full.bottom() - 4.0 * scale),
         Align2::RIGHT_BOTTOM,
         "Esc to skip",
-        egui::FontId::proportional(6.0 * scale),
+        egui::FontId::proportional(8.0 * scale),
         Color32::from_rgb(110, 110, 110),
     );
 }
@@ -833,7 +837,7 @@ fn show_loading_screen(ctx: &egui::Context) {
         full.center(),
         Align2::CENTER_CENTER,
         "Loading terrain...",
-        egui::FontId::proportional(10.0 * scale),
+        egui::FontId::proportional(8.0 * scale),
         Color32::WHITE,
     );
 }

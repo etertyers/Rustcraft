@@ -222,6 +222,86 @@ fn default_max_stack() -> u8 {
     64
 }
 
+/// Vanilla's (1.21) most of an item in a stack, by its name: the data
+/// files must agree, which a test checks.
+pub fn vanilla_max_stack(name: &str) -> u8 {
+    const ONE_SUFFIXES: &[&str] = &[
+        "_sword",
+        "_pickaxe",
+        "_axe",
+        "_shovel",
+        "_hoe",
+        "_spear",
+        "_helmet",
+        "_chestplate",
+        "_leggings",
+        "_boots",
+        "_horse_armor",
+        "_bucket",
+        "_boat",
+        "_raft",
+        "_minecart",
+        "_bed",
+        "_shulker_box",
+        "_bundle",
+        "_banner_pattern",
+        "_on_a_stick",
+        "_stew",
+        "_soup",
+    ];
+    const ONE: &[&str] = &[
+        "minecart",
+        "saddle",
+        "cake",
+        "potion",
+        "splash_potion",
+        "lingering_potion",
+        "enchanted_book",
+        "writable_book",
+        "knowledge_book",
+        "debug_stick",
+        "bow",
+        "crossbow",
+        "trident",
+        "mace",
+        "fishing_rod",
+        "shears",
+        "flint_and_steel",
+        "shield",
+        "elytra",
+        "totem_of_undying",
+        "spyglass",
+        "brush",
+        "goat_horn",
+        "shulker_box",
+        "bundle",
+        "wolf_armor",
+        "turtle_helmet",
+    ];
+    const SIXTEEN_SUFFIXES: &[&str] = &["_sign", "_banner"];
+    const SIXTEEN: &[&str] = &[
+        "bucket",
+        "egg",
+        "blue_egg",
+        "brown_egg",
+        "snowball",
+        "ender_pearl",
+        "honey_bottle",
+        "armor_stand",
+        "written_book",
+    ];
+    if SIXTEEN.contains(&name) || SIXTEEN_SUFFIXES.iter().any(|s| name.ends_with(s)) {
+        16
+    } else if ONE.contains(&name)
+        || name.starts_with("music_disc_")
+        || ONE_SUFFIXES.iter().any(|s| name.ends_with(s))
+    {
+        1
+    } else {
+        64
+    }
+}
+
 fn default_base_speed() -> f32 {
     1.0
 }
@@ -435,12 +515,34 @@ mod tests {
     }
 
     #[test]
+    fn every_item_stacks_as_in_vanilla() {
+        let registry = registry();
+        let wrong: Vec<String> = registry
+            .iter()
+            .filter(|item| item.max_stack != vanilla_max_stack(&item.name))
+            .map(|item| {
+                format!(
+                    "{} {} -> {}",
+                    item.name,
+                    item.max_stack,
+                    vanilla_max_stack(&item.name)
+                )
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "stack sizes differ from vanilla:\n{}",
+            wrong.join("\n")
+        );
+    }
+
+    #[test]
     fn stacks_tools_and_durability_follow_1_0_0() {
         let item = |id| registry().get(id).unwrap();
         assert_eq!(item(items::STICK).max_stack, 64);
         assert_eq!(item(items::SNOWBALL).max_stack, 16);
-        assert_eq!(item(items::BUCKET).max_stack, 1);
-        assert_eq!(item(items::OAK_DOOR).max_stack, 1);
+        assert_eq!(item(items::BUCKET).max_stack, 16);
+        assert_eq!(item(items::OAK_DOOR).max_stack, 64);
         assert_eq!(item(items::WOODEN_PICKAXE).max_damage(), Some(59));
         assert_eq!(item(items::DIAMOND_PICKAXE).max_damage(), Some(1561));
         assert_eq!(item(items::GOLDEN_SHOVEL).max_damage(), Some(32));
