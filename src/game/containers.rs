@@ -66,6 +66,8 @@ pub struct Bench {
     pub slots: Vec<Option<ItemStack>>,
     /// What's typed in the anvil's name box.
     pub name: String,
+    /// The anvil's first item when the name box was last filled from it.
+    pub named: Option<ItemStack>,
     /// Which of the stonecutter's cuts is chosen.
     pub choice: usize,
 }
@@ -451,8 +453,13 @@ impl Game {
         }
     }
 
-    /// Clicks a slot of the open screen.
     pub fn click_slot(&mut self, slot: SlotRef, click: Click) {
+        self.click_slot_inner(slot, click);
+        self.sync_anvil_name();
+    }
+
+    /// Clicks a slot of the open screen.
+    fn click_slot_inner(&mut self, slot: SlotRef, click: Click) {
         let items = self.items.clone();
         match slot {
             SlotRef::Inventory(index) if click == Click::Shift => {
@@ -624,11 +631,16 @@ impl Game {
         }
     }
 
+    pub fn drag_across(&mut self, slots: &[SlotRef], click: Click) {
+        self.drag_across_inner(slots, click);
+        self.sync_anvil_name();
+    }
+
     /// Drops the held stack across `slots` as a modern Minecraft drag: a
     /// left drag shares it evenly, a right drag puts one in each. Slots
     /// holding something else, or full, are skipped, and no more slots are
     /// used than there are items; what's left stays held.
-    pub fn drag_across(&mut self, slots: &[SlotRef], click: Click) {
+    fn drag_across_inner(&mut self, slots: &[SlotRef], click: Click) {
         let Some(held) = self.cursor.clone() else {
             return;
         };
@@ -669,10 +681,15 @@ impl Game {
         });
     }
 
+    pub fn collect_onto_cursor(&mut self) {
+        self.collect_onto_cursor_inner();
+        self.sync_anvil_name();
+    }
+
     /// Double-click: fills the held stack from matching stacks on the open
     /// screen, part stacks first (modern Minecraft's pick-up-all). Results
     /// aren't taken from.
-    pub fn collect_onto_cursor(&mut self) {
+    fn collect_onto_cursor_inner(&mut self) {
         let Some(mut held) = self.cursor.clone() else {
             return;
         };

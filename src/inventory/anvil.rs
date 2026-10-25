@@ -98,7 +98,8 @@ pub fn repairs(tool: ItemId, material: ItemId) -> bool {
     }
 }
 
-/// The anvil's work on `left` and `right` with `name` typed in. In
+/// The anvil's work on `left` and `right` with `name` typed in (the
+/// item's own name, or a blank box, renames nothing). In
 /// creative mode (`free`) nothing is too expensive.
 pub fn combine(
     items: &Items,
@@ -209,7 +210,7 @@ pub fn combine(
             cost += 1;
             result.set_custom_name(None);
         }
-    } else if left.custom_name() != Some(name) {
+    } else if name != items.name(left) {
         rename_only = 1;
         cost += 1;
         result.set_custom_name(Some(name.to_owned()));

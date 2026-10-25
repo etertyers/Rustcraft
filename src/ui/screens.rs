@@ -4,6 +4,8 @@
 
 use egui::{Color32, Painter, Pos2, Rect, pos2, vec2};
 
+use super::text_field::TextField;
+
 use super::creative::{self, CreativeTab, TabView};
 use super::doll;
 use super::geometry::Geometry;
@@ -892,6 +894,96 @@ fn shadowed(
     painter.text(at, align, text, font, color);
 }
 
+/// The anvil's name box: types into a [`TextField`] kept between frames
+/// and draws it with its cursor and selection. Returns the new text when
+/// typing changed it.
+fn anvil_name_box(w: &BenchWidgets, bench: &BenchView, at: Pos2) -> Option<String> {
+    let id = egui::Id::unique("anvil-name-field");
+    let mut field: TextField = w.ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    if field.text != bench.name || field.limit == 0 {
+        field = TextField::new(&bench.name, ANVIL_NAME_LIMIT);
+    }
+    let events = w.ctx.input(|i| i.events.clone());
+    let changed = field.edit(&events);
+    w.ctx.data_mut(|d| d.insert_temp(id, field.clone()));
+
+    // Show the end of a long name so the cursor stays in the box.
+    let width = |text: &str| text_width(w.painter, text, w.scale);
+    let chars: Vec<char> = field.text.chars().collect();
+    let room = 103.0 * w.scale;
+    let mut first = 0;
+    while first < field.cursor
+        && width(&chars[first..field.cursor].iter().collect::<String>()) > room
+    {
+        first += 1;
+    }
+    let mut last = first;
+    while last < chars.len() && width(&chars[first..=last].iter().collect::<String>()) <= room {
+        last += 1;
+    }
+    let shown: String = chars[first..last].iter().collect();
+    let x_of = |index: usize| {
+        let index = index.clamp(first, last);
+        at.x + width(&chars[first..index].iter().collect::<String>())
+    };
+    if let Some((from, to)) = field.selection() {
+        let rect = Rect::from_min_max(
+            pos2(x_of(from), at.y - w.scale),
+            pos2(x_of(to), at.y + 9.0 * w.scale),
+        );
+        w.painter
+            .rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 255, 140));
+    }
+    let color = Color32::from_rgb(0xE0, 0xE0, 0xE0);
+    shadowed(
+        w.painter,
+        at,
+        egui::Align2::LEFT_TOP,
+        &shown,
+        color,
+        w.scale,
+    );
+    // Vanilla's cursor blinks every 6 frames of 20: an underscore at the
+    // end, a bar inside the text.
+    let blink = ((w.ctx.input(|i| i.time) * 20.0 / 6.0) as u64).is_multiple_of(2);
+    if blink {
+        w.ctx.request_repaint();
+        let x = x_of(field.cursor);
+        if field.cursor >= chars.len() {
+            shadowed(
+                w.painter,
+                pos2(x, at.y),
+                egui::Align2::LEFT_TOP,
+                "_",
+                color,
+                w.scale,
+            );
+        } else {
+            w.painter.rect_filled(
+                Rect::from_min_size(pos2(x, at.y - w.scale), vec2(w.scale, 10.0 * w.scale)),
+                0.0,
+                color,
+            );
+        }
+    }
+    changed.then_some(field.text)
+}
+
+/// How wide `text` is drawn in the screens' font.
+fn text_width(painter: &Painter, text: &str, scale: f32) -> f32 {
+    painter
+        .layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::proportional(8.0 * scale),
+            Color32::WHITE,
+        )
+        .rect
+        .width()
+}
+
+/// The longest name an anvil takes (vanilla's `MAX_NAME_LENGTH`).
+const ANVIL_NAME_LIMIT: usize = 50;
+
 /// The enchanting table's three buttons, the anvil's name box and cost,
 /// and the red X on a grindstone or anvil that can't make anything.
 /// Returns the tooltip of a button under the mouse.
@@ -997,27 +1089,10 @@ fn paint_bench(
         Screen::Anvil => {
             let strip_v = if bench.has_item { 166.0 } else { 182.0 };
             sheet([0.0, strip_v], [110.0, 16.0], at(59.0, 20.0));
-            if bench.has_item {
-                let mut text = bench.name.clone();
-                let area = egui::Area::new(egui::Id::unique("anvil-name"))
-                    .order(egui::Order::Foreground)
-                    .fixed_pos(at(62.0, 24.0))
-                    .show(w.ctx, |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut text)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(103.0 * w.scale)
-                                .font(egui::FontId::proportional(8.0 * w.scale))
-                                .text_color(Color32::WHITE)
-                                .char_limit(50),
-                        )
-                    });
-                if !area.inner.has_focus() {
-                    area.inner.request_focus();
-                }
-                if text != bench.name {
-                    actions.push(ScreenAction::AnvilName(text));
-                }
+            if bench.has_item
+                && let Some(text) = anvil_name_box(w, bench, at(62.0, 24.0))
+            {
+                actions.push(ScreenAction::AnvilName(text));
             }
             if bench.blocked {
                 sheet([176.0, 0.0], [28.0, 21.0], at(99.0, 45.0));

@@ -12,6 +12,7 @@ pub mod pause;
 pub mod recipe_book;
 pub mod screens;
 pub mod stack;
+pub mod text_field;
 
 use std::time::Instant;
 
