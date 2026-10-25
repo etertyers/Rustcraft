@@ -307,6 +307,29 @@ impl Game {
                 return;
             }
         }
+        // A boat: punched to break, or got into (or opened, sneaking).
+        if let Some(boat) = self.target_boat(eye, hit.as_ref()) {
+            if clicked {
+                self.mining = None;
+                self.attack_ticker = 0;
+                let damage = self.attack_damage();
+                self.hit_boat(boat, damage);
+                return;
+            }
+            if using && place_pressed && !wants_break {
+                self.use_boat(boat);
+                self.view.swing();
+                return;
+            }
+        }
+        // A boat is put on the water (or the ground) looked at.
+        if using && place_pressed && !wants_break && self.holding_boat() {
+            if self.place_boat(eye) {
+                self.view.swing();
+            }
+            self.place_cooldown = PLACE_REPEAT_TICKS;
+            return;
+        }
         if !wants_break || hit.is_none() || self.shield_hand.is_some() {
             // Letting go or looking away starts the block over (1.0.0); a
             // raised shield keeps both hands busy.

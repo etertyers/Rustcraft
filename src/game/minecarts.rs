@@ -88,9 +88,9 @@ impl Game {
             .map(|(i, _)| i)
     }
 
-    /// Whether the player is in a cart.
+    /// Whether the player is in a cart, on a mob or in a boat.
     pub fn is_riding(&self) -> bool {
-        self.riding.is_some() || self.mounted.is_some()
+        self.riding.is_some() || self.mounted.is_some() || self.boat.is_some()
     }
 
     /// Right-click on a cart: sit in a plain one, open a chest or hopper

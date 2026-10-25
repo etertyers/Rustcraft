@@ -165,6 +165,8 @@ pub struct PlayerPose {
     pub left: ArmPose,
     /// Ticks the current item has been in use.
     pub use_time: f32,
+    /// Sitting in a boat, a cart or on a mob.
+    pub riding: bool,
 }
 
 /// One limb's pose: its pivot in model pixels and its rotation.
@@ -244,6 +246,14 @@ pub fn rig(pose: &PlayerPose, slim: bool) -> Rig {
     rot[rl].z = 0.005;
     rot[ll].z = -0.005;
 
+    // Sitting: legs out in front, a little apart, arms forward (modern
+    // `HumanoidModel.setupAnim` when riding).
+    if pose.riding {
+        rot[ra].x -= std::f32::consts::PI / 5.0;
+        rot[la].x -= std::f32::consts::PI / 5.0;
+        rot[rl] = Vec3::new(-1.413_716_7, std::f32::consts::PI / 10.0, 0.078_539_82);
+        rot[ll] = Vec3::new(-1.413_716_7, -std::f32::consts::PI / 10.0, -0.078_539_82);
+    }
     pose_arm(pose, pose.right, true, &mut rot, head);
     pose_arm(pose, pose.left, false, &mut rot, head);
     attack(pose, &mut pos, &mut rot);

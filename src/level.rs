@@ -74,6 +74,9 @@ pub struct Level {
     /// The world's game rules (added in M32; `/gamerule` sets them in M38).
     #[serde(default)]
     pub rules: GameRules,
+    /// Boats, in every dimension (added in M32).
+    #[serde(default)]
+    pub boats: Vec<crate::entity::boat::SavedBoat>,
 }
 
 /// Vanilla's game rules, as far as the game has them.
@@ -168,6 +171,7 @@ impl Level {
             advancements: Default::default(),
             recipe_book: Default::default(),
             rules: GameRules::default(),
+            boats: Vec::new(),
         }
     }
 }

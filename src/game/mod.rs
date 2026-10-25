@@ -6,6 +6,7 @@ pub mod advance;
 mod animals;
 mod armor;
 mod benches;
+mod boats;
 mod capture;
 mod combat;
 mod containers;
@@ -237,6 +238,11 @@ pub struct Game {
     redstone: Redstone,
     /// Minecarts, and which one the player sits in.
     pub carts: Vec<crate::entity::minecart::Minecart>,
+    /// Boats in every dimension, the one the player sits in, and the last
+    /// id given out.
+    pub boats: Vec<crate::entity::boat::Boat>,
+    boat: Option<u64>,
+    next_boat_id: u64,
     pub riding: Option<usize>,
     /// TNT with its fuse lit.
     pub primed: Vec<crate::entity::tnt::PrimedTnt>,
@@ -383,6 +389,9 @@ impl Game {
             redstone: Redstone::default(),
             primed: Vec::new(),
             carts: Vec::new(),
+            boats: Vec::new(),
+            boat: None,
+            next_boat_id: 0,
             riding: None,
             played_notes: Vec::new(),
             rng: Rng::new(level_random_seed()),
@@ -455,6 +464,7 @@ impl Game {
         game.stats = player.stats.clone();
         game.bed = player.bed.map(glam::IVec3::from_array);
         game.rules = level.rules.clone();
+        game.load_boats(&level.boats);
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
@@ -539,6 +549,7 @@ impl Game {
             inventory.add(held, &self.items);
         }
         let feet = self.standing_feet();
+        let boats = self.saved_boats();
         let Some(saved) = self.saved.as_mut() else {
             return Ok(());
         };
@@ -562,6 +573,7 @@ impl Game {
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
         saved.level.rules = self.rules.clone();
+        saved.level.boats = boats;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
         saved.dir.save_level(&saved.level)?;
@@ -791,6 +803,8 @@ impl Game {
         if !self.stats.is_dead() {
             if self.is_sleeping() {
                 self.tick_sleep();
+            } else if self.boat.is_some() {
+                self.ride_boat();
             } else if self.mounted.is_some() {
                 self.ride_mob();
             } else if self.is_riding() {
@@ -851,6 +865,7 @@ impl Game {
         self.tick_redstone();
         self.tick_tnt();
         self.tick_carts();
+        self.tick_boats();
         self.tick_hoppers();
         self.tick_falling();
         self.post_process();

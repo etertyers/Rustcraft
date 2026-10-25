@@ -155,6 +155,8 @@ pub struct Boat {
     pub passengers: Vec<Passenger>,
     /// A chest boat's 27 slots.
     pub slots: Vec<Option<ItemStack>>,
+    /// The dimension it's in.
+    pub dimension: crate::world::dimension::Dimension,
 }
 
 /// A boat as saved in level.ron.
@@ -165,6 +167,8 @@ pub struct SavedBoat {
     pub yaw: f32,
     #[serde(default)]
     pub slots: Vec<Option<ItemStack>>,
+    #[serde(default)]
+    pub dimension: crate::world::dimension::Dimension,
 }
 
 impl Boat {
@@ -193,6 +197,7 @@ impl Boat {
             } else {
                 Vec::new()
             },
+            dimension: Default::default(),
         }
     }
 
@@ -202,6 +207,7 @@ impl Boat {
             position: self.position.to_array(),
             yaw: self.yaw,
             slots: self.slots.clone(),
+            dimension: self.dimension,
         }
     }
 
@@ -211,6 +217,7 @@ impl Boat {
         if kind.chest && saved.slots.len() == CHEST_SLOTS {
             boat.slots = saved.slots.clone();
         }
+        boat.dimension = saved.dimension;
         Some(boat)
     }
 

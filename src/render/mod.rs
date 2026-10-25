@@ -1,6 +1,7 @@
 //! wgpu setup and frame rendering.
 
 pub mod atlas;
+pub mod boat;
 pub mod camera;
 pub mod crack;
 pub mod dragon;

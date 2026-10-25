@@ -557,6 +557,7 @@ impl Game {
             },
             attack: view.attack_anim(alpha),
             swing_left: false,
+            riding: self.is_riding(),
             right: main,
             left: if drawing { ArmPose::Bow } else { off },
             use_time: eating.map_or(0.0, |t| t + alpha),
