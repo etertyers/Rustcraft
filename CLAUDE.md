@@ -140,6 +140,7 @@ src/
   cli.rs, worldlist.rs   # the command line (flags in §3, usage text), the Select World list read on a background thread from each world's small world.meta.ron
   ui/{stack,geometry,doll,creative,recipe_book}.rs   # the open screens that own the mouse, where panels and slots are, the player's picture in the inventory, the tabbed creative screen, the recipe book panel
   inventory/{creative,book}.rs, assets/data/creative_tabs.ron   # creative tabs' contents, search and click rules; the recipe book's recipes, categories and placing
+  ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
