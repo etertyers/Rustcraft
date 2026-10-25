@@ -75,6 +75,7 @@ cargo run --release -- --shot <name>   # capture a scripted scene to docs/screen
 #   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>], --help
 cargo run --release -- --spawn-test --seed 12345   # one night in plains, prints monster and animal counts every 1,000 ticks
 cargo run --release -- --flower-test --seed 12345   # flowers per chunk by biome
+cargo run --release -- --structure-test [--seed <n>]   # 20 ruined portals, 20 geodes and 5 fortresses checked against M33's rules
 scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
 ```
@@ -535,7 +536,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - **Sugar cane placement (vanilla rule):** sugar cane can only be placed on grass, dirt, coarse dirt, rooted dirt, podzol, mycelium, moss, mud, sand, red sand or suspicious sand that has water (or frosted ice) directly beside it on one of the four sides, or on top of another sugar cane. It breaks and drops when that stops being true. Not on gravel. Unit-test the rule.
 - **Done when:** you can swim along the surface and climb out, water and torch light look like vanilla, dying drops your items and XP, you respawn at your bed, boats row and look right, and sugar cane only goes where vanilla allows. One screenshot: a torch-lit room next to water at night.
 
-### - [ ] M33 — World generation fixes
+### - [x] M33 — World generation fixes
 - **Ruined portals** use vanilla's placements instead of spawning inside the ground: on the land surface (most common), partly buried, underground (inside a cave, never sealed in solid stone), in a mountain, on the ocean floor (underwater), and in the Nether. Pick the placement per biome as vanilla does (desert and jungle variants, ocean → underwater), and air out the portal's interior so its frame and loot chest are reachable. Unit-test that a sample of generated portals has an open interior.
 - **Geodes** no longer float in caves. Place them after carving only where their outer smooth-basalt shell is embedded in solid stone: cancel a geode if more than a small threshold of its shell points are air, water or lava (vanilla's `invalid_blocks_threshold` idea; record the threshold in `DECISIONS.md`). Cave walls may cut into a geode, but no geode hangs in open air.
 - **Blaze spawners:** every Nether fortress has blaze spawners on its spawner platforms (vanilla's stair/"monster throne" piece), and blazes also spawn naturally inside fortress bounds, as do wither skeletons. Unit-test that each generated fortress has at least one blaze spawner.
