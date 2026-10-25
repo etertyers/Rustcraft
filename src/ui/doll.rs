@@ -66,11 +66,15 @@ pub fn angles(offset: Vec2) -> DollAngles {
     }
 }
 
-/// The model to draw: the skin-textured body and the atlas-textured items
-/// it holds (the elytra, which has a texture of its own, isn't drawn).
+/// The model to draw: the skin-textured body, the elytra, the armor (and
+/// its enchanted pieces again for the glint) and the atlas-textured items
+/// it holds.
 #[derive(Debug, Default)]
 pub struct Doll {
     pub body: Mesh,
+    pub elytra: Mesh,
+    pub armor: Mesh,
+    pub armor_glint: Mesh,
     pub items: Mesh,
 }
 
@@ -104,6 +108,9 @@ pub fn build(game: &Game, held: &mut HeldCache, fig: &Figure, angles: DollAngles
     );
     Doll {
         body: meshes.body,
+        elytra: meshes.elytra,
+        armor: meshes.armor,
+        armor_glint: meshes.armor_glint,
         items: meshes.items,
     }
 }

@@ -719,14 +719,24 @@ fn paint_doll(
     let feet = geo.origin + vec2(spot.feet[0], spot.feet[1]) * geo.scale;
     let per_block = spot.per_block * geo.scale;
     let painter = painter.with_clip_rect(doll::clip(geo.origin, geo.scale, spot));
+    // The wings are behind the body, the armor over it.
     for (mesh, texture) in [
+        (&figure.elytra, textures.elytra.id()),
         (&figure.body, textures.skin.id()),
-        (&figure.items, textures.atlas.id()),
+        (&figure.armor, textures.armor.id()),
     ] {
         painter.add(egui::Shape::mesh(doll::project(
             mesh, texture, feet, per_block,
         )));
     }
+    let glint = doll::project(&figure.armor_glint, textures.armor.id(), feet, per_block);
+    super::glint::paint_mesh(&painter, glint);
+    painter.add(egui::Shape::mesh(doll::project(
+        &figure.items,
+        textures.atlas.id(),
+        feet,
+        per_block,
+    )));
 }
 
 /// Turns a press or drag over the slot under the mouse into actions
@@ -1311,7 +1321,8 @@ mod tests {
                 .unwrap();
         let look = crate::look::Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap();
         let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, look.atlas.image(), look.skin(), &look.res).unwrap();
+        let textures =
+            GuiTextures::load(&ctx, look.atlas.image(), look.figure(), &look.res).unwrap();
         let slot = |_: SlotRef| None;
         let view = ScreenView {
             slot: &slot,

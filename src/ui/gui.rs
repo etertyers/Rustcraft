@@ -60,8 +60,11 @@ pub struct GuiTextures {
     /// The recipe book's panel, tabs and buttons, and the green book button.
     pub recipe_book: TextureHandle,
     pub recipe_button: TextureHandle,
-    /// The player's skin, for the figure in the inventory.
+    /// The player's skin, armor sheet and elytra, for the figure in the
+    /// inventory.
     pub skin: TextureHandle,
+    pub armor: TextureHandle,
+    pub elytra: TextureHandle,
     /// Falls back to the anvil's sheet: Kenzo's 1.12 GUI has no smithing
     /// table, so the slots then sit over the wrong outlines.
     pub smithing: TextureHandle,
@@ -178,7 +181,7 @@ impl GuiTextures {
     pub fn load(
         ctx: &egui::Context,
         atlas: &RgbaImage,
-        skin: &RgbaImage,
+        figure: crate::look::FigureImages,
         res: &Resources,
     ) -> Result<Self> {
         let load = |name: &str, image: &RgbaImage| {
@@ -211,7 +214,9 @@ impl GuiTextures {
             brewing: sheet("gui/container/brewing_stand", &[])?,
             recipe_book: sheet("gui/recipe_book", RECIPE_BOOK)?,
             recipe_button: sheet("gui/recipe_button", RECIPE_BUTTON)?,
-            skin: load("skin", skin),
+            skin: load("skin", figure.skin),
+            armor: load("armor", figure.armor),
+            elytra: load("elytra", figure.elytra),
             smithing: sheet("gui/container/smithing", &[])
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             stonecutter: sheet("gui/container/stonecutter", &[])

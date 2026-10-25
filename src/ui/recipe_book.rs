@@ -629,7 +629,7 @@ mod tests {
             let look = crate::look::Look::build(&crate::assets::dir(), Vec::new(), &mobs).unwrap();
             let ctx = egui::Context::default();
             let textures =
-                GuiTextures::load(&ctx, look.atlas.image(), look.skin(), &look.res).unwrap();
+                GuiTextures::load(&ctx, look.atlas.image(), look.figure(), &look.res).unwrap();
             Self {
                 ctx,
                 textures,

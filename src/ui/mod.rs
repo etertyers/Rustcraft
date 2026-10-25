@@ -171,11 +171,11 @@ impl DebugUi {
     pub fn new(
         window: &Window,
         atlas: &image::RgbaImage,
-        skin: &image::RgbaImage,
+        figure: crate::look::FigureImages,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<Self> {
         let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, atlas, skin, res)?;
+        let textures = GuiTextures::load(&ctx, atlas, figure, res)?;
         let state = egui_winit::State::new(
             ctx.clone(),
             egui::ViewportId::ROOT,
@@ -197,10 +197,10 @@ impl DebugUi {
     pub fn set_textures(
         &mut self,
         atlas: &image::RgbaImage,
-        skin: &image::RgbaImage,
+        figure: crate::look::FigureImages,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<()> {
-        self.textures = GuiTextures::load(&self.ctx, atlas, skin, res)?;
+        self.textures = GuiTextures::load(&self.ctx, atlas, figure, res)?;
         Ok(())
     }
 

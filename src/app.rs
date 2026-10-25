@@ -311,7 +311,7 @@ impl App {
         self.debug_ui = Some(DebugUi::new(
             &window,
             look.atlas.image(),
-            look.skin(),
+            look.figure(),
             &look.res,
         )?);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
@@ -810,7 +810,7 @@ impl App {
             renderer.set_textures(&look.atlas, &look.sky, &look.mob_textures);
         }
         if let Some(debug_ui) = self.debug_ui.as_mut()
-            && let Err(err) = debug_ui.set_textures(look.atlas.image(), look.skin(), &look.res)
+            && let Err(err) = debug_ui.set_textures(look.atlas.image(), look.figure(), &look.res)
         {
             error!("can't load the GUI images: {err:#}");
         }
@@ -1338,13 +1338,14 @@ impl App {
             meshes.push((mob_kinds + 2, dragon));
             meshes.push((mob_kinds + 3, crystals));
             meshes.push((mob_kinds + 4, player.elytra.clone()));
-            // Invisible players aren't drawn (modern draws their armor).
+            meshes.push((mob_kinds + 5, player.armor.clone()));
+            // Invisible players aren't drawn, but their armor is (modern).
             let invisible = game
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility);
             meshes.push((
-                mob_kinds + 5,
+                mob_kinds + 6,
                 if invisible {
                     Default::default()
                 } else {

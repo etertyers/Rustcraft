@@ -96,6 +96,41 @@ pub fn overlay(tile: &RgbaImage, pattern: &RgbaImage, seconds: f64) -> ColorImag
     ColorImage::from_rgba_premultiplied([w as usize, h as usize], &bytes)
 }
 
+/// Paints the pattern over `mesh`'s triangles (already projected onto the
+/// screen), scrolling across the rectangle they cover.
+pub fn paint_mesh(painter: &Painter, mut mesh: Mesh) {
+    STATE.with(|cell| {
+        let state = cell.borrow();
+        let Some(state) = state.as_ref() else {
+            return;
+        };
+        let Some(rect) = mesh
+            .vertices
+            .iter()
+            .map(|v| Rect::from_pos(v.pos))
+            .reduce(Rect::union)
+        else {
+            return;
+        };
+        let seconds = painter.ctx().input(|input| input.time);
+        let side = rect.width().max(rect.height()).max(1.0);
+        let tint = Color32::from_rgba_premultiplied(
+            (TINT[0] * 255.0) as u8,
+            (TINT[1] * 255.0) as u8,
+            (TINT[2] * 255.0) as u8,
+            0,
+        );
+        mesh.texture_id = state.texture.id();
+        for v in &mut mesh.vertices {
+            let p = [(v.pos.x - rect.min.x) / side, (v.pos.y - rect.min.y) / side];
+            let [u, w] = pattern_uv(p, seconds);
+            v.uv = Pos2::new(u, w);
+            v.color = tint;
+        }
+        painter.add(Shape::mesh(mesh));
+    });
+}
+
 /// Paints the glint over an icon drawn in `rect`.
 pub fn paint(painter: &Painter, rect: Rect, icon: &ItemIcon) {
     STATE.with(|cell| {
