@@ -514,7 +514,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 
 #### Checkpoint E — Bug fixes and the deeper world
 
-### - [ ] M31 — Items, enchanting and UI fixes
+### - [x] M31 — Items, enchanting and UI fixes
 - **Enchantment rules:** swords must not accept Protection (today they do). Use vanilla's per-item lists everywhere: the enchanting table's offers, anvils (item + book and item + item), and `/enchant` later. Swords: Sharpness, Smite, Bane of Arthropods, Knockback, Fire Aspect, Looting, Sweeping Edge, Unbreaking, Mending, Curse of Vanishing. Protection, Fire Protection, Blast Protection and Projectile Protection go on armor only and exclude each other; Sharpness/Smite/Bane exclude each other. Check every other item type against vanilla's tags (`enchantable/sword`, `enchantable/armor`, etc.) and unit-test that the anvil refuses invalid combinations.
 - **Anvil rename box:** the text you type appears in the box as you type (cursor, backspace, select-all, paste, 50-character limit), the result slot shows the new name, and the cost updates.
 - **Stack sizes:** doors stack to 64. Check every item against vanilla's max stack size (e.g. signs, eggs, snowballs, ender pearls, buckets, banners and honey bottles 16; beds, boats, minecarts, tools, armor, potions and saddles 1) and fix all mismatches, with a test over the item table.
