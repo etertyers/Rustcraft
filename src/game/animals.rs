@@ -342,8 +342,10 @@ impl Game {
         let Some(index) = self.mount_index() else {
             return;
         };
+        let horse = matches!(self.mob_defs.get(self.mobs[index].kind).ai, Ai::Horse);
         let mob = &mut self.mobs[index];
-        if mob.data.tamed {
+        // Only a wild horse bucks; pigs and striders carry anyone.
+        if mob.data.tamed || !horse {
             return;
         }
         mob.data.timer += 1;

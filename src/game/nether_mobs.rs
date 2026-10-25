@@ -446,7 +446,7 @@ mod tests {
         }
         game.chunks.set_blocks(&pool);
         let kind = game.mob_defs.find("strider").unwrap();
-        let strider = game.new_mob(kind, DVec3::new(6.5, 64.0, 0.5), 0.0);
+        let strider = game.new_mob(kind, DVec3::new(12.5, 64.0, 0.5), 0.0);
         game.add_mob(strider);
         for _ in 0..40 {
             game.tick();
@@ -472,6 +472,7 @@ mod tests {
         let start = game.mobs[0].feet();
         for _ in 0..40 {
             game.tick();
+            assert!(game.mounted.is_some(), "a strider never throws its rider");
         }
         let moved = game.mobs[0].feet() - start;
         assert!(moved.x > 2.0 && moved.z.abs() < 1.0, "went east: {moved}");
