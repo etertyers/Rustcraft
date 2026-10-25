@@ -841,8 +841,8 @@ impl App {
                 Some("music.menu"),
             ),
         };
-        audio.update(res, &listener, self.options.volume);
-        audio.update_music(res, music, dt, self.options.volume);
+        audio.update(res, &listener, self.options.volume, &self.options.volumes);
+        audio.update_music(res, music, dt, self.options.volumes.music);
     }
 
     /// Rebuilds the look with the selected resource packs and swaps it in
