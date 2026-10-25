@@ -9,6 +9,7 @@ pub mod frustum;
 pub mod hand;
 pub mod held;
 pub mod icons;
+pub mod lightmap;
 pub mod models;
 mod outline;
 pub mod player;
@@ -53,6 +54,7 @@ struct Globals {
     sky_color: [f32; 4],
     sunrise: [f32; 4],
     extra: [f32; 4],
+    lighting: [f32; 4],
 }
 
 /// The sky, light and fog for one frame. Colors are sRGB, 0–1.
@@ -79,6 +81,8 @@ pub struct Environment {
     /// Whether there's a sky with a sun, moon, stars and clouds (not in
     /// the Nether: there it's all fog).
     pub sky: bool,
+    /// The Brightness option, 0 (Moody) to 1 (Bright).
+    pub brightness: f32,
     /// The dimension's ambient light, lifting the dark (modern
     /// `DimensionType.ambientLight`: 0.1 in the Nether).
     pub ambient: f32,
@@ -1056,6 +1060,7 @@ fn globals(
             if env.sky { 0.0 } else { 1.0 },
             env.ambient,
         ],
+        lighting: [env.brightness, 0.0, 0.0, 0.0],
     }
 }
 

@@ -16,6 +16,9 @@ use crate::{
 const SKY_IN_FOG: f32 = 0.292_893_2;
 /// Linear fog starts at this fraction of the render distance (1.0.0).
 const FOG_START: f32 = 0.25;
+/// The Brightness option's default (vanilla's 50%); the game sets the
+/// player's own each frame.
+pub const DEFAULT_BRIGHTNESS: f32 = 0.5;
 /// Exponential fog in lava, and its color (1.0.0).
 const LAVA_FOG: (f32, Vec3) = (2.0, Vec3::new(0.6, 0.1, 0.0));
 /// Modern underwater fog: linear from 8 blocks behind the eyes to 96
@@ -193,6 +196,7 @@ pub fn environment(
         cloud_height: CLOUD_HEIGHT,
         sky: true,
         ambient: 0.0,
+        brightness: DEFAULT_BRIGHTNESS,
     }
 }
 
@@ -227,6 +231,7 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
         cloud_height: CLOUD_HEIGHT,
         sky: false,
         ambient: NETHER_AMBIENT,
+        brightness: DEFAULT_BRIGHTNESS,
     }
 }
 
@@ -255,6 +260,7 @@ pub fn end(time: u64, partial: f32, view: f32, eye: Option<Fluid>) -> Environmen
         cloud_height: CLOUD_HEIGHT,
         sky: false,
         ambient: END_AMBIENT,
+        brightness: DEFAULT_BRIGHTNESS,
     }
 }
 

@@ -1515,7 +1515,9 @@ impl App {
         let options_before = self.options.clone();
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
-        let result = renderer.render(&game.view_camera(), &game.environment(), ui);
+        let mut environment = game.environment();
+        environment.brightness = self.options.brightness;
+        let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {
             run.captured = true;
         }

@@ -37,6 +37,9 @@ pub struct Options {
     pub vsync: bool,
     /// Whether the view and hand shake with each step.
     pub view_bobbing: bool,
+    /// The Brightness option, 0 (Moody) to 1 (Bright); vanilla's 50% by
+    /// default.
+    pub brightness: f32,
     /// Selected resource packs (file or folder names in `resourcepacks/`),
     /// highest priority first.
     pub resource_packs: Vec<String>,
@@ -52,6 +55,7 @@ impl Default for Options {
             volume: 1.0,
             vsync: true,
             view_bobbing: true,
+            brightness: crate::game::environment::DEFAULT_BRIGHTNESS,
             resource_packs: Vec::new(),
         }
     }
@@ -107,6 +111,7 @@ impl Options {
             volume: self.volume.clamp(0.0, 1.0),
             vsync: self.vsync,
             view_bobbing: self.view_bobbing,
+            brightness: self.brightness.clamp(0.0, 1.0),
             resource_packs: self.resource_packs,
         }
     }
@@ -130,6 +135,7 @@ mod tests {
             volume: 0.25,
             vsync: false,
             view_bobbing: false,
+            brightness: 0.8,
             resource_packs: vec!["High.zip".to_owned(), "Low".to_owned()],
         };
         options.save(&path).unwrap();
