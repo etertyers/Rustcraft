@@ -16,11 +16,12 @@ use crate::{
 /// its edges.
 const SIDE: i32 = CHUNK_SIZE as i32 + 2;
 
-/// A chunk's blended grass and foliage colors per column.
+/// A chunk's blended grass, foliage and water colors per column.
 pub struct Tints {
     radius: i32,
     grass: Vec<[f32; 3]>,
     foliage: Vec<[f32; 3]>,
+    water: Vec<[f32; 3]>,
 }
 
 impl Tints {
@@ -35,12 +36,12 @@ impl Tints {
         let wide = SIDE + 2 * r;
         let low = -1 - r;
         let row = (wide + 1) as usize;
-        let mut sums = vec![[[0.0f64; 3]; 2]; row * row];
+        let mut sums = vec![[[0.0f64; 3]; 3]; row * row];
         for j in 0..wide as usize {
             for i in 0..wide as usize {
                 let b = biome(low + i as i32, low + j as i32);
-                let here = [colors.grass(b), colors.foliage(b)];
-                for k in 0..2 {
+                let here = [colors.grass(b), colors.foliage(b), colors.water(b)];
+                for k in 0..3 {
                     for c in 0..3 {
                         sums[(j + 1) * row + i + 1][k][c] = here[k][c] as f64
                             + sums[(j + 1) * row + i][k][c]
@@ -54,6 +55,7 @@ impl Tints {
         let span = (2 * r + 1) as usize;
         let mut grass = Vec::with_capacity((SIDE * SIDE) as usize);
         let mut foliage = Vec::with_capacity((SIDE * SIDE) as usize);
+        let mut water = Vec::with_capacity((SIDE * SIDE) as usize);
         for z in 0..SIDE as usize {
             for x in 0..SIDE as usize {
                 // Column (x - 1, z - 1)'s window starts at sum index (x, z).
@@ -66,12 +68,14 @@ impl Tints {
                 };
                 grass.push(average(0));
                 foliage.push(average(1));
+                water.push(average(2));
             }
         }
         Self {
             radius: r,
             grass,
             foliage,
+            water,
         }
     }
 
@@ -82,6 +86,7 @@ impl Tints {
             FaceTint::None => [1.0; 3],
             FaceTint::Grass => self.grass[i],
             FaceTint::Foliage => self.foliage[i],
+            FaceTint::Water => self.water[i],
             FaceTint::Rgb(rgb) => rgb,
         }
     }
@@ -117,7 +122,9 @@ impl Tints {
     /// corners given relative to the block. With blending off, the
     /// block's own column color, as before biome blend.
     pub fn corners(&self, tint: FaceTint, x: i32, z: i32, corners: [[f32; 3]; 4]) -> [[f32; 3]; 4] {
-        if self.radius == 0 || !matches!(tint, FaceTint::Grass | FaceTint::Foliage) {
+        if self.radius == 0
+            || !matches!(tint, FaceTint::Grass | FaceTint::Foliage | FaceTint::Water)
+        {
             return [self.column(tint, x, z); 4];
         }
         corners.map(|[cx, _, cz]| self.at(tint, x as f32 + cx, z as f32 + cz))

@@ -179,6 +179,9 @@ pub struct Game {
     pub entities: Vec<ItemEntity>,
     /// Experience orbs lying around.
     pub orbs: Vec<crate::entity::orb::XpOrb>,
+    /// Ticks the eyes have been under water, for how far the fog reaches
+    /// (`environment::water_vision`).
+    water_vision: u32,
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
     /// Stars of critical hits and arcs of sweeps.
@@ -347,6 +350,7 @@ impl Game {
             capture: [None, None],
             entities: Vec::new(),
             orbs: Vec::new(),
+            water_vision: 0,
             particles: Vec::new(),
             effects: Vec::new(),
             attack_ticker: 100,
@@ -811,6 +815,13 @@ impl Game {
             self.tick_gateway();
         }
         self.tick_view();
+        if self.eye_in() == Some(crate::world::block::Fluid::Water) {
+            self.water_vision = (self.water_vision + 1).min(environment::WATER_VISION_TICKS);
+        } else {
+            self.water_vision = self
+                .water_vision
+                .saturating_sub(environment::WATER_VISION_FADE);
+        }
         if !self.is_sleeping() {
             self.stats.awake = self.stats.awake.saturating_add(1);
         }

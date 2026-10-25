@@ -484,6 +484,9 @@ pub enum Tint {
     Grass,
     /// Biome foliage color on every face (leaves, vines).
     Foliage,
+    /// Biome water color on every face (water, unless its texture is
+    /// already colored).
+    Water,
     /// A fixed 0xRRGGBB color on every face (e.g. lily pads).
     Fixed(u32),
 }
@@ -496,6 +499,8 @@ pub enum FaceTint {
     Grass,
     /// The biome's foliage color.
     Foliage,
+    /// The biome's water color.
+    Water,
     /// A fixed sRGB color.
     Rgb([f32; 3]),
 }
@@ -508,6 +513,7 @@ impl Tint {
             Tint::GrassTop if face != Face::Top => FaceTint::None,
             Tint::GrassTop | Tint::Grass => FaceTint::Grass,
             Tint::Foliage => FaceTint::Foliage,
+            Tint::Water => FaceTint::Water,
             Tint::Fixed(hex) => FaceTint::Rgb(rgb(hex)),
         }
     }

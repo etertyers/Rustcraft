@@ -305,6 +305,7 @@ const SNOW_LINE: i32 = 80;
 pub struct BiomeColors {
     grass: [[f32; 3]; Biome::COUNT],
     foliage: [[f32; 3]; Biome::COUNT],
+    water: [[f32; 3]; Biome::COUNT],
 }
 
 impl BiomeColors {
@@ -315,10 +316,16 @@ impl BiomeColors {
             res.image(name)
                 .with_context(|| format!("no texture {name}"))
         };
-        Ok(Self::from_colormaps(
-            &open("colormap/grass")?,
-            &open("colormap/foliage")?,
-        ))
+        let mut colors = Self::from_colormaps(&open("colormap/grass")?, &open("colormap/foliage")?);
+        // A water texture that is already blue (1.12 and older packs) isn't
+        // tinted again; a gray one (1.13 on) takes each biome's water color.
+        if res
+            .image("block/water_still")
+            .is_some_and(|image| !is_gray(&image))
+        {
+            colors.water = [[1.0; 3]; Biome::COUNT];
+        }
+        Ok(colors)
     }
 
     /// Looks each biome's climate up in the colormaps, the way modern
@@ -347,6 +354,7 @@ impl BiomeColors {
         Self {
             grass: Biome::ALL.map(|b| color(grass, b, true)),
             foliage: Biome::ALL.map(|b| color(foliage, b, false)),
+            water: Biome::ALL.map(|b| rgb(b.water_color())),
         }
     }
 
@@ -358,6 +366,7 @@ impl BiomeColors {
         Self {
             grass: [grass; Biome::COUNT],
             foliage: [foliage; Biome::COUNT],
+            water: [rgb(DEFAULT_WATER); Biome::COUNT],
         }
     }
 
@@ -367,6 +376,52 @@ impl BiomeColors {
 
     pub fn foliage(&self, biome: Biome) -> [f32; 3] {
         self.foliage[biome.index()]
+    }
+
+    /// The biome's water tint (white when the water texture is colored).
+    pub fn water(&self, biome: Biome) -> [f32; 3] {
+        self.water[biome.index()]
+    }
+}
+
+/// Vanilla's default water color and underwater fog color.
+pub const DEFAULT_WATER: u32 = 0x3F76E4;
+pub const DEFAULT_WATER_FOG: u32 = 0x050533;
+
+/// Whether an image is gray: no pixel's channels spread far apart.
+fn is_gray(image: &RgbaImage) -> bool {
+    image.pixels().filter(|p| p[3] > 0).all(|p| {
+        let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+        hi - lo <= 24
+    })
+}
+
+impl Biome {
+    /// Modern `BiomeSpecialEffects.waterColor` by biome.
+    pub fn water_color(self) -> u32 {
+        match self.name() {
+            "Swamp" => 0x617B64,
+            "Mangrove Swamp" => 0x3A7A6A,
+            "Warm Ocean" => 0x43D5EE,
+            "Lukewarm Ocean" | "Deep Lukewarm Ocean" => 0x45ADF2,
+            "Cold Ocean" | "Deep Cold Ocean" => 0x3D57D6,
+            "Frozen Ocean" | "Deep Frozen Ocean" | "Frozen River" => 0x3938C9,
+            "Meadow" => 0x0E4ECF,
+            "Cherry Grove" => 0x5DB7EF,
+            _ => DEFAULT_WATER,
+        }
+    }
+
+    /// Modern `BiomeSpecialEffects.waterFogColor` by biome.
+    pub fn water_fog_color(self) -> u32 {
+        match self.name() {
+            "Swamp" => 0x232317,
+            "Mangrove Swamp" => 0x4D7A60,
+            "Warm Ocean" => 0x041F33,
+            "Lukewarm Ocean" | "Deep Lukewarm Ocean" => 0x041633,
+            "Cherry Grove" => 0x5DB7EF,
+            _ => DEFAULT_WATER_FOG,
+        }
     }
 }
 
