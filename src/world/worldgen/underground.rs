@@ -202,22 +202,88 @@ fn spike(chunk: &mut Chunk, (x, y, z): (usize, usize, usize), length: usize, dow
     }
 }
 
-/// Replays chunk `source`'s geode, if it has one, writing the part inside
-/// `chunk` (modern `GeodeFeature`, simplified: a ball of smooth basalt,
-/// calcite and amethyst around a hollow, buds and clusters on the floor).
-fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
+/// A geode's place and size, and the seed of its per-block rolls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geode {
+    pub center: glam::IVec3,
+    pub radius: f64,
+    seed: u64,
+}
+
+/// Points tested on a geode's outer shell, and how many of them may be
+/// open (air, water or lava) before the geode is cancelled: modern
+/// `GeodeFeature`'s `invalid_blocks_threshold` idea, sampled more finely.
+pub const GEODE_SHELL_POINTS: usize = 64;
+pub const GEODE_INVALID_THRESHOLD: usize = 3;
+
+impl Geode {
+    /// Points spread evenly over the smooth basalt shell's middle.
+    pub fn shell(&self) -> impl Iterator<Item = glam::IVec3> + '_ {
+        let n = GEODE_SHELL_POINTS as f64;
+        let golden = std::f64::consts::PI * (3.0 - 5.0f64.sqrt());
+        (0..GEODE_SHELL_POINTS).map(move |i| {
+            let y = 1.0 - 2.0 * (i as f64 + 0.5) / n;
+            let r = (1.0 - y * y).sqrt();
+            let a = golden * i as f64;
+            let d = glam::DVec3::new(a.cos() * r, y, a.sin() * r) * (self.radius + 1.5);
+            self.center + d.round().as_ivec3()
+        })
+    }
+}
+
+/// Whether worldgen leaves (x, y, z) open: above the land, or in a cave.
+pub fn open_at(terrain: &Terrain, x: i32, y: i32, z: i32) -> bool {
+    y > terrain.height(x, z) || terrain.is_cave(x, y, z)
+}
+
+/// Whether chunk `pos` rolls a geode at all (one in 24), before the check
+/// that cancels exposed ones.
+pub fn rolls_geode(terrain: &Terrain, pos: ChunkPos) -> bool {
+    let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, GEODE_SALT);
+    rng.below(GEODE_RARITY) == 0
+}
+
+/// Chunk `source`'s geode, if it has one and its shell is set in solid
+/// rock: a geode with more than `GEODE_INVALID_THRESHOLD` shell points
+/// open would hang in a cave, so it isn't made.
+pub fn geode_at(terrain: &Terrain, source: ChunkPos) -> Option<Geode> {
     let mut rng = Rng::for_chunk(terrain.seed(), source.x, source.z, GEODE_SALT);
     if rng.below(GEODE_RARITY) != 0 {
-        return;
+        return None;
     }
     let (sx, sz) = source.min_block();
     let cx = sx + rng.below(16) as i32;
     let cz = sz + rng.below(16) as i32;
     let cy = GEODE_LOW + rng.below((GEODE_HIGH - GEODE_LOW) as u32) as i32;
     let radius = 4.0 + rng.next_f64() * 1.5;
+    let geode = Geode {
+        center: glam::IVec3::new(cx, cy, cz),
+        radius,
+        seed: rng.next_u64(),
+    };
+    let open = geode
+        .shell()
+        .filter(|p| open_at(terrain, p.x, p.y, p.z))
+        .count();
+    (open <= GEODE_INVALID_THRESHOLD).then_some(geode)
+}
+
+/// Replays chunk `source`'s geode, if it has one, writing the part inside
+/// `chunk` (modern `GeodeFeature`, simplified: a ball of smooth basalt,
+/// calcite and amethyst around a hollow, buds and clusters on the floor).
+/// Caves cut into it: nothing is written into a carved cell.
+fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
+    let Some(Geode {
+        center,
+        radius,
+        seed,
+    }) = geode_at(terrain, source)
+    else {
+        return;
+    };
+    let (cx, cy, cz) = (center.x, center.y, center.z);
     let (min_x, min_z) = chunk.pos.min_block();
     let outer = (radius + 3.0).ceil() as i32;
-    let seed = rng.next_u64();
     for dz in -outer..=outer {
         for dx in -outer..=outer {
             let (x, z) = (cx + dx, cz + dz);
@@ -252,7 +318,8 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
                     continue;
                 };
                 let here = chunk.get(lx, ly, lz);
-                if here.id() == blocks::BEDROCK {
+                let carved = here.is_air() || here.def().fluid.is_some();
+                if here.id() == blocks::BEDROCK || (carved && !block.is_air()) {
                     continue;
                 }
                 chunk.set(lx, ly, lz, block);
