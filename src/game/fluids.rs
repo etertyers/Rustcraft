@@ -119,9 +119,19 @@ impl Game {
         self.edit(&[edit]);
         let keeps = after == Bucket::Empty && !self.mode.uses_up_items();
         if !keeps && let Some(id) = self.items.bucket_item(after) {
+            // One bucket of a stack fills; the full one goes beside the
+            // rest (modern `ItemUtils.createFilledResult`).
             let slot = self.inventory.selected;
-            self.inventory
-                .set(slot, Some(ItemStack::with_damage(id, 1, 0)));
+            let got = ItemStack::with_damage(id, 1, 0);
+            let many = self.inventory.slot(slot).is_some_and(|s| s.count > 1);
+            if many && self.mode.uses_up_items() {
+                self.inventory.take(slot, 1);
+                if let Some(rest) = self.inventory.add(got, &self.items) {
+                    self.throw(rest);
+                }
+            } else {
+                self.inventory.set(slot, Some(got));
+            }
         }
     }
 
@@ -427,6 +437,25 @@ mod tests {
         game.advance(0.0);
         game.place_clicked = true;
         game.tick();
+    }
+
+    #[test]
+    fn one_bucket_of_a_stack_fills_and_the_rest_stay() {
+        let mut game = flat_game(GameMode::Survival);
+        game.edit(&[(IVec3::new(0, 64, -2), BlockState::of(blocks::WATER))]);
+        game.inventory
+            .set(0, Some(ItemStack::new(items::BUCKET, 16)));
+        game.inventory.selected = 0;
+        game.camera.yaw = 0.0;
+        game.camera.pitch = -0.51;
+        game.advance(0.0);
+        game.place_clicked = true;
+        game.tick();
+        assert_eq!(
+            game.inventory.slot(0),
+            Some(&ItemStack::new(items::BUCKET, 15))
+        );
+        assert!(game.inventory.find(items::WATER_BUCKET).is_some());
     }
 
     #[test]

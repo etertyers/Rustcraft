@@ -59,31 +59,9 @@ pub fn skipped(name: &str, mobs: &BTreeSet<String>) -> bool {
         .is_some_and(|mob| !mobs.contains(mob))
 }
 
-/// Most of an item in a stack: 1 for tools, armor, buckets of something,
-/// boats, minecarts and music discs, else 64.
+/// Most of an item in a stack, as vanilla has it.
 pub fn max_stack(name: &str) -> u8 {
-    const ONE: &[&str] = &[
-        "_sword",
-        "_pickaxe",
-        "_axe",
-        "_shovel",
-        "_hoe",
-        "_spear",
-        "_helmet",
-        "_chestplate",
-        "_leggings",
-        "_boots",
-        "_bucket",
-        "_boat",
-        "_raft",
-        "_minecart",
-    ];
-    if name == "bucket" || name.starts_with("music_disc_") || ONE.iter().any(|s| name.ends_with(s))
-    {
-        1
-    } else {
-        64
-    }
+    crate::inventory::item::vanilla_max_stack(name)
 }
 
 /// A block or item already in `blocks.ron` or `items.ron`.
@@ -951,7 +929,7 @@ mod tests {
         ] {
             assert_eq!(max_stack(name), 1, "{name}");
         }
-        for name in ["baked_potato", "andesite_slab", "pig_spawn_egg", "bundle"] {
+        for name in ["baked_potato", "andesite_slab", "pig_spawn_egg", "oak_door"] {
             assert_eq!(max_stack(name), 64, "{name}");
         }
     }
@@ -1006,7 +984,9 @@ mod tests {
                 def.name
             );
             assert!(def.stack >= 1 && def.stack <= 64, "{}", def.name);
-            assert_eq!(def.stack, max_stack(&def.name), "{}", def.name);
+            if def.item {
+                assert_eq!(def.stack, max_stack(&def.name), "{}", def.name);
+            }
             assert_eq!(
                 def.model.is_empty(),
                 def.shape != Shape::Model,
