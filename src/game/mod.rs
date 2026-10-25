@@ -1100,8 +1100,15 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
 }
 
 /// A seed for drop and throw randomness, from the clock.
+/// The game's random numbers start from the clock, except in tests,
+/// which start from the same seed every run so they pass or fail the same
+/// way each time.
 fn level_random_seed() -> u64 {
-    crate::level::random_seed()
+    if cfg!(test) {
+        0x5eed_2026
+    } else {
+        crate::level::random_seed()
+    }
 }
 
 /// One chunk worker per core, leaving one core for the main thread.
@@ -1823,6 +1830,18 @@ pub(crate) mod tests {
     }
 
     /// A flat world 5×5 chunks around the origin with light computed.
+    /// Waits for the chunk holding block column (x, z) to load, for tests
+    /// that build outside the nearest chunks.
+    pub(crate) fn wait_for_chunk(game: &mut Game, x: i32, z: i32) {
+        let pos = ChunkPos::of_block(x, z);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while game.chunks.world().get(pos).is_none() {
+            assert!(Instant::now() < deadline, "chunk {pos:?} never loaded");
+            game.chunks.update(ChunkPos::new(0, 0));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     pub(crate) fn lit_flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
         let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 2, 4);
