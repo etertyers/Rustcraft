@@ -59,6 +59,11 @@ impl Game {
                 }
                 self.pop_unsupported(next, at);
                 self.pop_chorus(next);
+                self.pop_cane(next);
+                if face.normal()[1] == 0 {
+                    // Water beside the block sugar cane stands on.
+                    self.pop_cane(next + IVec3::Y);
+                }
                 self.harden(next);
                 self.schedule_fall(next);
                 let world = self.chunks.world();
@@ -109,6 +114,25 @@ impl Game {
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         for stack in harvest::drops(state, None, &mut random) {
+            self.entities
+                .push(ItemEntity::from_block(stack, cell, &mut random));
+        }
+        self.edit(&[(cell, BlockState::AIR)]);
+    }
+
+    /// Sugar cane at `cell` that can't stay any more (its ground changed or
+    /// lost the water beside it) breaks and drops.
+    fn pop_cane(&mut self, cell: IVec3) {
+        let world = self.chunks.world();
+        let get = |p: IVec3| world.block(p.x, p.y, p.z);
+        if !get(cell).is_some_and(|b| b.is(blocks::SUGAR_CANE))
+            || crate::world::plants::cane_can_stay(&get, cell)
+        {
+            return;
+        }
+        let rng = &mut self.rng;
+        let mut random = || rng.next_f64() as f32;
+        for stack in harvest::drops(BlockState::of(blocks::SUGAR_CANE), None, &mut random) {
             self.entities
                 .push(ItemEntity::from_block(stack, cell, &mut random));
         }
@@ -333,6 +357,38 @@ mod tests {
             props::{Prop, slab_type},
         },
     };
+
+    #[test]
+    fn sugar_cane_pops_when_its_water_goes() {
+        let mut game = flat_game(GameMode::Survival);
+        let cane = BlockState::of(blocks::SUGAR_CANE);
+        let (ground, water) = (IVec3::new(3, 63, 3), IVec3::new(4, 63, 3));
+        game.chunks.set_blocks(&[
+            (ground, BlockState::of(blocks::SAND)),
+            (water, BlockState::of(blocks::WATER)),
+            (IVec3::new(3, 64, 3), cane),
+            (IVec3::new(3, 65, 3), cane),
+        ]);
+        game.edit(&[(water, BlockState::of(blocks::STONE))]);
+        let world = game.chunks.world();
+        assert_eq!(
+            world.block(3, 64, 3),
+            Some(BlockState::AIR),
+            "the base popped"
+        );
+        assert_eq!(
+            world.block(3, 65, 3),
+            Some(BlockState::AIR),
+            "and the cane on it"
+        );
+        let dropped: u8 = game
+            .entities
+            .iter()
+            .filter(|e| e.stack.id == items::SUGAR_CANE)
+            .map(|e| e.stack.count)
+            .sum();
+        assert_eq!(dropped, 2);
+    }
 
     #[test]
     fn sand_above_a_dug_out_hole_falls_and_lands() {

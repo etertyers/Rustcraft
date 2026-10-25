@@ -81,6 +81,9 @@ const FLUID_JUMP_THRESHOLD: f64 = 0.4;
 /// Speed added each tick along the water's flow (modern
 /// `updateFluidHeightAndDoFluidPushing`).
 pub const CURRENT_PUSH: f64 = 0.014;
+/// How far above a swimmer's feet water keeps them easing toward the
+/// look (modern `travel`'s `getY() + 1.0 - 0.1`).
+const SURFACE_CHECK: f64 = 0.9;
 /// Upward speed when swimming into a ledge with room above it.
 const LEDGE_HOP: f64 = 0.3;
 /// A second jump press within this many ticks toggles creative flight.
@@ -578,7 +581,8 @@ impl Body {
             // A swimmer's vertical speed eases toward where they look.
             let look = input.look_y;
             let rate = if look < -0.2 { 0.085 } else { 0.06 };
-            let head = self.position() + DVec3::Y * (self.height_in(self.pose) - 0.1);
+            // Vanilla looks 0.9 above the feet, whatever the pose.
+            let head = self.position() + DVec3::Y * SURFACE_CHECK;
             let surfacing = world.fluid_at(head).is_some();
             if look <= 0.0 || input.jump || surfacing {
                 self.velocity.y += (look - self.velocity.y) * rate;
@@ -645,14 +649,20 @@ impl Body {
         if input.sprint && can_start {
             self.sprinting = true;
         }
-        let in_water_not_under = self.liquid == Some(Fluid::Water) && !eyes_in_water;
-        if self.sprinting
-            && (forward <= FORWARD_IMPULSE
+        // Modern `LocalPlayer.aiStep`: a swimmer keeps sprinting with the
+        // head out of the water, and stops on leaving it, or on letting go
+        // of forward (or running out of food) away from the ground.
+        let in_water = self.liquid == Some(Fluid::Water);
+        let lost_impulse = forward <= FORWARD_IMPULSE || !self.can_sprint;
+        let stop = if self.swimming {
+            !in_water || (!self.on_ground && !input.sneak && lost_impulse)
+        } else {
+            lost_impulse
                 || self.moving_slowly()
                 || self.collided_horizontally
-                || !self.can_sprint
-                || in_water_not_under)
-        {
+                || (in_water && !eyes_in_water)
+        };
+        if self.sprinting && stop {
             self.sprinting = false;
         }
         self.was_moving_forward = enough;
@@ -1737,6 +1747,46 @@ mod tests {
         assert!(down < -2.0, "{down}");
         let (level, _) = swim(0.0);
         assert!(level.abs() < 1.0, "{level}");
+    }
+
+    #[test]
+    fn a_swimmer_keeps_swimming_with_the_head_out() {
+        let world = deep_water();
+        let mut body = Body::new(DVec3::new(0.5, 58.0, 0.5));
+        body.can_sprint = true;
+        let up = MoveInput {
+            sprint: true,
+            look_y: 0.6,
+            ..FORWARD
+        };
+        // Swim up until the eyes are out of the water.
+        let mut surfaced = false;
+        for _ in 0..80 {
+            body.tick(&up, 0.0, &world);
+            if body.swimming && !body.eyes_in_water(&world) {
+                surfaced = true;
+                break;
+            }
+        }
+        assert!(surfaced, "reached the surface swimming");
+        let along = MoveInput {
+            sprint: false,
+            look_y: 0.0,
+            ..FORWARD
+        };
+        for _ in 0..40 {
+            body.tick(&along, 0.0, &world);
+            assert!(
+                body.swimming && body.sprinting,
+                "still swimming at {:?}",
+                body.position()
+            );
+        }
+        // Letting go of forward, off the ground, ends it.
+        for _ in 0..3 {
+            body.tick(&MoveInput::default(), 0.0, &world);
+        }
+        assert!(!body.sprinting);
     }
 
     #[test]

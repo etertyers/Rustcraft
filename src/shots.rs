@@ -473,6 +473,16 @@ pub static SHOTS: &[Shot] = &[
         stage: inventory_with_armor,
     },
     Shot {
+        name: "m32-torchlight",
+        about: "at night, a torch-lit stone room with a doorway onto a pool, an oak boat floating on the water outside",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 2.5], 0.0, -0.12)),
+        time: Some(18000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: torchlit_room,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -560,6 +570,42 @@ fn workstations(game: &mut Game) {
     edits.push((at(-3, 64, 3), facing(GRINDSTONE, Face::East)));
     game.set_blocks(&edits);
     game.run_ticks(5);
+}
+
+/// A stone room lit by four torches, its north doorway onto a pool with a
+/// boat on it.
+fn torchlit_room(game: &mut Game) {
+    let mut edits = Vec::new();
+    for x in -4..=4 {
+        for z in -4..=4 {
+            for y in 64..=67 {
+                let wall = x == -4 || x == 4 || z == -4 || z == 4;
+                let door = z == -4 && (-1..=1).contains(&x) && y <= 65;
+                if (wall && !door) || y == 67 {
+                    edits.push((at(x, y, z), BlockState::of(COBBLESTONE)));
+                }
+            }
+        }
+    }
+    for (x, z) in [(-3, -3), (3, -3), (-3, 3), (3, 3)] {
+        edits.push((at(x, 64, z), BlockState::of(TORCH)));
+    }
+    for x in -7..=7 {
+        for z in -16..=-5 {
+            for y in 60..=63 {
+                edits.push((at(x, y, z), BlockState::of(WATER)));
+            }
+        }
+    }
+    game.set_blocks(&edits);
+    let kind = crate::entity::boat::BoatKind::of_item("oak_boat").unwrap();
+    game.boats.push(crate::entity::boat::Boat::new(
+        1,
+        kind,
+        glam::DVec3::new(1.5, 63.5, -9.0),
+        0.5,
+    ));
+    game.run_ticks(40);
 }
 
 fn third_back(game: &mut Game) {

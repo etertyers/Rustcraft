@@ -914,6 +914,7 @@ impl App {
                 BenchKind::Smithing => Screen::Smithing,
                 BenchKind::Stonecutter => Screen::Stonecutter,
             },
+            Container::Boat(_) => Screen::Chest,
             Container::Cart(index) => match self.game.as_ref().and_then(|g| g.carts.get(*index)) {
                 Some(cart) if cart.kind == crate::entity::minecart::CartKind::Hopper => {
                     Screen::Hopper
@@ -1323,6 +1324,21 @@ impl App {
                 );
             }
             meshes.push((mob_kinds + 1, carts));
+            // Boats, a mesh for each wood's boat and chest boat.
+            let mut boats: Vec<Mesh> = (0..crate::look::BOAT_TEXTURES)
+                .map(|_| Mesh::default())
+                .collect();
+            for boat in game.boats_here() {
+                crate::render::boat::add_boat(
+                    &mut boats[crate::look::boat_texture(boat.kind)],
+                    boat,
+                    alpha,
+                    light_at(boat.position + DVec3::Y * 0.5),
+                );
+            }
+            for (i, mesh) in boats.into_iter().enumerate() {
+                meshes.push((mob_kinds + crate::look::EXTRA_BOATS + i, mesh));
+            }
             // The dragon and the crystals, in the End.
             let mut dragon = Mesh::default();
             let mut crystals = Mesh::default();
@@ -1338,14 +1354,14 @@ impl App {
             meshes.push((mob_kinds + 2, dragon));
             meshes.push((mob_kinds + 3, crystals));
             meshes.push((mob_kinds + 4, player.elytra.clone()));
-            meshes.push((mob_kinds + 5, player.armor.clone()));
+            meshes.push((mob_kinds + crate::look::EXTRA_ARMOR, player.armor.clone()));
             // Invisible players aren't drawn, but their armor is (modern).
             let invisible = game
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility);
             meshes.push((
-                mob_kinds + 6,
+                mob_kinds + crate::look::EXTRA_SKIN,
                 if invisible {
                     Default::default()
                 } else {
@@ -1515,7 +1531,9 @@ impl App {
         let options_before = self.options.clone();
         let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
-        let result = renderer.render(&game.view_camera(), &game.environment(), ui);
+        let mut environment = game.environment();
+        environment.brightness = self.options.brightness;
+        let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {
             run.captured = true;
         }

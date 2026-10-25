@@ -149,6 +149,16 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
             .show_value(false),
     );
     ui.add_space(8.0);
+    row(
+        ui,
+        format!("Brightness: {}", brightness_name(options.brightness)),
+    );
+    ui.add(
+        Slider::new(&mut options.brightness, 0.0..=1.0)
+            .step_by(0.01)
+            .show_value(false),
+    );
+    ui.add_space(8.0);
     let vsync = format!("VSync: {}", if options.vsync { "ON" } else { "OFF" });
     if ui
         .add_sized(BUTTON, Button::new(vsync))
@@ -179,6 +189,15 @@ pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsA
         Some(OptionsAction::ResourcePacks)
     } else {
         done.then_some(OptionsAction::Done)
+    }
+}
+
+/// Vanilla's names for the Brightness slider's ends.
+fn brightness_name(brightness: f32) -> String {
+    match (brightness * 100.0).round() as i32 {
+        0 => "Moody".to_owned(),
+        100 => "Bright".to_owned(),
+        percent => format!("{percent}%"),
     }
 }
 

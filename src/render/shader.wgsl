@@ -33,8 +33,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-// 1.0.0's light level to brightness curve (`lightBrightnessTable`, overworld),
-// lifted by the dimension's ambient light as modern `getBrightness` is.
+// Modern `LightTexture.getBrightness`: f / (4 − 3f), lifted by the
+// dimension's ambient light. (render/lightmap.rs is the same, tested.)
 fn brightness(level: f32) -> f32 {
     let dark = 1.0 - level / 15.0;
     let curve = (1.0 - dark) / (dark * 3.0 + 1.0);
@@ -42,9 +42,15 @@ fn brightness(level: f32) -> f32 {
     return curve + ambient * (1.0 - curve);
 }
 
-// 1.0.0's lightmap (`EntityRenderer.updateLightmap`) with the "Moody"
-// brightness setting: sky light scaled by the time of day (and bluish at
-// night), warm torch light, never fully black.
+// Vanilla's brighter curve the Brightness option blends toward.
+fn not_gamma(x: vec3<f32>) -> vec3<f32> {
+    let n = vec3<f32>(1.0) - x;
+    return vec3<f32>(1.0) - n * n * n * n;
+}
+
+// Modern `LightTexture.updateLightTexture`: sky light scaled by the time
+// of day (and bluish at night), warm torch light, a little gray, then
+// blended toward the brighter curve by the Brightness option.
 fn lightmap(light: vec2<f32>) -> vec3<f32> {
     let sun = globals.fog.z;
     let sky_level = brightness(light.x) * (sun * 0.95 + 0.05);
@@ -56,7 +62,10 @@ fn lightmap(light: vec2<f32>) -> vec3<f32> {
         block * ((block * 0.6 + 0.4) * 0.6 + 0.4),
         block * (block * block * 0.6 + 0.4),
     );
-    return min((sky + torch) * 0.96 + 0.03, vec3<f32>(1.0));
+    let gray = vec3<f32>(0.75);
+    let lit = clamp(mix(sky + torch, gray, 0.04), vec3<f32>(0.0), vec3<f32>(1.0));
+    let bright = mix(lit, not_gamma(lit), globals.lighting.x);
+    return clamp(mix(bright, gray, 0.04), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 // Enchanted items have 64 added to their sky light (see GLINT_FLAG).

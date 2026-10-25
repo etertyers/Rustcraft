@@ -39,6 +39,8 @@ pub enum Container {
     Hopper(IVec3),
     /// The chest or hopper minecart with this index.
     Cart(usize),
+    /// The chest boat with this id.
+    Boat(u64),
     /// An enchanting table, anvil or grindstone, with the stacks put in it.
     Bench(Bench),
     /// Trading with the villager whose mob id this is.
@@ -76,7 +78,11 @@ impl Container {
     /// The block whose slots this shows, if it shows a block's.
     pub fn block(&self) -> Option<IVec3> {
         match *self {
-            Self::Crafting { .. } | Self::Cart(_) | Self::Bench(_) | Self::Merchant(_) => None,
+            Self::Crafting { .. }
+            | Self::Cart(_)
+            | Self::Boat(_)
+            | Self::Bench(_)
+            | Self::Merchant(_) => None,
             Self::Chest(at)
             | Self::Furnace(at)
             | Self::Brewing(at)
@@ -425,6 +431,13 @@ impl Game {
         if let Some(Container::Cart(index)) = self.container {
             return self.carts.get(index).map(|cart| cart.slots.as_slice());
         }
+        if let Some(Container::Boat(id)) = self.container {
+            return self
+                .boats
+                .iter()
+                .find(|b| b.id == id)
+                .map(|boat| boat.slots.as_slice());
+        }
         let at = self.open_block()?;
         self.chunks.block_entity(at).map(BlockEntity::slots)
     }
@@ -435,6 +448,13 @@ impl Game {
                 .carts
                 .get_mut(index)
                 .map(|cart| cart.slots.as_mut_slice());
+        }
+        if let Some(Container::Boat(id)) = self.container {
+            return self
+                .boats
+                .iter_mut()
+                .find(|b| b.id == id)
+                .map(|boat| boat.slots.as_mut_slice());
         }
         let at = self.open_block()?;
         self.chunks.block_entity_mut(at).map(BlockEntity::slots_mut)
@@ -705,7 +725,8 @@ impl Game {
                 | Container::Brewing(_)
                 | Container::Dispenser(..)
                 | Container::Hopper(_)
-                | Container::Cart(_),
+                | Container::Cart(_)
+                | Container::Boat(_),
             ) => {
                 let count = self.block_slots().map_or(0, <[_]>::len);
                 (0..count).map(SlotRef::Block).collect()
@@ -799,7 +820,8 @@ impl Game {
             Container::Chest(_)
             | Container::Dispenser(..)
             | Container::Hopper(_)
-            | Container::Cart(_),
+            | Container::Cart(_)
+            | Container::Boat(_),
         ) = self.container
         {
             let Some(stack) = self.inventory.slot(index).cloned() else {

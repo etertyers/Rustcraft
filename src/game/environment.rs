@@ -16,9 +16,49 @@ use crate::{
 const SKY_IN_FOG: f32 = 0.292_893_2;
 /// Linear fog starts at this fraction of the render distance (1.0.0).
 const FOG_START: f32 = 0.25;
-/// Exponential fog under water and in lava, and their colors (1.0.0).
-const WATER_FOG: (f32, Vec3) = (0.1, Vec3::new(0.02, 0.02, 0.2));
+/// The Brightness option's default (vanilla's 50%); the game sets the
+/// player's own each frame.
+pub const DEFAULT_BRIGHTNESS: f32 = 0.5;
+/// Exponential fog in lava, and its color (1.0.0).
 const LAVA_FOG: (f32, Vec3) = (2.0, Vec3::new(0.6, 0.1, 0.0));
+/// Modern underwater fog: linear from 8 blocks behind the eyes to 96
+/// ahead, times the water vision (at least a quarter).
+const WATER_FOG_START: f32 = -8.0;
+const WATER_FOG_END: f32 = 96.0;
+/// Ticks under water until the eyes are used to it (modern
+/// `LocalPlayer.waterVisionTime`), and how fast that fades above water.
+pub const WATER_VISION_TICKS: u32 = 600;
+pub const WATER_VISION_FADE: u32 = 10;
+
+/// How used to the water the eyes are, 0–1 (modern `getWaterVision`).
+pub fn water_vision(ticks: u32) -> f32 {
+    if ticks >= WATER_VISION_TICKS {
+        return 1.0;
+    }
+    let early = (ticks as f32 / 100.0).clamp(0.0, 1.0);
+    let late = if ticks < 100 {
+        0.0
+    } else {
+        ((ticks - 100) as f32 / 500.0).clamp(0.0, 1.0)
+    };
+    early * 0.6 + late * 0.4
+}
+
+/// Fog under water in `biome` (modern `FogRenderer` for `FogType.WATER`):
+/// the biome's water fog color, brightened toward its own full strength
+/// as the eyes adjust, and how far it reaches within `view`.
+pub fn water_fog(biome: Biome, vision: f32, view: f32) -> (Vec3, f32) {
+    let c = biome.water_fog_color();
+    let color = Vec3::new(
+        (c >> 16 & 0xFF) as f32,
+        (c >> 8 & 0xFF) as f32,
+        (c & 0xFF) as f32,
+    ) / 255.0;
+    let boost = 1.0 / color.max_element().max(1.0 / 255.0);
+    let color = color * (1.0 - vision) + color * boost * vision;
+    let end = (WATER_FOG_END * vision.max(0.25)).min(view);
+    (color, end)
+}
 
 impl Game {
     /// The liquid the camera is in, if any.
@@ -69,6 +109,15 @@ impl Game {
             Dimension::End => end(self.time, self.tick_alpha() as f32, view, self.eye_in()),
             Dimension::Overworld => self.overworld_environment(biome, view),
         };
+        if self.eye_in() == Some(Fluid::Water) {
+            let (color, end) = water_fog(biome, water_vision(self.water_vision), view);
+            environment.fog_color = color;
+            environment.sky_color = color;
+            environment.fog_density = 0.0;
+            environment.fog_start = WATER_FOG_START;
+            environment.fog_end = end;
+            environment.sky = false;
+        }
         // Night vision lights everything, flickering in its last 10 s
         // (modern `GameRenderer.getNightVisionScale`).
         if let Some(active) = self
@@ -128,8 +177,8 @@ pub fn environment(
     }
     let fog_end = (RENDER_DISTANCE * CHUNK_SIZE as i32) as f32;
     let (fog_density, fog_color) = match eye {
-        None => (0.0, fog_color),
-        Some(Fluid::Water) => WATER_FOG,
+        // Water's fog is set by `Game::environment`.
+        None | Some(Fluid::Water) => (0.0, fog_color),
         Some(Fluid::Lava) => LAVA_FOG,
     };
     Environment {
@@ -147,6 +196,7 @@ pub fn environment(
         cloud_height: CLOUD_HEIGHT,
         sky: true,
         ambient: 0.0,
+        brightness: DEFAULT_BRIGHTNESS,
     }
 }
 
@@ -162,8 +212,8 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
         (fog & 0xFF) as f32,
     ) / 255.0;
     let (fog_density, fog_color) = match eye {
-        None => (0.0, fog),
-        Some(Fluid::Water) => WATER_FOG,
+        // Water's fog is set by `Game::environment`.
+        None | Some(Fluid::Water) => (0.0, fog),
         Some(Fluid::Lava) => LAVA_FOG,
     };
     Environment {
@@ -181,6 +231,7 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
         cloud_height: CLOUD_HEIGHT,
         sky: false,
         ambient: NETHER_AMBIENT,
+        brightness: DEFAULT_BRIGHTNESS,
     }
 }
 
@@ -191,8 +242,7 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
 pub fn end(time: u64, partial: f32, view: f32, eye: Option<Fluid>) -> Environment {
     let dark = Vec3::new(0x18 as f32, 0x13 as f32, 0x18 as f32) / 255.0;
     let (fog_density, fog_color) = match eye {
-        None => (0.0, dark),
-        Some(Fluid::Water) => WATER_FOG,
+        None | Some(Fluid::Water) => (0.0, dark),
         Some(Fluid::Lava) => LAVA_FOG,
     };
     Environment {
@@ -210,6 +260,7 @@ pub fn end(time: u64, partial: f32, view: f32, eye: Option<Fluid>) -> Environmen
         cloud_height: CLOUD_HEIGHT,
         sky: false,
         ambient: END_AMBIENT,
+        brightness: DEFAULT_BRIGHTNESS,
     }
 }
 
@@ -243,9 +294,26 @@ mod tests {
     }
 
     #[test]
-    fn under_water_the_fog_is_thick_and_blue() {
-        let env = environment(6000, 0.0, Biome::Ocean, Vec3::NEG_Z, Some(Fluid::Water));
-        assert_eq!((env.fog_density, env.fog_color), WATER_FOG);
+    fn under_water_the_fog_is_blue_and_clears_as_the_eyes_adjust() {
+        assert_eq!(water_vision(0), 0.0);
+        assert!((water_vision(100) - 0.6).abs() < 1e-6);
+        assert!((water_vision(599) - 1.0).abs() < 0.01);
+        assert_eq!(water_vision(600), 1.0);
+        // Just under: a quarter of 96 blocks, vanilla's dark blue.
+        let (color, end) = water_fog(Biome::Ocean, 0.0, 144.0);
+        assert_eq!(end, 24.0);
+        assert!((color - Vec3::new(5.0, 5.0, 51.0) / 255.0).length() < 1e-6);
+        // Used to it: 96 blocks, the blue at full strength.
+        let (color, end) = water_fog(Biome::Ocean, 1.0, 144.0);
+        assert_eq!(end, 96.0);
+        assert!((color.z - 1.0).abs() < 1e-6 && color.x < 0.11);
+        assert_eq!(
+            water_fog(Biome::Ocean, 1.0, 64.0).1,
+            64.0,
+            "within the view"
+        );
+        let (swamp, _) = water_fog(Biome::Swamp, 0.0, 144.0);
+        assert!(swamp.x > swamp.z, "swamps are murky green-brown");
         let lava = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, Some(Fluid::Lava));
         assert_eq!(lava.fog_density, 2.0);
     }

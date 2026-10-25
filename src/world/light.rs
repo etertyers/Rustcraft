@@ -320,9 +320,9 @@ mod tests {
         // Two leaves dim the column to 13, but open air beside it gives 14.
         assert_eq!(light.get(3, 64, 3).0, 14);
         assert_eq!(light.get(3, 65, 3).0, 14);
-        // Water absorbs 3 per block.
-        assert_eq!(light.get(8, 63, 8).0, 12);
-        assert_eq!(light.get(8, 62, 8).0, 9);
+        // Water absorbs 1 per block (modern; 1.0.0's was 3).
+        assert_eq!(light.get(8, 63, 8).0, 14);
+        assert_eq!(light.get(8, 62, 8).0, 13);
         // Glass is clear.
         assert_eq!(light.get(12, 64, 12).0, 15);
     }

@@ -151,6 +151,7 @@ impl BlockModels {
             FaceTint::None => [1.0; 3],
             FaceTint::Grass => self.colors.grass(biome),
             FaceTint::Foliage => self.colors.foliage(biome),
+            FaceTint::Water => self.colors.water(biome),
             FaceTint::Rgb(rgb) => rgb,
         }
     }

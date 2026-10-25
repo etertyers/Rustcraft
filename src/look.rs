@@ -40,6 +40,19 @@ pub const CRYSTAL_TEXTURE: &str = "entity/endercrystal/endercrystal";
 /// The elytra's, after the crystal's.
 pub const ELYTRA_TEXTURE: &str = "entity/elytra";
 
+/// After the mob kinds' textures come the arrow's, the cart's, the
+/// dragon's, the crystal's and the elytra's (0–4), then each wood's boat
+/// and chest boat, then the armor sheet and last the skin.
+pub const EXTRA_BOATS: usize = 5;
+pub const BOAT_TEXTURES: usize = crate::entity::boat::WOODS.len() * 2;
+pub const EXTRA_ARMOR: usize = EXTRA_BOATS + BOAT_TEXTURES;
+pub const EXTRA_SKIN: usize = EXTRA_ARMOR + 1;
+
+/// The texture of a boat kind, counted from `EXTRA_BOATS`.
+pub fn boat_texture(kind: crate::entity::boat::BoatKind) -> usize {
+    kind.wood * 2 + usize::from(kind.chest)
+}
+
 /// The armor materials in the armor sheet, two rows each (the outer layer,
 /// then the leggings' inner one): (26.x name, older `models/armor` name).
 pub const ARMOR_MATERIALS: [(&str, &str); 9] = [
@@ -251,6 +264,18 @@ impl Look {
             )
             .map(|(name, size)| mob_image(&res, name, size))
             .collect();
+        for wood in crate::entity::boat::WOODS {
+            mob_textures.push(mob_image(
+                &res,
+                &format!("entity/boat/{wood}"),
+                Some((128, 64)),
+            ));
+            mob_textures.push(mob_image(
+                &res,
+                &format!("entity/chest_boat/{wood}"),
+                Some((128, 128)),
+            ));
+        }
         mob_textures.push(armor_sheet(&res));
         mob_textures.push(skin);
         info!(
@@ -488,7 +513,10 @@ mod tests {
         // Water and lava animate from their .mcmeta files.
         assert!(look.atlas.animated() >= 2, "{}", look.atlas.animated());
         // The mobs, then the arrow, cart, dragon, crystal, elytra, armor and skin.
-        assert_eq!(look.mob_textures.len(), mobs().texture_count() + 7);
+        assert_eq!(
+            look.mob_textures.len(),
+            mobs().texture_count() + EXTRA_SKIN + 1
+        );
         // Kenzo's 1.12 armor layers fill the sheet's rows.
         let sheet = look.armor_sheet();
         assert_eq!(sheet.height(), sheet.width() / 2 * 18);

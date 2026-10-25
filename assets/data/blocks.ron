@@ -75,7 +75,7 @@
     (name: "birch_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "birch_sapling")),
     (name: "bedrock", hardness: -1.0, textures: (all: "bedrock")),
     // Level 0 is a source, 1-7 flowing further from one, 8 and up falling.
-    (name: "water", hardness: 100.0, props: [Level], item: false, fluid: Water, drops: Nothing, opacity: 3, replaceable: true, shape: Liquid, layer: Translucent, solid: false, cull_same: true, textures: (end: "water_still", side: "water_flow")),
+    (name: "water", hardness: 100.0, props: [Level], item: false, fluid: Water, drops: Nothing, opacity: 1, tint: Water, replaceable: true, shape: Liquid, layer: Translucent, solid: false, cull_same: true, textures: (end: "water_still", side: "water_flow")),
     (name: "lava", hardness: 100.0, props: [Level], item: false, fluid: Lava, drops: Nothing, opacity: 15, replaceable: true, shape: Liquid, solid: false, light: 15, cull_same: true, textures: (end: "lava_still", side: "lava_flow")),
     (name: "sand", hardness: 0.5, falls: true, tool: Shovel, textures: (all: "sand")),
     (name: "gravel", hardness: 0.6, falls: true, tool: Shovel, drops: OneOf([(item: "flint", chance: 0.1), (item: "gravel")]), textures: (all: "gravel")),
