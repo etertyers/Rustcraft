@@ -124,6 +124,9 @@ pub struct ChunkManager {
     radius: i32,
     /// Biome blend radius for meshing, in columns.
     blend: i32,
+    /// Smooth Lighting, and Fast graphics' solid leaves.
+    smooth: bool,
+    fast_leaves: bool,
     /// Offsets within `radius + 1`, nearest first.
     offsets: Vec<(i32, i32)>,
     max_in_flight: usize,
@@ -314,6 +317,8 @@ impl ChunkManager {
             meshed: FastSet::default(),
             radius,
             blend: config::BIOME_BLEND,
+            smooth: true,
+            fast_leaves: false,
             offsets,
             revisions: FastMap::default(),
             unsaved: FastSet::default(),
@@ -451,6 +456,8 @@ impl ChunkManager {
                 && let Some(mut area) = self.world.area(pos)
             {
                 area.blend = self.blend;
+                area.smooth = self.smooth;
+                area.fast_leaves = self.fast_leaves;
                 self.meshing.insert(pos);
                 let _ = jobs.send(Job::Mesh(
                     pos,
@@ -483,6 +490,18 @@ impl ChunkManager {
     pub fn set_blend(&mut self, blend: i32) {
         if blend != self.blend {
             self.blend = blend;
+            for &pos in &self.meshed {
+                *self.revisions.entry(pos).or_default() += 1;
+                self.relight.insert(pos);
+            }
+        }
+    }
+
+    /// Changes Smooth Lighting and whether leaves are solid, remeshing
+    /// every drawn chunk if either changed.
+    pub fn set_look(&mut self, smooth: bool, fast_leaves: bool) {
+        if (smooth, fast_leaves) != (self.smooth, self.fast_leaves) {
+            (self.smooth, self.fast_leaves) = (smooth, fast_leaves);
             for &pos in &self.meshed {
                 *self.revisions.entry(pos).or_default() += 1;
                 self.relight.insert(pos);
@@ -617,6 +636,8 @@ impl ChunkManager {
                 && let Some(mut area) = self.world.area(pos)
             {
                 area.blend = self.blend;
+                area.smooth = self.smooth;
+                area.fast_leaves = self.fast_leaves;
                 let light = light_chunk(&self.models, &area);
                 self.remeshed
                     .push((pos, mesh_chunk(&self.models, &area, &light)));

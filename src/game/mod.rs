@@ -695,6 +695,10 @@ impl Game {
     pub fn apply_options(&mut self, options: &Options) {
         self.chunks.set_radius(options.render_distance);
         self.chunks.set_blend(options.biome_blend);
+        self.chunks.set_look(
+            options.smooth_lighting,
+            options.graphics == crate::options::Graphics::Fast,
+        );
         self.camera.fov = options.fov;
         self.view.bobbing = options.view_bobbing;
         self.sensitivity = options.sensitivity;

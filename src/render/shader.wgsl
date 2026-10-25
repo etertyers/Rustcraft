@@ -70,6 +70,9 @@ fn lightmap(light: vec2<f32>) -> vec3<f32> {
 
 // Enchanted items have 64 added to their sky light (see GLINT_FLAG).
 const GLINT_FLAG: f32 = 64.0;
+// Faces drawn without cutout have 32 added to their block light
+// (mesh::SOLID_FLAG).
+const SOLID_FLAG: f32 = 32.0;
 
 // The glint pattern at a point of an enchanted item: stripes scrolling
 // diagonally at 10°, tinted purple. Tiled across the item's world position
@@ -88,12 +91,18 @@ fn glint(world: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    var light = in.light;
+    // Fast graphics' leaves are drawn solid (see SOLID_FLAG).
+    var solid = false;
+    if light.y >= SOLID_FLAG * 0.5 {
+        light.y -= SOLID_FLAG;
+        solid = true;
+    }
     // Cutout transparency (leaves, plants); water, ice and glass use
     // fs_translucent.
-    if texel.a < 0.5 {
+    if texel.a < 0.5 && !solid {
         discard;
     }
-    var light = in.light;
     var shine = vec3<f32>(0.0);
     if light.x >= GLINT_FLAG * 0.5 {
         light.x -= GLINT_FLAG;
