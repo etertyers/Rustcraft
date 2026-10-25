@@ -14,6 +14,22 @@ pub enum Dimension {
 impl Dimension {
     pub const ALL: [Dimension; 3] = [Dimension::Overworld, Dimension::Nether, Dimension::End];
 
+    /// The lowest block and one past the highest you can build at: the
+    /// Overworld's modern −64 to 319 (M34), the Nether's and End's 0 to 255.
+    pub fn min_y(self) -> i32 {
+        match self {
+            Dimension::Overworld => crate::config::MIN_Y,
+            Dimension::Nether | Dimension::End => 0,
+        }
+    }
+
+    pub fn max_y(self) -> i32 {
+        match self {
+            Dimension::Overworld => crate::config::MAX_Y,
+            Dimension::Nether | Dimension::End => 256,
+        }
+    }
+
     /// Modern Minecraft's name for it.
     pub fn name(self) -> &'static str {
         match self {

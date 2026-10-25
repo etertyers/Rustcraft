@@ -1,14 +1,15 @@
-//! Chunk storage: a 16×256×16 column split into 16³ sections, plus the
-//! block entities (chests, furnaces) in it.
+//! Chunk storage: a 16×384×16 column (Y −64 to 319) split into 16³
+//! sections, plus the block entities (chests, furnaces) in it. Blocks are
+//! addressed by their world Y; section 0 starts at `MIN_Y`.
 
 use std::collections::BTreeMap;
 
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::{CHUNK_SIZE, MAX_Y, MIN_Y, WORLD_HEIGHT};
 
 use super::{biome::Biome, block::BlockState, block_entity::BlockEntity};
 
-/// A block's position within its chunk: x and z in 0..16, y in 0..256.
-pub type LocalPos = [u8; 3];
+/// A block's position within its chunk: x and z in 0..16, and its world Y.
+pub type LocalPos = [i16; 3];
 
 /// Edge length of a section (and width of a chunk).
 pub const SECTION_SIZE: usize = CHUNK_SIZE;
@@ -51,9 +52,25 @@ pub const CAVE_CELLS: usize = 4 * 4 * (WORLD_HEIGHT / 4);
 /// A cave biome cell with no cave biome.
 pub const NO_CAVE: u8 = u8::MAX;
 
-/// Index of the cave biome cell holding a block, `(y, z, x)` order.
-fn cave_cell(x: usize, y: usize, z: usize) -> usize {
-    ((y / 4) * 4 + z / 4) * 4 + x / 4
+/// Index of the cave biome cell holding a block at world `y`, `(y, z, x)`
+/// order.
+fn cave_cell(x: usize, y: i32, z: usize) -> usize {
+    (((y - MIN_Y) as usize / 4) * 4 + z / 4) * 4 + x / 4
+}
+
+/// The section holding world `y` (0 at `MIN_Y`).
+pub fn section_of(y: i32) -> usize {
+    ((y - MIN_Y) as usize) / SECTION_SIZE
+}
+
+/// The world Y at the bottom of section `index`.
+pub fn section_bottom(index: usize) -> i32 {
+    MIN_Y + (index * SECTION_SIZE) as i32
+}
+
+/// Whether world `y` is inside a chunk.
+pub fn in_height(y: i32) -> bool {
+    (MIN_Y..MAX_Y).contains(&y)
 }
 
 /// One chunk column. All-air sections take no memory.
@@ -72,6 +89,9 @@ pub struct Chunk {
     /// stair corners) and must be worked out again once the chunks around
     /// are loaded: those upgraded from v1.0, which didn't store it.
     pub post_process: Vec<LocalPos>,
+    /// Loaded from a save made before M34 (Y 0 to 255): the Overworld
+    /// fills in the new depth below it (`Terrain::deepen`).
+    pub shallow: bool,
 }
 
 impl Chunk {
@@ -83,6 +103,7 @@ impl Chunk {
             cave_biomes: None,
             block_entities: BTreeMap::new(),
             post_process: Vec::new(),
+            shallow: false,
         }
     }
 
@@ -121,7 +142,7 @@ impl Chunk {
 
     /// The biome at a block: a cave biome if one fills its cell, otherwise
     /// the column's.
-    pub fn biome_at(&self, x: usize, y: usize, z: usize) -> Biome {
+    pub fn biome_at(&self, x: usize, y: i32, z: usize) -> Biome {
         self.cave_biomes
             .as_ref()
             .and_then(|cells| Biome::from_id(cells[cave_cell(x, y, z)]))
@@ -130,7 +151,7 @@ impl Chunk {
 
     /// Puts a cave biome (or, with `None`, the column's) in the 4×4×4 cell
     /// holding a block.
-    pub fn set_cave_biome(&mut self, x: usize, y: usize, z: usize, biome: Option<Biome>) {
+    pub fn set_cave_biome(&mut self, x: usize, y: i32, z: usize, biome: Option<Biome>) {
         let id = biome.map_or(NO_CAVE, Biome::id);
         if id == NO_CAVE && self.cave_biomes.is_none() {
             return;
@@ -146,18 +167,19 @@ impl Chunk {
         self.cave_biomes.as_deref()
     }
 
-    fn index(x: usize, y: usize, z: usize) -> (usize, usize) {
-        let local_y = y % SECTION_SIZE;
+    fn index(x: usize, y: i32, z: usize) -> (usize, usize) {
+        let up = (y - MIN_Y) as usize;
+        let local_y = up % SECTION_SIZE;
         (
-            y / SECTION_SIZE,
+            up / SECTION_SIZE,
             (local_y * SECTION_SIZE + z) * SECTION_SIZE + x,
         )
     }
 
-    /// Block at local (x, z) in 0..16 and y in 0..256. Out-of-range y is air.
-    pub fn get(&self, x: usize, y: usize, z: usize) -> BlockState {
+    /// Block at local (x, z) in 0..16 and world `y`. Out-of-range y is air.
+    pub fn get(&self, x: usize, y: i32, z: usize) -> BlockState {
         debug_assert!(x < CHUNK_SIZE && z < CHUNK_SIZE, "({x}, {z}) outside chunk");
-        if y >= WORLD_HEIGHT {
+        if !in_height(y) {
             return BlockState::AIR;
         }
         let (section, index) = Self::index(x, y, z);
@@ -166,10 +188,10 @@ impl Chunk {
             .map_or(BlockState::AIR, |s| s[index])
     }
 
-    /// Sets the block at local (x, y, z). Panics if out of range.
-    pub fn set(&mut self, x: usize, y: usize, z: usize, block: BlockState) {
+    /// Sets the block at local (x, z) and world `y`. Panics if out of range.
+    pub fn set(&mut self, x: usize, y: i32, z: usize, block: BlockState) {
         assert!(
-            x < CHUNK_SIZE && y < WORLD_HEIGHT && z < CHUNK_SIZE,
+            x < CHUNK_SIZE && in_height(y) && z < CHUNK_SIZE,
             "({x}, {y}, {z}) outside chunk"
         );
         let (section, index) = Self::index(x, y, z);
@@ -192,16 +214,16 @@ impl Chunk {
             .map_or(0, |index| index + 1)
     }
 
-    /// Whether section `index` (0 = bottom) holds no blocks at all.
-    /// One above the top of the highest section holding any block: no
-    /// block in the chunk is at or above this height.
-    pub fn height_bound(&self) -> usize {
+    /// One above the top of the highest section holding any block, as a
+    /// world Y: no block in the chunk is at or above this height.
+    pub fn height_bound(&self) -> i32 {
         (0..SECTION_COUNT)
             .rev()
             .find(|&index| !self.section_is_empty(index))
-            .map_or(0, |index| (index + 1) * SECTION_SIZE)
+            .map_or(MIN_Y, |index| section_bottom(index + 1))
     }
 
+    /// Whether section `index` (0 = bottom) holds no blocks at all.
     pub fn section_is_empty(&self, index: usize) -> bool {
         self.sections[index].is_none()
     }
@@ -268,8 +290,8 @@ mod tests {
         chunk.set(0, 40, 0, BlockState::AIR);
         assert!((0..SECTION_COUNT).all(|s| chunk.section_is_empty(s)));
         chunk.set(0, 40, 0, BlockState::of(blocks::STONE));
-        assert!(!chunk.section_is_empty(2));
-        assert!(chunk.section_is_empty(1));
+        assert!(!chunk.section_is_empty(section_of(40)));
+        assert!(chunk.section_is_empty(section_of(40) - 1));
     }
 
     #[test]

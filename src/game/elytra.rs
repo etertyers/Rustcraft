@@ -123,7 +123,7 @@ impl Game {
                 (feet.y + (self.rng.next_f64() - 0.5) * 16.0).floor() as i32,
                 (feet.z + (self.rng.next_f64() - 0.5) * 16.0).floor() as i32,
             );
-            if spot.y < 1 || spot.y > crate::config::WORLD_HEIGHT as i32 - 3 {
+            if spot.y < 1 || spot.y > crate::config::MAX_Y - 3 {
                 continue;
             }
             let world = self.chunks.world();

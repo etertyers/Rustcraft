@@ -493,6 +493,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m34-cheese-cave",
+        about: "a deepslate cheese cave at Y -18 on seed 20111118, lit by torches on its floor",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([-79.5, -17.0, 66.5], 2.6, -0.2)),
+        time: Some(18000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: torches_in_cave,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -616,6 +626,25 @@ fn torchlit_room(game: &mut Game) {
         0.5,
     ));
     game.run_ticks(40);
+}
+
+/// Torches on the cave floor around (−72, −18, 56), every few blocks.
+fn torches_in_cave(game: &mut Game) {
+    let world = game.chunks.world();
+    let mut edits = Vec::new();
+    for x in (-88..=-56).step_by(5) {
+        for z in (40..=72).step_by(5) {
+            let floor = (-40..-10).rev().find(|&y| {
+                world.block(x, y, z).is_some_and(|b| b.def().solid)
+                    && world.block(x, y + 1, z).is_some_and(BlockState::is_air)
+            });
+            if let Some(y) = floor {
+                edits.push((at(x, y + 1, z), BlockState::of(TORCH)));
+            }
+        }
+    }
+    game.set_blocks(&edits);
+    game.run_ticks(5);
 }
 
 fn third_back(game: &mut Game) {

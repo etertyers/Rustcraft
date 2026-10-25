@@ -16,7 +16,7 @@ const GRASS: BlockState = BlockState::of(blocks::GRASS_BLOCK);
 
 pub fn flat_chunk(pos: ChunkPos) -> Chunk {
     let mut chunk = Chunk::new(pos);
-    let top = SEA_LEVEL as usize;
+    let top = SEA_LEVEL;
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             chunk.set(x, 0, z, BEDROCK);

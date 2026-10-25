@@ -68,15 +68,11 @@ impl World {
     /// or below the world.
     pub fn block(&self, x: i32, y: i32, z: i32) -> Option<BlockState> {
         let chunk = self.get(ChunkPos::of_block(x, z))?;
-        if !(0..config::WORLD_HEIGHT as i32).contains(&y) {
+        if !chunk::in_height(y) {
             return Some(BlockState::AIR);
         }
         let size = config::CHUNK_SIZE as i32;
-        Some(chunk.get(
-            x.rem_euclid(size) as usize,
-            y as usize,
-            z.rem_euclid(size) as usize,
-        ))
+        Some(chunk.get(x.rem_euclid(size) as usize, y, z.rem_euclid(size) as usize))
     }
 
     /// Biome of the column at world (x, z), if its chunk is loaded.
@@ -90,7 +86,7 @@ impl World {
     pub fn biome_at_block(&self, x: i32, y: i32, z: i32) -> Option<biome::Biome> {
         let chunk = self.get(ChunkPos::of_block(x, z))?;
         let size = config::CHUNK_SIZE as i32;
-        let y = y.clamp(0, config::WORLD_HEIGHT as i32 - 1) as usize;
+        let y = y.clamp(config::MIN_Y, config::MAX_Y - 1);
         Some(chunk.biome_at(x.rem_euclid(size) as usize, y, z.rem_euclid(size) as usize))
     }
 

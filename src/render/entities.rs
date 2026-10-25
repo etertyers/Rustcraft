@@ -291,7 +291,7 @@ const DEATH_BEAM_HALF: f32 = 0.4;
 /// Adds the pillar of light over each opened End gateway: four sides, from
 /// the gateway up to the top of the world.
 pub fn add_gateway_beams(mesh: &mut Mesh, gateways: &[IVec3], uvs: &EffectUvs, camera: &Camera) {
-    let top = crate::config::WORLD_HEIGHT as f32;
+    let top = crate::config::MAX_Y as f32;
     for at in gateways {
         let center = Vec3::new(at.x as f32 + 0.5, 0.0, at.z as f32 + 0.5);
         // Skip beams on the far side of the world.

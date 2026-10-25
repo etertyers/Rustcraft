@@ -12,12 +12,13 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::{
     biome_source,
+    caves::{CARVER_REACH, Caves, worms},
     climate::{Climate, ClimateNoise, Lay, noise_offset, noise_seed},
     rng::{Rng, mix},
     terrain_shape::Shaper,
 };
 use crate::{
-    config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT},
+    config::{CHUNK_SIZE, MAX_Y, MIN_Y, SEA_LEVEL},
     world::{
         biome::Biome,
         block::BlockState,
@@ -50,16 +51,6 @@ pub const ICE: BlockState = BlockState::of(blocks::ICE);
 /// A rise of this many blocks to a neighbor bares the stone.
 const STEEP: i32 = 4;
 
-/// Caves are where two 3D noise fields are both near zero; this is the
-/// squared distance from zero that counts (wider = bigger tunnels).
-const TUNNEL_WIDTH: f64 = 0.0045;
-/// Big caverns (modern "cheese caves") open where this noise is high.
-const CAVERN_EDGE: f64 = 0.62;
-/// Caverns stay below this height and fade out toward it.
-const CAVERN_TOP: i32 = 56;
-/// Air carved at or below this height becomes lava: modern's y -55,
-/// squeezed into our y 0..63 like the ores.
-const LAVA_LEVEL: i32 = 5;
 /// Caves stay this far below the floor of any water.
 const CAVE_WATER_MARGIN: i32 = 4;
 /// Caves stop this far under the surface, except at cave entrances.
@@ -68,11 +59,15 @@ const CAVE_ROOF: i32 = 3;
 /// `CAVE_CELL_Y` up, and blended in between.
 const CAVE_CELL_XZ: i32 = 4;
 const CAVE_CELL_Y: i32 = 4;
-/// Deepslate replaces stone below this (modern y 0, squeezed), blending
-/// over the four blocks above (modern 0..8).
-pub const DEEPSLATE_LEVEL: i32 = 32;
+/// Deepslate replaces stone below Y 0, blending into it over the eight
+/// blocks above (modern `deepslate` vertical gradient).
+pub const DEEPSLATE_LEVEL: i32 = 0;
+const DEEPSLATE_BLEND: i32 = 8;
 /// Lowest height a cave biome reaches.
-const CAVE_BIOME_FLOOR: i32 = 6;
+const CAVE_BIOME_FLOOR: i32 = MIN_Y + 4;
+/// The ragged bedrock floor: always at the bottom, thinning out over the
+/// four blocks above (modern −64 to −60).
+const BEDROCK_RAGGED: i32 = 4;
 
 /// Everything about a column that doesn't depend on caves or features.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,9 +108,7 @@ pub struct Terrain {
     /// Varies surface layer depth and beach/gravel patches.
     surface: Perlin,
     entrances: Perlin,
-    tunnel_a: Perlin,
-    tunnel_b: Perlin,
-    cavern: Fbm<Perlin>,
+    caves: Caves,
     /// Badlands terracotta bands, by height.
     bands: [BlockState; BAND_COUNT],
 }
@@ -133,8 +126,9 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 /// between (modern `NoiseChunk`).
 const CELL_XZ: i32 = 4;
 const CELL_Y: i32 = 8;
-/// Corners up a column, every 8 blocks from 0 to the top.
-const LEVELS: usize = WORLD_HEIGHT / CELL_Y as usize + 1;
+/// Corners up a column, every 8 blocks from Y 0 to 256; the land's shape
+/// lives up there, and everything below Y 0 is solid.
+const LEVELS: usize = 256 / CELL_Y as usize + 1;
 /// The most the 3D noise moves density; it fades out from `NOISE_FADE`
 /// up to `NOISE_TOP`, so nothing floats up there.
 const NOISE_AMPLITUDE: f64 = 0.6;
@@ -233,9 +227,7 @@ impl Terrain {
             jagged: Perlin::new(noise_seed(seed, 14)),
             surface: Perlin::new(noise_seed(seed, 5)),
             entrances: Perlin::new(noise_seed(seed, 16)),
-            tunnel_a: Perlin::new(noise_seed(seed, 6)),
-            tunnel_b: Perlin::new(noise_seed(seed, 7)),
-            cavern: fbm(17, 2, 90.0),
+            caves: Caves::new(seed),
             bands: badlands_bands(seed),
         }
     }
@@ -502,27 +494,16 @@ impl Terrain {
         }
     }
 
-    /// The tunnel and cavern noise at a point (both carve where positive).
+    /// The noise caves' field at a point (carves where positive).
     fn cave_noise(&self, x: i32, y: i32, z: i32) -> f64 {
-        // Tunnels are stretched sideways: caves wind more than they climb.
-        let [sx, sy, sz] = self.shift;
-        let (x, y, z) = (x as f64 + sx, y as f64, z as f64 + sz);
-        let p = [x / 48.0, y / 24.0 + sy, z / 48.0];
-        let (a, b) = (self.tunnel_a.get(p), self.tunnel_b.get(p));
-        let tunnel = TUNNEL_WIDTH - (a * a + b * b);
-        let fade = smoothstep(CAVERN_TOP as f64, CAVERN_TOP as f64 - 16.0, y)
-            * smoothstep(LAVA_LEVEL as f64 - 2.0, LAVA_LEVEL as f64 + 6.0, y);
-        let q = [x, y * 1.6 + sy, z];
-        let cavern = (self.cavern.get(q) + 0.5) * fade - CAVERN_EDGE;
-        // Scale the cavern field down to the tunnel field's size.
-        tunnel.max(cavern * 0.05)
+        self.caves.density(x, y, z)
     }
 
     /// Whether a cave runs through (x, y, z), ignoring what block is there.
     /// Cave noise is blended between samples on a coarse grid, exactly as
     /// `carve_caves` does.
     pub fn is_cave(&self, x: i32, y: i32, z: i32) -> bool {
-        if y < 1 {
+        if y <= MIN_Y + BEDROCK_RAGGED {
             return false;
         }
         let (cx, cy, cz) = (
@@ -555,6 +536,45 @@ impl Terrain {
         trilinear(&c, t) > 0.0
     }
 
+    /// Which of `points` a worm tunnel or ravine runs through (ignoring
+    /// how high a column lets caves reach and what fills them).
+    pub fn in_worms(&self, points: &[glam::IVec3]) -> Vec<bool> {
+        let mut hit = vec![false; points.len()];
+        let Some(first) = points.first() else {
+            return hit;
+        };
+        let (lo, hi) = points
+            .iter()
+            .fold((*first, *first), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+        let center = ChunkPos::of_block((lo.x + hi.x) / 2, (lo.z + hi.z) / 2);
+        for sz in center.z - CARVER_REACH..=center.z + CARVER_REACH {
+            for sx in center.x - CARVER_REACH..=center.x + CARVER_REACH {
+                for worm in worms(self.seed, sx, sz) {
+                    for &([px, py, pz], across, up) in &worm.steps {
+                        if px + across < lo.x as f64
+                            || px - across > hi.x as f64 + 1.0
+                            || pz + across < lo.z as f64
+                            || pz - across > hi.z as f64 + 1.0
+                            || py + up < lo.y as f64
+                            || py - up > hi.y as f64 + 1.0
+                        {
+                            continue;
+                        }
+                        for (i, p) in points.iter().enumerate() {
+                            let dx = (p.x as f64 + 0.5 - px) / across;
+                            let dy = (p.y as f64 + 0.5 - py) / up;
+                            let dz = (p.z as f64 + 0.5 - pz) / across;
+                            if dy >= -0.7 && dx * dx + dy * dy + dz * dz < 1.0 {
+                                hit[i] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        hit
+    }
+
     /// The highest block caves may carve in a column.
     fn cave_top(column: &Column) -> i32 {
         if column.height < SEA_LEVEL {
@@ -566,8 +586,10 @@ impl Terrain {
         }
     }
 
-    /// Carves caves into a filled chunk, leaving bedrock, water and the
-    /// ground just under water alone.
+    /// Carves caves into a filled chunk: the noise caves, then the worm
+    /// tunnels and ravines of the chunks around. Each carved block takes
+    /// what its aquifer holds; bedrock and the ground just under water are
+    /// left alone.
     fn carve_caves(&self, chunk: &mut Chunk, area: &Area) {
         let (min_x, min_z) = chunk.pos.min_block();
         let top = (0..CHUNK_SIZE * CHUNK_SIZE)
@@ -576,11 +598,12 @@ impl Terrain {
                 Self::cave_top(column)
             })
             .max()
-            .unwrap_or(0)
-            .max(1);
-        // Noise on a coarse grid over the chunk, up to the highest top.
+            .unwrap_or(MIN_Y)
+            .max(MIN_Y + 1);
+        // Noise on a coarse grid over the chunk, from the bottom of the
+        // world up to the highest top.
         let nx = CHUNK_SIZE as i32 / CAVE_CELL_XZ + 1;
-        let ny = top / CAVE_CELL_Y + 2;
+        let ny = (top - MIN_Y) / CAVE_CELL_Y + 2;
         let mut grid = vec![0.0; (nx * nx * ny) as usize];
         let index = |i: i32, j: i32, k: i32| ((j * nx + k) * nx + i) as usize;
         for j in 0..ny {
@@ -588,7 +611,7 @@ impl Terrain {
                 for i in 0..nx {
                     grid[index(i, j, k)] = self.cave_noise(
                         min_x + i * CAVE_CELL_XZ,
-                        j * CAVE_CELL_Y,
+                        MIN_Y + j * CAVE_CELL_Y,
                         min_z + k * CAVE_CELL_XZ,
                     );
                 }
@@ -600,9 +623,10 @@ impl Terrain {
                 let (i, k) = (x as i32 / CAVE_CELL_XZ, z as i32 / CAVE_CELL_XZ);
                 let tx = (x as i32 % CAVE_CELL_XZ) as f64 / CAVE_CELL_XZ as f64;
                 let tz = (z as i32 % CAVE_CELL_XZ) as f64 / CAVE_CELL_XZ as f64;
-                for y in 1..=Self::cave_top(column) {
-                    let j = y / CAVE_CELL_Y;
-                    let ty = (y % CAVE_CELL_Y) as f64 / CAVE_CELL_Y as f64;
+                for y in MIN_Y + 1..=Self::cave_top(column) {
+                    let up = y - MIN_Y;
+                    let j = up / CAVE_CELL_Y;
+                    let ty = (up % CAVE_CELL_Y) as f64 / CAVE_CELL_Y as f64;
                     let c = [
                         [
                             [grid[index(i, j, k)], grid[index(i + 1, j, k)]],
@@ -619,16 +643,70 @@ impl Terrain {
                     if trilinear(&c, (tx, ty, tz)) <= 0.0 {
                         continue;
                     }
-                    let block = chunk.get(x, y as usize, z);
-                    if block == BEDROCK {
-                        continue;
+                    self.carve(chunk, x, y, z);
+                }
+            }
+        }
+        self.carve_worms(chunk, area);
+    }
+
+    /// Carves one block of a cave, if it isn't bedrock, with what the
+    /// aquifer holds there.
+    fn carve(&self, chunk: &mut Chunk, x: usize, y: i32, z: usize) {
+        if chunk.get(x, y, z) == BEDROCK {
+            return;
+        }
+        let (min_x, min_z) = chunk.pos.min_block();
+        let (wx, wz) = (min_x + x as i32, min_z + z as i32);
+        if let Some(block) = self.caves.fill(wx, y, wz).block() {
+            chunk.set(x, y, z, block);
+        }
+    }
+
+    /// The worm tunnels and ravines that reach this chunk, from every
+    /// chunk within `CARVER_REACH`.
+    fn carve_worms(&self, chunk: &mut Chunk, area: &Area) {
+        let pos = chunk.pos;
+        let (min_x, min_z) = pos.min_block();
+        let (max_x, max_z) = (min_x + 16, min_z + 16);
+        for sz in pos.z - CARVER_REACH..=pos.z + CARVER_REACH {
+            for sx in pos.x - CARVER_REACH..=pos.x + CARVER_REACH {
+                for worm in worms(self.seed, sx, sz) {
+                    for &([px, py, pz], across, up) in &worm.steps {
+                        if px + across < min_x as f64
+                            || px - across >= max_x as f64
+                            || pz + across < min_z as f64
+                            || pz - across >= max_z as f64
+                        {
+                            continue;
+                        }
+                        let x0 = ((px - across).floor() as i32).max(min_x);
+                        let x1 = ((px + across).ceil() as i32).min(max_x - 1);
+                        let z0 = ((pz - across).floor() as i32).max(min_z);
+                        let z1 = ((pz + across).ceil() as i32).min(max_z - 1);
+                        let y0 = ((py - up).floor() as i32).max(MIN_Y + 1);
+                        let y1 = (py + up).ceil() as i32;
+                        for wz in z0..=z1 {
+                            for wx in x0..=x1 {
+                                let column = area.get(wx, wz);
+                                let top = Self::cave_top(column).min(y1);
+                                let dx = (wx as f64 + 0.5 - px) / across;
+                                let dz = (wz as f64 + 0.5 - pz) / across;
+                                if dx * dx + dz * dz >= 1.0 {
+                                    continue;
+                                }
+                                for y in y0..=top {
+                                    let dy = (y as f64 + 0.5 - py) / up;
+                                    // A flatter floor, as modern carvers have.
+                                    if dy < -0.7 || dx * dx + dy * dy + dz * dz >= 1.0 {
+                                        continue;
+                                    }
+                                    let (lx, lz) = ((wx - min_x) as usize, (wz - min_z) as usize);
+                                    self.carve(chunk, lx, y, lz);
+                                }
+                            }
+                        }
                     }
-                    let carved = if y <= LAVA_LEVEL {
-                        LAVA
-                    } else {
-                        BlockState::AIR
-                    };
-                    chunk.set(x, y as usize, z, carved);
                 }
             }
         }
@@ -656,7 +734,7 @@ impl Terrain {
                         .entry(ChunkPos::of_block(x, z))
                         .or_insert_with_key(|&pos| self.generate(pos));
                     let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
-                    let y = column.height as usize;
+                    let y = column.height;
                     let ground = chunk.get(lx, y, lz);
                     if ground.def().solid
                         && ground.def().fluid.is_none()
@@ -668,7 +746,7 @@ impl Terrain {
                 }
             }
         }
-        (0, WORLD_HEIGHT as i32, 0)
+        (0, MAX_Y, 0)
     }
 
     /// Fills a chunk with stone, surface layers, water and bedrock (no caves or features).
@@ -697,7 +775,7 @@ impl Terrain {
                     let top = surface - (lo * 128.0).ceil() as i32;
                     let bottom = (surface - (hi * 128.0) as i32).max(CAVE_BIOME_FLOOR);
                     for y in (bottom..=top).step_by(4) {
-                        chunk.set_cave_biome(x, y as usize, z, Some(cave));
+                        chunk.set_cave_biome(x, y, z, Some(cave));
                     }
                 }
                 let depth = 3 + (self.surface_noise(wx, wz, 8.0, 7.3) * 1.5 + 1.5) as i32;
@@ -705,20 +783,20 @@ impl Terrain {
                 // surface layers follow the topmost solid block, and
                 // overhangs leave air under them.
                 let levels = area.corners.levels(wx, wz);
-                for y in 1..=column.height {
-                    if density(&levels, y) > 0.0 {
+                for y in MIN_Y + 1..=column.height {
+                    if y < 0 || density(&levels, y) > 0.0 {
                         let block = self.layer(&column, wx, y, wz, depth, &mut rng);
-                        chunk.set(x, y as usize, z, block);
+                        chunk.set(x, y, z, block);
                     }
                 }
                 for y in column.height + 1..=SEA_LEVEL {
-                    chunk.set(x, y as usize, z, WATER);
+                    chunk.set(x, y, z, WATER);
                 }
-                // A bedrock floor, ragged for four blocks like 1.0.0.
-                chunk.set(x, 0, z, BEDROCK);
-                for y in 1..5 {
-                    if (rng.below(5) as usize) >= y {
-                        chunk.set(x, y, z, BEDROCK);
+                // A bedrock floor at the bottom, ragged for four blocks.
+                chunk.set(x, MIN_Y, z, BEDROCK);
+                for up in 1..=BEDROCK_RAGGED {
+                    if rng.below(BEDROCK_RAGGED as u32 + 1) as i32 >= up {
+                        chunk.set(x, MIN_Y + up, z, BEDROCK);
                     }
                 }
             }
@@ -772,12 +850,43 @@ impl Terrain {
             return self.band(x, y, z);
         }
         if y < DEEPSLATE_LEVEL
-            || (y < DEEPSLATE_LEVEL + 4 && rng.below(4) as i32 >= y - DEEPSLATE_LEVEL)
+            || (y < DEEPSLATE_LEVEL + DEEPSLATE_BLEND
+                && (rng.below(DEEPSLATE_BLEND as u32) as i32) >= y - DEEPSLATE_LEVEL)
         {
             DEEPSLATE
         } else {
             STONE
         }
+    }
+
+    /// Gives a chunk saved before M34 (Y 0 to 255) the depth new chunks
+    /// have: everything below Y 0 as this world generates it now, and the
+    /// old bedrock floor at Y 0–4 replaced by what lies there now (modern
+    /// 1.18's upgrade of old worlds). Every block from Y 0 up stays.
+    pub fn deepen(&self, chunk: &mut Chunk) {
+        let fresh = self.generate(chunk.pos);
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in MIN_Y..0 {
+                    chunk.set(x, y, z, fresh.get(x, y, z));
+                    if y % 4 == 0 && x % 4 == 0 && z % 4 == 0 {
+                        let cave = Some(fresh.biome_at(x, y, z)).filter(|b| b.is_cave());
+                        chunk.set_cave_biome(x, y, z, cave);
+                    }
+                }
+                for y in 0..=BEDROCK_RAGGED {
+                    if chunk.get(x, y, z) == BEDROCK {
+                        chunk.set(x, y, z, fresh.get(x, y, z));
+                    }
+                }
+            }
+        }
+        for (at, entity) in fresh.block_entities() {
+            if at[1] < 0 {
+                chunk.set_block_entity(at, Some(entity.clone()));
+            }
+        }
+        chunk.shallow = false;
     }
 
     /// Generates a chunk: terrain, caves, ores, underground features, trees
@@ -905,7 +1014,7 @@ pub(crate) mod tests {
         let b = Terrain::new(1).generate(pos);
         let c = Terrain::new(2).generate(pos);
         let blocks = |chunk: &Chunk| -> Vec<BlockState> {
-            (0..WORLD_HEIGHT)
+            (crate::config::MIN_Y..crate::config::MAX_Y)
                 .flat_map(|y| (0..256).map(move |i| (i % 16, y, i / 16)))
                 .map(|(x, y, z)| chunk.get(x, y, z))
                 .collect()
@@ -1028,8 +1137,8 @@ pub(crate) mod tests {
                 let (lx, lz) = local(x, z);
                 let column = terrain.column(x, z);
                 assert!(column.height <= 61, "river bed at {}", column.height);
-                assert_eq!(chunk.get(lx, SEA_LEVEL as usize, lz), WATER);
-                assert!(chunk.get(lx, SEA_LEVEL as usize + 1, lz).is_air());
+                assert_eq!(chunk.get(lx, SEA_LEVEL, lz), WATER);
+                assert!(chunk.get(lx, SEA_LEVEL + 1, lz).is_air());
                 checked += 1;
                 if checked == 20 {
                     break 'search;
@@ -1052,8 +1161,8 @@ pub(crate) mod tests {
                     for x in 0..16 {
                         // From 200 up, every column is solid from 200 to its
                         // top: no air under solid ground.
-                        let solid = |y: usize| chunk.get(x, y, z).def().solid;
-                        let top = (200..WORLD_HEIGHT).rev().find(|&y| solid(y));
+                        let solid = |y: i32| chunk.get(x, y, z).def().solid;
+                        let top = (200..crate::config::MAX_Y).rev().find(|&y| solid(y));
                         if let Some(top) = top {
                             high += 1;
                             for y in 200..top {
@@ -1103,11 +1212,11 @@ pub(crate) mod tests {
         let (lx, lz) = local(x, z);
         let column = terrain.column(x, z);
         assert!(matches!(
-            chunk.get(lx, SEA_LEVEL as usize, lz).id(),
+            chunk.get(lx, SEA_LEVEL, lz).id(),
             blocks::WATER | blocks::ICE | blocks::PACKED_ICE
         ));
-        assert_eq!(chunk.get(lx, column.height as usize + 1, lz), WATER);
-        assert_eq!(chunk.get(lx, column.height as usize, lz), column.top);
+        assert_eq!(chunk.get(lx, column.height + 1, lz), WATER);
+        assert_eq!(chunk.get(lx, column.height, lz), column.top);
     }
 
     #[test]
@@ -1118,7 +1227,7 @@ pub(crate) mod tests {
         });
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
         let (lx, lz) = local(x, z);
-        let top = chunk.get(lx, SEA_LEVEL as usize, lz).id();
+        let top = chunk.get(lx, SEA_LEVEL, lz).id();
         assert!(matches!(top, blocks::WATER | blocks::ICE), "{top:?}");
     }
 
@@ -1134,8 +1243,8 @@ pub(crate) mod tests {
             let chunk = terrain.generate(ChunkPos::of_block(x, z));
             let (lx, lz) = local(x, z);
             let y = y as usize;
-            assert!(chunk.get(lx, y - 1, lz).def().solid, "seed {seed}");
-            assert!(chunk.get(lx, y + 1, lz).is_air(), "seed {seed}");
+            assert!(chunk.get(lx, (y - 1) as i32, lz).def().solid, "seed {seed}");
+            assert!(chunk.get(lx, (y + 1) as i32, lz).is_air(), "seed {seed}");
         }
     }
 
@@ -1149,19 +1258,17 @@ pub(crate) mod tests {
                 let (min_x, min_z) = chunk.pos.min_block();
                 for z in 0..16 {
                     for x in 0..16 {
-                        assert_eq!(chunk.get(x, 0, z), BEDROCK);
+                        assert_eq!(chunk.get(x, MIN_Y, z), BEDROCK);
                         let column = terrain.column(min_x + x as i32, min_z + z as i32);
                         if column.height < SEA_LEVEL {
-                            let floor = chunk.get(x, column.height as usize, z);
+                            let floor = chunk.get(x, column.height, z);
                             assert!(!floor.is_air(), "hole under water at {x},{z}");
                         }
-                        for y in 1..column.height as usize {
+                        for y in MIN_Y + 1..column.height {
                             match chunk.get(x, y, z) {
                                 b if b.is_air() => air_below_surface += 1,
-                                LAVA => {
-                                    assert!(y as i32 <= LAVA_LEVEL);
-                                    lava += 1;
-                                }
+                                // Deep caves fill with lava (and a few pools sit higher).
+                                LAVA if y <= super::super::caves::LAVA_LEVEL => lava += 1,
                                 _ => {}
                             }
                         }
@@ -1182,39 +1289,49 @@ pub(crate) mod tests {
         let pos = ChunkPos::new(2, -3);
         let chunk = terrain.generate(pos);
         let (min_x, min_z) = pos.min_block();
-        let mut checked = 0;
+        // Rock left where the noise opens a cave is an aquifer's wall;
+        // it stays a small share.
+        let (mut checked, mut walls) = (0, 0);
         for (x, z) in [(3usize, 4usize), (10, 12), (15, 0)] {
-            for y in 12..40 {
+            for y in -50..40 {
                 let block = chunk.get(x, y, z);
                 if matches!(block.id(), blocks::STONE | blocks::DEEPSLATE) {
-                    assert!(!terrain.is_cave(min_x + x as i32, y as i32, min_z + z as i32));
+                    walls += usize::from(terrain.is_cave(min_x + x as i32, y, min_z + z as i32));
                     checked += 1;
                 }
             }
         }
-        assert!(checked > 20);
+        assert!(checked > 60);
+        assert!(walls * 10 <= checked, "{walls} of {checked}");
     }
 
     #[test]
     fn deepslate_lies_below_stone() {
         let terrain = Terrain::new(3);
         let chunk = terrain.generate(ChunkPos::new(5, 5));
-        let count = |range: std::ops::Range<usize>, block: BlockState| {
+        let count = |range: std::ops::Range<i32>, block: BlockState| {
             range
                 .flat_map(|y| (0..256).map(move |i| (i % 16, y, i / 16)))
                 .filter(|&(x, y, z)| chunk.get(x, y, z) == block)
                 .count()
         };
-        assert_eq!(count(37..WORLD_HEIGHT, DEEPSLATE), 0);
-        assert_eq!(count(5..DEEPSLATE_LEVEL as usize, STONE), 0);
-        assert!(count(5..30, DEEPSLATE) > 1000);
+        // All deepslate below Y 0, blending into stone up to 8.
+        assert_eq!(
+            count(DEEPSLATE_LEVEL + DEEPSLATE_BLEND..MAX_Y, DEEPSLATE),
+            0
+        );
+        assert_eq!(count(MIN_Y + 5..DEEPSLATE_LEVEL, STONE), 0);
+        assert!(count(-50..-10, DEEPSLATE) > 1000);
+        assert!(count(0..8, DEEPSLATE) > 0 && count(0..8, STONE) > 0);
     }
 
     /// Generates the chunk holding (x, z) and returns its column there.
     fn column_blocks(terrain: &Terrain, x: i32, z: i32) -> Vec<BlockState> {
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
         let (lx, lz) = local(x, z);
-        (0..WORLD_HEIGHT).map(|y| chunk.get(lx, y, lz)).collect()
+        (crate::config::MIN_Y..crate::config::MAX_Y)
+            .map(|y| chunk.get(lx, y, lz))
+            .collect()
     }
 
     /// An open column (no cave entrance) of `biome`, not on a slope.
@@ -1238,7 +1355,7 @@ pub(crate) mod tests {
             let (x, z, column) = open(&terrain, biome);
             assert_eq!(column.top, top, "{biome:?}");
             let blocks = column_blocks(&terrain, x, z);
-            let h = column.height as usize;
+            let h = (column.height - crate::config::MIN_Y) as usize;
             if column.top == SAND {
                 assert!(
                     blocks[..h].contains(&SANDSTONE),
@@ -1254,7 +1371,7 @@ pub(crate) mod tests {
         // Badlands: red sand on bands of terracotta.
         let (x, z, column) = open(&terrain, Biome::Badlands);
         let blocks = column_blocks(&terrain, x, z);
-        let h = column.height as usize;
+        let h = (column.height - crate::config::MIN_Y) as usize;
         assert!(
             blocks[h - 10..h]
                 .iter()
@@ -1263,14 +1380,14 @@ pub(crate) mod tests {
         // Cold biomes: snow on top, snowy grass.
         let (x, z, column) = open(&terrain, Biome::SnowyPlains);
         let blocks = column_blocks(&terrain, x, z);
-        let h = column.height as usize;
+        let h = (column.height - crate::config::MIN_Y) as usize;
         assert_eq!(blocks[h + 1].id(), blocks::SNOW, "{:?}", &blocks[h..h + 3]);
         assert!(blocks[h].bool(crate::world::props::Prop::Snowy));
         // Frozen oceans freeze over.
         let (x, z) = find(&terrain, "frozen ocean", |c| c.biome == Biome::FrozenOcean);
         let blocks = column_blocks(&terrain, x, z);
         assert!(matches!(
-            blocks[SEA_LEVEL as usize].id(),
+            blocks[(SEA_LEVEL - crate::config::MIN_Y) as usize].id(),
             blocks::ICE | blocks::PACKED_ICE | blocks::SNOW_BLOCK
         ));
     }
@@ -1287,8 +1404,14 @@ pub(crate) mod tests {
         // Halfway down the cave band (depth 0.2 to 0.9 under the quart's
         // corner).
         let deep = terrain.height(x.div_euclid(4) * 4, z.div_euclid(4) * 4) - 64;
-        assert_eq!(chunk.biome_at(lx, deep as usize, lz), Biome::LushCaves);
-        assert_eq!(chunk.biome_at(lx, column.height as usize, lz), column.biome);
+        assert_eq!(
+            chunk.biome_at(lx, (deep as usize) as i32, lz),
+            Biome::LushCaves
+        );
+        assert_eq!(
+            chunk.biome_at(lx, (column.height as usize) as i32, lz),
+            column.biome
+        );
     }
 
     /// Prints biome shares, heights and slopes over a big square:
@@ -1414,5 +1537,44 @@ mod timing {
         {
             println!("{name:12} {:.3} ms", v * 1000.0 / n as f64);
         }
+    }
+
+    /// Share of land columns (out of `n`) whose surface block a cave has
+    /// carved away: openings to the sky.
+    fn openings(seed: u64) -> (usize, usize) {
+        let terrain = Terrain::new(seed);
+        let (mut open, mut land) = (0, 0);
+        for cz in -6..6 {
+            for cx in -6..6 {
+                let chunk = terrain.generate(ChunkPos::new(cx, cz));
+                let (min_x, min_z) = chunk.pos.min_block();
+                for z in 0..16 {
+                    for x in 0..16 {
+                        let column = terrain.column(min_x + x as i32, min_z + z as i32);
+                        if column.height <= SEA_LEVEL {
+                            continue;
+                        }
+                        land += 1;
+                        let top = chunk.get(x, column.height, z);
+                        let below = chunk.get(x, column.height - 2, z);
+                        open += usize::from(top.is_air() && below.is_air());
+                    }
+                }
+            }
+        }
+        (open, land)
+    }
+
+    #[test]
+    fn caves_open_to_the_surface_only_rarely() {
+        let (mut open, mut land) = (0, 0);
+        for seed in [15, 3, 20111118] {
+            let (o, l) = openings(seed);
+            eprintln!("seed {seed}: openings {o} of {l}");
+            open += o;
+            land += l;
+        }
+        assert!(open > 0, "no cave reaches the surface");
+        assert!(open * 100 < land, "{open} of {land} columns open");
     }
 }

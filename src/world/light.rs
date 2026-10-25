@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 
 use super::{block::BlockState, mesh::BlockModels, mesh::ChunkArea};
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::{CHUNK_SIZE, MIN_Y, WORLD_HEIGHT};
 
 pub const MAX_LIGHT: u8 = 15;
 
@@ -29,9 +29,10 @@ pub struct ChunkLight {
 }
 
 impl ChunkLight {
-    /// (sky, block) light at chunk-local coordinates, with x and z in
-    /// -1..=16. Above the blocks is full sky light; below the world it's dark.
+    /// (sky, block) light at chunk-local x and z in -1..=16 and world `y`.
+    /// Above the blocks is full sky light; below the world it's dark.
     pub fn get(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        let y = y - MIN_Y;
         if y >= self.height as i32 {
             return (MAX_LIGHT, 0);
         }
@@ -52,7 +53,7 @@ fn area_index(x: usize, y: usize, z: usize) -> usize {
 }
 
 /// Computes light for the center chunk of `area`. Missing neighbor chunks
-/// count as empty.
+/// count as empty. Heights here count from `MIN_Y`.
 pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
     // Up to a section past the highest blocks, which block light can't
     // cross; everything above is open sky.
@@ -72,23 +73,27 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
             // Sunlight goes straight down undimmed until something absorbs it.
             let mut level = MAX_LIGHT;
             let mut open = true;
+
             for y in (0..height).rev() {
-                let state = area.get(ax, y as i32, az).unwrap_or(BlockState::AIR);
+                let state = area
+                    .get(ax, y as i32 + MIN_Y, az)
+                    .unwrap_or(BlockState::AIR);
                 if state.is_air() {
                     sky[area_index(x, y, z)] = level;
                     continue;
                 }
                 let model = models.get(state);
+                let (block_opacity, emission) = (model.opacity, model.emission);
                 let i = area_index(x, y, z);
-                opacity[i] = model.opacity;
-                level = level.saturating_sub(model.opacity);
+                opacity[i] = block_opacity;
+                level = level.saturating_sub(block_opacity);
                 sky[i] = level;
-                if open && model.opacity > 0 {
+                if open && block_opacity > 0 {
                     open = false;
                     open_from[z * AREA + x] = y + 1;
                 }
-                if model.emission > 0 {
-                    block[i] = model.emission;
+                if emission > 0 {
+                    block[i] = emission;
                     block_queue.push_back(i as u32);
                 }
             }
@@ -116,6 +121,12 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
     }
 
     spread(&mut sky, &opacity, sky_queue, height);
+    // An emitter boxed in by rock and emitters as bright (deep lava) can't
+    // light anything its neighbors don't already: leave it out.
+    let block_queue: VecDeque<u32> = block_queue
+        .into_iter()
+        .filter(|&i| lights_a_neighbor(i as usize, &block, &opacity, height))
+        .collect();
     spread(&mut block, &opacity, block_queue, height);
 
     let mut cells = vec![0u8; BORDER * BORDER * height];
@@ -129,6 +140,36 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
         }
     }
     ChunkLight { cells, height }
+}
+
+/// Whether the emitter at `i` has a neighbor it could light: one that
+/// isn't opaque and isn't itself an emitter at least as bright.
+fn lights_a_neighbor(i: usize, levels: &[u8], opacity: &[u8], height: usize) -> bool {
+    let (x, z, y) = (i % AREA, (i / AREA) % AREA, i / (AREA * AREA));
+    let own = levels[i];
+    let mut neighbors = [None; 6];
+    if x > 0 {
+        neighbors[0] = Some(i - 1);
+    }
+    if x + 1 < AREA {
+        neighbors[1] = Some(i + 1);
+    }
+    if z > 0 {
+        neighbors[2] = Some(i - AREA);
+    }
+    if z + 1 < AREA {
+        neighbors[3] = Some(i + AREA);
+    }
+    if y > 0 {
+        neighbors[4] = Some(i - AREA * AREA);
+    }
+    if y + 1 < height {
+        neighbors[5] = Some(i + AREA * AREA);
+    }
+    neighbors
+        .into_iter()
+        .flatten()
+        .any(|n| opacity[n] < 15 && levels[n] < own)
 }
 
 /// Floods light outward from the queued cells: each step loses 1, or the
@@ -198,10 +239,10 @@ mod tests {
                 let pos = ChunkPos::new(cx, cz);
                 let mut chunk = Chunk::new(pos);
                 let (min_x, min_z) = pos.min_block();
-                for y in 0..WORLD_HEIGHT {
+                for y in crate::config::MIN_Y..crate::config::MAX_Y {
                     for z in 0..CHUNK_SIZE {
                         for x in 0..CHUNK_SIZE {
-                            let block = fill(min_x + x as i32, y as i32, min_z + z as i32);
+                            let block = fill(min_x + x as i32, y, min_z + z as i32);
                             chunk.set(x, y, z, block);
                         }
                     }
@@ -237,18 +278,19 @@ mod tests {
         assert_eq!(light.get(5, 127, 5), (15, 0));
         assert_eq!(light.get(5, 63, 5), (0, 0));
         assert_eq!(light.get(5, 255, 5), (15, 0));
-        assert_eq!(light.get(5, 256, 5), (15, 0));
+        assert_eq!(light.get(5, crate::config::MAX_Y, 5), (15, 0));
     }
 
     #[test]
     fn blocks_at_the_top_of_the_world_are_lit_like_any_other() {
-        let tower: Vec<_> = (64..256).map(|y| (5, y, 5, STONE)).collect();
+        let top = crate::config::MAX_Y - 1;
+        let tower: Vec<_> = (64..=top).map(|y| (5, y, 5, STONE)).collect();
         let mut with_torch = tower.clone();
-        with_torch.push((6, 255, 5, TORCH));
+        with_torch.push((6, top, 5, TORCH));
         let light = light_chunk(&models(), &ground(&with_torch));
         assert_eq!(light.get(5, 200, 6), (15, 0), "beside the tower, open sky");
-        assert_eq!(light.get(7, 255, 5).1, 13, "a torch at the top spreads");
-        assert_eq!(light.get(5, 256, 5), (15, 0));
+        assert_eq!(light.get(7, top, 5).1, 13, "a torch at the top spreads");
+        assert_eq!(light.get(5, top + 1, 5), (15, 0));
     }
 
     #[test]

@@ -153,7 +153,7 @@ fn fluids(c: &mut Criterion) {
                     let pos = ChunkPos::of_block(at.x, at.z);
                     if let Some(chunk) = world.get_mut(pos) {
                         let (x, z) = (at.x.rem_euclid(16), at.z.rem_euclid(16));
-                        chunk.set(x as usize, at.y as usize, z as usize, block);
+                        chunk.set(x as usize, at.y, z as usize, block);
                     }
                 }
             }
@@ -207,7 +207,7 @@ fn redstone(c: &mut Criterion) {
                 for (at, block) in outcome.edits {
                     world.get_mut(ChunkPos::of_block(at.x, at.z)).unwrap().set(
                         at.x.rem_euclid(16) as usize,
-                        at.y as usize,
+                        at.y,
                         at.z.rem_euclid(16) as usize,
                         block,
                     );

@@ -1652,6 +1652,7 @@ mod tests {
             "cracked_nether_bricks",
             "cracked_polished_blackstone_bricks",
             "gilded_blackstone",
+            "glow_lichen",
             "netherite_block",
             "polished_blackstone",
             "polished_blackstone_bricks",

@@ -72,6 +72,7 @@ const NOT_CRAFTED: &[&str] = &[
     "red_mushroom_block",
     "mushroom_stem",
     "vine",
+    "glow_lichen",
     "mycelium",
     "lily_pad",
     "nether_wart",

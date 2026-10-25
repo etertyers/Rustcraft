@@ -53,10 +53,10 @@ impl Chunks<'_> {
         if at.y < 0 {
             return BlockState::of(blocks::BEDROCK);
         }
-        if at.y >= crate::config::WORLD_HEIGHT as i32 {
+        if at.y >= crate::config::MAX_Y {
             return BlockState::AIR;
         }
-        chunk.get((at.x - x0) as usize, at.y as usize, (at.z - z0) as usize)
+        chunk.get((at.x - x0) as usize, at.y, (at.z - z0) as usize)
     }
 }
 

@@ -195,7 +195,7 @@ impl Nether {
                 for y in 0..HEIGHT {
                     let block = self.base(bits, biome, x, y, z);
                     if block != AIR {
-                        chunk.set(lx, y as usize, lz, block);
+                        chunk.set(lx, y, lz, block);
                     }
                 }
             }
@@ -448,12 +448,12 @@ struct Out<'c> {
 }
 
 impl Out<'_> {
-    fn local(&self, x: i32, y: i32, z: i32) -> Option<(usize, usize, usize)> {
+    fn local(&self, x: i32, y: i32, z: i32) -> Option<(usize, i32, usize)> {
         let (x0, z0) = self.chunk.pos.min_block();
         let (lx, lz) = (x - x0, z - z0);
         let size = CHUNK_SIZE as i32;
         ((0..size).contains(&lx) && (0..size).contains(&lz) && (1..HEIGHT - 1).contains(&y))
-            .then_some((lx as usize, y as usize, lz as usize))
+            .then_some((lx as usize, y, lz as usize))
     }
 
     /// Whether a feature `reach` blocks around (x, z) could touch the chunk.
@@ -1116,7 +1116,7 @@ mod tests {
         for y in 0..HEIGHT as usize {
             for z in 0..CHUNK_SIZE {
                 for x in 0..CHUNK_SIZE {
-                    n += usize::from(chunk.get(x, y, z).is(id));
+                    n += usize::from(chunk.get(x, y as i32, z).is(id));
                 }
             }
         }
@@ -1138,7 +1138,7 @@ mod tests {
             let chunk = nether.generate(ChunkPos::new(cx - 16, 0));
             for x in 0..16 {
                 for y in 0..HEIGHT as usize {
-                    let block = chunk.get(x, y, 8);
+                    let block = chunk.get(x, y as i32, 8);
                     let color = match block.id() {
                         blocks::AIR => [20, 10, 10],
                         blocks::LAVA => [230, 90, 10],
@@ -1213,13 +1213,13 @@ mod tests {
         for y in 0..HEIGHT as usize {
             for z in 0..CHUNK_SIZE {
                 for x in 0..CHUNK_SIZE {
-                    assert_eq!(a.get(x, y, z), b.get(x, y, z));
+                    assert_eq!(a.get(x, y as i32, z), b.get(x, y as i32, z));
                 }
             }
         }
         let other = Nether::new(6).generate(pos);
         let differ = (0..HEIGHT as usize)
-            .filter(|&y| a.get(8, y, 8) != other.get(8, y, 8))
+            .filter(|&y| a.get(8, y as i32, 8) != other.get(8, y as i32, 8))
             .count();
         assert!(differ > 10);
     }
@@ -1239,7 +1239,7 @@ mod tests {
                             assert_eq!(chunk.get(x, y, z), AIR);
                         }
                         for y in 1..=LAVA_LEVEL as usize {
-                            lava += usize::from(chunk.get(x, y, z).is(blocks::LAVA));
+                            lava += usize::from(chunk.get(x, y as i32, z).is(blocks::LAVA));
                         }
                         for y in 40..100 {
                             sampled += 1;
@@ -1351,11 +1351,11 @@ mod tests {
             for y in 1..HEIGHT as usize - 1 {
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
-                        let block = chunk.get(x, y, z);
+                        let block = chunk.get(x, y as i32, z);
                         // Glowstone is part of a clump hanging from rock.
                         if block.is(blocks::WEEPING_VINES) || block.is(blocks::WEEPING_VINES_PLANT)
                         {
-                            let above = chunk.get(x, y + 1, z);
+                            let above = chunk.get(x, (y + 1) as i32, z);
                             assert!(
                                 above.def().solid || above.is(blocks::WEEPING_VINES_PLANT),
                                 "a weeping vine at {x},{y},{z} hangs from {}",
@@ -1363,7 +1363,7 @@ mod tests {
                             );
                         }
                         if block.is(blocks::CRIMSON_ROOTS) || block.is(blocks::WARPED_ROOTS) {
-                            let below = chunk.get(x, y - 1, z);
+                            let below = chunk.get(x, (y - 1) as i32, z);
                             assert!(
                                 below.is(blocks::CRIMSON_NYLIUM) || below.is(blocks::WARPED_NYLIUM),
                                 "roots on {}",

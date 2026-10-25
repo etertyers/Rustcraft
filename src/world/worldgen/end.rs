@@ -314,7 +314,7 @@ impl End {
                 };
                 for (top, bottom) in spans {
                     for y in bottom.max(1)..=top {
-                        chunk.set(lx, y as usize, lz, END_STONE);
+                        chunk.set(lx, y, lz, END_STONE);
                     }
                 }
             }
@@ -324,9 +324,9 @@ impl End {
             let (lx, lz) = (at.x - min_x, at.z - min_z);
             if (0..CHUNK_SIZE as i32).contains(&lx)
                 && (0..CHUNK_SIZE as i32).contains(&lz)
-                && (0..crate::config::WORLD_HEIGHT as i32).contains(&at.y)
+                && crate::world::chunk::in_height(at.y)
             {
-                Some((lx as usize, at.y as usize, lz as usize, block))
+                Some((lx as usize, at.y, lz as usize, block))
             } else {
                 None
             }
@@ -567,7 +567,7 @@ mod tests {
         let chunk = chunk_at(end, at.x.div_euclid(16), at.z.div_euclid(16));
         chunk.get(
             at.x.rem_euclid(16) as usize,
-            at.y as usize,
+            at.y,
             at.z.rem_euclid(16) as usize,
         )
     }
@@ -604,14 +604,14 @@ mod tests {
         let end = End::new(7);
         let a = chunk_at(&end, 2, 1);
         let b = chunk_at(&end, 2, 1);
-        assert_eq!(a.get(3, SURFACE_Y as usize, 3), END_STONE);
+        assert_eq!(a.get(3, SURFACE_Y, 3), END_STONE);
         assert_eq!(a.biome(0, 0), Biome::TheEnd);
-        for y in 0..crate::config::WORLD_HEIGHT {
+        for y in crate::config::MIN_Y..crate::config::MAX_Y {
             assert_eq!(a.get(5, y, 9), b.get(5, y, 9));
         }
         // Far chunks are empty.
         let far = chunk_at(&end, 20, 20);
-        assert!((0..crate::config::WORLD_HEIGHT).all(|y| far.get(4, y, 4).is_air()));
+        assert!((crate::config::MIN_Y..crate::config::MAX_Y).all(|y| far.get(4, y, 4).is_air()));
     }
 
     #[test]
@@ -666,7 +666,7 @@ mod tests {
                         && at.z.div_euclid(16) == cz
                         && chunk.get(
                             at.x.rem_euclid(16) as usize,
-                            at.y as usize,
+                            at.y,
                             at.z.rem_euclid(16) as usize,
                         ) == OBSIDIAN
                     {
@@ -759,8 +759,8 @@ mod tests {
             (at.x.rem_euclid(16)) as usize,
             (at.z.rem_euclid(16)) as usize,
         );
-        assert_eq!(chunk.get(local.0, at.y as usize, local.1), END_STONE);
-        for y in 0..crate::config::WORLD_HEIGHT {
+        assert_eq!(chunk.get(local.0, at.y, local.1), END_STONE);
+        for y in crate::config::MIN_Y..crate::config::MAX_Y {
             assert_eq!(
                 chunk.get(local.0, y, local.1),
                 again.get(local.0, y, local.1)
@@ -773,7 +773,7 @@ mod tests {
                 let chunk = end.generate(pos.offset(dx, dz));
                 for z in 0..16 {
                     for x in 0..16 {
-                        for y in 1..crate::config::WORLD_HEIGHT {
+                        for y in crate::config::MIN_Y + 1..crate::config::MAX_Y {
                             if chunk.get(x, y, z).is(blocks::CHORUS_PLANT)
                                 && chunk.get(x, y - 1, z).is(blocks::END_STONE)
                             {

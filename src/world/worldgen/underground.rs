@@ -7,7 +7,7 @@ use super::{
     terrain::{Area, Terrain},
 };
 use crate::{
-    config::{CHUNK_SIZE, WORLD_HEIGHT},
+    config::{CHUNK_SIZE, MAX_Y, MIN_Y},
     world::{
         biome::Biome,
         block::BlockState,
@@ -41,11 +41,146 @@ const GEODE_HIGH: i32 = ores::ours(30);
 
 pub fn populate(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
     caves(terrain, area, chunk);
+    lava_pools(terrain, area, chunk);
+    glow_lichen(terrain, area, chunk);
     let center = chunk.pos;
     for dz in -1..=1 {
         for dx in -1..=1 {
             geode(terrain, center.offset(dx, dz), chunk);
         }
+    }
+}
+
+const LICHEN_SALT: u64 = 0x11C7;
+const POOL_SALT: u64 = 0x9001;
+/// Glow lichen patches tried per chunk (modern `glow_lichen`: 104 tries
+/// a chunk below the surface), and blocks each spreads to at most.
+const LICHEN_TRIES: u32 = 104;
+const LICHEN_SPREAD: u32 = 6;
+/// One chunk in this many has an underground lava pool (modern
+/// `lake_lava_underground`, rarity 9).
+const POOL_RARITY: u32 = 9;
+
+/// Glow lichen on the walls and ceilings of caves: each try picks an air
+/// block in the rock and covers the solid sides next to it, then a few
+/// blocks around.
+fn glow_lichen(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
+    use crate::world::{Face, props::Prop};
+    let pos = chunk.pos;
+    let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, LICHEN_SALT);
+    let (min_x, min_z) = pos.min_block();
+    let lichen = BlockState::of(blocks::GLOW_LICHEN);
+    for _ in 0..LICHEN_TRIES {
+        let (x, z) = (rng.below(16) as i32, rng.below(16) as i32);
+        let column = area.get(min_x + x, min_z + z);
+        let top = column.height - 10;
+        if top <= MIN_Y + 6 {
+            continue;
+        }
+        let y = MIN_Y + 6 + rng.below((top - MIN_Y - 6) as u32) as i32;
+        let mut at = (x, y, z);
+        for _ in 0..1 + rng.below(LICHEN_SPREAD) {
+            let (x, y, z) = at;
+            if !(0..16).contains(&x) || !(0..16).contains(&z) {
+                break;
+            }
+            let (lx, lz) = (x as usize, z as usize);
+            if !chunk.get(lx, y, lz).is_air() {
+                break;
+            }
+            let mut placed = lichen;
+            let mut any = false;
+            for face in [Face::North, Face::South, Face::East, Face::West, Face::Top] {
+                let [dx, dy, dz] = face.normal();
+                let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+                let solid = (0..16).contains(&nx)
+                    && (0..16).contains(&nz)
+                    && rock(chunk.get(nx as usize, ny, nz as usize));
+                if solid && rng.below(3) != 0 {
+                    placed = placed.with_bool(Prop::side(face), true);
+                    any = true;
+                }
+            }
+            if any {
+                chunk.set(lx, y, lz, placed);
+            }
+            let step = [
+                (1, 0, 0),
+                (-1, 0, 0),
+                (0, 0, 1),
+                (0, 0, -1),
+                (0, 1, 0),
+                (0, -1, 0),
+            ][rng.below(6) as usize];
+            at = (x + step.0, y + step.1, z + step.2);
+        }
+    }
+}
+
+/// Now and then a small pool of lava sunk into the rock underground, with
+/// air over it (modern `lake_lava_underground`, smaller). It stays inside
+/// the chunk.
+fn lava_pools(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
+    let pos = chunk.pos;
+    let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, POOL_SALT);
+    if rng.below(POOL_RARITY) != 0 {
+        return;
+    }
+    let (min_x, min_z) = pos.min_block();
+    let (cx, cz) = (4 + rng.below(8) as i32, 4 + rng.below(8) as i32);
+    let column = area.get(min_x + cx, min_z + cz);
+    let top = column.height - 12;
+    if top <= MIN_Y + 10 {
+        return;
+    }
+    let cy = MIN_Y + 10 + rng.below((top - MIN_Y - 10) as u32) as i32;
+    let (rx, ry, rz) = (2.0 + rng.next_f64() * 2.0, 2.0, 2.0 + rng.next_f64() * 2.0);
+    let lava = BlockState::of(blocks::LAVA);
+    let inside = |dx: i32, dy: i32, dz: i32| {
+        (dx as f64 / rx).powi(2) + (dy as f64 / ry).powi(2) + (dz as f64 / rz).powi(2) < 1.0
+    };
+    // The pool's lower half is lava where every side and the floor are
+    // lava or rock (so nothing flows when the chunk loads); the rest is
+    // hollowed out.
+    let wet = |dx: i32, dy: i32, dz: i32| inside(dx, dy, dz) && dy <= 0;
+    let mut edits = Vec::new();
+    for dx in -4i32..=4 {
+        for dz in -4i32..=4 {
+            for dy in -2i32..=2 {
+                if !inside(dx, dy, dz) {
+                    continue;
+                }
+                let (lx, y, lz) = ((cx + dx) as usize, cy + dy, (cz + dz) as usize);
+                if chunk.get(lx, y, lz) == BlockState::of(blocks::BEDROCK) {
+                    continue;
+                }
+                let held = |ox: i32, oy: i32, oz: i32| {
+                    wet(dx + ox, dy + oy, dz + oz)
+                        || (!inside(dx + ox, dy + oy, dz + oz)
+                            && rock(chunk.get(
+                                (cx + dx + ox) as usize,
+                                cy + dy + oy,
+                                (cz + dz + oz) as usize,
+                            )))
+                };
+                let block = if wet(dx, dy, dz)
+                    && [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)]
+                        .into_iter()
+                        .all(|(ox, oy, oz)| held(ox, oy, oz))
+                {
+                    lava
+                } else if wet(dx, dy, dz) {
+                    // Rock where lava would spill.
+                    continue;
+                } else {
+                    BlockState::AIR
+                };
+                edits.push((lx, y, lz, block));
+            }
+        }
+    }
+    for (lx, y, lz, block) in edits {
+        chunk.set(lx, y, lz, block);
     }
 }
 
@@ -75,8 +210,8 @@ fn caves(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
             let Some(cave) = column.cave else {
                 continue;
             };
-            let top = (column.height - 12).min(WORLD_HEIGHT as i32 - 2) as usize;
-            for y in 2..top {
+            let top = (column.height - 12).min(MAX_Y - 2);
+            for y in MIN_Y + 2..top {
                 if chunk.biome_at(x, y, z) != cave || !chunk.get(x, y, z).is_air() {
                     continue;
                 }
@@ -94,7 +229,7 @@ fn caves(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
 }
 
 /// The floor under the air at `at`.
-fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: &mut Rng) {
+fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, i32, usize), rng: &mut Rng) {
     let roll = rng.next_f64();
     match cave {
         Biome::LushCaves => {
@@ -114,7 +249,7 @@ fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: 
                 chunk.set(x, y - 1, z, DRIPSTONE);
             }
             if roll < 0.1 {
-                let length = 1 + rng.below(4) as usize;
+                let length = 1 + rng.below(4) as i32;
                 spike(chunk, (x, y, z), length, false);
             }
         }
@@ -122,7 +257,7 @@ fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: 
 }
 
 /// The ceiling over the air at `at`.
-fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: &mut Rng) {
+fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, i32, usize), rng: &mut Rng) {
     let roll = rng.next_f64();
     match cave {
         Biome::LushCaves => {
@@ -131,10 +266,12 @@ fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng
             }
             if roll < 0.12 {
                 // Glow berry vines, lit in places.
-                let length = 1 + rng.below(6) as usize;
+                let length = 1 + rng.below(6) as i32;
                 for k in 0..length {
                     let cy = y - k;
-                    if cy < 2 || !chunk.get(x, cy, z).is_air() || !chunk.get(x, cy - 1, z).is_air()
+                    if cy < MIN_Y + 2
+                        || !chunk.get(x, cy, z).is_air()
+                        || !chunk.get(x, cy - 1, z).is_air()
                     {
                         break;
                     }
@@ -150,7 +287,7 @@ fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng
                 chunk.set(x, y + 1, z, DRIPSTONE);
             }
             if roll < 0.12 {
-                let length = 1 + rng.below(5) as usize;
+                let length = 1 + rng.below(5) as i32;
                 spike(chunk, (x, y, z), length, true);
             }
         }
@@ -159,23 +296,18 @@ fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng
 
 /// Pointed dripstone `length` long from `at`, hanging down from the block
 /// above (`down`) or standing up from the block below.
-fn spike(chunk: &mut Chunk, (x, y, z): (usize, usize, usize), length: usize, down: bool) {
+fn spike(chunk: &mut Chunk, (x, y, z): (usize, i32, usize), length: i32, down: bool) {
     // Shorten it to the open air it has, leaving a block of air at its tip.
     let mut room = 0;
     while room <= length {
-        let cy = if down {
-            y.checked_sub(room)
+        let cy = if down { y - room } else { y + room };
+        if (MIN_Y + 1..MAX_Y - 1).contains(&cy) && chunk.get(x, cy, z).is_air() {
+            room += 1;
         } else {
-            Some(y + room)
-        };
-        match cy {
-            Some(cy) if (1..WORLD_HEIGHT - 1).contains(&cy) && chunk.get(x, cy, z).is_air() => {
-                room += 1
-            }
-            _ => break,
+            break;
         }
     }
-    let length = length.min(room.saturating_sub(1));
+    let length = length.min((room - 1).max(0));
     let direction = if down {
         vertical_direction::DOWN
     } else {
@@ -261,9 +393,12 @@ pub fn geode_at(terrain: &Terrain, source: ChunkPos) -> Option<Geode> {
         radius,
         seed: rng.next_u64(),
     };
-    let open = geode
-        .shell()
-        .filter(|p| open_at(terrain, p.x, p.y, p.z))
+    let shell: Vec<glam::IVec3> = geode.shell().collect();
+    let worms = terrain.in_worms(&shell);
+    let open = shell
+        .iter()
+        .zip(worms)
+        .filter(|&(p, worm)| worm || open_at(terrain, p.x, p.y, p.z))
         .count();
     (open <= GEODE_INVALID_THRESHOLD).then_some(geode)
 }
@@ -293,7 +428,7 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
             }
             for dy in -outer..=outer {
                 let y = cy + dy;
-                if !(1..WORLD_HEIGHT as i32 - 1).contains(&y) {
+                if !(MIN_Y + 1..MAX_Y - 1).contains(&y) {
                     continue;
                 }
                 let d = ((dx * dx + dy * dy + dz * dz) as f64).sqrt();
@@ -301,7 +436,7 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
                 let mut cell = Rng::for_chunk(seed, x, z, y as u64);
                 let wobble = cell.next_f64() * 0.6;
                 let d = d - wobble;
-                let (lx, ly, lz) = (lx as usize, y as usize, lz as usize);
+                let (lx, ly, lz) = (lx as usize, y, lz as usize);
                 let block = if d < radius - 1.0 {
                     BlockState::AIR
                 } else if d < radius {
@@ -341,10 +476,9 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
             }
             for dy in -outer..0 {
                 let y = cy + dy;
-                if y < 1 || y + 1 >= WORLD_HEIGHT as i32 {
+                if y < MIN_Y + 1 || y + 1 >= MAX_Y {
                     continue;
                 }
-                let y = y as usize;
                 let (lx, lz) = (lx as usize, lz as usize);
                 if chunk.get(lx, y, lz) == BUDDING && chunk.get(lx, y + 1, lz).is_air() {
                     let mut cell = Rng::for_chunk(seed ^ 0xB0D, cx + dx, cz + dz, y as u64);
@@ -367,7 +501,7 @@ mod tests {
         let mut counts = HashMap::new();
         for pos in chunks {
             let chunk = terrain.generate(pos);
-            for y in 0..WORLD_HEIGHT {
+            for y in crate::config::MIN_Y..crate::config::MAX_Y {
                 for i in 0..256 {
                     *counts
                         .entry(chunk.get(i % 16, y, i / 16).id().0)
@@ -440,5 +574,18 @@ mod tests {
         assert!(n(blocks::CALCITE) > n(blocks::AMETHYST_BLOCK) / 2);
         assert!(n(blocks::SMOOTH_BASALT) > 0);
         assert!(n(blocks::BUDDING_AMETHYST) > 0);
+    }
+
+    #[test]
+    fn caves_get_glow_lichen_and_some_chunks_lava_pools() {
+        let terrain = Terrain::new(20111118);
+        let counts = census(&terrain, (0..36).map(|i| ChunkPos::new(i % 6, i / 6)));
+        let n = |id: crate::world::block::BlockId| counts.get(&id.0).copied().unwrap_or(0);
+        assert!(
+            n(blocks::GLOW_LICHEN) > 50,
+            "{} glow lichen",
+            n(blocks::GLOW_LICHEN)
+        );
+        assert!(n(blocks::LAVA) > 0);
     }
 }

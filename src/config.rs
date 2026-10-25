@@ -76,9 +76,13 @@ pub const MOUSE_SENSITIVITY: f32 = 0.0025;
 /// Chunk width and depth in blocks; chunks are columns of 16³ sections.
 pub const CHUNK_SIZE: usize = 16;
 
-/// World height in blocks (Y 0..255, 16 sections), raised from 1.0.0's 128
-/// in v1.1 (see CLAUDE.md §9).
-pub const WORLD_HEIGHT: usize = 256;
+/// The lowest and one past the highest block a chunk holds: modern Y −64
+/// to 319 since M34 (0..255 in v1.1, 0..127 in v1.0). The Nether and the
+/// End keep their own heights inside it.
+pub const MIN_Y: i32 = -64;
+pub const MAX_Y: i32 = 320;
+/// Blocks in a chunk column (24 sections).
+pub const WORLD_HEIGHT: usize = (MAX_Y - MIN_Y) as usize;
 
 /// Sea level, as in 1.0.0.
 pub const SEA_LEVEL: i32 = 63;

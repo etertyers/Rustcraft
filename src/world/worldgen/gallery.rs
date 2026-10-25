@@ -80,7 +80,7 @@ pub fn gallery_chunks(registry: &BlockRegistry) -> Vec<Chunk> {
             let mut chunk = Chunk::new(pos);
             for z in 0..CHUNK_SIZE {
                 for x in 0..CHUNK_SIZE {
-                    chunk.set(x, FLOOR_Y as usize, z, FLOOR);
+                    chunk.set(x, FLOOR_Y, z, FLOOR);
                 }
             }
             chunks.insert(pos, chunk);
@@ -94,7 +94,7 @@ pub fn gallery_chunks(registry: &BlockRegistry) -> Vec<Chunk> {
             .expect("floor covers every exhibit");
         chunk.set(
             x.rem_euclid(size) as usize,
-            y as usize,
+            y,
             z.rem_euclid(size) as usize,
             exhibit.block,
         );
@@ -137,11 +137,7 @@ mod tests {
         for exhibit in exhibits(registry) {
             let [x, y, z] = exhibit.pos;
             let chunk = &chunks[&ChunkPos::of_block(x, z)];
-            let block = chunk.get(
-                x.rem_euclid(16) as usize,
-                y as usize,
-                z.rem_euclid(16) as usize,
-            );
+            let block = chunk.get(x.rem_euclid(16) as usize, y, z.rem_euclid(16) as usize);
             assert_eq!(block, exhibit.block);
         }
     }

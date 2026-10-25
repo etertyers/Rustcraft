@@ -15,11 +15,11 @@ use super::{
     Face, World,
     block::{BlockState, Shape},
     blocks,
-    chunk::{Chunk, SECTION_COUNT, SECTION_SIZE},
+    chunk::{Chunk, SECTION_COUNT},
     fast_hash::{FastMap, FastSet},
     props::{Prop, attach_face, door_half, rail_shape, wire_side},
 };
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::CHUNK_SIZE;
 
 /// Most blocks looked at in one tick, so a long chain can't stall it.
 const MAX_UPDATES: usize = 200_000;
@@ -118,14 +118,16 @@ impl Redstone {
     pub fn chunk_loaded(&mut self, chunk: &Chunk, time: u64) {
         let (min_x, min_z) = chunk.pos.min_block();
         for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
-            for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
+            for y in crate::world::chunk::section_bottom(section)
+                ..crate::world::chunk::section_bottom(section + 1)
+            {
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
                         let state = chunk.get(x, y, z);
                         if !is_part(state) {
                             continue;
                         }
-                        let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
+                        let at = IVec3::new(min_x + x as i32, y, min_z + z as i32);
                         if releases_itself(state) && state.bool(Prop::Powered) {
                             self.schedule(at, time, press_ticks(state), priority::NORMAL);
                         } else {
@@ -335,7 +337,7 @@ struct Step<'a> {
 
 impl Step<'_> {
     fn get(&self, at: IVec3) -> Option<BlockState> {
-        if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+        if !crate::world::chunk::in_height(at.y) {
             return None;
         }
         match self.edits.get(&at) {
