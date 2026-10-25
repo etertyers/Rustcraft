@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod glint;
 pub mod gui;
 pub mod menu;
+pub mod options;
 pub mod packs;
 pub mod pause;
 pub mod recipe_book;
@@ -250,7 +251,11 @@ impl DebugUi {
         stats: &DebugStats,
         hud: &Hud,
         screen: Option<(&mut screens::Screen, &screens::ScreenView)>,
-        pause: Option<(&mut pause::PauseMenu, &mut Options)>,
+        pause: Option<(
+            &mut pause::PauseMenu,
+            &mut Options,
+            &mut crate::level::Difficulty,
+        )>,
     ) -> (UiPaint, Vec<screens::ScreenAction>) {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
@@ -311,8 +316,8 @@ impl DebugUi {
             {
                 actions.push(screens::ScreenAction::Respawn);
             }
-            if let Some((menu, options)) = &mut pause
-                && let Some(action) = menu.show(ui.ctx(), options)
+            if let Some((menu, options, difficulty)) = &mut pause
+                && let Some(action) = menu.show(ui.ctx(), options, difficulty)
             {
                 actions.push(screens::ScreenAction::Pause(action));
             }

@@ -1,13 +1,13 @@
 //! The pause menu Escape opens in a world (1.0.0's GuiIngameMenu: Back to
-//! Game, Options..., Save and Quit to Title) and the Options screen it
-//! shares with the title screen (1.0.0's GuiOptions and GuiVideoSettings,
-//! cut down to the settings this game has, plus modern Resource Packs...).
+//! Game, Options..., Save and Quit to Title), opening the Options screens
+//! it shares with the title screen.
 
-use egui::{Align2, Button, Color32, RichText, Slider};
+use egui::{Align2, Button, Color32, RichText};
 
 use super::ClickSound;
+use super::options::{OptionsAction, OptionsScreen};
 use super::packs::PackScreen;
-use crate::options::{BIOME_BLENDS, FOVS, Options, RENDER_DISTANCES, SENSITIVITIES};
+use crate::{level::Difficulty, options::Options};
 
 const BUTTON: [f32; 2] = [260.0, 32.0];
 
@@ -18,28 +18,23 @@ pub enum PauseAction {
     SaveAndQuit,
 }
 
-/// What the Options page's buttons asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OptionsAction {
-    Done,
-    ResourcePacks,
-}
-
 /// The pause menu, or its Options page, or the Resource Packs screen.
 #[derive(Default)]
 pub struct PauseMenu {
-    pub options_open: bool,
+    pub options: Option<OptionsScreen>,
     pub packs: Option<PackScreen>,
 }
 
 impl PauseMenu {
-    /// Escape: from Resource Packs back to Options without applying, from
-    /// Options back to the menu, from the menu back to the game.
+    /// Escape: from Resource Packs back to Options without applying, up
+    /// the Options pages to the menu, from the menu back to the game.
     pub fn back(&mut self) -> Option<PauseAction> {
         if self.packs.take().is_some() {
             None
-        } else if self.options_open {
-            self.options_open = false;
+        } else if let Some(options) = self.options.as_mut() {
+            if options.back() {
+                self.options = None;
+            }
             None
         } else {
             Some(PauseAction::Resume)
@@ -48,7 +43,12 @@ impl PauseMenu {
 
     /// Draws the menu over the darkened game; changes go straight into
     /// `options`.
-    pub fn show(&mut self, ctx: &egui::Context, options: &mut Options) -> Option<PauseAction> {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        options: &mut Options,
+        difficulty: &mut Difficulty,
+    ) -> Option<PauseAction> {
         let full = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
@@ -67,9 +67,9 @@ impl PauseMenu {
                         }
                         return;
                     }
-                    if self.options_open {
-                        match options_page(ui, options) {
-                            Some(OptionsAction::Done) => self.options_open = false,
+                    if let Some(screen) = self.options.as_mut() {
+                        match screen.show(ui, options, Some(difficulty)) {
+                            Some(OptionsAction::Done) => self.options = None,
                             Some(OptionsAction::ResourcePacks) => {
                                 self.packs = Some(PackScreen::new(
                                     crate::pack::packs_dir(),
@@ -92,7 +92,7 @@ impl PauseMenu {
                         .add_sized(BUTTON, Button::new("Options..."))
                         .clicked_with_sound()
                     {
-                        self.options_open = true;
+                        self.options = Some(OptionsScreen::default());
                     }
                     ui.add_space(8.0);
                     if ui
@@ -105,122 +105,6 @@ impl PauseMenu {
             });
         action
     }
-}
-
-/// The Options page: sliders for render distance, biome blend, field of
-/// view, mouse sensitivity and volume, a vsync toggle, Resource Packs... and Done.
-pub fn options_page(ui: &mut egui::Ui, options: &mut Options) -> Option<OptionsAction> {
-    heading(ui, "Options");
-    let width = BUTTON[0];
-    ui.spacing_mut().slider_width = width;
-    let row = |ui: &mut egui::Ui, label: String| {
-        ui.label(RichText::new(label).color(Color32::WHITE));
-    };
-    row(
-        ui,
-        format!("Render Distance: {} chunks", options.render_distance),
-    );
-    ui.add(Slider::new(&mut options.render_distance, RENDER_DISTANCES).show_value(false));
-    ui.add_space(8.0);
-    row(
-        ui,
-        format!("Biome Blend: {}", blend_name(options.biome_blend)),
-    );
-    ui.add(Slider::new(&mut options.biome_blend, BIOME_BLENDS).show_value(false));
-    ui.add_space(8.0);
-    row(ui, format!("FOV: {}", fov_name(options.fov)));
-    ui.add(
-        Slider::new(&mut options.fov, FOVS)
-            .step_by(1.0)
-            .show_value(false),
-    );
-    ui.add_space(8.0);
-    row(ui, format!("Sensitivity: {}", percent(options.sensitivity)));
-    ui.add(
-        Slider::new(&mut options.sensitivity, SENSITIVITIES)
-            .step_by(0.01)
-            .show_value(false),
-    );
-    ui.add_space(8.0);
-    row(ui, format!("Volume: {}", percent(options.volume)));
-    ui.add(
-        Slider::new(&mut options.volume, 0.0..=1.0)
-            .step_by(0.01)
-            .show_value(false),
-    );
-    ui.add_space(8.0);
-    row(
-        ui,
-        format!("Brightness: {}", brightness_name(options.brightness)),
-    );
-    ui.add(
-        Slider::new(&mut options.brightness, 0.0..=1.0)
-            .step_by(0.01)
-            .show_value(false),
-    );
-    ui.add_space(8.0);
-    let vsync = format!("VSync: {}", if options.vsync { "ON" } else { "OFF" });
-    if ui
-        .add_sized(BUTTON, Button::new(vsync))
-        .clicked_with_sound()
-    {
-        options.vsync = !options.vsync;
-    }
-    ui.add_space(8.0);
-    let bobbing = format!(
-        "View Bobbing: {}",
-        if options.view_bobbing { "ON" } else { "OFF" }
-    );
-    if ui
-        .add_sized(BUTTON, Button::new(bobbing))
-        .clicked_with_sound()
-    {
-        options.view_bobbing = !options.view_bobbing;
-    }
-    ui.add_space(8.0);
-    let packs = ui
-        .add_sized(BUTTON, Button::new("Resource Packs..."))
-        .clicked_with_sound();
-    ui.add_space(16.0);
-    let done = ui
-        .add_sized(BUTTON, Button::new("Done"))
-        .clicked_with_sound();
-    if packs {
-        Some(OptionsAction::ResourcePacks)
-    } else {
-        done.then_some(OptionsAction::Done)
-    }
-}
-
-/// Vanilla's names for the Brightness slider's ends.
-fn brightness_name(brightness: f32) -> String {
-    match (brightness * 100.0).round() as i32 {
-        0 => "Moody".to_owned(),
-        100 => "Bright".to_owned(),
-        percent => format!("{percent}%"),
-    }
-}
-
-/// 1.0.0's names for the ends and middle of the FOV slider.
-fn fov_name(fov: f32) -> String {
-    match fov.round() as i32 {
-        70 => "Normal".to_owned(),
-        110 => "Quake Pro".to_owned(),
-        degrees => degrees.to_string(),
-    }
-}
-
-/// Modern's names for the biome blend sizes: "OFF", then "3x3" up to
-/// "15x15".
-fn blend_name(radius: i32) -> String {
-    match radius {
-        0 => "OFF".to_owned(),
-        r => format!("{0}x{0}", 2 * r + 1),
-    }
-}
-
-fn percent(fraction: f32) -> String {
-    format!("{}%", (fraction * 100.0).round() as i32)
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
@@ -237,25 +121,13 @@ mod tests {
     fn escape_steps_back_out_of_packs_and_options_then_resumes() {
         let dir = crate::world::save::TempDir::new("pause-packs");
         let mut pause = PauseMenu {
-            options_open: true,
+            options: Some(OptionsScreen::default()),
             packs: Some(PackScreen::new(dir.path().to_owned(), &[])),
         };
         assert_eq!(pause.back(), None);
-        assert!(pause.packs.is_none() && pause.options_open);
+        assert!(pause.packs.is_none() && pause.options.is_some());
         assert_eq!(pause.back(), None);
-        assert!(!pause.options_open);
+        assert!(pause.options.is_none());
         assert_eq!(pause.back(), Some(PauseAction::Resume));
-    }
-
-    #[test]
-    fn labels_read_like_1_0_0() {
-        assert_eq!(fov_name(70.0), "Normal");
-        assert_eq!(fov_name(110.0), "Quake Pro");
-        assert_eq!(fov_name(85.4), "85");
-        assert_eq!(percent(1.0), "100%");
-        assert_eq!(percent(0.25), "25%");
-        assert_eq!(blend_name(0), "OFF");
-        assert_eq!(blend_name(2), "5x5");
-        assert_eq!(blend_name(7), "15x15");
     }
 }

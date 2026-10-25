@@ -510,6 +510,15 @@ impl App {
     /// window; otherwise it reaches the player only while the camera has
     /// the mouse.
     fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        if let Some(screen) = options_screen(&mut self.pause, &mut self.menu) {
+            if pressed && screen.waiting().is_some() {
+                screen.bind(&mut self.options.keys, Some(Input::Mouse(button)));
+                return self.options_changed();
+            }
+            if !pressed {
+                screen.mouse_released();
+            }
+        }
         if pressed && button == MouseButton::Left && self.playing() && self.stack.click_in() {
             return self.apply_grab();
         }
@@ -643,12 +652,26 @@ impl App {
         let is = |action| actions.contains(&action);
         let escape = input == Input::Key(KeyCode::Escape);
         let press = pressed && !repeat;
+        // The Key Binds screen is waiting for a key: this is it, or Escape
+        // to unbind.
+        if press
+            && let Some(screen) = options_screen(&mut self.pause, &mut self.menu)
+            && screen.waiting().is_some()
+        {
+            screen.bind(&mut self.options.keys, (!escape).then_some(input));
+            return self.options_changed();
+        }
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
         let rolling = self
             .game
             .as_ref()
             .is_some_and(|g| g.credits_ticks().is_some());
-        if self.advancements.is_some() && press && (escape || is(Action::Advancements)) {
+        if escape
+            && press
+            && let Some(menu) = self.menu.as_mut()
+        {
+            menu.back();
+        } else if self.advancements.is_some() && press && (escape || is(Action::Advancements)) {
             self.close_advancements();
         } else if self.advancements.is_some() {
             // Nothing else works while it is open.
@@ -696,7 +719,9 @@ impl App {
             if let Some(debug_ui) = self.debug_ui.as_mut() {
                 debug_ui.toggle();
             }
-        } else if let Some(game) = self.game.as_mut() {
+        } else if self.pause.is_none()
+            && let Some(game) = self.game.as_mut()
+        {
             let grabbed = self.stack.reaches_game();
             for action in actions {
                 game.on_action(action, pressed, repeat, grabbed);
@@ -1536,8 +1561,13 @@ impl App {
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();
-        let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
+        let mut difficulty = game.difficulty;
+        let pause = self
+            .pause
+            .as_mut()
+            .map(|menu| (menu, &mut self.options, &mut difficulty));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
+        game.difficulty = difficulty;
         let mut environment = game.environment();
         environment.brightness = self.options.brightness;
         let result = renderer.render(&game.view_camera(), &environment, ui);
@@ -1729,6 +1759,17 @@ impl ApplicationHandler for App {
         // Joins the chunk workers.
         self.game = None;
         self.window = None;
+    }
+}
+
+/// The Options screen open in the pause menu or on the title screen.
+fn options_screen<'a>(
+    pause: &'a mut Option<PauseMenu>,
+    menu: &'a mut Option<Menu>,
+) -> Option<&'a mut crate::ui::options::OptionsScreen> {
+    match pause {
+        Some(pause) => pause.options.as_mut(),
+        None => menu.as_mut()?.options_screen(),
     }
 }
 
@@ -2046,6 +2087,44 @@ mod tests {
         app.options.keys.reset_all();
         app.on_input(Input::Key(KeyCode::KeyE), true, false);
         assert!(app.screen.is_some(), "E opens the inventory again");
+    }
+
+    #[test]
+    fn the_key_binds_screen_takes_the_next_key_or_button_and_escape_unbinds() {
+        use crate::ui::options::{OptionsScreen, Page};
+        use winit::keyboard::KeyCode;
+        let mut app = app_in_a_world();
+        app.pause_game();
+        let pause = app.pause.as_mut().expect("paused");
+        pause.options = Some(OptionsScreen::new(Page::KeyBinds));
+        let screen = || OptionsScreen::new(Page::KeyBinds);
+        let waiting = |app: &mut App, action| {
+            app.pause.as_mut().unwrap().options = Some({
+                let mut s = screen();
+                s.wait_for(action);
+                s
+            });
+        };
+        waiting(&mut app, Action::Jump);
+        app.on_input(Input::Key(KeyCode::KeyG), true, false);
+        assert_eq!(
+            app.options.keys.get(Action::Jump),
+            Some(Input::Key(KeyCode::KeyG))
+        );
+        assert!(
+            app.pause.is_some(),
+            "the key didn't reach the game or menus"
+        );
+        waiting(&mut app, Action::Attack);
+        app.on_mouse_button(MouseButton::Forward, true);
+        assert_eq!(
+            app.options.keys.get(Action::Attack),
+            Some(Input::Mouse(MouseButton::Forward))
+        );
+        waiting(&mut app, Action::Drop);
+        app.on_input(Input::Key(KeyCode::Escape), true, false);
+        assert_eq!(app.options.keys.get(Action::Drop), None);
+        assert!(app.pause.is_some(), "Escape only unbound the key");
     }
 
     #[test]
