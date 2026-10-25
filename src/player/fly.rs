@@ -25,10 +25,10 @@ pub fn fly(position: &mut DVec3, yaw: f32, keys: &MoveKeys, dt: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bindings::Action;
     use std::f32::consts::FRAC_PI_2;
-    use winit::keyboard::KeyCode;
 
-    fn held(keys: &[KeyCode]) -> MoveKeys {
+    fn held(keys: &[Action]) -> MoveKeys {
         let mut held = MoveKeys::default();
         for &key in keys {
             assert!(held.set_key(key, true));
@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn w_moves_along_yaw() {
         let mut position = DVec3::ZERO;
-        fly(&mut position, FRAC_PI_2, &held(&[KeyCode::KeyW]), 1.0);
+        fly(&mut position, FRAC_PI_2, &held(&[Action::Forward]), 1.0);
         assert!(position.abs_diff_eq(DVec3::X * SPEED, 1e-4));
     }
 
@@ -51,7 +51,7 @@ mod tests {
         fly(
             &mut position,
             0.0,
-            &held(&[KeyCode::KeyW, KeyCode::KeyD]),
+            &held(&[Action::Forward, Action::Right]),
             1.0,
         );
         assert!((position.length() - SPEED).abs() < 1e-4);
@@ -60,10 +60,10 @@ mod tests {
     #[test]
     fn space_and_shift_move_vertically_and_cancel() {
         let mut position = DVec3::ZERO;
-        fly(&mut position, 0.0, &held(&[KeyCode::ShiftLeft]), 0.5);
+        fly(&mut position, 0.0, &held(&[Action::Sneak]), 0.5);
         assert!((position.y + SPEED * 0.5).abs() < 1e-4);
         let before = position;
-        let both = held(&[KeyCode::Space, KeyCode::ShiftLeft]);
+        let both = held(&[Action::Jump, Action::Sneak]);
         fly(&mut position, 0.0, &both, 1.0);
         assert_eq!(position, before);
     }

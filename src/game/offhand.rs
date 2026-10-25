@@ -1,8 +1,8 @@
 //! Tests of the two hands: the off-hand slot and the F swap, using items
 //! from the off-hand, shields, and flint and steel.
 
+use crate::bindings::Action;
 use glam::{DVec3, IVec3};
-use winit::{event::MouseButton, keyboard::KeyCode};
 
 use super::{
     Game,
@@ -27,7 +27,7 @@ fn hold(game: &mut Game, main: Option<ItemStack>, off: Option<ItemStack>) {
 }
 
 fn right_click(game: &mut Game, held: bool) {
-    game.on_mouse_button(MouseButton::Right, held);
+    game.on_action(Action::Use, held, false, true);
 }
 
 fn zombie_at(game: &mut Game, feet: DVec3) {
@@ -45,7 +45,7 @@ fn f_swaps_the_hands_and_ends_whatever_was_in_use() {
         Some(ItemStack::new(items::IRON_SWORD, 1)),
         Some(ItemStack::new(items::SHIELD, 1)),
     );
-    game.on_key(KeyCode::KeyF, true, false, true);
+    game.on_action(Action::SwapHands, true, false, true);
     assert_eq!(
         game.inventory.hand_stack(Hand::Main).unwrap().id,
         items::SHIELD
@@ -59,11 +59,11 @@ fn f_swaps_the_hands_and_ends_whatever_was_in_use() {
     right_click(&mut game, true);
     game.run_ticks(8);
     assert!(game.is_blocking());
-    game.on_key(KeyCode::KeyF, true, false, true);
+    game.on_action(Action::SwapHands, true, false, true);
     assert!(!game.is_blocking() && game.shield_hand().is_none());
     // Held down, the key swaps once.
     let before = game.inventory.hand_stack(Hand::Main).cloned();
-    game.on_key(KeyCode::KeyF, true, true, true);
+    game.on_action(Action::SwapHands, true, true, true);
     assert_eq!(game.inventory.hand_stack(Hand::Main).cloned(), before);
 }
 
@@ -210,9 +210,9 @@ fn you_can_attack_with_the_sword_while_the_shield_stays_up() {
     assert!(game.is_blocking());
     game.attack_ticker = 100;
     game.mobs[0].body.set_position(DVec3::new(0.5, 64.0, -1.5));
-    game.on_mouse_button(MouseButton::Left, true);
+    game.on_action(Action::Attack, true, false, true);
     game.run_ticks(1);
-    game.on_mouse_button(MouseButton::Left, false);
+    game.on_action(Action::Attack, false, false, true);
     assert!(game.mobs[0].stats.health < 20.0, "the sword hit");
     assert!(game.is_blocking(), "and the shield is still up");
 }
@@ -224,7 +224,7 @@ fn you_cant_mine_with_the_shield_up() {
     game.advance(0.0);
     let target = game.target.unwrap().block;
     game.run_ticks(8);
-    game.on_mouse_button(MouseButton::Left, true);
+    game.on_action(Action::Attack, true, false, true);
     game.run_ticks(40);
     assert!(game.mining_progress().is_none());
     assert!(
@@ -274,7 +274,7 @@ fn a_broken_shield_is_gone() {
 fn raising_a_shield_slows_you_to_a_fifth() {
     let mut game = blocking_game();
     game.run_ticks(6);
-    game.on_key(KeyCode::KeyW, true, false, true);
+    game.on_action(Action::Forward, true, false, true);
     game.run_ticks(40);
     let blocking = game.body.velocity.x.hypot(game.body.velocity.z);
     // Walking settles at 0.118 a tick after friction; a fifth of the push is 0.024.

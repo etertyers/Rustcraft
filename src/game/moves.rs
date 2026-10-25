@@ -1,8 +1,8 @@
 //! Tests of the modern movement rules through the whole game: hunger
 //! and sprinting, swimming, crawling, and landing on ladders.
 
+use crate::bindings::Action;
 use glam::{DVec3, IVec3};
-use winit::keyboard::KeyCode;
 
 use super::tests::flat_game;
 use crate::{
@@ -10,8 +10,8 @@ use crate::{
     world::{block::BlockState, blocks},
 };
 
-fn press(game: &mut super::Game, key: KeyCode) {
-    game.on_key(key, true, false, true);
+fn press(game: &mut super::Game, action: Action) {
+    game.on_action(action, true, false, true);
 }
 
 #[test]
@@ -20,16 +20,16 @@ fn hunger_of_six_or_less_cant_sprint() {
         let mut game = flat_game(GameMode::Survival);
         game.stats.food = food;
         game.camera.pitch = 0.0;
-        press(&mut game, KeyCode::KeyW);
-        press(&mut game, KeyCode::ControlLeft);
+        press(&mut game, Action::Forward);
+        press(&mut game, Action::Sprint);
         game.run_ticks(10);
         assert_eq!(game.body.sprinting, sprints, "food {food}");
     }
     // Creative players eat nothing and sprint regardless.
     let mut game = flat_game(GameMode::Creative);
     game.stats.food = 0;
-    press(&mut game, KeyCode::KeyW);
-    press(&mut game, KeyCode::ControlLeft);
+    press(&mut game, Action::Forward);
+    press(&mut game, Action::Sprint);
     game.run_ticks(10);
     assert!(game.body.sprinting);
 }
@@ -38,8 +38,8 @@ fn hunger_of_six_or_less_cant_sprint() {
 fn running_out_of_hunger_mid_sprint_stops_it() {
     let mut game = flat_game(GameMode::Survival);
     game.camera.pitch = 0.0;
-    press(&mut game, KeyCode::KeyW);
-    press(&mut game, KeyCode::ControlLeft);
+    press(&mut game, Action::Forward);
+    press(&mut game, Action::Sprint);
     game.run_ticks(10);
     assert!(game.body.sprinting);
     game.stats.food = 6;
@@ -59,8 +59,8 @@ fn sprinting_with_the_head_under_water_swims() {
         })
         .collect();
     game.set_blocks(&water);
-    press(&mut game, KeyCode::KeyW);
-    press(&mut game, KeyCode::ControlLeft);
+    press(&mut game, Action::Forward);
+    press(&mut game, Action::Sprint);
     game.run_ticks(25);
     game.advance(0.0);
     assert!(game.body.swimming, "{:?}", game.body.position());
@@ -137,8 +137,8 @@ fn a_ladder_placed_in_the_game_can_be_climbed() {
     let place = |game: &mut super::Game, pitch: f32| {
         game.camera.pitch = pitch;
         game.advance(0.0);
-        game.on_mouse_button(winit::event::MouseButton::Right, true);
-        game.on_mouse_button(winit::event::MouseButton::Right, false);
+        game.on_action(Action::Use, true, false, true);
+        game.on_action(Action::Use, false, false, true);
         game.run_ticks(5);
     };
     // Looking at the wall at eye height, then at the floor in front of it.
@@ -160,7 +160,7 @@ fn a_ladder_placed_in_the_game_can_be_climbed() {
         ),
     ]);
     game.camera.pitch = 0.0;
-    press(&mut game, KeyCode::KeyW);
+    press(&mut game, Action::Forward);
     game.run_ticks(40);
     assert!(
         game.body.position().y > 66.0,

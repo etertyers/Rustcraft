@@ -7,8 +7,8 @@
 
 use std::f32::consts::{PI, TAU};
 
+use crate::bindings::Action;
 use glam::{DVec3, IVec3, Vec3};
-use winit::keyboard::KeyCode;
 
 use super::Game;
 use crate::{
@@ -416,7 +416,7 @@ impl Game {
 
     /// Holds sneak for a moment (for `--shot` scenes).
     pub fn sneak_for_shot(&mut self) {
-        self.keys.set_key(KeyCode::ShiftLeft, true);
+        self.keys.set_key(Action::Sneak, true);
         self.run_ticks(3);
     }
 
@@ -971,8 +971,8 @@ mod tests {
         assert!(!game.view().is_swinging());
         // A click that hits nothing still swings.
         game.camera.pitch = 0.5;
-        game.on_mouse_button(winit::event::MouseButton::Left, true);
-        game.on_mouse_button(winit::event::MouseButton::Left, false);
+        game.on_action(Action::Attack, true, false, true);
+        game.on_action(Action::Attack, false, false, true);
         game.run_ticks(1);
         assert!(game.view().is_swinging());
         game.run_ticks(8);
@@ -989,8 +989,8 @@ mod tests {
             )),
         );
         game.inventory.selected = 0;
-        game.on_mouse_button(winit::event::MouseButton::Right, true);
-        game.on_mouse_button(winit::event::MouseButton::Right, false);
+        game.on_action(Action::Use, true, false, true);
+        game.on_action(Action::Use, false, false, true);
         game.run_ticks(1);
         assert!(game.view().is_swinging());
     }
@@ -1062,15 +1062,15 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         game.camera.pitch = 0.0;
         let base = game.view_camera().fov;
-        game.on_key(KeyCode::KeyW, true, false, true);
-        game.on_key(KeyCode::ControlLeft, true, false, true);
+        game.on_action(Action::Forward, true, false, true);
+        game.on_action(Action::Sprint, true, false, true);
         game.run_ticks(15);
         game.advance(0.0);
         assert!(game.body.sprinting);
         let fov = game.view_camera().fov;
         assert!((fov / base - 1.15).abs() < 0.02, "{base} -> {fov}");
-        game.on_key(KeyCode::KeyW, false, false, true);
-        game.on_key(KeyCode::ControlLeft, false, false, true);
+        game.on_action(Action::Forward, false, false, true);
+        game.on_action(Action::Sprint, false, false, true);
         game.run_ticks(20);
         game.advance(0.0);
         assert!((game.view_camera().fov / base - 1.0).abs() < 0.01);
@@ -1078,7 +1078,7 @@ mod tests {
         // Sneaking: the hitbox and eyes drop, the camera follows.
         let standing_eye = game.camera.position.y - game.body.position().y as f32;
         assert!((standing_eye - 1.62).abs() < 0.01, "{standing_eye}");
-        game.on_key(KeyCode::ShiftLeft, true, false, true);
+        game.on_action(Action::Sneak, true, false, true);
         game.run_ticks(10);
         game.advance(0.0);
         let sneaking_eye = game.camera.position.y - game.body.position().y as f32;

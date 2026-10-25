@@ -528,7 +528,7 @@ mod tests {
                     .apply(Active::new(Effect::Speed, 0, 600), false, true);
             }
             game.camera.pitch = 0.0;
-            game.on_key(winit::keyboard::KeyCode::KeyW, true, false, true);
+            game.on_action(crate::bindings::Action::Forward, true, false, true);
             let start = game.body.position();
             for _ in 0..60 {
                 game.tick();

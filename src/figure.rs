@@ -480,7 +480,7 @@ mod tests {
         game.camera.pitch = 0.0;
         game.run_ticks(12);
         if blocking {
-            game.on_mouse_button(winit::event::MouseButton::Right, true);
+            game.on_action(crate::bindings::Action::Use, true, false, true);
             game.run_ticks(8);
             assert!(game.is_blocking());
         }

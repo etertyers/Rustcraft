@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use crate::{config, level};
+use crate::{bindings::Bindings, config, level};
 
 /// Render distance range in chunks: 1.0.0's Tiny (2) to Far (16).
 pub const RENDER_DISTANCES: std::ops::RangeInclusive<i32> = 2..=16;
@@ -43,6 +43,8 @@ pub struct Options {
     /// Selected resource packs (file or folder names in `resourcepacks/`),
     /// highest priority first.
     pub resource_packs: Vec<String>,
+    /// Every action's key or mouse button.
+    pub keys: Bindings,
 }
 
 impl Default for Options {
@@ -57,6 +59,7 @@ impl Default for Options {
             view_bobbing: true,
             brightness: crate::game::environment::DEFAULT_BRIGHTNESS,
             resource_packs: Vec::new(),
+            keys: Bindings::default(),
         }
     }
 }
@@ -113,6 +116,7 @@ impl Options {
             view_bobbing: self.view_bobbing,
             brightness: self.brightness.clamp(0.0, 1.0),
             resource_packs: self.resource_packs,
+            keys: self.keys,
         }
     }
 }
@@ -137,6 +141,14 @@ mod tests {
             view_bobbing: false,
             brightness: 0.8,
             resource_packs: vec!["High.zip".to_owned(), "Low".to_owned()],
+            keys: {
+                let mut keys = Bindings::default();
+                keys.set(
+                    crate::bindings::Action::Jump,
+                    Some(crate::bindings::Input::Key(winit::keyboard::KeyCode::KeyJ)),
+                );
+                keys
+            },
         };
         options.save(&path).unwrap();
         assert_eq!(Options::load(&path), options);

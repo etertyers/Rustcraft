@@ -25,6 +25,7 @@ use crate::{
     assets,
     audio::{Audio, Listener},
     bench::{self, Bench, FrameTimes},
+    bindings::{Action, Input},
     config,
     entity::mobs::MobRegistry,
     figure::{self, Figure, PlayerMeshes},
@@ -512,10 +513,8 @@ impl App {
         if pressed && button == MouseButton::Left && self.playing() && self.stack.click_in() {
             return self.apply_grab();
         }
-        if self.stack.reaches_game()
-            && let Some(game) = self.game.as_mut()
-        {
-            game.on_mouse_button(button, pressed);
+        if self.stack.reaches_game() {
+            self.on_input(Input::Mouse(button), pressed, false);
         }
     }
 
@@ -633,52 +632,57 @@ impl App {
             return;
         };
         let pressed = event.state == ElementState::Pressed;
+        self.on_input(Input::Key(key), pressed, event.repeat);
+    }
+
+    /// A key press or release, or a mouse button's while the camera has
+    /// the mouse. Escape is always the menu key, as in vanilla; everything
+    /// else goes through the key bindings.
+    fn on_input(&mut self, input: Input, pressed: bool, repeat: bool) {
+        let actions: Vec<Action> = self.options.keys.actions(input).collect();
+        let is = |action| actions.contains(&action);
+        let escape = input == Input::Key(KeyCode::Escape);
+        let press = pressed && !repeat;
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
         let rolling = self
             .game
             .as_ref()
             .is_some_and(|g| g.credits_ticks().is_some());
-        if self.advancements.is_some()
-            && pressed
-            && !event.repeat
-            && matches!(key, KeyCode::Escape | KeyCode::KeyL)
-        {
+        if self.advancements.is_some() && press && (escape || is(Action::Advancements)) {
             self.close_advancements();
         } else if self.advancements.is_some() {
             // Nothing else works while it is open.
-        } else if key == KeyCode::KeyL
-            && pressed
-            && !event.repeat
+        } else if is(Action::Advancements)
+            && press
             && self.playing()
             && self.stack.is_empty()
             && !rolling
         {
             self.open_advancements();
-        } else if key == KeyCode::Escape && pressed && !event.repeat && rolling {
+        } else if escape && press && rolling {
             // Skipping the poem and credits goes home.
             if let Some(game) = self.game.as_mut() {
                 game.finish_credits();
             }
         } else if rolling {
             // Nothing else works while they roll.
-        } else if key == KeyCode::Escape && pressed && sleeping {
+        } else if escape && pressed && sleeping {
             if let Some(game) = self.game.as_mut() {
                 game.wake();
             }
-        } else if key == KeyCode::Escape && pressed && self.screen.is_some() {
+        } else if escape && pressed && self.screen.is_some() {
             self.close_screen();
-        } else if key == KeyCode::Escape && pressed && !event.repeat && self.pause.is_some() {
+        } else if escape && press && self.pause.is_some() {
             if self.pause.as_mut().and_then(PauseMenu::back) == Some(PauseAction::Resume) {
                 self.resume();
             }
-        } else if key == KeyCode::Escape && pressed && !event.repeat && self.game.is_some() {
+        } else if escape && press && self.game.is_some() {
             self.pause_game();
-        } else if self.types_into_a_box() && key != KeyCode::F3 {
+        } else if self.types_into_a_box() && !is(Action::DebugOverlay) {
             // The anvil's name box or the creative search box has the
             // keyboard (E and the digits are letters).
-        } else if key == KeyCode::KeyE
-            && pressed
-            && !event.repeat
+        } else if is(Action::Inventory)
+            && press
             && self.game.is_some()
             && self.pause.is_none()
             && !sleeping
@@ -688,12 +692,15 @@ impl App {
             } else {
                 self.open_screen();
             }
-        } else if key == KeyCode::F3 && pressed && !event.repeat {
+        } else if is(Action::DebugOverlay) && press {
             if let Some(debug_ui) = self.debug_ui.as_mut() {
                 debug_ui.toggle();
             }
         } else if let Some(game) = self.game.as_mut() {
-            game.on_key(key, pressed, event.repeat, self.stack.reaches_game());
+            let grabbed = self.stack.reaches_game();
+            for action in actions {
+                game.on_action(action, pressed, repeat, grabbed);
+            }
         }
     }
 
@@ -2011,6 +2018,34 @@ mod tests {
         app.on_scroll(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
             0.0, -90.0,
         )));
+    }
+
+    #[test]
+    fn keys_do_what_they_are_bound_to() {
+        use winit::keyboard::KeyCode;
+        let mut app = app_in_a_world();
+        app.options
+            .keys
+            .set(Action::Forward, Some(Input::Key(KeyCode::KeyI)));
+        app.options
+            .keys
+            .set(Action::Hotbar5, Some(Input::Mouse(MouseButton::Back)));
+        app.on_input(Input::Key(KeyCode::KeyW), true, false);
+        assert!(
+            !app.game.as_ref().unwrap().keys.forward,
+            "W does nothing now"
+        );
+        app.on_input(Input::Key(KeyCode::KeyI), true, false);
+        assert!(app.game.as_ref().unwrap().keys.forward, "I walks forward");
+        app.on_mouse_button(MouseButton::Back, true);
+        assert_eq!(app.game.as_ref().unwrap().inventory.selected, 4);
+        // An unbound action does nothing.
+        app.options.keys.set(Action::Inventory, None);
+        app.on_input(Input::Key(KeyCode::KeyE), true, false);
+        assert!(app.screen.is_none());
+        app.options.keys.reset_all();
+        app.on_input(Input::Key(KeyCode::KeyE), true, false);
+        assert!(app.screen.is_some(), "E opens the inventory again");
     }
 
     #[test]
