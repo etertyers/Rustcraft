@@ -71,6 +71,19 @@ pub struct Level {
     /// the book).
     #[serde(default)]
     pub recipe_book: crate::inventory::book::Settings,
+    /// The world's game rules (added in M32; `/gamerule` sets them in M38).
+    #[serde(default)]
+    pub rules: GameRules,
+}
+
+/// Vanilla's game rules, as far as the game has them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GameRules {
+    /// The player keeps their items and experience on death (vanilla's
+    /// `keepInventory`, off by default).
+    #[serde(rename = "keepInventory")]
+    pub keep_inventory: bool,
 }
 
 /// The End as the world remembers it (added in M27).
@@ -154,6 +167,7 @@ impl Level {
             end: EndData::default(),
             advancements: Default::default(),
             recipe_book: Default::default(),
+            rules: GameRules::default(),
         }
     }
 }

@@ -169,6 +169,8 @@ pub struct Game {
     sleep: Option<sleep::Sleep>,
     /// The head of the bed the player last slept in, where they respawn.
     bed: Option<glam::IVec3>,
+    /// The world's game rules.
+    pub rules: crate::level::GameRules,
     /// A notice on screen and the ticks it has left (1.0.0's chat lines).
     pub message: Option<(String, u32)>,
     /// The capture tool's two corners (creative).
@@ -340,6 +342,7 @@ impl Game {
             container: None,
             sleep: None,
             bed: None,
+            rules: crate::level::GameRules::default(),
             message: None,
             capture: [None, None],
             entities: Vec::new(),
@@ -447,6 +450,7 @@ impl Game {
         game.inventory = player.inventory.clone();
         game.stats = player.stats.clone();
         game.bed = player.bed.map(glam::IVec3::from_array);
+        game.rules = level.rules.clone();
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
         game.body.flying = player.flying && game.body.may_fly;
@@ -553,6 +557,7 @@ impl Game {
         saved.level.end = self.end.clone();
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
+        saved.level.rules = self.rules.clone();
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
         saved.dir.save_level(&saved.level)?;
@@ -841,6 +846,7 @@ impl Game {
         self.tick_furnaces();
         self.tick_brewing();
         self.tick_sounds();
+        self.on_death();
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -907,8 +913,7 @@ impl Game {
     }
 
     /// Exhaustion from moving, then a tick of health, hunger, air and fire
-    /// (`Player.checkMovementStatistics` and 1.0.0's `onEntityUpdate`). Dying drops the
-    /// whole inventory.
+    /// (`Player.checkMovementStatistics` and 1.0.0's `onEntityUpdate`).
     fn tick_stats(&mut self) {
         let vulnerable = self.mode.is_vulnerable();
         let moved = self.body.position() - self.prev_feet;
@@ -956,10 +961,18 @@ impl Game {
             self.stats.tick_food();
         }
         self.body.can_sprint = !vulnerable || self.stats.can_sprint();
-        if self.stats.is_dead() {
-            self.drop_experience();
-            self.drop_everything();
+    }
+
+    /// A dead player's items and experience fall where they died, however
+    /// they died (a hit, an arrow, a blast or the fall), unless the world
+    /// keeps them. Run every tick while dead; once they're dropped there's
+    /// nothing left to drop.
+    fn on_death(&mut self) {
+        if !self.stats.is_dead() || self.rules.keep_inventory {
+            return;
         }
+        self.drop_experience();
+        self.drop_everything();
     }
 
     /// Scatters every stack in the inventory (and the mouse) around the player.
@@ -1764,6 +1777,51 @@ pub(crate) mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         game
+    }
+
+    #[test]
+    fn dying_any_way_drops_everything_unless_the_world_keeps_it() {
+        use crate::inventory::{
+            enchant::Enchantment,
+            items,
+            player::{ARMOR_HEAD, OFFHAND},
+        };
+        let stuff = |game: &mut Game| {
+            game.inventory
+                .set(0, Some(ItemStack::new(items::DIAMOND, 5)));
+            game.inventory
+                .set(20, Some(ItemStack::new(items::OAK_LOG, 30)));
+            game.inventory
+                .set(ARMOR_HEAD, Some(ItemStack::new(items::IRON_HELMET, 1)));
+            game.inventory
+                .set(OFFHAND, Some(ItemStack::new(items::SHIELD, 1)));
+            let mut cursed = ItemStack::new(items::GOLDEN_SWORD, 1);
+            cursed.enchant(Enchantment::VanishingCurse, 1);
+            game.inventory.set(1, Some(cursed));
+            game.stats.experience.level = 20;
+        };
+        let mut game = flat_game(GameMode::Survival);
+        stuff(&mut game);
+        // Killed outside the stats tick (a mob's hit lands after it).
+        game.stats.health = 0.0;
+        game.tick();
+        game.tick();
+        let dropped: Vec<_> = game.entities.iter().map(|e| e.stack.id).collect();
+        assert_eq!(dropped.len(), 4, "{dropped:?}");
+        assert!(!dropped.contains(&items::GOLDEN_SWORD), "vanishing curse");
+        assert!((0..crate::inventory::player::SLOTS).all(|s| game.inventory.slot(s).is_none()));
+        assert_eq!(game.stats.experience.level, 0);
+        let orbs: u32 = game.orbs.iter().map(|o| o.value).sum();
+        assert_eq!(orbs, 100, "7 a level, at most 100");
+
+        let mut kept = flat_game(GameMode::Survival);
+        kept.rules.keep_inventory = true;
+        stuff(&mut kept);
+        kept.stats.health = 0.0;
+        kept.tick();
+        assert!(kept.entities.is_empty());
+        assert!(kept.inventory.slot(ARMOR_HEAD).is_some());
+        assert_eq!(kept.stats.experience.level, 20);
     }
 
     #[test]
