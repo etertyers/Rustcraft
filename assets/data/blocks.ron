@@ -280,6 +280,7 @@
     (name: "pumpkin_stem", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "pumpkin_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "pumpkin_stem"), tint: Fixed(0x30C010)),
     (name: "melon_stem", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "melon_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "melon_stem"), tint: Fixed(0x30C010)),
     (name: "vine", hardness: 0.2, climbable: true, placement: Vine, props: [Up, North, East, South, West], burns: (encourage: 15, catch: 100), drops: All([(item: "vine", tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, textures: (all: "vine"), tint: Foliage),
+    (name: "glow_lichen", hardness: 0.2, placement: Vine, props: [Up, North, East, South, West], drops: All([(item: "glow_lichen", tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, light: 7, textures: (all: "glow_lichen")),
     (name: "oak_fence_gate", hardness: 2.0, placement: Look, activate: Open, props: [Facing, InWall, Open, Powered], shape: FenceGate, textures: (all: "oak_planks")),
     (name: "brick_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (all: "bricks")),
     (name: "stone_brick_stairs", hardness: 1.5, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (all: "stone_bricks")),
