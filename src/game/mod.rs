@@ -253,6 +253,12 @@ pub struct Game {
     scroll_pixels: f64,
     /// Mouse look speed, 1 for the default.
     sensitivity: f32,
+    /// The Controls options: Invert Mouse, Auto-Jump, and Sneak and Sprint
+    /// toggled instead of held.
+    invert_y: bool,
+    auto_jump: bool,
+    toggle_sneak: bool,
+    toggle_sprint: bool,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
     tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
@@ -397,6 +403,10 @@ impl Game {
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
+            invert_y: false,
+            auto_jump: false,
+            toggle_sneak: false,
+            toggle_sprint: false,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
             flying: false,
@@ -654,6 +664,16 @@ impl Game {
                 self.place_cooldown = 0;
             }
             Action::PickBlock if press && grabbed => self.pick_block(),
+            Action::Sneak if grabbed && self.toggle_sneak => {
+                if press {
+                    self.keys.sneak = !self.keys.sneak;
+                }
+            }
+            Action::Sprint if grabbed && self.toggle_sprint => {
+                if press {
+                    self.keys.sprint = !self.keys.sprint;
+                }
+            }
             _ if grabbed => {
                 self.keys.set_key(action, pressed);
             }
@@ -678,10 +698,15 @@ impl Game {
         self.camera.fov = options.fov;
         self.view.bobbing = options.view_bobbing;
         self.sensitivity = options.sensitivity;
+        self.invert_y = options.invert_y;
+        self.auto_jump = options.auto_jump;
+        self.toggle_sneak = options.toggle_sneak;
+        self.toggle_sprint = options.toggle_sprint;
     }
 
     pub fn look(&mut self, dx: f64, dy: f64) {
         let s = config::MOUSE_SENSITIVITY * self.sensitivity;
+        let dy = if self.invert_y { -dy } else { dy };
         self.camera.rotate(dx as f32 * s, -dy as f32 * s);
     }
 
@@ -888,6 +913,7 @@ impl Game {
         let input = MoveInput {
             look_y: self.camera.pitch.sin() as f64,
             using_item: self.using_item(),
+            auto_jump: self.auto_jump,
             ..self.keys.move_input()
         };
         effects_move(&mut self.body, &self.stats.effects);
@@ -1134,6 +1160,38 @@ pub(crate) mod tests {
             game.chunks.update(center);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn controls_options_invert_the_mouse_and_toggle_sneak_and_sprint() {
+        let mut game = flat_game(GameMode::Survival);
+        game.camera.pitch = 0.0;
+        let pitch = game.camera.pitch;
+        game.look(0.0, 50.0);
+        let down = game.camera.pitch - pitch;
+        game.apply_options(&Options {
+            invert_y: true,
+            toggle_sneak: true,
+            toggle_sprint: true,
+            ..Options::default()
+        });
+        game.camera.pitch = 0.0;
+        game.look(0.0, 50.0);
+        assert!(
+            down != 0.0 && (game.camera.pitch + down).abs() < 1e-6,
+            "inverted"
+        );
+        game.on_action(Action::Sneak, true, false, true);
+        game.on_action(Action::Sneak, false, false, true);
+        assert!(game.keys.sneak, "still sneaking after letting go");
+        game.on_action(Action::Sneak, true, false, true);
+        assert!(!game.keys.sneak, "a second press stops");
+        game.on_action(Action::Sprint, true, false, true);
+        game.on_action(Action::Sprint, true, true, true);
+        assert!(
+            game.keys.sprint,
+            "a held key's repeats don't toggle it back"
+        );
     }
 
     #[test]
