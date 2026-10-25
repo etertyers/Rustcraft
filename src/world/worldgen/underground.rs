@@ -41,10 +41,126 @@ const GEODE_HIGH: i32 = ores::ours(30);
 
 pub fn populate(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
     caves(terrain, area, chunk);
+    lava_pools(terrain, area, chunk);
+    glow_lichen(terrain, area, chunk);
     let center = chunk.pos;
     for dz in -1..=1 {
         for dx in -1..=1 {
             geode(terrain, center.offset(dx, dz), chunk);
+        }
+    }
+}
+
+const LICHEN_SALT: u64 = 0x11C7;
+const POOL_SALT: u64 = 0x9001;
+/// Glow lichen patches tried per chunk (modern `glow_lichen`: 104 tries
+/// a chunk below the surface), and blocks each spreads to at most.
+const LICHEN_TRIES: u32 = 104;
+const LICHEN_SPREAD: u32 = 6;
+/// One chunk in this many has an underground lava pool (modern
+/// `lake_lava_underground`, rarity 9).
+const POOL_RARITY: u32 = 9;
+
+/// Glow lichen on the walls and ceilings of caves: each try picks an air
+/// block in the rock and covers the solid sides next to it, then a few
+/// blocks around.
+fn glow_lichen(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
+    use crate::world::{Face, props::Prop};
+    let pos = chunk.pos;
+    let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, LICHEN_SALT);
+    let (min_x, min_z) = pos.min_block();
+    let lichen = BlockState::of(blocks::GLOW_LICHEN);
+    for _ in 0..LICHEN_TRIES {
+        let (x, z) = (rng.below(16) as i32, rng.below(16) as i32);
+        let column = area.get(min_x + x, min_z + z);
+        let top = column.height - 10;
+        if top <= MIN_Y + 6 {
+            continue;
+        }
+        let y = MIN_Y + 6 + rng.below((top - MIN_Y - 6) as u32) as i32;
+        let mut at = (x, y, z);
+        for _ in 0..1 + rng.below(LICHEN_SPREAD) {
+            let (x, y, z) = at;
+            if !(0..16).contains(&x) || !(0..16).contains(&z) {
+                break;
+            }
+            let (lx, lz) = (x as usize, z as usize);
+            if !chunk.get(lx, y, lz).is_air() {
+                break;
+            }
+            let mut placed = lichen;
+            let mut any = false;
+            for face in [Face::North, Face::South, Face::East, Face::West, Face::Top] {
+                let [dx, dy, dz] = face.normal();
+                let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+                let solid = (0..16).contains(&nx)
+                    && (0..16).contains(&nz)
+                    && rock(chunk.get(nx as usize, ny, nz as usize));
+                if solid && rng.below(3) != 0 {
+                    placed = placed.with_bool(Prop::side(face), true);
+                    any = true;
+                }
+            }
+            if any {
+                chunk.set(lx, y, lz, placed);
+            }
+            let step = [
+                (1, 0, 0),
+                (-1, 0, 0),
+                (0, 0, 1),
+                (0, 0, -1),
+                (0, 1, 0),
+                (0, -1, 0),
+            ][rng.below(6) as usize];
+            at = (x + step.0, y + step.1, z + step.2);
+        }
+    }
+}
+
+/// Now and then a small pool of lava sunk into the rock underground, with
+/// air over it (modern `lake_lava_underground`, smaller). It stays inside
+/// the chunk.
+fn lava_pools(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
+    let pos = chunk.pos;
+    let mut rng = Rng::for_chunk(terrain.seed(), pos.x, pos.z, POOL_SALT);
+    if rng.below(POOL_RARITY) != 0 {
+        return;
+    }
+    let (min_x, min_z) = pos.min_block();
+    let (cx, cz) = (4 + rng.below(8) as i32, 4 + rng.below(8) as i32);
+    let column = area.get(min_x + cx, min_z + cz);
+    let top = column.height - 12;
+    if top <= MIN_Y + 10 {
+        return;
+    }
+    let cy = MIN_Y + 10 + rng.below((top - MIN_Y - 10) as u32) as i32;
+    let (rx, ry, rz) = (2.0 + rng.next_f64() * 2.0, 2.0, 2.0 + rng.next_f64() * 2.0);
+    let lava = BlockState::of(blocks::LAVA);
+    for dx in -4i32..=4 {
+        for dz in -4i32..=4 {
+            for dy in -2i32..=2 {
+                let d =
+                    (dx as f64 / rx).powi(2) + (dy as f64 / ry).powi(2) + (dz as f64 / rz).powi(2);
+                if d >= 1.0 {
+                    continue;
+                }
+                let (lx, y, lz) = ((cx + dx) as usize, cy + dy, (cz + dz) as usize);
+                if chunk.get(lx, y, lz) == BlockState::of(blocks::BEDROCK) {
+                    continue;
+                }
+                // Lava in the lower half, on rock; air above it.
+                let floor = rock(chunk.get(lx, y - 1, lz)) || dy < 0;
+                chunk.set(
+                    lx,
+                    y,
+                    lz,
+                    if dy <= 0 && floor {
+                        lava
+                    } else {
+                        BlockState::AIR
+                    },
+                );
+            }
         }
     }
 }
@@ -436,5 +552,18 @@ mod tests {
         assert!(n(blocks::CALCITE) > n(blocks::AMETHYST_BLOCK) / 2);
         assert!(n(blocks::SMOOTH_BASALT) > 0);
         assert!(n(blocks::BUDDING_AMETHYST) > 0);
+    }
+
+    #[test]
+    fn caves_get_glow_lichen_and_some_chunks_lava_pools() {
+        let terrain = Terrain::new(20111118);
+        let counts = census(&terrain, (0..36).map(|i| ChunkPos::new(i % 6, i / 6)));
+        let n = |id: crate::world::block::BlockId| counts.get(&id.0).copied().unwrap_or(0);
+        assert!(
+            n(blocks::GLOW_LICHEN) > 50,
+            "{} glow lichen",
+            n(blocks::GLOW_LICHEN)
+        );
+        assert!(n(blocks::LAVA) > 0);
     }
 }

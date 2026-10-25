@@ -14,6 +14,8 @@ use crate::world::{
     worldgen::{rng::Rng, terrain::Terrain},
 };
 
+use crate::config::MIN_Y;
+
 /// The share of chunks that try for a dungeon.
 pub const CHANCE: f64 = 0.4;
 /// Spots tried in such a chunk.
@@ -21,7 +23,7 @@ const TRIES: u32 = 8;
 
 /// Whether the cell is rock (under the surface, not a cave).
 pub fn solid(terrain: &Terrain, at: IVec3) -> bool {
-    at.y > 0 && at.y <= terrain.height(at.x, at.z) && !terrain.is_cave(at.x, at.y, at.z)
+    at.y > MIN_Y + 4 && at.y <= terrain.height(at.x, at.z) && !terrain.is_cave(at.x, at.y, at.z)
 }
 
 pub fn generate(terrain: &Terrain, start: ChunkPos, rng: &mut Rng) -> Option<Vec<Piece>> {
@@ -31,7 +33,9 @@ pub fn generate(terrain: &Terrain, start: ChunkPos, rng: &mut Rng) -> Option<Vec
     for _ in 0..TRIES {
         let center = IVec3::new(
             x0 + rng.below(16) as i32,
-            8 + rng.below(48) as i32,
+            // Modern `monster_room` and `monster_room_deep`: from just
+            // over the bedrock up under the ground.
+            MIN_Y + 6 + rng.below(160) as i32,
             z0 + rng.below(16) as i32,
         );
         let (rx, rz) = (2 + rng.below(2) as i32, 2 + rng.below(2) as i32);
@@ -48,7 +52,7 @@ pub fn generate(terrain: &Terrain, start: ChunkPos, rng: &mut Rng) -> Option<Vec
 /// Rock here (the caller keeps rooms 12 blocks under the ground, so only
 /// caves matter).
 fn rock(terrain: &Terrain, at: IVec3) -> bool {
-    at.y > 0 && !terrain.is_cave(at.x, at.y, at.z)
+    at.y > MIN_Y + 4 && !terrain.is_cave(at.x, at.y, at.z)
 }
 
 fn room(terrain: &Terrain, c: IVec3, rx: i32, rz: i32, rng: &mut Rng) -> Option<Piece> {

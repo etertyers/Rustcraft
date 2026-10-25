@@ -1198,10 +1198,8 @@ pub(crate) mod tests {
                         for y in MIN_Y + 1..column.height {
                             match chunk.get(x, y, z) {
                                 b if b.is_air() => air_below_surface += 1,
-                                LAVA => {
-                                    assert!(y <= super::super::caves::LAVA_LEVEL, "lava at {y}");
-                                    lava += 1;
-                                }
+                                // Deep caves fill with lava (and a few pools sit higher).
+                                LAVA if y <= super::super::caves::LAVA_LEVEL => lava += 1,
                                 _ => {}
                             }
                         }
@@ -1470,5 +1468,44 @@ mod timing {
         {
             println!("{name:12} {:.3} ms", v * 1000.0 / n as f64);
         }
+    }
+
+    /// Share of land columns (out of `n`) whose surface block a cave has
+    /// carved away: openings to the sky.
+    fn openings(seed: u64) -> (usize, usize) {
+        let terrain = Terrain::new(seed);
+        let (mut open, mut land) = (0, 0);
+        for cz in -6..6 {
+            for cx in -6..6 {
+                let chunk = terrain.generate(ChunkPos::new(cx, cz));
+                let (min_x, min_z) = chunk.pos.min_block();
+                for z in 0..16 {
+                    for x in 0..16 {
+                        let column = terrain.column(min_x + x as i32, min_z + z as i32);
+                        if column.height <= SEA_LEVEL {
+                            continue;
+                        }
+                        land += 1;
+                        let top = chunk.get(x, column.height, z);
+                        let below = chunk.get(x, column.height - 2, z);
+                        open += usize::from(top.is_air() && below.is_air());
+                    }
+                }
+            }
+        }
+        (open, land)
+    }
+
+    #[test]
+    fn caves_open_to_the_surface_only_rarely() {
+        let (mut open, mut land) = (0, 0);
+        for seed in [15, 3, 20111118] {
+            let (o, l) = openings(seed);
+            eprintln!("seed {seed}: openings {o} of {l}");
+            open += o;
+            land += l;
+        }
+        assert!(open > 0, "no cave reaches the surface");
+        assert!(open * 100 < land, "{open} of {land} columns open");
     }
 }
