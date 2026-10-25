@@ -135,7 +135,7 @@ impl PackScreen {
         ui.add_space(16.0);
         ui.label(
             RichText::new("Select Resource Packs")
-                .size(28.0)
+                .size(32.0)
                 .color(Color32::WHITE),
         );
         ui.label(RichText::new("Packs on top override the ones below them").color(GRAY));

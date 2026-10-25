@@ -836,7 +836,7 @@ fn paint_merchant(
             at(x + 40.0, y + 9.5),
             egui::Align2::CENTER_CENTER,
             "→",
-            egui::FontId::proportional(9.0 * w.scale),
+            egui::FontId::proportional(8.0 * w.scale),
             Color32::WHITE,
         );
         gui::paint_slot(
@@ -855,7 +855,7 @@ fn paint_merchant(
             at(x + 77.0, y + 10.0),
             egui::Align2::RIGHT_CENTER,
             left,
-            egui::FontId::proportional(7.0 * w.scale),
+            egui::FontId::proportional(8.0 * w.scale),
             color,
         );
         if !trade.affordable {
@@ -893,15 +893,7 @@ fn shadowed(
     color: Color32,
     scale: f32,
 ) {
-    let font = egui::FontId::proportional(8.0 * scale);
-    painter.text(
-        at + vec2(scale, scale),
-        align,
-        text,
-        font.clone(),
-        Color32::from_black_alpha(160),
-    );
-    painter.text(at, align, text, font, color);
+    super::font::shadowed(painter, at, align, text, color, 8.0 * scale);
 }
 
 /// The anvil's name box: types into a [`TextField`] kept between frames
@@ -1209,8 +1201,8 @@ fn paint_brewing_progress(
 
 /// 1.0.0's item name tooltip: white text on a dark box above-right of the mouse.
 fn paint_tooltip(painter: &Painter, pointer: Pos2, name: &str, scale: f32) {
-    let font = egui::FontId::proportional(8.0 * scale);
-    let galley = painter.layout_no_wrap(name.to_owned(), font, Color32::WHITE);
+    let job = |shadow| super::font::job(name, 8.0 * scale, Color32::WHITE, shadow);
+    let galley = painter.layout_job(job(false));
     let at = pointer + vec2(12.0, -12.0) * scale;
     let rect = Rect::from_min_size(at, galley.size()).expand(3.0 * scale);
     painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(16, 0, 16, 240));
@@ -1219,6 +1211,11 @@ fn paint_tooltip(painter: &Painter, pointer: Pos2, name: &str, scale: f32) {
         0.0,
         egui::Stroke::new(scale, Color32::from_rgb(40, 0, 127)),
         egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        at + vec2(scale, scale),
+        painter.layout_job(job(true)),
+        Color32::WHITE,
     );
     painter.galley(pos2(at.x, at.y), galley, Color32::WHITE);
 }

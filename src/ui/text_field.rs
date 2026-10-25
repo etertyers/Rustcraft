@@ -60,7 +60,7 @@ impl TextField {
         let room = self.limit.saturating_sub(self.len());
         let typed: String = typed
             .chars()
-            .filter(|c| !c.is_control())
+            .filter(|&c| !c.is_control() && c != '§')
             .take(room)
             .collect();
         let at = self.byte(self.cursor);
