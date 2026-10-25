@@ -315,7 +315,7 @@ impl Game {
 fn height_range(dimension: Dimension) -> (i32, i32) {
     match dimension {
         Dimension::Nether => (nether::LAVA_LEVEL + 1, nether::HEIGHT - 10),
-        _ => (1, crate::config::WORLD_HEIGHT as i32 - 10),
+        _ => (1, crate::config::MAX_Y - 10),
     }
 }
 

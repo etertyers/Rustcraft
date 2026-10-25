@@ -486,7 +486,7 @@ mod tests {
             }
         }
         for &(at, state) in cells {
-            chunk.set(at.x as usize, at.y as usize, at.z as usize, state);
+            chunk.set(at.x as usize, at.y, at.z as usize, state);
         }
         world.insert(chunk);
         world

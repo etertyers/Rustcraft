@@ -67,7 +67,7 @@ impl Scene {
             let chunk = self.world.get_mut(ChunkPos::of_block(at.x, at.z)).unwrap();
             chunk.set(
                 at.x.rem_euclid(16) as usize,
-                at.y as usize,
+                at.y,
                 at.z.rem_euclid(16) as usize,
                 block,
             );

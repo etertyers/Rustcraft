@@ -696,7 +696,7 @@ impl Game {
     /// `ground` with two free blocks above.
     pub(super) fn ground_spot(&self, x: i32, z: i32, ground: &[BlockId]) -> Option<DVec3> {
         let world = self.chunks.world();
-        let top = (0..crate::config::WORLD_HEIGHT as i32)
+        let top = (0..crate::config::MAX_Y)
             .rev()
             .find(|&y| world.block(x, y, z).is_some_and(|b| !b.is_air()))?;
         let mut surface = world.block(x, top, z)?;
@@ -795,9 +795,11 @@ impl Game {
             return 0;
         };
         let (min_x, min_z) = pos.min_block();
+        // From the bottom of the world (Y −64 in the Overworld since M34).
+        let floor = self.dimension.min_y();
         let start = IVec3::new(
             min_x + self.rng.below(16) as i32,
-            self.rng.below(top as u32 + 2) as i32,
+            floor + self.rng.below((top - floor).max(0) as u32 + 2) as i32,
             min_z + self.rng.below(16) as i32,
         );
         // A solid block there leaves no room for anything.

@@ -20,11 +20,11 @@ use super::{
     World,
     block::{BlockId, BlockRegistry, BlockState, Fluid},
     blocks,
-    chunk::{Chunk, SECTION_COUNT, SECTION_SIZE},
+    chunk::{Chunk, SECTION_COUNT},
     fast_hash::{FastMap, FastSet},
     props::Prop,
 };
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::CHUNK_SIZE;
 
 const STONE: BlockState = BlockState::of(blocks::STONE);
 const COBBLESTONE: BlockState = BlockState::of(blocks::COBBLESTONE);
@@ -223,17 +223,17 @@ pub struct Fluids {
 
 /// Whether fluid at local (x, y, z) could flow into a cell beside or below
 /// it in the same chunk (cells in other chunks count as closed).
-fn open_beside(chunk: &Chunk, x: usize, y: usize, z: usize) -> bool {
+fn open_beside(chunk: &Chunk, x: usize, y: i32, z: usize) -> bool {
     let own = chunk.get(x, y, z).id();
     [(-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1), (0, -1, 0)]
         .into_iter()
         .any(|(dx, dy, dz)| {
-            let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
+            let (nx, ny, nz) = (x as i32 + dx, y + dy, z as i32 + dz);
             let size = CHUNK_SIZE as i32;
-            if !(0..size).contains(&nx) || !(0..size).contains(&nz) || ny < 0 {
+            if !(0..size).contains(&nx) || !(0..size).contains(&nz) || ny < crate::config::MIN_Y {
                 return false;
             }
-            let next = chunk.get(nx as usize, ny as usize, nz as usize);
+            let next = chunk.get(nx as usize, ny, nz as usize);
             next.id() != own && !next.def().stops_fluid() && next.def().fluid.is_none()
         })
 }
@@ -264,7 +264,9 @@ impl Fluids {
     pub fn chunk_loaded(&mut self, chunk: &Chunk, time: u64) {
         let (min_x, min_z) = chunk.pos.min_block();
         for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
-            for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
+            for y in crate::world::chunk::section_bottom(section)
+                ..crate::world::chunk::section_bottom(section + 1)
+            {
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
                         let block = chunk.get(x, y, z);
@@ -278,7 +280,7 @@ impl Fluids {
                         if level(block) == 0 && !open_beside(chunk, x, y, z) {
                             continue;
                         }
-                        let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
+                        let at = IVec3::new(min_x + x as i32, y, min_z + z as i32);
                         self.schedule(at, block.id(), time + tick_rate(fluid, self.warm));
                     }
                 }
@@ -362,7 +364,7 @@ struct Step<'a> {
 
 impl Step<'_> {
     fn get(&self, at: IVec3) -> Option<BlockState> {
-        if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+        if !crate::world::chunk::in_height(at.y) {
             return None;
         }
         match self.edits.get(&at) {
@@ -710,7 +712,7 @@ mod tests {
                     for z in 0..CHUNK_SIZE {
                         for x in 0..CHUNK_SIZE {
                             for y in FLOOR - 3..=FLOOR {
-                                chunk.set(x, y as usize, z, STONE);
+                                chunk.set(x, y, z, STONE);
                             }
                         }
                     }
@@ -735,7 +737,7 @@ mod tests {
             let size = CHUNK_SIZE as i32;
             let chunk = self.world.get_mut(pos).unwrap();
             let (x, z) = (at.x.rem_euclid(size), at.z.rem_euclid(size));
-            chunk.set(x as usize, at.y as usize, z as usize, block);
+            chunk.set(x as usize, at.y, z as usize, block);
         }
 
         /// Sets a block the way the game does, waking fluids around it.

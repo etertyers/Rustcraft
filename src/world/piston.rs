@@ -13,7 +13,6 @@ use super::{
     blocks,
     props::Prop,
 };
-use crate::config::WORLD_HEIGHT;
 
 /// Most blocks one piston pushes (modern `PistonBaseBlock.MAX_PUSH_DEPTH`).
 pub const PUSH_LIMIT: usize = 12;
@@ -118,14 +117,14 @@ fn has_block_entity(state: BlockState) -> bool {
 /// (modern `PistonBaseBlock.isPushable`). Blocks that break only count
 /// when `destroy_blocks` says so.
 pub fn pushable(state: BlockState, at: IVec3, move_direction: Face, destroy_blocks: bool) -> bool {
-    if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+    if !crate::world::chunk::in_height(at.y) {
         return false;
     }
     if state.is_air() {
         return true;
     }
     if (move_direction == Face::Bottom && at.y == 0)
-        || (move_direction == Face::Top && at.y == WORLD_HEIGHT as i32 - 1)
+        || (move_direction == Face::Top && at.y == crate::config::MAX_Y - 1)
     {
         return false;
     }
@@ -294,7 +293,7 @@ mod tests {
     fn nothing_moves_off_the_top_or_bottom_of_the_world() {
         let stone = BlockState::of(blocks::STONE);
         assert!(!pushable(stone, IVec3::new(0, 0, 0), Face::Bottom, false));
-        let top = WORLD_HEIGHT as i32 - 1;
+        let top = crate::config::MAX_Y - 1;
         assert!(!pushable(stone, IVec3::new(0, top, 0), Face::Top, false));
         assert!(pushable(stone, IVec3::new(0, 10, 0), Face::Top, false));
     }

@@ -123,7 +123,7 @@ impl Game {
     fn exit_point(&self) -> DVec3 {
         let (x, z) = (end::PODIUM.x, end::PODIUM.z);
         let world = self.chunks.world();
-        let top = (0..crate::config::WORLD_HEIGHT as i32)
+        let top = (0..crate::config::MAX_Y)
             .rev()
             .find(|&y| world.block(x, y, z).is_some_and(|b| !b.is_air()))
             .unwrap_or(end::PODIUM.y);

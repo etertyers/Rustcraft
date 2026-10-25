@@ -484,10 +484,10 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
                 let (x, z, y) = (i % SECTION_SIZE, (i / SECTION_SIZE) % SECTION_SIZE, i / 256);
                 chunk
                     .post_process
-                    .push([x as u8, (index * SECTION_SIZE + y) as u8, z as u8]);
+                    .push([x as i16, (index * SECTION_SIZE + y) as i16, z as i16]);
             }
         }
-        chunk.set_section(index, &blocks);
+        chunk.set_section(super::chunk::section_of(0) + index, &blocks);
     }
     if data.biomes.len() != CHUNK_SIZE * CHUNK_SIZE {
         return Err(corrupt(format!("{} biomes", data.biomes.len())));

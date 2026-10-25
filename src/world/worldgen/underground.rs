@@ -7,7 +7,7 @@ use super::{
     terrain::{Area, Terrain},
 };
 use crate::{
-    config::{CHUNK_SIZE, WORLD_HEIGHT},
+    config::{CHUNK_SIZE, MAX_Y, MIN_Y},
     world::{
         biome::Biome,
         block::BlockState,
@@ -75,8 +75,8 @@ fn caves(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
             let Some(cave) = column.cave else {
                 continue;
             };
-            let top = (column.height - 12).min(WORLD_HEIGHT as i32 - 2) as usize;
-            for y in 2..top {
+            let top = (column.height - 12).min(MAX_Y - 2);
+            for y in MIN_Y + 2..top {
                 if chunk.biome_at(x, y, z) != cave || !chunk.get(x, y, z).is_air() {
                     continue;
                 }
@@ -94,7 +94,7 @@ fn caves(terrain: &Terrain, area: &Area, chunk: &mut Chunk) {
 }
 
 /// The floor under the air at `at`.
-fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: &mut Rng) {
+fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, i32, usize), rng: &mut Rng) {
     let roll = rng.next_f64();
     match cave {
         Biome::LushCaves => {
@@ -114,7 +114,7 @@ fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: 
                 chunk.set(x, y - 1, z, DRIPSTONE);
             }
             if roll < 0.1 {
-                let length = 1 + rng.below(4) as usize;
+                let length = 1 + rng.below(4) as i32;
                 spike(chunk, (x, y, z), length, false);
             }
         }
@@ -122,7 +122,7 @@ fn floor(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: 
 }
 
 /// The ceiling over the air at `at`.
-fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng: &mut Rng) {
+fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, i32, usize), rng: &mut Rng) {
     let roll = rng.next_f64();
     match cave {
         Biome::LushCaves => {
@@ -131,10 +131,12 @@ fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng
             }
             if roll < 0.12 {
                 // Glow berry vines, lit in places.
-                let length = 1 + rng.below(6) as usize;
+                let length = 1 + rng.below(6) as i32;
                 for k in 0..length {
                     let cy = y - k;
-                    if cy < 2 || !chunk.get(x, cy, z).is_air() || !chunk.get(x, cy - 1, z).is_air()
+                    if cy < MIN_Y + 2
+                        || !chunk.get(x, cy, z).is_air()
+                        || !chunk.get(x, cy - 1, z).is_air()
                     {
                         break;
                     }
@@ -150,7 +152,7 @@ fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng
                 chunk.set(x, y + 1, z, DRIPSTONE);
             }
             if roll < 0.12 {
-                let length = 1 + rng.below(5) as usize;
+                let length = 1 + rng.below(5) as i32;
                 spike(chunk, (x, y, z), length, true);
             }
         }
@@ -159,23 +161,18 @@ fn ceiling(cave: Biome, chunk: &mut Chunk, (x, y, z): (usize, usize, usize), rng
 
 /// Pointed dripstone `length` long from `at`, hanging down from the block
 /// above (`down`) or standing up from the block below.
-fn spike(chunk: &mut Chunk, (x, y, z): (usize, usize, usize), length: usize, down: bool) {
+fn spike(chunk: &mut Chunk, (x, y, z): (usize, i32, usize), length: i32, down: bool) {
     // Shorten it to the open air it has, leaving a block of air at its tip.
     let mut room = 0;
     while room <= length {
-        let cy = if down {
-            y.checked_sub(room)
+        let cy = if down { y - room } else { y + room };
+        if (MIN_Y + 1..MAX_Y - 1).contains(&cy) && chunk.get(x, cy, z).is_air() {
+            room += 1;
         } else {
-            Some(y + room)
-        };
-        match cy {
-            Some(cy) if (1..WORLD_HEIGHT - 1).contains(&cy) && chunk.get(x, cy, z).is_air() => {
-                room += 1
-            }
-            _ => break,
+            break;
         }
     }
-    let length = length.min(room.saturating_sub(1));
+    let length = length.min((room - 1).max(0));
     let direction = if down {
         vertical_direction::DOWN
     } else {
@@ -293,7 +290,7 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
             }
             for dy in -outer..=outer {
                 let y = cy + dy;
-                if !(1..WORLD_HEIGHT as i32 - 1).contains(&y) {
+                if !(MIN_Y + 1..MAX_Y - 1).contains(&y) {
                     continue;
                 }
                 let d = ((dx * dx + dy * dy + dz * dz) as f64).sqrt();
@@ -301,7 +298,7 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
                 let mut cell = Rng::for_chunk(seed, x, z, y as u64);
                 let wobble = cell.next_f64() * 0.6;
                 let d = d - wobble;
-                let (lx, ly, lz) = (lx as usize, y as usize, lz as usize);
+                let (lx, ly, lz) = (lx as usize, y, lz as usize);
                 let block = if d < radius - 1.0 {
                     BlockState::AIR
                 } else if d < radius {
@@ -341,10 +338,9 @@ fn geode(terrain: &Terrain, source: ChunkPos, chunk: &mut Chunk) {
             }
             for dy in -outer..0 {
                 let y = cy + dy;
-                if y < 1 || y + 1 >= WORLD_HEIGHT as i32 {
+                if y < MIN_Y + 1 || y + 1 >= MAX_Y {
                     continue;
                 }
-                let y = y as usize;
                 let (lx, lz) = (lx as usize, lz as usize);
                 if chunk.get(lx, y, lz) == BUDDING && chunk.get(lx, y + 1, lz).is_air() {
                     let mut cell = Rng::for_chunk(seed ^ 0xB0D, cx + dx, cz + dz, y as u64);
@@ -367,7 +363,7 @@ mod tests {
         let mut counts = HashMap::new();
         for pos in chunks {
             let chunk = terrain.generate(pos);
-            for y in 0..WORLD_HEIGHT {
+            for y in crate::config::MIN_Y..crate::config::MAX_Y {
                 for i in 0..256 {
                     *counts
                         .entry(chunk.get(i % 16, y, i / 16).id().0)

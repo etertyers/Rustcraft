@@ -16,7 +16,7 @@ use super::{
     fast_hash::{FastMap, FastSet},
     props::Prop,
 };
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::CHUNK_SIZE;
 
 // Netherrack burns forever (modern `#infiniburn_overworld`), and so does
 // anything on bedrock (`#infiniburn_end`: the crystals' pillars).
@@ -68,11 +68,13 @@ impl Fires {
     pub fn chunk_loaded(&mut self, chunk: &Chunk, time: u64) {
         let (min_x, min_z) = chunk.pos.min_block();
         for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
-            for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
+            for y in crate::world::chunk::section_bottom(section)
+                ..crate::world::chunk::section_bottom(section + 1)
+            {
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
                         if chunk.get(x, y, z).id() == FIRE {
-                            let at = IVec3::new(min_x + x as i32, y as i32, min_z + z as i32);
+                            let at = IVec3::new(min_x + x as i32, y, min_z + z as i32);
                             self.schedule(at, time + 30);
                         }
                     }
@@ -184,7 +186,7 @@ struct Step<'a> {
 
 impl Step<'_> {
     fn get(&self, at: IVec3) -> Option<BlockState> {
-        if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+        if !crate::world::chunk::in_height(at.y) {
             return None;
         }
         match self.edits.get(&at) {
@@ -353,7 +355,8 @@ impl Step<'_> {
         for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
             for _ in 0..RANDOM_TICKS {
                 let x = (self.random)(CHUNK_SIZE as u32) as i32;
-                let y = (section * SECTION_SIZE) as i32 + (self.random)(SECTION_SIZE as u32) as i32;
+                let y = crate::world::chunk::section_bottom(section)
+                    + (self.random)(SECTION_SIZE as u32) as i32;
                 let z = (self.random)(CHUNK_SIZE as u32) as i32;
                 let at = IVec3::new(min_x + x, y, min_z + z);
                 if self.get(at).is_some_and(|block| block.is(LAVA)) {
@@ -429,7 +432,7 @@ mod tests {
                     let mut chunk = Chunk::new(ChunkPos::new(cx, cz));
                     for z in 0..CHUNK_SIZE {
                         for x in 0..CHUNK_SIZE {
-                            chunk.set(x, FLOOR as usize, z, STONE);
+                            chunk.set(x, FLOOR, z, STONE);
                         }
                     }
                     world.insert(chunk);
@@ -454,7 +457,7 @@ mod tests {
             let size = CHUNK_SIZE as i32;
             let chunk = self.world.get_mut(pos).unwrap();
             let (x, z) = (at.x.rem_euclid(size), at.z.rem_euclid(size));
-            chunk.set(x as usize, at.y as usize, z as usize, block);
+            chunk.set(x as usize, at.y, z as usize, block);
             self.fires.changed(at);
         }
 

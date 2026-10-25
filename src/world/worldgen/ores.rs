@@ -12,7 +12,7 @@ use super::{
     terrain::{Area, DEEPSLATE, DIRT, GRAVEL, STONE, Terrain},
 };
 use crate::{
-    config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT},
+    config::{CHUNK_SIZE, SEA_LEVEL},
     world::{
         biome::Biome,
         block::BlockState,
@@ -400,7 +400,7 @@ fn vein(rng: &mut Rng, source: ChunkPos, kind: &VeinKind, area: &Area, chunk: &m
     let x = min_x + rng.below(CHUNK_SIZE as u32) as i32;
     let z = min_z + rng.below(CHUNK_SIZE as u32) as i32;
     let y = kind.spread.sample(rng);
-    if !(0..WORLD_HEIGHT as i32).contains(&y) {
+    if !crate::world::chunk::in_height(y) {
         return;
     }
     let size = kind.size as f64;
@@ -450,7 +450,7 @@ fn vein(rng: &mut Rng, source: ChunkPos, kind: &VeinKind, area: &Area, chunk: &m
         let x_range = ((px - half).floor() as i32).max(chunk_x)
             ..=((px + half).floor() as i32).min(chunk_x + 15);
         let y_range = ((py - half).floor() as i32).max(1)
-            ..=((py + half).floor() as i32).min(WORLD_HEIGHT as i32 - 2);
+            ..=((py + half).floor() as i32).min(crate::config::MAX_Y - 2);
         let z_range = ((pz - half).floor() as i32).max(chunk_z)
             ..=((pz + half).floor() as i32).min(chunk_z + 15);
         if x_range.is_empty() || z_range.is_empty() || y_range.is_empty() {
@@ -470,11 +470,7 @@ fn vein(rng: &mut Rng, source: ChunkPos, kind: &VeinKind, area: &Area, chunk: &m
                     if dxy + dz * dz >= 1.0 {
                         continue;
                     }
-                    let (lx, ly, lz) = (
-                        (bx - chunk_x) as usize,
-                        by as usize,
-                        (bz - chunk_z) as usize,
-                    );
+                    let (lx, ly, lz) = ((bx - chunk_x) as usize, by, (bz - chunk_z) as usize);
                     let here = chunk.get(lx, ly, lz);
                     let Some(deep) = host(here) else {
                         continue;
@@ -499,9 +495,9 @@ fn vein(rng: &mut Rng, source: ChunkPos, kind: &VeinKind, area: &Area, chunk: &m
 
 /// Whether a block in the chunk has air (or water or lava: a cave) beside
 /// it. Cells past the chunk's edge count as solid.
-fn touches_air(chunk: &Chunk, x: usize, y: usize, z: usize) -> bool {
+fn touches_air(chunk: &Chunk, x: usize, y: i32, z: usize) -> bool {
     let open = |b: BlockState| b.is_air() || b.def().fluid.is_some();
-    let (x, y, z) = (x as i32, y as i32, z as i32);
+    let (x, z) = (x as i32, z as i32);
     [
         (1, 0, 0),
         (-1, 0, 0),
@@ -515,8 +511,8 @@ fn touches_air(chunk: &Chunk, x: usize, y: usize, z: usize) -> bool {
         let (nx, ny, nz) = (x + dx, y + dy, z + dz);
         (0..16).contains(&nx)
             && (0..16).contains(&nz)
-            && (0..WORLD_HEIGHT as i32).contains(&ny)
-            && open(chunk.get(nx as usize, ny as usize, nz as usize))
+            && crate::world::chunk::in_height(ny)
+            && open(chunk.get(nx as usize, ny, nz as usize))
     })
 }
 
@@ -566,11 +562,14 @@ mod tests {
         for cz in -radius..radius {
             for cx in -radius..radius {
                 let chunk = terrain.generate(ChunkPos::new(cx, cz));
-                for y in 0..WORLD_HEIGHT {
+                for y in crate::config::MIN_Y..crate::config::MAX_Y {
                     for z in 0..16 {
                         for x in 0..16 {
                             let block = chunk.get(x, y, z);
-                            counts.entry(block).or_insert_with(|| vec![0; WORLD_HEIGHT])[y] += 1;
+                            counts
+                                .entry(block)
+                                .or_insert_with(|| vec![0; crate::config::WORLD_HEIGHT])
+                                [(y - crate::config::MIN_Y) as usize] += 1;
                             if matches!(
                                 block.id(),
                                 blocks::EMERALD_ORE | blocks::DEEPSLATE_EMERALD_ORE
@@ -590,13 +589,17 @@ mod tests {
         // Seed 15 has hills and mountains round the origin, where coal and
         // emeralds show.
         let (counts, emerald_biomes) = survey(15, 4);
-        let total =
-            |ids: &[crate::world::block::BlockId], range: std::ops::Range<usize>| -> usize {
-                ids.iter()
-                    .filter_map(|&id| counts.get(&of(id)))
-                    .map(|by_y| by_y[range.clone()].iter().sum::<usize>())
-                    .sum()
-            };
+        let total = |ids: &[crate::world::block::BlockId], range: std::ops::Range<i32>| -> usize {
+            let index = |y: i32| (y - crate::config::MIN_Y) as usize;
+            ids.iter()
+                .filter_map(|&id| counts.get(&of(id)))
+                .map(|by_y| {
+                    by_y[index(range.start)..index(range.end)]
+                        .iter()
+                        .sum::<usize>()
+                })
+                .sum()
+        };
         let diamond = [blocks::DIAMOND_ORE, blocks::DEEPSLATE_DIAMOND_ORE];
         let redstone = [blocks::REDSTONE_ORE, blocks::DEEPSLATE_REDSTONE_ORE];
         let lapis = [blocks::LAPIS_ORE, blocks::DEEPSLATE_LAPIS_ORE];
@@ -604,11 +607,11 @@ mod tests {
         let coal = [blocks::COAL_ORE, blocks::DEEPSLATE_COAL_ORE];
         let copper = [blocks::COPPER_ORE, blocks::DEEPSLATE_COPPER_ORE];
         let iron = [blocks::IRON_ORE, blocks::DEEPSLATE_IRON_ORE];
-        let all = 0..WORLD_HEIGHT;
+        let all = crate::config::MIN_Y..crate::config::MAX_Y;
         // Diamonds sit near the bottom: none above our 42 (modern 16, plus a
         // vein's reach), thinning upward (the triangle peaks at our 0, so
         // three quarters of it lies below 20 before bedrock and caves).
-        assert_eq!(total(&diamond, 43..WORLD_HEIGHT), 0);
+        assert_eq!(total(&diamond, 43..crate::config::MAX_Y), 0);
         let (low, mid, high) = (
             total(&diamond, 0..14),
             total(&diamond, 14..28),
@@ -620,13 +623,13 @@ mod tests {
         );
         assert!(total(&diamond, all.clone()) > 0);
         // Redstone too, below our 42.
-        assert_eq!(total(&redstone, 43..WORLD_HEIGHT), 0);
+        assert_eq!(total(&redstone, 43..crate::config::MAX_Y), 0);
         // Lapis peaks around our 32 (modern 0).
         assert!(total(&lapis, 24..40) > total(&lapis, 44..66));
         // Gold below our 52, except in badlands.
         assert!(total(&gold, 0..52) > 0);
         // Coal is common high up, absent from the deepest layers.
-        assert!(total(&coal, 64..WORLD_HEIGHT) > total(&coal, 0..40));
+        assert!(total(&coal, 64..crate::config::MAX_Y) > total(&coal, 0..40));
         assert!(total(&coal, 0..30) == 0);
         // Copper is mid-depth (our 24..112).
         assert!(total(&copper, 40..80) > 0);
@@ -636,7 +639,14 @@ mod tests {
         // Deepslate forms only below our 36, stone forms only above 31.
         for id in [blocks::DEEPSLATE_DIAMOND_ORE, blocks::DEEPSLATE_IRON_ORE] {
             if let Some(by_y) = counts.get(&of(id)) {
-                assert_eq!(by_y[40..].iter().sum::<usize>(), 0, "{}", id.name());
+                assert_eq!(
+                    by_y[(40 - crate::config::MIN_Y) as usize..]
+                        .iter()
+                        .sum::<usize>(),
+                    0,
+                    "{}",
+                    id.name()
+                );
             }
         }
         assert_eq!(total(&[blocks::DIAMOND_ORE], 0..28), 0);
@@ -682,7 +692,7 @@ mod tests {
         let alone = terrain.generate(ChunkPos::new(1, 1));
         let _neighbor = terrain.generate(ChunkPos::new(0, 1));
         let again = terrain.generate(ChunkPos::new(1, 1));
-        for y in 0..WORLD_HEIGHT {
+        for y in crate::config::MIN_Y..crate::config::MAX_Y {
             for z in 0..16 {
                 for x in 0..16 {
                     assert_eq!(alone.get(x, y, z), again.get(x, y, z));

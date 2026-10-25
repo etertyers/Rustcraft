@@ -13,7 +13,7 @@ use super::{
 };
 use crate::world::fast_hash::FastSet;
 use crate::{
-    config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT},
+    config::{CHUNK_SIZE, SEA_LEVEL},
     world::{
         biome::Biome,
         block::{BlockId, BlockState, Shape},
@@ -106,14 +106,14 @@ impl<'a> ChunkWriter<'a> {
             .any(|b| b.grow(1).contains_column(x, z))
     }
 
-    fn local(&self, x: i32, y: i32, z: i32) -> Option<(usize, usize, usize)> {
+    fn local(&self, x: i32, y: i32, z: i32) -> Option<(usize, i32, usize)> {
         let (lx, lz) = (x - self.min_x, z - self.min_z);
         let size = CHUNK_SIZE as i32;
         (self.chunk.is_some()
             && (0..size).contains(&lx)
             && (0..size).contains(&lz)
-            && (0..WORLD_HEIGHT as i32).contains(&y))
-        .then_some((lx as usize, y as usize, lz as usize))
+            && crate::world::chunk::in_height(y))
+        .then_some((lx as usize, y, lz as usize))
     }
 
     fn get(&self, x: i32, y: i32, z: i32) -> Option<BlockState> {
@@ -530,7 +530,7 @@ fn grow(
     z: i32,
     column: &Column,
 ) -> bool {
-    let fits = |height: i32| base + height + 4 < WORLD_HEIGHT as i32;
+    let fits = |height: i32| base + height + 4 < crate::config::MAX_Y;
     match kind {
         Tree::IceSpike => {
             let ground =
@@ -1602,17 +1602,14 @@ fn freeze(area: &Area, chunk: &mut Chunk) {
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             let column = area.get(min_x + x as i32, min_z + z as i32);
-            let start = (column.height.max(SEA_LEVEL) + 40).min(WORLD_HEIGHT as i32 - 2);
-            let Some(y) = (1..=start)
-                .rev()
-                .find(|&y| !chunk.get(x, y as usize, z).is_air())
-            else {
+            let start = (column.height.max(SEA_LEVEL) + 40).min(crate::config::MAX_Y - 2);
+            let Some(y) = (1..=start).rev().find(|&y| !chunk.get(x, y, z).is_air()) else {
                 continue;
             };
-            let block = chunk.get(x, y as usize, z);
+            let block = chunk.get(x, y, z);
             if block == WATER {
                 if column.biome.is_cold_at(y) {
-                    chunk.set(x, y as usize, z, ICE);
+                    chunk.set(x, y, z, ICE);
                 }
                 continue;
             }
@@ -1623,9 +1620,9 @@ fn freeze(area: &Area, chunk: &mut Chunk) {
             let holds_snow = (def.is_opaque_cube() || is_leaves(block))
                 && !matches!(block.id(), blocks::ICE | blocks::PACKED_ICE);
             if holds_snow {
-                chunk.set(x, y as usize + 1, z, SNOW);
+                chunk.set(x, y + 1, z, SNOW);
                 if block.def().props.contains(&Prop::Snowy) {
-                    chunk.set(x, y as usize, z, block.with_bool(Prop::Snowy, true));
+                    chunk.set(x, y, z, block.with_bool(Prop::Snowy, true));
                 }
             }
         }
@@ -1691,7 +1688,7 @@ mod tests {
             for dx in -radius..=radius {
                 let pos = center.offset(dx, dz);
                 let chunk = terrain.generate(pos);
-                for y in SEA_LEVEL as usize - 4..WORLD_HEIGHT {
+                for y in SEA_LEVEL - 4..crate::config::MAX_Y {
                     for i in 0..256 {
                         *counts.entry(chunk.get(i % 16, y, i / 16).id()).or_insert(0) += 1;
                     }
@@ -1817,7 +1814,7 @@ mod tests {
         let (chunks, _) = census(&terrain, find_biome(&terrain, Biome::Plains), 2);
         let mut found = 0;
         for chunk in chunks.values() {
-            for y in SEA_LEVEL as usize..WORLD_HEIGHT - 1 {
+            for y in SEA_LEVEL..crate::config::MAX_Y - 1 {
                 for i in 0..256 {
                     let block = chunk.get(i % 16, y, i / 16);
                     if block.id() == blocks::TALL_GRASS
@@ -1845,7 +1842,7 @@ mod tests {
                 continue;
             };
             for z in 0..16 {
-                for y in SEA_LEVEL as usize..WORLD_HEIGHT - 1 {
+                for y in SEA_LEVEL..crate::config::MAX_Y - 1 {
                     // The top log of a small oak on the east edge of the chunk.
                     let log = chunk.get(15, y, z);
                     // (A trunk under it and leaves to the west: a small oak's
@@ -1877,7 +1874,7 @@ mod tests {
         let mut out = Vec::new();
         for z in 0..16 {
             for x in 0..16 {
-                let ground = (1..WORLD_HEIGHT)
+                let ground = (crate::config::MIN_Y + 1..crate::config::MAX_Y)
                     .rev()
                     .map(|y| chunk.get(x, y, z))
                     .find(|b| {
@@ -1912,7 +1909,7 @@ mod tests {
                             continue;
                         }
                         all += 1;
-                        let top = (1..WORLD_HEIGHT)
+                        let top = (crate::config::MIN_Y + 1..crate::config::MAX_Y)
                             .rev()
                             .map(|y| chunk.get(x, y, z))
                             .find(|b| !b.is_air());
@@ -1982,8 +1979,8 @@ mod tests {
         let column = terrain.column(x, z);
         let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
         let h = column.height as usize;
-        assert_eq!(chunk.get(lx, h, lz).id(), blocks::SAND);
-        let sandstone = (h - 8..h).any(|y| chunk.get(lx, y, lz).id() == blocks::SANDSTONE);
+        assert_eq!(chunk.get(lx, h as i32, lz).id(), blocks::SAND);
+        let sandstone = (h - 8..h).any(|y| chunk.get(lx, y as i32, lz).id() == blocks::SANDSTONE);
         assert!(sandstone, "sandstone under the beach");
     }
 
@@ -2008,7 +2005,7 @@ mod tests {
             for chunk in chunks.values() {
                 for z in 0..16 {
                     for x in 0..16 {
-                        for y in 2..WORLD_HEIGHT {
+                        for y in crate::config::MIN_Y + 2..crate::config::MAX_Y {
                             let block = chunk.get(x, y, z);
                             let below = chunk.get(x, y - 1, z);
                             let plant = matches!(
@@ -2050,7 +2047,7 @@ mod tests {
                                 || block.def().name.contains("mushroom")
                                 || block.is(blocks::COBWEB)
                                 || block.is(blocks::POINTED_DRIPSTONE)
-                                || (plant && y < SEA_LEVEL as usize)
+                                || (plant && y < (SEA_LEVEL as usize) as i32)
                             {
                                 continue;
                             }
@@ -2072,7 +2069,7 @@ mod tests {
             // The same seed decorates the same way.
             let again = terrain.generate(center);
             let first = &chunks[&center];
-            for y in 0..WORLD_HEIGHT {
+            for y in crate::config::MIN_Y..crate::config::MAX_Y {
                 for i in 0..256 {
                     assert_eq!(again.get(i % 16, y, i / 16), first.get(i % 16, y, i / 16));
                 }
@@ -2176,7 +2173,7 @@ mod tests {
                 terrain.generate(center.offset(dx, dz));
             }
             let after = terrain.generate(center);
-            for y in 0..WORLD_HEIGHT {
+            for y in crate::config::MIN_Y..crate::config::MAX_Y {
                 for i in 0..256 {
                     assert_eq!(after.get(i % 16, y, i / 16), alone.get(i % 16, y, i / 16));
                 }
@@ -2196,7 +2193,7 @@ mod tests {
             }
             for pos in chunks_of(&terrain, row.biome, 6) {
                 let chunk = terrain.generate(pos);
-                for y in 1..WORLD_HEIGHT {
+                for y in crate::config::MIN_Y + 1..crate::config::MAX_Y {
                     for i in 0..256 {
                         let (x, z) = (i % 16, i / 16);
                         let block = chunk.get(x, y, z);

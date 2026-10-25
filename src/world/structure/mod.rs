@@ -41,7 +41,7 @@ use super::{
     chunk::{Chunk, ChunkPos},
     worldgen::{rng::Rng, terrain::Terrain},
 };
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::CHUNK_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
@@ -334,12 +334,8 @@ impl Piece {
         if let Some(b) = self.bounds.as_mut()
             && (!self.foundations.is_empty() || !self.surface.is_empty())
         {
-            b.min.y = 0;
-            b.max.y = b
-                .max
-                .y
-                .max(WORLD_HEIGHT as i32 - 1)
-                .min(WORLD_HEIGHT as i32 - 1);
+            b.min.y = crate::config::MIN_Y;
+            b.max.y = crate::config::MAX_Y - 1;
         }
     }
 }
@@ -522,23 +518,21 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn local(&self, at: IVec3) -> Option<[u8; 3]> {
+    fn local(&self, at: IVec3) -> Option<[i16; 3]> {
         let (x, z) = (at.x - self.min_x, at.z - self.min_z);
         let size = CHUNK_SIZE as i32;
-        ((0..size).contains(&x)
-            && (0..size).contains(&z)
-            && (0..WORLD_HEIGHT as i32).contains(&at.y))
-        .then_some([x as u8, at.y as u8, z as u8])
+        ((0..size).contains(&x) && (0..size).contains(&z) && super::chunk::in_height(at.y))
+            .then_some([x as i16, at.y as i16, z as i16])
     }
 
     fn get(&self, at: IVec3) -> Option<BlockState> {
         let [x, y, z] = self.local(at)?;
-        Some(self.chunk.get(x as usize, y as usize, z as usize))
+        Some(self.chunk.get(x as usize, y.into(), z as usize))
     }
 
     fn set(&mut self, at: IVec3, block: BlockState) {
         if let Some([x, y, z]) = self.local(at) {
-            self.chunk.set(x as usize, y as usize, z as usize, block);
+            self.chunk.set(x as usize, y.into(), z as usize, block);
             // A block entity left from the terrain isn't this block's.
             self.chunk.set_block_entity([x, y, z], None);
             // Fences, panes, walls and stairs join their neighbors once
@@ -568,7 +562,7 @@ impl<'a> Writer<'a> {
     /// surface block, clearing the plant on it. Water gets the block too,
     /// as a bridge.
     fn surface(&mut self, x: i32, z: i32, block: BlockState) {
-        let Some(top) = (1..WORLD_HEIGHT as i32).rev().find(|&y| {
+        let Some(top) = (1..crate::config::MAX_Y).rev().find(|&y| {
             self.get(IVec3::new(x, y, z))
                 .is_some_and(|b| !b.is_air() && !is_plant(b))
         }) else {

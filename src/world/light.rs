@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 
 use super::{block::BlockState, mesh::BlockModels, mesh::ChunkArea};
-use crate::config::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::{CHUNK_SIZE, MIN_Y, WORLD_HEIGHT};
 
 pub const MAX_LIGHT: u8 = 15;
 
@@ -29,9 +29,10 @@ pub struct ChunkLight {
 }
 
 impl ChunkLight {
-    /// (sky, block) light at chunk-local coordinates, with x and z in
-    /// -1..=16. Above the blocks is full sky light; below the world it's dark.
+    /// (sky, block) light at chunk-local x and z in -1..=16 and world `y`.
+    /// Above the blocks is full sky light; below the world it's dark.
     pub fn get(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        let y = y - MIN_Y;
         if y >= self.height as i32 {
             return (MAX_LIGHT, 0);
         }
@@ -52,7 +53,7 @@ fn area_index(x: usize, y: usize, z: usize) -> usize {
 }
 
 /// Computes light for the center chunk of `area`. Missing neighbor chunks
-/// count as empty.
+/// count as empty. Heights here count from `MIN_Y`.
 pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
     // Up to a section past the highest blocks, which block light can't
     // cross; everything above is open sky.
@@ -73,7 +74,9 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
             let mut level = MAX_LIGHT;
             let mut open = true;
             for y in (0..height).rev() {
-                let state = area.get(ax, y as i32, az).unwrap_or(BlockState::AIR);
+                let state = area
+                    .get(ax, y as i32 + MIN_Y, az)
+                    .unwrap_or(BlockState::AIR);
                 if state.is_air() {
                     sky[area_index(x, y, z)] = level;
                     continue;
@@ -198,10 +201,10 @@ mod tests {
                 let pos = ChunkPos::new(cx, cz);
                 let mut chunk = Chunk::new(pos);
                 let (min_x, min_z) = pos.min_block();
-                for y in 0..WORLD_HEIGHT {
+                for y in crate::config::MIN_Y..crate::config::MAX_Y {
                     for z in 0..CHUNK_SIZE {
                         for x in 0..CHUNK_SIZE {
-                            let block = fill(min_x + x as i32, y as i32, min_z + z as i32);
+                            let block = fill(min_x + x as i32, y, min_z + z as i32);
                             chunk.set(x, y, z, block);
                         }
                     }
@@ -237,18 +240,19 @@ mod tests {
         assert_eq!(light.get(5, 127, 5), (15, 0));
         assert_eq!(light.get(5, 63, 5), (0, 0));
         assert_eq!(light.get(5, 255, 5), (15, 0));
-        assert_eq!(light.get(5, 256, 5), (15, 0));
+        assert_eq!(light.get(5, crate::config::MAX_Y, 5), (15, 0));
     }
 
     #[test]
     fn blocks_at_the_top_of_the_world_are_lit_like_any_other() {
-        let tower: Vec<_> = (64..256).map(|y| (5, y, 5, STONE)).collect();
+        let top = crate::config::MAX_Y - 1;
+        let tower: Vec<_> = (64..=top).map(|y| (5, y, 5, STONE)).collect();
         let mut with_torch = tower.clone();
-        with_torch.push((6, 255, 5, TORCH));
+        with_torch.push((6, top, 5, TORCH));
         let light = light_chunk(&models(), &ground(&with_torch));
         assert_eq!(light.get(5, 200, 6), (15, 0), "beside the tower, open sky");
-        assert_eq!(light.get(7, 255, 5).1, 13, "a torch at the top spreads");
-        assert_eq!(light.get(5, 256, 5), (15, 0));
+        assert_eq!(light.get(7, top, 5).1, 13, "a torch at the top spreads");
+        assert_eq!(light.get(5, top + 1, 5), (15, 0));
     }
 
     #[test]

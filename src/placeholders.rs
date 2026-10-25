@@ -1048,11 +1048,14 @@ mod tests {
         let mut chunk = Chunk::new(ChunkPos::new(0, 0));
         let placed: Vec<_> = placeholder_blocks().into_iter().take(40).collect();
         for (i, def) in placed.iter().enumerate() {
-            chunk.set(i % 16, 70 + i / 16, 3, BlockState::of(def.id));
+            chunk.set(i % 16, (70 + i / 16) as i32, 3, BlockState::of(def.id));
         }
         let decoded = decode_chunk(&encode_chunk(&chunk)).unwrap();
         for (i, def) in placed.iter().enumerate() {
-            assert_eq!(decoded.get(i % 16, 70 + i / 16, 3), BlockState::of(def.id));
+            assert_eq!(
+                decoded.get(i % 16, (70 + i / 16) as i32, 3),
+                BlockState::of(def.id)
+            );
         }
         // An item in a chest comes back by name.
         let mut entity = crate::world::block_entity::BlockEntity::chest();

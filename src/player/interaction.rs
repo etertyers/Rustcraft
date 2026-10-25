@@ -4,15 +4,12 @@
 use glam::{DVec3, IVec3};
 
 use super::{collision::Aabb, raycast::Hit};
-use crate::{
-    config::WORLD_HEIGHT,
-    world::{
-        Face, World,
-        block::{BlockDef, BlockRegistry, BlockState, Placement, Shape},
-        connect::{self, sturdy},
-        props::{Prop, attach_face, axis, bed_part, door_half, half, hinge, rail_shape, slab_type},
-        rails, shape,
-    },
+use crate::world::{
+    Face, World,
+    block::{BlockDef, BlockRegistry, BlockState, Placement, Shape},
+    connect::{self, sturdy},
+    props::{Prop, attach_face, axis, bed_part, door_half, half, hinge, rail_shape, slab_type},
+    rails, shape,
 };
 
 /// Ticks between breaks while the button is held (1.0.0's creative `blockHitDelay`).
@@ -134,7 +131,7 @@ pub fn place_block_looking(
         }
         (at, there)
     };
-    if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+    if !crate::world::chunk::in_height(at.y) {
         return None;
     }
     let looking = Face::from_yaw(yaw);
@@ -415,7 +412,7 @@ fn place_door(
     (lower, door): Edit,
     player: &Aabb,
 ) -> Option<[Edit; 2]> {
-    if hit.face != Some(Face::Top) || lower.y + 1 >= WORLD_HEIGHT as i32 {
+    if hit.face != Some(Face::Top) || lower.y + 1 >= crate::config::MAX_Y {
         return None;
     }
     let upper = lower + IVec3::Y;
@@ -509,7 +506,7 @@ mod tests {
             }
         }
         for &(at, block) in extra {
-            chunk.set(at.x as usize, at.y as usize, at.z as usize, block);
+            chunk.set(at.x as usize, at.y, at.z as usize, block);
         }
         let mut world = World::default();
         world.insert(chunk);
@@ -522,7 +519,7 @@ mod tests {
             world
                 .get_mut(pos)
                 .unwrap()
-                .set(at.x as usize, at.y as usize, at.z as usize, block);
+                .set(at.x as usize, at.y, at.z as usize, block);
         }
     }
 
@@ -954,7 +951,7 @@ mod tests {
             place_one(&world, &hit(IVec3::new(3, 63, 3), Face::Top), STONE),
             None
         );
-        let top = WORLD_HEIGHT as i32 - 1;
+        let top = crate::config::MAX_Y - 1;
         let world = world_with(&[(IVec3::new(3, top, 3), STONE)]);
         assert_eq!(
             place_one(&world, &hit(IVec3::new(3, top, 3), Face::Top), STONE),

@@ -612,7 +612,10 @@ mod tests {
         assert_eq!(chunk.get(0, 63, 0), BlockState::of(blocks::STONE));
         // v1.0's top layer stays; above it, new air.
         assert_eq!(chunk.get(3, 127, 3), BlockState::of(blocks::COBBLESTONE));
-        assert!(chunk.get(3, 128, 3).is_air() && chunk.section_is_empty(8));
+        assert!(
+            chunk.get(3, 128, 3).is_air()
+                && chunk.section_is_empty(crate::world::chunk::section_of(128))
+        );
         assert_eq!(
             chunk.get(2, 64, 2),
             BlockState::of(blocks::CHEST).with_face(Prop::Facing, Face::South)

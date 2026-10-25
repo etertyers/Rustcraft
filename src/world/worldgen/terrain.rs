@@ -619,7 +619,7 @@ impl Terrain {
                     if trilinear(&c, (tx, ty, tz)) <= 0.0 {
                         continue;
                     }
-                    let block = chunk.get(x, y as usize, z);
+                    let block = chunk.get(x, y, z);
                     if block == BEDROCK {
                         continue;
                     }
@@ -628,7 +628,7 @@ impl Terrain {
                     } else {
                         BlockState::AIR
                     };
-                    chunk.set(x, y as usize, z, carved);
+                    chunk.set(x, y, z, carved);
                 }
             }
         }
@@ -656,7 +656,7 @@ impl Terrain {
                         .entry(ChunkPos::of_block(x, z))
                         .or_insert_with_key(|&pos| self.generate(pos));
                     let (lx, lz) = (x.rem_euclid(16) as usize, z.rem_euclid(16) as usize);
-                    let y = column.height as usize;
+                    let y = column.height;
                     let ground = chunk.get(lx, y, lz);
                     if ground.def().solid
                         && ground.def().fluid.is_none()
@@ -668,7 +668,7 @@ impl Terrain {
                 }
             }
         }
-        (0, WORLD_HEIGHT as i32, 0)
+        (0, crate::config::MAX_Y, 0)
     }
 
     /// Fills a chunk with stone, surface layers, water and bedrock (no caves or features).
@@ -697,7 +697,7 @@ impl Terrain {
                     let top = surface - (lo * 128.0).ceil() as i32;
                     let bottom = (surface - (hi * 128.0) as i32).max(CAVE_BIOME_FLOOR);
                     for y in (bottom..=top).step_by(4) {
-                        chunk.set_cave_biome(x, y as usize, z, Some(cave));
+                        chunk.set_cave_biome(x, y, z, Some(cave));
                     }
                 }
                 let depth = 3 + (self.surface_noise(wx, wz, 8.0, 7.3) * 1.5 + 1.5) as i32;
@@ -708,16 +708,16 @@ impl Terrain {
                 for y in 1..=column.height {
                     if density(&levels, y) > 0.0 {
                         let block = self.layer(&column, wx, y, wz, depth, &mut rng);
-                        chunk.set(x, y as usize, z, block);
+                        chunk.set(x, y, z, block);
                     }
                 }
                 for y in column.height + 1..=SEA_LEVEL {
-                    chunk.set(x, y as usize, z, WATER);
+                    chunk.set(x, y, z, WATER);
                 }
                 // A bedrock floor, ragged for four blocks like 1.0.0.
                 chunk.set(x, 0, z, BEDROCK);
                 for y in 1..5 {
-                    if (rng.below(5) as usize) >= y {
+                    if rng.below(5) as i32 >= y {
                         chunk.set(x, y, z, BEDROCK);
                     }
                 }
@@ -905,7 +905,7 @@ pub(crate) mod tests {
         let b = Terrain::new(1).generate(pos);
         let c = Terrain::new(2).generate(pos);
         let blocks = |chunk: &Chunk| -> Vec<BlockState> {
-            (0..WORLD_HEIGHT)
+            (crate::config::MIN_Y..crate::config::MAX_Y)
                 .flat_map(|y| (0..256).map(move |i| (i % 16, y, i / 16)))
                 .map(|(x, y, z)| chunk.get(x, y, z))
                 .collect()
@@ -1028,8 +1028,8 @@ pub(crate) mod tests {
                 let (lx, lz) = local(x, z);
                 let column = terrain.column(x, z);
                 assert!(column.height <= 61, "river bed at {}", column.height);
-                assert_eq!(chunk.get(lx, SEA_LEVEL as usize, lz), WATER);
-                assert!(chunk.get(lx, SEA_LEVEL as usize + 1, lz).is_air());
+                assert_eq!(chunk.get(lx, SEA_LEVEL, lz), WATER);
+                assert!(chunk.get(lx, SEA_LEVEL + 1, lz).is_air());
                 checked += 1;
                 if checked == 20 {
                     break 'search;
@@ -1052,8 +1052,8 @@ pub(crate) mod tests {
                     for x in 0..16 {
                         // From 200 up, every column is solid from 200 to its
                         // top: no air under solid ground.
-                        let solid = |y: usize| chunk.get(x, y, z).def().solid;
-                        let top = (200..WORLD_HEIGHT).rev().find(|&y| solid(y));
+                        let solid = |y: i32| chunk.get(x, y, z).def().solid;
+                        let top = (200..crate::config::MAX_Y).rev().find(|&y| solid(y));
                         if let Some(top) = top {
                             high += 1;
                             for y in 200..top {
@@ -1103,11 +1103,11 @@ pub(crate) mod tests {
         let (lx, lz) = local(x, z);
         let column = terrain.column(x, z);
         assert!(matches!(
-            chunk.get(lx, SEA_LEVEL as usize, lz).id(),
+            chunk.get(lx, SEA_LEVEL, lz).id(),
             blocks::WATER | blocks::ICE | blocks::PACKED_ICE
         ));
-        assert_eq!(chunk.get(lx, column.height as usize + 1, lz), WATER);
-        assert_eq!(chunk.get(lx, column.height as usize, lz), column.top);
+        assert_eq!(chunk.get(lx, column.height + 1, lz), WATER);
+        assert_eq!(chunk.get(lx, column.height, lz), column.top);
     }
 
     #[test]
@@ -1118,7 +1118,7 @@ pub(crate) mod tests {
         });
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
         let (lx, lz) = local(x, z);
-        let top = chunk.get(lx, SEA_LEVEL as usize, lz).id();
+        let top = chunk.get(lx, SEA_LEVEL, lz).id();
         assert!(matches!(top, blocks::WATER | blocks::ICE), "{top:?}");
     }
 
@@ -1134,8 +1134,8 @@ pub(crate) mod tests {
             let chunk = terrain.generate(ChunkPos::of_block(x, z));
             let (lx, lz) = local(x, z);
             let y = y as usize;
-            assert!(chunk.get(lx, y - 1, lz).def().solid, "seed {seed}");
-            assert!(chunk.get(lx, y + 1, lz).is_air(), "seed {seed}");
+            assert!(chunk.get(lx, (y - 1) as i32, lz).def().solid, "seed {seed}");
+            assert!(chunk.get(lx, (y + 1) as i32, lz).is_air(), "seed {seed}");
         }
     }
 
@@ -1152,11 +1152,11 @@ pub(crate) mod tests {
                         assert_eq!(chunk.get(x, 0, z), BEDROCK);
                         let column = terrain.column(min_x + x as i32, min_z + z as i32);
                         if column.height < SEA_LEVEL {
-                            let floor = chunk.get(x, column.height as usize, z);
+                            let floor = chunk.get(x, column.height, z);
                             assert!(!floor.is_air(), "hole under water at {x},{z}");
                         }
                         for y in 1..column.height as usize {
-                            match chunk.get(x, y, z) {
+                            match chunk.get(x, y as i32, z) {
                                 b if b.is_air() => air_below_surface += 1,
                                 LAVA => {
                                     assert!(y as i32 <= LAVA_LEVEL);
@@ -1187,7 +1187,7 @@ pub(crate) mod tests {
             for y in 12..40 {
                 let block = chunk.get(x, y, z);
                 if matches!(block.id(), blocks::STONE | blocks::DEEPSLATE) {
-                    assert!(!terrain.is_cave(min_x + x as i32, y as i32, min_z + z as i32));
+                    assert!(!terrain.is_cave(min_x + x as i32, y, min_z + z as i32));
                     checked += 1;
                 }
             }
@@ -1202,7 +1202,7 @@ pub(crate) mod tests {
         let count = |range: std::ops::Range<usize>, block: BlockState| {
             range
                 .flat_map(|y| (0..256).map(move |i| (i % 16, y, i / 16)))
-                .filter(|&(x, y, z)| chunk.get(x, y, z) == block)
+                .filter(|&(x, y, z)| chunk.get(x, y as i32, z) == block)
                 .count()
         };
         assert_eq!(count(37..WORLD_HEIGHT, DEEPSLATE), 0);
@@ -1214,7 +1214,9 @@ pub(crate) mod tests {
     fn column_blocks(terrain: &Terrain, x: i32, z: i32) -> Vec<BlockState> {
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
         let (lx, lz) = local(x, z);
-        (0..WORLD_HEIGHT).map(|y| chunk.get(lx, y, lz)).collect()
+        (crate::config::MIN_Y..crate::config::MAX_Y)
+            .map(|y| chunk.get(lx, y, lz))
+            .collect()
     }
 
     /// An open column (no cave entrance) of `biome`, not on a slope.
@@ -1238,7 +1240,7 @@ pub(crate) mod tests {
             let (x, z, column) = open(&terrain, biome);
             assert_eq!(column.top, top, "{biome:?}");
             let blocks = column_blocks(&terrain, x, z);
-            let h = column.height as usize;
+            let h = (column.height - crate::config::MIN_Y) as usize;
             if column.top == SAND {
                 assert!(
                     blocks[..h].contains(&SANDSTONE),
@@ -1254,7 +1256,7 @@ pub(crate) mod tests {
         // Badlands: red sand on bands of terracotta.
         let (x, z, column) = open(&terrain, Biome::Badlands);
         let blocks = column_blocks(&terrain, x, z);
-        let h = column.height as usize;
+        let h = (column.height - crate::config::MIN_Y) as usize;
         assert!(
             blocks[h - 10..h]
                 .iter()
@@ -1263,14 +1265,14 @@ pub(crate) mod tests {
         // Cold biomes: snow on top, snowy grass.
         let (x, z, column) = open(&terrain, Biome::SnowyPlains);
         let blocks = column_blocks(&terrain, x, z);
-        let h = column.height as usize;
+        let h = (column.height - crate::config::MIN_Y) as usize;
         assert_eq!(blocks[h + 1].id(), blocks::SNOW, "{:?}", &blocks[h..h + 3]);
         assert!(blocks[h].bool(crate::world::props::Prop::Snowy));
         // Frozen oceans freeze over.
         let (x, z) = find(&terrain, "frozen ocean", |c| c.biome == Biome::FrozenOcean);
         let blocks = column_blocks(&terrain, x, z);
         assert!(matches!(
-            blocks[SEA_LEVEL as usize].id(),
+            blocks[(SEA_LEVEL - crate::config::MIN_Y) as usize].id(),
             blocks::ICE | blocks::PACKED_ICE | blocks::SNOW_BLOCK
         ));
     }
@@ -1287,8 +1289,14 @@ pub(crate) mod tests {
         // Halfway down the cave band (depth 0.2 to 0.9 under the quart's
         // corner).
         let deep = terrain.height(x.div_euclid(4) * 4, z.div_euclid(4) * 4) - 64;
-        assert_eq!(chunk.biome_at(lx, deep as usize, lz), Biome::LushCaves);
-        assert_eq!(chunk.biome_at(lx, column.height as usize, lz), column.biome);
+        assert_eq!(
+            chunk.biome_at(lx, (deep as usize) as i32, lz),
+            Biome::LushCaves
+        );
+        assert_eq!(
+            chunk.biome_at(lx, (column.height as usize) as i32, lz),
+            column.biome
+        );
     }
 
     /// Prints biome shares, heights and slopes over a big square:

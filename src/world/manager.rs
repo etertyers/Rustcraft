@@ -20,7 +20,7 @@ use glam::IVec3;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use log::error;
 
-use crate::config::{self, CHUNK_SIZE, WORLD_HEIGHT};
+use crate::config::{self, CHUNK_SIZE};
 
 use super::{
     World,
@@ -187,11 +187,11 @@ pub struct WorkStats {
 }
 
 fn local_pos(at: IVec3) -> Option<(ChunkPos, LocalPos)> {
-    if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+    if !super::chunk::in_height(at.y) {
         return None;
     }
     let size = CHUNK_SIZE as i32;
-    let local = [at.x.rem_euclid(size), at.y, at.z.rem_euclid(size)].map(|v| v as u8);
+    let local = [at.x.rem_euclid(size), at.y, at.z.rem_euclid(size)].map(|v| v as i16);
     Some((ChunkPos::of_block(at.x, at.z), local))
 }
 
@@ -567,7 +567,7 @@ impl ChunkManager {
         let mut touched = FastSet::default();
         let mut lit = FastSet::default();
         for &(at, block) in edits {
-            if !(0..WORLD_HEIGHT as i32).contains(&at.y) {
+            if !crate::world::chunk::in_height(at.y) {
                 continue;
             }
             let pos = ChunkPos::of_block(at.x, at.z);
@@ -575,7 +575,7 @@ impl ChunkManager {
                 continue;
             };
             let (x, z) = (at.x.rem_euclid(size), at.z.rem_euclid(size));
-            chunk.set(x as usize, at.y as usize, z as usize, block);
+            chunk.set(x as usize, at.y, z as usize, block);
             self.unsaved.insert(pos);
             touched.insert(pos);
             let low = ChunkPos::of_block(at.x - LIGHT_REACH, at.z - LIGHT_REACH);
@@ -891,8 +891,8 @@ mod tests {
         let mut manager = loaded_flat();
         manager.set_blocks(&[
             (IVec3::new(500, 70, 0), STONE),
-            (IVec3::new(0, WORLD_HEIGHT as i32, 0), STONE),
-            (IVec3::new(0, -1, 0), STONE),
+            (IVec3::new(0, crate::config::MAX_Y, 0), STONE),
+            (IVec3::new(0, crate::config::MIN_Y - 1, 0), STONE),
         ]);
         assert!(manager.update(ChunkPos::new(0, 0)).meshes.is_empty());
     }

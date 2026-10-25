@@ -861,7 +861,7 @@ impl Renderer {
                 .iter()
                 .filter_map(|(pos, chunk)| {
                     let (x, z) = pos.min_block();
-                    let min = Vec3::new(x as f32, 0.0, z as f32);
+                    let min = Vec3::new(x as f32, crate::config::MIN_Y as f32, z as f32);
                     let size = Vec3::new(CHUNK_SIZE as f32, WORLD_HEIGHT as f32, CHUNK_SIZE as f32);
                     let center = min + size / 2.0;
                     let distance =

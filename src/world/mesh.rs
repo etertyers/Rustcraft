@@ -10,14 +10,14 @@ use super::{
         BlockRegistry, BlockState, FaceTint, Fluid, RenderLayer, Shape, Textures, door_box,
         door_side, texture_location,
     },
-    chunk::{Chunk, ChunkPos, SECTION_COUNT, SECTION_SIZE},
+    chunk::{Chunk, ChunkPos, SECTION_COUNT},
     fluid::{self, Cell},
     light::ChunkLight,
     props::{Prop, axis, bed_part, hinge, rail_shape},
     shape::{self, Cuboid},
 };
 use crate::{
-    config::{self, CHUNK_SIZE, WORLD_HEIGHT},
+    config::{self, CHUNK_SIZE},
     pack::model::BlockOverrides,
     render::vertex::Vertex,
 };
@@ -350,17 +350,17 @@ impl ChunkArea {
     /// reach into neighbors). Above the world is air; below the world or in an
     /// unloaded chunk is `None`.
     pub fn get(&self, x: i32, y: i32, z: i32) -> Option<BlockState> {
-        if y >= WORLD_HEIGHT as i32 {
+        if y >= config::MAX_Y {
             return Some(BlockState::AIR);
         }
-        if y < 0 {
+        if y < config::MIN_Y {
             return None;
         }
         let size = CHUNK_SIZE as i32;
         let (cx, cz) = (x.div_euclid(size), z.div_euclid(size));
         let chunk = self.chunks.get((cz + 1) as usize)?.get((cx + 1) as usize)?;
         let (lx, lz) = (x.rem_euclid(size), z.rem_euclid(size));
-        Some(chunk.as_ref()?.get(lx as usize, y as usize, lz as usize))
+        Some(chunk.as_ref()?.get(lx as usize, y, lz as usize))
     }
 }
 
@@ -1212,7 +1212,9 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
     let (min_x, min_z) = chunk.pos.min_block();
     let tints = Tints::new(&models.colors, area.blend, |x, z| area.biome(x, z));
     for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
-        for y in section * SECTION_SIZE..(section + 1) * SECTION_SIZE {
+        for y in crate::world::chunk::section_bottom(section)
+            ..crate::world::chunk::section_bottom(section + 1)
+        {
             for z in 0..CHUNK_SIZE {
                 for x in 0..CHUNK_SIZE {
                     let block = chunk.get(x, y, z);
@@ -1224,14 +1226,14 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         y as f32,
                         (min_z + z as i32) as f32,
                     ];
-                    let model = models.get_at(block, min_x + x as i32, y as i32, min_z + z as i32);
+                    let model = models.get_at(block, min_x + x as i32, y, min_z + z as i32);
                     mesh.adding_translucent = model.translucent;
                     let side = model.faces[Face::North.index()];
                     let side_color = tints.flat(side.tint, x as i32, z as i32);
                     let side_colors =
                         |corners| tints.corners(side.tint, x as i32, z as i32, corners);
                     // Plants take the light of their own cell.
-                    let own = light.get(x as i32, y as i32, z as i32);
+                    let own = light.get(x as i32, y, z as i32);
                     let own_light = [own.0 as f32, own.1 as f32];
                     match model.shape {
                         Shape::None => {}
@@ -1258,8 +1260,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         Shape::Bed => {
                             for (face, corners, uv) in bed_quads(block, model) {
                                 let [dx, dy, dz] = face.normal();
-                                let neighbor =
-                                    area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                                let neighbor = area.get(x as i32 + dx, y + dy, z as i32 + dz);
                                 let inset = matches!(face, Face::Top | Face::Bottom);
                                 if !inset && !face_visible(models, block, model, neighbor) {
                                     continue;
@@ -1296,7 +1297,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         }
                         Shape::Fire => {
                             let solid = |dx: i32, dy: i32, dz: i32| {
-                                let next = area.get(x as i32 + dx, y as i32 + dy, z as i32 + dz);
+                                let next = area.get(x as i32 + dx, y + dy, z as i32 + dz);
                                 next.is_some_and(|next| models.get(next).opaque_cube)
                             };
                             let floor = solid(0, -1, 0);
@@ -1316,11 +1317,11 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             }
                         }
                         Shape::Liquid => {
-                            let cell = [x as i32, y as i32, z as i32];
+                            let cell = [x as i32, y, z as i32];
                             mesh_liquid(&mut mesh, models, area, light, cell, origin, &tints);
                         }
                         Shape::Cube => {
-                            let cell = [x as i32, y as i32, z as i32];
+                            let cell = [x as i32, y, z as i32];
                             mesh_box(
                                 &mut mesh,
                                 models,
@@ -1336,7 +1337,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             );
                         }
                         Shape::Cactus => {
-                            let cell = [x as i32, y as i32, z as i32];
+                            let cell = [x as i32, y, z as i32];
                             mesh_cactus(&mut mesh, models, area, light, cell, origin, &tints);
                         }
                         Shape::Rail => {
@@ -1364,7 +1365,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             }
                         }
                         _ => {
-                            let cell = [x as i32, y as i32, z as i32];
+                            let cell = [x as i32, y, z as i32];
                             for (i, &b) in model.boxes.iter().flatten().enumerate() {
                                 let faces = model.part_faces.get(i).unwrap_or(&model.faces);
                                 mesh_box(
@@ -1422,7 +1423,7 @@ mod tests {
             let size = CHUNK_SIZE as i32;
             chunk.set(
                 x.rem_euclid(size) as usize,
-                y as usize,
+                y,
                 z.rem_euclid(size) as usize,
                 block,
             );
@@ -1640,8 +1641,11 @@ mod tests {
 
     #[test]
     fn bottom_of_world_is_hidden_and_top_is_open() {
-        assert_eq!(quads(&mesh_with(&[(5, 0, 5, STONE)], true)), 5);
-        let top = WORLD_HEIGHT as i32 - 1;
+        assert_eq!(
+            quads(&mesh_with(&[(5, crate::config::MIN_Y, 5, STONE)], true)),
+            5
+        );
+        let top = crate::config::MAX_Y - 1;
         assert_eq!(quads(&mesh_with(&[(5, top, 5, STONE)], true)), 6);
     }
 

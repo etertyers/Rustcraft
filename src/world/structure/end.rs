@@ -536,15 +536,15 @@ mod tests {
             chest.x.rem_euclid(16) as usize,
             chest.z.rem_euclid(16) as usize,
         );
-        let local = [lx as u8, chest.y as u8, lz as u8];
-        assert!(chunk.get(lx, chest.y as usize, lz).is(blocks::CHEST));
+        let local = [lx as i16, chest.y as i16, lz as i16];
+        assert!(chunk.get(lx, chest.y, lz).is(blocks::CHEST));
         assert!(
             chunk
                 .block_entity(local)
                 .is_some_and(|e| e.slots().iter().any(Option::is_some))
         );
         let again = end.generate(pos);
-        for y in 0..crate::config::WORLD_HEIGHT {
+        for y in crate::config::MIN_Y..crate::config::MAX_Y {
             assert_eq!(chunk.get(3, y, 5), again.get(3, y, 5));
         }
         // A tower wall stands on end stone, not in the air.
