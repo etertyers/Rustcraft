@@ -56,14 +56,29 @@ pub struct DollAngles {
 /// Vanilla's `renderEntityInInventoryFollowsMouse`: `offset` is the mouse
 /// minus the head's position in GUI pixels. The head turns twice as far
 /// as the body, both by `atan(offset / 40)`, and the head tips up to 20°.
+/// The head's turn from the body is held to `HEAD_TURN_LIMIT`, past which
+/// the body turns instead.
 pub fn angles(offset: Vec2) -> DollAngles {
     let (f, g) = ((offset.x / 40.0).atan(), (offset.y / 40.0).atan());
+    // Mouse to the right is the viewer's right: the player's west.
+    let turn = -f * 20.0_f32.to_radians();
+    let (body_yaw, head_yaw) = follow(turn, turn);
     DollAngles {
-        // Mouse to the right is the viewer's right: the player's west.
-        body_yaw: -f * 20.0_f32.to_radians(),
-        head_yaw: -f * 20.0_f32.to_radians(),
+        body_yaw,
+        head_yaw,
         head_pitch: g * 20.0_f32.to_radians(),
     }
+}
+
+/// How far the head may turn from the body (vanilla's body follows the
+/// head past 50°).
+pub const HEAD_TURN_LIMIT: f32 = 50.0 * std::f32::consts::PI / 180.0;
+
+/// `body_yaw` and the head's turn from it, with the turn held within the
+/// limit and the rest given to the body.
+pub fn follow(body_yaw: f32, head_yaw: f32) -> (f32, f32) {
+    let held = head_yaw.clamp(-HEAD_TURN_LIMIT, HEAD_TURN_LIMIT);
+    (body_yaw + (head_yaw - held), held)
 }
 
 /// The model to draw: the skin-textured body, the elytra, the armor (and
@@ -118,37 +133,70 @@ pub fn build(game: &Game, held: &mut HeldCache, fig: &Figure, angles: DollAngles
 /// One corner of a projected triangle: where, its texture coordinate and color.
 type Corner = (Pos2, Pos2, Color32);
 
-/// `mesh` seen from the front (the model faces north, the viewer stands
-/// north of it), its feet at `feet` and `per_block` points to a block,
-/// back faces dropped and the rest sorted far to near.
-pub fn project(mesh: &Mesh, texture: egui::TextureId, feet: Pos2, per_block: f32) -> egui::Mesh {
-    let corner = |i: u32| {
-        let v = &mesh.vertices[i as usize];
-        let p = Vec3::from(v.position);
-        let screen = pos2(feet.x - p.x * per_block, feet.y - p.y * per_block);
-        let [r, g, b] = v.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+/// A corner before projection: the model point (blocks), its texture
+/// coordinate and color.
+type ModelCorner = (Vec3, Pos2, [f32; 3]);
+
+/// Triangles longer than this (in blocks, about a model pixel and a half)
+/// are split before sorting: sorted far to near by their middles, big
+/// faces that meet at an angle (a turned head over the shoulders) would
+/// paint over each other, small ones come out as a depth buffer would.
+const MAX_EDGE: f32 = 0.09;
+
+/// Splits a triangle into four at its edges' middles until every edge is
+/// at most `MAX_EDGE` long.
+fn split(t: [ModelCorner; 3], out: &mut Vec<[ModelCorner; 3]>) {
+    let long = (0..3).any(|i| t[i].0.distance(t[(i + 1) % 3].0) > MAX_EDGE);
+    if !long {
+        out.push(t);
+        return;
+    }
+    let mid = |a: ModelCorner, b: ModelCorner| -> ModelCorner {
         (
-            screen,
-            p.z,
-            pos2(v.uv[0], v.uv[1]),
-            Color32::from_rgb(r, g, b),
+            (a.0 + b.0) / 2.0,
+            pos2((a.1.x + b.1.x) / 2.0, (a.1.y + b.1.y) / 2.0),
+            std::array::from_fn(|c| (a.2[c] + b.2[c]) / 2.0),
         )
     };
-    let mut faces: Vec<(f32, [Corner; 3])> = Vec::new();
+    let [a, b, c] = t;
+    let (ab, bc, ca) = (mid(a, b), mid(b, c), mid(c, a));
+    for part in [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]] {
+        split(part, out);
+    }
+}
+
+/// `mesh` seen from the front (the model faces north, the viewer stands
+/// north of it), its feet at `feet` and `per_block` points to a block,
+/// back faces dropped and the rest split small and sorted far to near.
+pub fn project(mesh: &Mesh, texture: egui::TextureId, feet: Pos2, per_block: f32) -> egui::Mesh {
+    let screen = |p: Vec3| pos2(feet.x - p.x * per_block, feet.y - p.y * per_block);
+    let corner = |i: u32| -> ModelCorner {
+        let v = &mesh.vertices[i as usize];
+        (Vec3::from(v.position), pos2(v.uv[0], v.uv[1]), v.color)
+    };
+    let mut small = Vec::new();
     for &[a, b, c] in mesh.indices.as_chunks::<3>().0 {
-        let [a, b, c] = [a, b, c].map(corner);
+        let t = [a, b, c].map(corner);
+        let [pa, pb, pc] = t.map(|corner| screen(corner.0));
         // Seen from the front the mesh's triangles wind this way on a
         // screen whose y points down; the others face away.
-        let area = (b.0 - a.0).x * (c.0 - a.0).y - (b.0 - a.0).y * (c.0 - a.0).x;
+        let area = (pb - pa).x * (pc - pa).y - (pb - pa).y * (pc - pa).x;
         if area >= 0.0 {
             continue;
         }
-        let depth = (a.1 + b.1 + c.1) / 3.0;
-        faces.push((
-            depth,
-            [a, b, c].map(|(screen, _, uv, color)| (screen, uv, color)),
-        ));
+        split(t, &mut small);
     }
+    let mut faces: Vec<(f32, [Corner; 3])> = small
+        .into_iter()
+        .map(|t| {
+            let depth = (t[0].0.z + t[1].0.z + t[2].0.z) / 3.0;
+            let color = |c: [f32; 3]| {
+                let [r, g, b] = c.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+                Color32::from_rgb(r, g, b)
+            };
+            (depth, t.map(|(p, uv, c)| (screen(p), uv, color(c))))
+        })
+        .collect();
     // Far first: the viewer is on the -z side.
     faces.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut out = egui::Mesh::with_texture(texture);
@@ -281,5 +329,35 @@ mod tests {
         let far = angles(vec2(1.0e6, 0.0));
         assert!((far.body_yaw.abs().to_degrees() - 31.4).abs() < 0.2);
         assert_eq!(far.body_yaw, far.head_yaw);
+    }
+
+    #[test]
+    fn faces_are_split_small_and_the_head_never_turns_past_the_limit() {
+        let (body, _) = drawn(angles(vec2(200.0, 100.0)));
+        let longest = body
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|t| {
+                let p = t.map(|i| body.vertices[i as usize].pos);
+                [
+                    p[0].distance(p[1]),
+                    p[1].distance(p[2]),
+                    p[2].distance(p[0]),
+                ]
+            })
+            .fold(0.0, f32::max);
+        // Points: three times a block of 30 GUI pixels.
+        assert!(longest <= MAX_EDGE * 90.0 + 0.01, "{longest}");
+        assert_eq!(follow(0.2, 0.3), (0.2, 0.3));
+        let (body_yaw, head) = follow(0.1, 1.2);
+        assert!((head - HEAD_TURN_LIMIT).abs() < 1e-6);
+        assert!(
+            (body_yaw + head - 1.3).abs() < 1e-6,
+            "the body takes the rest"
+        );
+        let (body_yaw, head) = follow(0.0, -1.0);
+        assert!((head + HEAD_TURN_LIMIT).abs() < 1e-6 && body_yaw < 0.0);
     }
 }
