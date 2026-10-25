@@ -297,6 +297,11 @@ pub fn place_block_looking(
             return None;
         }
     }
+    if state.is(crate::world::blocks::SUGAR_CANE)
+        && !crate::world::plants::cane_can_stay(&|p| state_at(world, p), at)
+    {
+        return None;
+    }
     if collides(state, at, player) {
         return None;
     }
