@@ -680,8 +680,9 @@ impl Game {
     pub(super) fn tick_arrows(&mut self) {
         let mut arrows = std::mem::take(&mut self.arrows);
         // Living players, each a target for any arrow they didn't loose.
-        let players: Vec<(usize, String, crate::player::collision::Aabb)> = (0..self
-            .player_count())
+        let players: Vec<(usize, String, crate::player::collision::Aabb)> = self
+            .players_here()
+            .into_iter()
             .filter(|&i| !self.player_at(i).stats.is_dead())
             .map(|i| {
                 let p = self.player_at(i);

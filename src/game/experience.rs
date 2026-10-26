@@ -73,7 +73,9 @@ impl Game {
             blocks: self.items.blocks,
         };
         // Each orb drifts to the nearest living player.
-        let centers: Vec<DVec3> = (0..self.player_count())
+        let centers: Vec<DVec3> = self
+            .players_here()
+            .into_iter()
             .map(|i| self.player_at(i))
             .filter(|p| !p.stats.is_dead())
             .map(|p| p.body.position() + DVec3::Y * (p.body.eye_height() * 0.5))

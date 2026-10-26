@@ -143,6 +143,10 @@ pub const ENDER_CHEST_SLOTS: usize = 27;
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// The dimension the player is in, and the one a portal is taking
+    /// them to at the end of the tick.
+    pub dimension: crate::world::dimension::Dimension,
+    travel: Option<(crate::world::dimension::Dimension, dimensions::Arrival)>,
     /// A server's record of the sounds only this player hears (their own,
     /// with no place), made during their turns, for sending.
     #[serde(skip)]
@@ -269,6 +273,8 @@ impl PlayerState {
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
+            dimension: crate::world::dimension::Dimension::Overworld,
+            travel: None,
             heard: Vec::new(),
             ender_chest: vec![None; ENDER_CHEST_SLOTS],
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
@@ -413,6 +419,12 @@ pub struct Game {
     /// The dimension the player is in, and the others as they were left.
     dimension: crate::world::dimension::Dimension,
     away: FastMap<crate::world::dimension::Dimension, dimensions::Away>,
+    /// The live dimensions besides `dimension`, which has players in it too.
+    live: FastMap<crate::world::dimension::Dimension, dimensions::Realm>,
+    /// In the middle of a tick, or of another player's turn (portal
+    /// travel waits for the tick's end).
+    ticking: bool,
+    swapped: u32,
     /// Set on going to another dimension, until the app has seen it.
     dimension_changed: bool,
     /// Every Nether portal lit or built, by dimension: a block of its
@@ -493,6 +505,9 @@ impl Game {
             ticks_since_save: 0,
             dimension: Default::default(),
             away: FastMap::default(),
+            live: FastMap::default(),
+            ticking: false,
+            swapped: 0,
             dimension_changed: false,
             portals: Vec::new(),
             eyes: Vec::new(),
@@ -540,6 +555,7 @@ impl Game {
         // file is read (`restore_player`).
         game.take_player_file(&PlayerFile {
             player: player.clone(),
+            dimension: level.dimension,
             ender_chest: Vec::new(),
             advancements: level.advancements.clone(),
             recipe_book: level.recipe_book.clone(),
@@ -591,6 +607,7 @@ impl Game {
                 stats: p.stats.clone(),
                 bed: p.bed.map(|bed| bed.to_array()),
             },
+            dimension: p.dimension,
             ender_chest: p.ender_chest.clone(),
             advancements: p.progress.clone(),
             recipe_book: p.recipe_book.clone(),
@@ -614,6 +631,7 @@ impl Game {
         p.body.may_fly = p.mode.can_fly();
         p.body.flying = data.flying && p.body.may_fly;
         p.ender_chest = file.ender_chest.clone();
+        p.dimension = file.dimension;
         p.ender_chest.resize(ENDER_CHEST_SLOTS, None);
         p.progress = file.advancements.clone();
         p.recipe_book = file.recipe_book.clone();
@@ -695,8 +713,9 @@ impl Game {
         let chunks = self.chunks.save()?;
         // Every player's own file, then the host's state in the level too,
         // for older builds.
-        let mut files = Vec::new();
-        self.for_each_player(|game| files.push((game.player.name.clone(), game.player_file())));
+        let files: Vec<_> = (0..self.player_count())
+            .map(|i| self.with_player(i, |game| (game.player.name.clone(), game.player_file())))
+            .collect();
         let host = files[0].1.clone();
         let boats = self.saved_boats();
         let Some(saved) = self.saved.as_mut() else {
@@ -713,7 +732,7 @@ impl Game {
         saved.level.mobs.extend(away_mobs);
         saved.level.populated = populated;
         saved.level.away_populated = away_populated;
-        saved.level.dimension = self.dimension;
+        saved.level.dimension = host.dimension;
         saved.level.portals = self.portals.clone();
         saved.level.end = self.end.clone();
         saved.level.advancements = progress;
@@ -984,13 +1003,24 @@ impl Game {
     /// player made of it. The world waits while every player is arriving
     /// in a dimension or watching the credits.
     fn tick(&mut self) {
-        let mut waiting = true;
-        self.for_each_player(|game| waiting &= !game.tick_player());
-        if waiting {
+        self.ticking = true;
+        let mut ticked = false;
+        for dimension in self.dimensions_with_players() {
+            self.enter_realm(dimension);
+            let mut waiting = true;
+            self.for_each_player(|game| waiting &= !game.tick_player());
+            if waiting {
+                continue;
+            }
+            self.tick_world();
+            self.for_each_player(Game::tick_player_after);
+            ticked = true;
+        }
+        self.ticking = false;
+        self.finish_travels();
+        if !ticked {
             return;
         }
-        self.tick_world();
-        self.for_each_player(Game::tick_player_after);
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -1000,13 +1030,20 @@ impl Game {
         }
     }
 
-    /// Runs `turn` for each player in turn, the host first, with that
-    /// player in `self.player`.
+    /// Runs `turn` for each player in the dimension whose world is in the
+    /// game's fields, with that player in `self.player`.
     pub(crate) fn for_each_player(&mut self, mut turn: impl FnMut(&mut Game)) {
-        self.hearing(&mut turn);
+        let here = self.dimension;
+        if self.player.dimension == here {
+            self.hearing(&mut turn);
+        }
         for i in 0..self.others.len() {
             std::mem::swap(&mut self.player, &mut self.others[i]);
-            self.hearing(&mut turn);
+            self.swapped += 1;
+            if self.player.dimension == here {
+                self.hearing(&mut turn);
+            }
+            self.swapped -= 1;
             std::mem::swap(&mut self.player, &mut self.others[i]);
         }
     }
@@ -1313,8 +1350,10 @@ impl Game {
         // Beds and the world spawn are in the Overworld.
         let away = self.dimension != crate::world::dimension::Dimension::Overworld;
         if away {
-            let spawn = self.spawn;
-            self.change_dimension(crate::world::dimension::Dimension::Overworld, spawn);
+            self.change_dimension(
+                crate::world::dimension::Dimension::Overworld,
+                dimensions::Arrival::Home,
+            );
         }
         let feet = self.respawn_point();
         self.player.body = Body::new(feet);

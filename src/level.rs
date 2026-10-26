@@ -199,6 +199,9 @@ pub struct PlayerData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerFile {
     pub player: PlayerData,
+    /// The dimension they're in.
+    #[serde(default)]
+    pub dimension: Dimension,
     #[serde(default)]
     pub ender_chest: Vec<Option<crate::inventory::stack::ItemStack>>,
     #[serde(default)]

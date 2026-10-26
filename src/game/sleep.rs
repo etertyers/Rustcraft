@@ -123,7 +123,7 @@ impl Game {
         sleep.ticks = (sleep.ticks + 1).min(SLEEP_TICKS);
         // The night passes once everyone is fast asleep; until then, a
         // player who is waits in bed.
-        let asleep = (0..self.player_count()).all(|i| {
+        let asleep = self.players_here().into_iter().all(|i| {
             self.player_at(i)
                 .sleep
                 .is_some_and(|sleep| sleep.ticks >= SLEEP_TICKS)
@@ -301,6 +301,7 @@ mod tests {
     fn a_bed_in_the_nether_blows_up_and_sets_fires() {
         let (mut game, head) = game_with_bed(18000);
         game.dimension = crate::world::dimension::Dimension::Nether;
+        game.player.dimension = crate::world::dimension::Dimension::Nether;
         game.use_bed(head);
         assert!(!game.is_sleeping());
         let world = game.chunks.world();

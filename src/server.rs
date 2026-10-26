@@ -147,9 +147,14 @@ impl Server {
     pub fn advance(&mut self, dt: f32) {
         self.accept();
         self.read_messages();
-        let centers = self.game.player_chunks();
-        let changes = self.game.chunks.update_around(&centers);
-        self.game.on_chunks_loaded(&changes.loaded);
+        // Chunks load around every player, in each one's dimension.
+        for dimension in self.game.dimensions_with_players() {
+            self.game.enter_realm(dimension);
+            let centers = self.game.player_chunks();
+            let changes = self.game.chunks.update_around(&centers);
+            self.game.on_chunks_loaded(&changes.loaded);
+        }
+        self.home();
         let ticks = self.game.clock(dt);
         for _ in 0..ticks {
             self.tick();
@@ -188,15 +193,25 @@ impl Server {
     /// Sends each player their snapshot and the sounds they hear.
     fn publish(&mut self, heard: Vec<Cue>) {
         let views: Vec<_> = (0..self.remotes.len())
-            .map(|index| self.game.with_player(index, |game| game.player_view()))
+            .map(|index| {
+                let view = self.game.with_player(index, |game| game.player_view());
+                (self.game.player_at(index).dimension, view)
+            })
             .collect();
         for index in 0..self.remotes.len() {
             let ack = self.remotes[index].ack;
-            // What's in the chunks the client has.
+            // What's in the chunks the client has, in their dimension.
+            let dimension = self.game.player_at(index).dimension;
+            self.game.enter_realm(dimension);
             let range = f64::from((self.remotes[index].view_distance + 1) * 16);
+            let here: Vec<_> = views
+                .iter()
+                .filter(|(d, _)| *d == dimension)
+                .map(|(_, view)| view.clone())
+                .collect();
             let snapshot = self
                 .game
-                .with_player(index, |game| game.snapshot(ack, range, views.clone()));
+                .with_player(index, |game| game.snapshot(ack, range, here));
             let feet = self.feet(index);
             self.remotes[index]
                 .conn
@@ -215,6 +230,13 @@ impl Server {
                 self.remotes[index].conn.send(ServerMsg::Sounds(sounds));
             }
         }
+        self.home();
+    }
+
+    /// Puts the host's dimension back in the game's fields.
+    fn home(&mut self) {
+        let dimension = self.game.player.dimension;
+        self.game.enter_realm(dimension);
     }
 
     /// Takes in logins: a player with a free name joins, the first as the
@@ -333,10 +355,14 @@ impl Server {
         for index in gone.into_iter().rev() {
             self.leave(index);
         }
+        self.home();
     }
 
     fn handle(&mut self, index: usize, msg: ClientMsg) {
         let book = self.book.clone();
+        // What a player does happens in their dimension.
+        let dimension = self.game.player_at(index).dimension;
+        self.game.enter_realm(dimension);
         match msg {
             ClientMsg::Login { .. } | ClientMsg::Disconnect => {}
             ClientMsg::Skin { png, slim } => {
@@ -418,9 +444,22 @@ impl Server {
     /// Sends every client the chunks around it it doesn't have, the edits
     /// in the ones it has, and takes away the ones out of its view.
     fn send_chunks(&mut self) {
+        let dimensions: Vec<Dimension> = self.game.live_dimensions();
+        for dimension in dimensions {
+            self.game.enter_realm(dimension);
+            self.send_chunks_here(dimension);
+        }
+        self.home();
+    }
+
+    /// `send_chunks` for the players in `dimension`, whose world is in the
+    /// game's fields.
+    fn send_chunks_here(&mut self, dimension: Dimension) {
         let (edits, rewritten) = self.game.chunks.take_edits();
-        let dimension = self.game.dimension();
         for index in 0..self.remotes.len() {
+            if self.game.player_at(index).dimension != dimension {
+                continue;
+            }
             let center = {
                 let feet = self.feet(index);
                 ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)

@@ -63,7 +63,9 @@ impl Game {
             return self.hearing(f);
         }
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
+        self.swapped += 1;
         let result = self.hearing(f);
+        self.swapped -= 1;
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
         result
     }
@@ -83,6 +85,7 @@ impl Game {
     ) -> Snapshot {
         let feet = self.player.body.position();
         let near = |at: DVec3| (at.x - feet.x).abs().max((at.z - feet.z).abs()) <= range;
+        let in_the_end = self.dimension == crate::world::dimension::Dimension::End;
         Snapshot {
             ack,
             time: self.time,
@@ -123,8 +126,13 @@ impl Game {
                 boats: self.boats.clone(),
                 primed: self.primed.clone(),
                 eyes: self.eyes.clone(),
-                dragon: self.dragon.clone(),
-                crystals: self.crystals.clone(),
+                // The fight is only in the End.
+                dragon: self.dragon.clone().filter(|_| in_the_end),
+                crystals: if in_the_end {
+                    self.crystals.clone()
+                } else {
+                    Vec::new()
+                },
                 dragon_fireballs: self.dragon_fireballs.clone(),
                 breath: self.breath.clone(),
             },

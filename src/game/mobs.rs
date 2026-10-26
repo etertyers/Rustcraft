@@ -266,7 +266,9 @@ impl Game {
     pub(super) fn tick_mobs(&mut self) {
         // Every player as the mobs see them; each mob goes after the
         // nearest it may attack (vanilla), and listens for the nearest.
-        let seen: Vec<Seen> = (0..self.player_count())
+        let seen: Vec<Seen> = self
+            .players_here()
+            .into_iter()
             .map(|index| {
                 let p = self.player_at(index);
                 let feet = p.body.position();
@@ -786,7 +788,9 @@ impl Game {
 
     /// The chunk each player stands in.
     pub fn player_chunks(&self) -> Vec<ChunkPos> {
-        let mut chunks: Vec<ChunkPos> = (0..self.player_count())
+        let mut chunks: Vec<ChunkPos> = self
+            .players_here()
+            .into_iter()
             .map(|i| {
                 let feet = self.feet_of(i);
                 ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)
@@ -799,7 +803,8 @@ impl Game {
 
     /// How far the nearest player is from `at`.
     pub(super) fn nearest_player_distance(&self, at: DVec3) -> f64 {
-        (0..self.player_count())
+        self.players_here()
+            .into_iter()
             .map(|i| self.feet_of(i).distance(at))
             .fold(f64::INFINITY, f64::min)
     }

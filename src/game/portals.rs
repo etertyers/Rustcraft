@@ -163,19 +163,14 @@ impl Game {
             (feet.z * scale).floor() as i32,
         );
         crate::audio::play_here_with("block.portal.travel", 0.25, 1.0);
-        self.change_dimension(to, target.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
-        let exit = self.portal_near(target, axis);
-        self.place_player(exit);
         self.player.portal.ticks = 0;
         self.player.portal.cooldown = COOLDOWN;
-        if let Err(err) = self.save() {
-            log::error!("saving after going to {}: {err}", to.name());
-        }
+        self.change_dimension(to, super::dimensions::Arrival::Portal(target, axis));
     }
 
     /// Where a player arriving near `target` comes out: a known portal close
     /// enough, or a new one.
-    fn portal_near(&mut self, target: IVec3, axis: u8) -> DVec3 {
+    pub(super) fn portal_near(&mut self, target: IVec3, axis: u8) -> DVec3 {
         let radius = if self.dimension == Dimension::Nether {
             LINK_RADIUS_NETHER
         } else {
