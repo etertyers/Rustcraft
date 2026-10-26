@@ -590,13 +590,18 @@ impl Game {
             let near = |bb: crate::player::collision::Aabb| {
                 crate::player::collision::Aabb::new(bb.min - reach, bb.max + reach)
             };
-            if !self.player.body.flying
-                && !mobs[i].ridden
-                && near(mobs[i].body.aabb()).intersects(&self.player.body.aabb())
-            {
-                let push = push_between(mobs[i].feet(), self.player.body.position());
-                mobs[i].body.velocity += push;
-                self.player.body.velocity -= push;
+            if !mobs[i].ridden {
+                let (bb, feet) = (near(mobs[i].body.aabb()), mobs[i].feet());
+                let mut pushed = DVec3::ZERO;
+                self.for_each_player(|game| {
+                    let body = &mut game.player.body;
+                    if !body.flying && bb.intersects(&body.aabb()) {
+                        let push = push_between(feet, body.position());
+                        pushed += push;
+                        body.velocity -= push;
+                    }
+                });
+                mobs[i].body.velocity += pushed;
             }
             for j in i + 1..mobs.len() {
                 if !mobs[j].is_dead() && near(mobs[i].body.aabb()).intersects(&mobs[j].body.aabb())
