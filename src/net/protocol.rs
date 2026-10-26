@@ -105,6 +105,9 @@ pub enum ServerMsg {
     Snapshot(Box<Snapshot>),
     /// Sounds to play, already filtered to the ones the player hears.
     Sounds(Vec<crate::audio::Cue>),
+    /// Everyone playing, the host first (sent as players come and go, for
+    /// the Tab list).
+    Players(Vec<String>),
     /// Another player's skin (each once, as they join or this player does).
     Skin {
         name: String,

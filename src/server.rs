@@ -23,6 +23,8 @@ use crate::{
 pub const MAX_PLAYERS: usize = 8;
 /// Positioned sounds farther than this from a player aren't sent to them.
 const HEARING: f64 = 64.0;
+/// How long "… joined the game" shows.
+const ANNOUNCE_TICKS: u32 = 100;
 /// Inputs a client may get ahead by before the oldest are dropped.
 const MAX_QUEUED_INPUTS: usize = 4;
 
@@ -325,6 +327,7 @@ impl Server {
             dimension,
             skin: None,
         });
+        self.announce(format!("{name} joined the game"));
         // The newcomer sees everyone's skins.
         let index = self.remotes.len() - 1;
         for other in 0..index {
@@ -334,6 +337,22 @@ impl Server {
                     .conn
                     .send(ServerMsg::Skin { name, png, slim });
             }
+        }
+    }
+
+    /// Tells everyone `text` (until chat, over the hotbar) and who is
+    /// playing now.
+    fn announce(&mut self, text: String) {
+        for index in 0..self.game.player_count() {
+            self.game.with_player(index, |game| {
+                game.player.message = Some((text.clone(), ANNOUNCE_TICKS));
+            });
+        }
+        let names: Vec<String> = (0..self.game.player_count())
+            .map(|i| self.game.player_at(i).name.clone())
+            .collect();
+        for remote in &mut self.remotes {
+            remote.conn.send(ServerMsg::Players(names.clone()));
         }
     }
 
@@ -439,6 +458,7 @@ impl Server {
         }
         let player = self.game.others.remove(index - 1);
         info!("{} left", player.name);
+        self.announce(format!("{} left the game", player.name));
     }
 
     /// Sends every client the chunks around it it doesn't have, the edits
@@ -742,12 +762,23 @@ mod tests {
             GameMode::Creative,
             "the host keeps theirs"
         );
+        assert_eq!(clients[1].0.players, ["Alice", "Bob"], "the Tab list");
+        let said = |server: &Server| {
+            server
+                .game
+                .player
+                .message
+                .as_ref()
+                .map(|(text, _)| text.clone())
+        };
+        assert_eq!(said(&server).as_deref(), Some("Bob joined the game"));
         // Leaving takes Bob out of the world.
         clients.pop();
         run_until(&mut server, &mut clients, |server, _| {
             server.player_count() == 1
         });
         assert!(server.game.others.is_empty());
+        assert_eq!(said(&server).as_deref(), Some("Bob left the game"));
     }
 
     #[test]

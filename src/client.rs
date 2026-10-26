@@ -38,6 +38,8 @@ pub struct Client {
     /// Other players' skins that arrived (name, PNG, slim arms), for the
     /// window to take.
     pub skins: Vec<(String, Vec<u8>, bool)>,
+    /// Everyone playing, for the Tab list.
+    pub players: Vec<String>,
 }
 
 impl Client {
@@ -56,6 +58,7 @@ impl Client {
             welcomed: false,
             gone: None,
             skins: Vec::new(),
+            players: Vec::new(),
         }
     }
 
@@ -123,6 +126,7 @@ impl Client {
                 }
                 ServerMsg::Sounds(cues) => cues.into_iter().for_each(audio::requeue),
                 ServerMsg::Skin { name, png, slim } => self.skins.push((name, png, slim)),
+                ServerMsg::Players(names) => self.players = names,
             }
         }
         if !self.conn.is_open() && self.gone.is_none() {

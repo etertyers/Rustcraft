@@ -189,6 +189,8 @@ pub struct App {
     shot: Option<ShotRun>,
     /// Hide GUI (F1) is on.
     hide_gui: bool,
+    /// List Players (Tab) is held.
+    tab_held: bool,
     /// The world being played, served in this process, and this client's
     /// link to it; `game` is the client's copy of the world.
     server: Option<Server>,
@@ -238,6 +240,7 @@ impl App {
             res: None,
             pause: None,
             hide_gui: false,
+            tab_held: false,
             server: None,
             link: None,
             skin_png: Vec::new(),
@@ -567,6 +570,10 @@ impl App {
         ) || action.hotbar_slot().is_some();
         if action == Action::Perspective {
             return game.on_action(action, pressed, repeat, grabbed);
+        }
+        if action == Action::PlayerList {
+            self.tab_held = pressed;
+            return;
         }
         if local {
             game.on_action(action, pressed, repeat, grabbed);
@@ -1385,6 +1392,18 @@ impl App {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
+            MenuAction::Join(address) => {
+                if let Err(err) = self.join_world(&address) {
+                    error!("joining {address}: {err:#}");
+                    if let Some(menu) = self.menu.as_mut() {
+                        menu.error = Some(format!("Couldn't connect to {address}: {err}"));
+                    }
+                } else {
+                    self.stack.set_in_world(true, true);
+                    self.apply_grab();
+                }
+                return;
+            }
             MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create { name, seed, mode } => {
                 Game::create(&level::saves_dir(), &name, seed, mode, items, models)
@@ -1903,9 +1922,15 @@ impl App {
                 })
             })
             .collect();
+        let player_list = self
+            .link
+            .as_ref()
+            .filter(|_| self.tab_held && !self.hide_gui)
+            .map(|link| link.players.clone());
         let hud = Hud {
             hidden: self.hide_gui,
             name_tags,
+            player_list,
             crosshair: self.stack.grabbed(),
             attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
