@@ -143,6 +143,7 @@ src/
   inventory/{creative,book}.rs, assets/data/creative_tabs.ron   # creative tabs' contents, search and click rules; the recipe book's recipes, categories and placing
   entity/boat.rs, game/boats.rs, render/{boat,lightmap}.rs, world/plants.rs   # boats and rafts (floating, rowing, seats), placing/riding/breaking them, their models; the lightmap formula (tested copy of the shader's); where sugar cane may stand
   world/worldgen/caves.rs   # modern caves: cheese, spaghetti and noodle noise caves, worm tunnels and ravines, aquifers and deep lava
+  server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
