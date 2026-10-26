@@ -45,16 +45,26 @@ impl FaceTexture {
     }
 }
 
+/// Faces a block hides besides those against full opaque cubes (one field,
+/// so a block's model stays small enough to mesh quickly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cull {
+    Nothing,
+    /// Faces between two blocks of the same kind (glass, ice).
+    Same,
+    /// Leaves: between two leaves with Fast graphics, which draws them
+    /// solid.
+    Leaves,
+}
+
 /// Everything the mesher needs to know about one block state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockModel {
     pub shape: Shape,
     /// Hides any face touching it.
     pub opaque_cube: bool,
-    /// Hides faces between two blocks of the same kind.
-    pub cull_same: bool,
-    /// Leaves, which Fast graphics draws solid.
-    pub leaves: bool,
+    /// Which neighbors' faces it hides beyond full opaque cubes.
+    pub cull: Cull,
     /// Light lost passing through it, 0–15.
     pub opacity: u8,
     /// Light it gives off, 0–15.
@@ -273,8 +283,13 @@ fn build_model(
     BlockModel {
         shape: def.shape,
         opaque_cube: def.is_opaque_cube_state(state),
-        cull_same: def.cull_same,
-        leaves: state.kind() == crate::world::blocks::OAK_LEAVES,
+        cull: if state.kind() == crate::world::blocks::OAK_LEAVES {
+            Cull::Leaves
+        } else if def.cull_same {
+            Cull::Same
+        } else {
+            Cull::Nothing
+        },
         opacity: def.light_opacity_for(state),
         emission: def.light_for(state),
         translucent: def.layer == RenderLayer::Translucent,
@@ -482,6 +497,15 @@ impl Mesh {
 /// Added to a vertex's block light to have the shader draw its face solid
 /// (`SOLID_FLAG` in shader.wgsl): Fast graphics' leaves.
 pub const SOLID_FLAG: f32 = 32.0;
+
+/// Flags the vertices from `first` on for the shader to draw without
+/// cutting out see-through pixels: Fast graphics' leaves.
+#[cold]
+fn solid_faces(mesh: &mut Mesh, first: usize) {
+    for vertex in &mut mesh.vertices[first..] {
+        vertex.light[1] += SOLID_FLAG;
+    }
+}
 
 /// 1.0.0's ambient occlusion value for a block next to a vertex.
 fn occlusion(opaque: bool) -> f32 {
@@ -980,15 +1004,16 @@ fn face_visible(
     if other.opaque_cube {
         return false;
     }
-    // Solid leaves hide each other.
-    if fast_leaves && model.leaves && other.leaves {
-        return false;
-    }
     // Flowing and still water hide each other's faces too.
     if model.fluid.is_some() && other.fluid == model.fluid {
         return false;
     }
-    !(model.cull_same && neighbor.id() == block.id())
+    match model.cull {
+        Cull::Nothing => true,
+        Cull::Same => neighbor.id() != block.id(),
+        // Solid leaves hide each other.
+        Cull::Leaves => !(fast_leaves && other.cull == Cull::Leaves),
+    }
 }
 
 /// Where a face's corner `p` (block-relative) falls on its texture, 0–1
@@ -1365,7 +1390,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                             let cell = [x as i32, y, z as i32];
                             mesh_liquid(&mut mesh, models, area, light, cell, origin, &tints);
                         }
-                        Shape::Cube if model.leaves && area.fast_leaves => {
+                        Shape::Cube => {
                             let cell = [x as i32, y, z as i32];
                             let first = mesh.vertices.len();
                             mesh_box(
@@ -1381,27 +1406,9 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 &model.faces,
                                 Cuboid::FULL,
                             );
-                            // Flagged for the shader to draw without
-                            // cutting out the see-through pixels.
-                            for vertex in &mut mesh.vertices[first..] {
-                                vertex.light[1] += SOLID_FLAG;
+                            if model.cull == Cull::Leaves && area.fast_leaves {
+                                solid_faces(&mut mesh, first);
                             }
-                        }
-                        Shape::Cube => {
-                            let cell = [x as i32, y, z as i32];
-                            mesh_box(
-                                &mut mesh,
-                                models,
-                                area,
-                                light,
-                                cell,
-                                origin,
-                                &tints,
-                                block,
-                                model,
-                                &model.faces,
-                                Cuboid::FULL,
-                            );
                         }
                         Shape::Cactus => {
                             let cell = [x as i32, y, z as i32];
