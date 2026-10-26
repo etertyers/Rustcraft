@@ -172,6 +172,8 @@ impl Server {
                 Some(format!(
                     "Incompatible version: the server runs protocol {PROTOCOL_VERSION}, you {version}"
                 ))
+            } else if !crate::options::valid_name(&name) {
+                Some("Names are 3 to 16 letters, digits or underscores".to_owned())
             } else if self.remotes.len() >= MAX_PLAYERS {
                 Some("The world is full".to_owned())
             } else if self.names().any(|taken| taken == name) {
@@ -196,7 +198,11 @@ impl Server {
     }
 
     fn join(&mut self, mut conn: ServerConnection, name: String) {
-        if self.remotes.is_empty() {
+        // The host plays the world's own player; a guest starts at the
+        // spawn. Either way, a player who has been here before is put back
+        // as they left.
+        let index = self.remotes.len();
+        if index == 0 {
             self.game.player.name = name.clone();
         } else {
             let spawn = self.game.spawn_point();
@@ -205,6 +211,7 @@ impl Server {
             player.mode = self.game.player.mode;
             self.game.others.push(player);
         }
+        self.game.with_player(index, Game::restore_player);
         info!("{name} joined");
         conn.send(ServerMsg::Welcome {
             seed: self.game.chunks.seed(),
@@ -300,6 +307,9 @@ impl Server {
         if index == 0 {
             warn!("the host left");
             return;
+        }
+        if let Err(err) = self.game.with_player(index, |game| game.save_player()) {
+            warn!("saving a leaving player: {err:#}");
         }
         let player = self.game.others.remove(index - 1);
         info!("{} left", player.name);

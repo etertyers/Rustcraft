@@ -67,7 +67,7 @@ use crate::{
         player::{HOTBAR_SLOTS, Inventory},
         stack::{ItemStack, Items},
     },
-    level::{Level, PlayerData, WorldDir},
+    level::{Level, PlayerData, PlayerFile, WorldDir},
     options::Options,
     player::{
         collision::{Collider, WorldCollider},
@@ -525,15 +525,17 @@ impl Game {
         );
         game.player.mode = level.game_mode;
         game.time = level.time;
-        game.player.inventory = player.inventory.clone();
-        game.player.stats = player.stats.clone();
-        game.player.bed = player.bed.map(glam::IVec3::from_array);
+        // The host's state as single player kept it, until the host's own
+        // file is read (`restore_player`).
+        game.take_player_file(&PlayerFile {
+            player: player.clone(),
+            ender_chest: Vec::new(),
+            advancements: level.advancements.clone(),
+            recipe_book: level.recipe_book.clone(),
+        });
         game.rules = level.rules.clone();
         game.difficulty = level.difficulty;
         game.load_boats(&level.boats);
-        game.player.inventory.repair(&game.items);
-        game.player.body.may_fly = game.player.mode.can_fly();
-        game.player.body.flying = player.flying && game.player.body.may_fly;
         game.populated = level
             .populated
             .iter()
@@ -543,11 +545,96 @@ impl Game {
         game.fluids.warm = level.dimension == crate::world::dimension::Dimension::Nether;
         game.portals = level.portals.clone();
         game.end = level.end.clone();
-        game.player.progress = level.advancements.clone();
-        game.player.recipe_book = level.recipe_book.clone();
         game.restore_fight(level.end.dragon);
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
+    }
+
+    /// `self.player` as their file keeps them. A stack held in an open
+    /// inventory screen, and the crafting grid, go back in the inventory
+    /// rather than being lost.
+    pub fn player_file(&self) -> PlayerFile {
+        let p = &self.player;
+        let mut inventory = p.inventory.clone();
+        let grid = p
+            .container
+            .as_ref()
+            .and_then(Container::grid)
+            .map(<[_]>::to_vec)
+            .unwrap_or_default();
+        for held in p
+            .cursor
+            .clone()
+            .into_iter()
+            .chain(grid.into_iter().flatten())
+        {
+            inventory.add(held, &self.items);
+        }
+        PlayerFile {
+            player: PlayerData {
+                position: self.standing_feet().to_array(),
+                yaw: p.camera.yaw,
+                pitch: p.camera.pitch,
+                inventory,
+                flying: p.body.flying,
+                stats: p.stats.clone(),
+                bed: p.bed.map(|bed| bed.to_array()),
+            },
+            ender_chest: p.ender_chest.clone(),
+            advancements: p.progress.clone(),
+            recipe_book: p.recipe_book.clone(),
+        }
+    }
+
+    /// Puts `self.player` where their file says, carrying what it says.
+    pub fn take_player_file(&mut self, file: &PlayerFile) {
+        let data = &file.player;
+        let feet = DVec3::from_array(data.position);
+        let p = &mut self.player;
+        p.body = Body::new(feet);
+        p.prev_feet = feet;
+        p.camera.yaw = data.yaw;
+        p.camera.pitch = data.pitch;
+        p.turned = p.turned.wrapping_add(1);
+        p.inventory = data.inventory.clone();
+        p.inventory.repair(&self.items);
+        p.stats = data.stats.clone();
+        p.bed = data.bed.map(glam::IVec3::from_array);
+        p.body.may_fly = p.mode.can_fly();
+        p.body.flying = data.flying && p.body.may_fly;
+        p.ender_chest = file.ender_chest.clone();
+        p.ender_chest.resize(ENDER_CHEST_SLOTS, None);
+        p.progress = file.advancements.clone();
+        p.recipe_book = file.recipe_book.clone();
+    }
+
+    /// Reads `self.player`'s own file by their name, if they've played in
+    /// this world before. Returns whether there was one.
+    pub fn restore_player(&mut self) -> bool {
+        let Some(saved) = &self.saved else {
+            return false;
+        };
+        match saved.dir.load_player(&self.player.name) {
+            Ok(Some(file)) => {
+                self.take_player_file(&file);
+                true
+            }
+            Ok(None) => false,
+            Err(err) => {
+                error!("{err:#}");
+                false
+            }
+        }
+    }
+
+    /// Writes `self.player`'s own file (a player leaving).
+    pub fn save_player(&self) -> Result<()> {
+        if let Some(saved) = &self.saved {
+            saved
+                .dir
+                .save_player(&self.player.name, &self.player_file())?;
+        }
+        Ok(())
     }
 
     /// Gives the game its mob kinds, and brings back saved animals.
@@ -590,46 +677,26 @@ impl Game {
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
         let (away_mobs, away_populated) = self.away_for_saving();
         let crystals = self.fight_for_saving();
-        let progress = self.player.progress.clone();
-        let recipe_book = self.player.recipe_book.clone();
         let dragon = self.dragon.as_ref().map(|d| d.save());
         if self.saved.is_none() {
             return Ok(());
         }
         let chunks = self.chunks.save()?;
-        // A stack held in an open inventory screen, and the crafting grid,
-        // go back in the inventory rather than being lost.
-        let mut inventory = self.player.inventory.clone();
-        let grid = self
-            .player
-            .container
-            .as_ref()
-            .and_then(Container::grid)
-            .map(<[_]>::to_vec)
-            .unwrap_or_default();
-        for held in self
-            .player
-            .cursor
-            .clone()
-            .into_iter()
-            .chain(grid.into_iter().flatten())
-        {
-            inventory.add(held, &self.items);
-        }
-        let feet = self.standing_feet();
+        // Every player's own file, then the host's state in the level too,
+        // for older builds.
+        let mut files = Vec::new();
+        self.for_each_player(|game| files.push((game.player.name.clone(), game.player_file())));
+        let host = files[0].1.clone();
         let boats = self.saved_boats();
         let Some(saved) = self.saved.as_mut() else {
             return Ok(());
         };
-        saved.level.player = PlayerData {
-            position: feet.to_array(),
-            yaw: self.player.camera.yaw,
-            pitch: self.player.camera.pitch,
-            inventory,
-            flying: self.player.body.flying,
-            stats: self.player.stats.clone(),
-            bed: self.player.bed.map(|bed| bed.to_array()),
-        };
+        for (name, file) in &files {
+            saved.dir.save_player(name, file)?;
+        }
+        let progress = host.advancements;
+        let recipe_book = host.recipe_book;
+        saved.level.player = host.player;
         saved.level.time = self.time;
         saved.level.mobs = mobs;
         saved.level.mobs.extend(away_mobs);
@@ -1322,6 +1389,67 @@ pub(crate) mod tests {
             game.chunks.update(center);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn each_player_is_saved_in_their_own_file_and_put_back_as_they_left() {
+        use crate::{
+            inventory::{items, stack::ItemStack},
+            world::save::TempDir,
+        };
+        let saves = TempDir::new("playerdata");
+        let (items, models) = registries();
+        Game::create(
+            saves.path(),
+            "Two",
+            3,
+            GameMode::Survival,
+            items.clone(),
+            models.clone(),
+        )
+        .unwrap();
+        let dir = || WorldDir::new(saves.path().join("Two"));
+        // A world from before M36 has only the level's player: the host
+        // takes it, and the first save writes their file.
+        let mut game = Game::open(dir(), items.clone(), models.clone()).unwrap();
+        game.player.name = "Kenzo".to_owned();
+        assert!(!game.restore_player(), "no file yet");
+        game.player
+            .inventory
+            .set(0, Some(ItemStack::new(items::DIAMOND, 2)));
+        let mut guest = PlayerState::new(DVec3::new(10.5, 70.0, -3.5), 1.0, 0.2);
+        guest.name = "Guest".to_owned();
+        guest
+            .inventory
+            .set(4, Some(ItemStack::new(items::APPLE, 7)));
+        guest.ender_chest[3] = Some(ItemStack::new(items::EMERALD, 1));
+        game.others.push(guest);
+        game.save().unwrap();
+        assert!(dir().player_path("Kenzo").is_file());
+        assert!(dir().player_path("Guest").is_file());
+        drop(game);
+
+        let mut game = Game::open(dir(), items.clone(), models.clone()).unwrap();
+        game.others.push(PlayerState::new(DVec3::ZERO, 0.0, 0.0));
+        game.others[0].name = "Guest".to_owned();
+        assert!(game.with_player(1, Game::restore_player));
+        let guest = &game.others[0];
+        assert_eq!(
+            guest.inventory.slot(4),
+            Some(&ItemStack::new(items::APPLE, 7))
+        );
+        assert_eq!(
+            guest.ender_chest[3],
+            Some(ItemStack::new(items::EMERALD, 1))
+        );
+        assert_eq!(guest.body.position(), DVec3::new(10.5, 70.0, -3.5));
+        assert_eq!((guest.camera.yaw, guest.camera.pitch), (1.0, 0.2));
+        game.player.name = "Kenzo".to_owned();
+        assert!(game.restore_player());
+        assert_eq!(
+            game.player.inventory.slot(0),
+            Some(&ItemStack::new(items::DIAMOND, 2))
+        );
     }
 
     #[test]
