@@ -42,6 +42,8 @@ impl Game {
         let chunks = ChunkManager::new(ChunkSource::Remote, models, radius, workers);
         let mut game = Game::new(chunks, items, DVec3::ZERO, DVec3::ZERO, 0.0, 0.0).with_mobs(mobs);
         game.role = Role::Client;
+        // So the first snapshot's look is taken.
+        game.player.turned = u32::MAX;
         game
     }
 
@@ -107,7 +109,12 @@ impl Game {
         let server_body = std::mem::replace(&mut player.body, local.body.clone());
         player.prev_feet = local.prev_feet;
         player.step_lag = local.step_lag;
+        // The client's look, unless the world turned the player.
+        let (yaw, pitch) = (player.camera.yaw, player.camera.pitch);
         player.camera = local.camera;
+        if player.turned != local.turned {
+            (player.camera.yaw, player.camera.pitch) = (yaw, pitch);
+        }
         player.keys = local.keys;
         player.target = local.target;
         player.view.mode = local.view.mode;
@@ -164,6 +171,7 @@ impl Game {
             && p.riding.is_none()
             && p.arriving.is_none()
             && p.credits.is_none()
+            && !p.is_flying()
     }
 
     /// A client's tick of its own player's movement with `input`.

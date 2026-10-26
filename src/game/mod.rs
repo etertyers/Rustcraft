@@ -140,6 +140,9 @@ pub enum ShotScreen {
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// How many times the world has turned the player to face a new way
+    /// (teleports), so a client takes the new look instead of its own.
+    turned: u32,
     /// Look direction comes from the mouse; position follows `body` each frame.
     pub camera: Camera,
     /// How the player looks to the camera: swinging, bobbing, F5.
@@ -255,6 +258,7 @@ impl PlayerState {
         let eye = feet + DVec3::Y * body.eye_height();
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
+            turned: 0,
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
             view: view::ViewState::new(yaw, pitch, None),
             body,
@@ -807,6 +811,7 @@ impl Game {
         self.player.prev_feet = feet;
         self.player.camera.yaw = yaw;
         self.player.camera.pitch = pitch;
+        self.player.turned = self.player.turned.wrapping_add(1);
         self.advance(0.0);
     }
 

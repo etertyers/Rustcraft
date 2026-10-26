@@ -55,6 +55,10 @@ pub struct Server {
     pending: Vec<Pending>,
     /// Every recipe in the book's order, for placing one from the book.
     book: Arc<Vec<BookRecipe>>,
+    /// A client changed something on a screen since the last snapshot, so
+    /// one goes out even without a tick (the held stack follows the mouse
+    /// at once).
+    changed: bool,
 }
 
 impl Server {
@@ -69,6 +73,7 @@ impl Server {
             remotes: Vec::new(),
             pending: Vec::new(),
             book,
+            changed: false,
         }
     }
 
@@ -90,11 +95,18 @@ impl Server {
         let center = self.host_center();
         let changes = self.game.chunks.update(center);
         self.game.on_chunks_loaded(&changes.loaded);
-        for _ in 0..self.game.clock(dt) {
+        let ticks = self.game.clock(dt);
+        for _ in 0..ticks {
             self.tick();
         }
         // Chunks that finished loading since the last tick go out at once.
         self.send_chunks();
+        // A stopped world (paused, or a scene being set up) still shows its
+        // changes, and a screen's click shows before the next tick.
+        if ticks == 0 && (dt == 0.0 || self.changed) {
+            self.publish(Vec::new());
+        }
+        self.changed = false;
     }
 
     /// One tick: each player's next input, the world's tick, then what
@@ -115,6 +127,11 @@ impl Server {
             audio::requeue(cue);
         }
         self.send_chunks();
+        self.publish(heard);
+    }
+
+    /// Sends each player their snapshot and the sounds they hear.
+    fn publish(&mut self, heard: Vec<Cue>) {
         for index in 0..self.remotes.len() {
             let ack = self.remotes[index].ack;
             let snapshot = self.game.with_player(index, |game| game.snapshot(ack));
@@ -256,11 +273,19 @@ impl Server {
                 game.player.inventory.selected =
                     slot.min(crate::inventory::player::HOTBAR_SLOTS - 1);
             }),
-            ClientMsg::Screen(action) => self
-                .game
-                .with_player(index, |game| game.apply_screen_action(action, &book)),
-            ClientMsg::OpenInventory => self.game.with_player(index, Game::open_inventory),
-            ClientMsg::CloseScreen => self.game.with_player(index, Game::close_container),
+            ClientMsg::Screen(action) => {
+                self.changed = true;
+                self.game
+                    .with_player(index, |game| game.apply_screen_action(action, &book));
+            }
+            ClientMsg::OpenInventory => {
+                self.changed = true;
+                self.game.with_player(index, Game::open_inventory);
+            }
+            ClientMsg::CloseScreen => {
+                self.changed = true;
+                self.game.with_player(index, Game::close_container);
+            }
             ClientMsg::FinishCredits => self.game.with_player(index, Game::finish_credits),
             ClientMsg::ReleaseInput => self.game.with_player(index, Game::release_input),
             ClientMsg::Fly { feet } => self.game.with_player(index, |game| game.fly_to(feet)),
