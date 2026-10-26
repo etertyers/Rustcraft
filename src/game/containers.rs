@@ -172,7 +172,10 @@ impl Game {
         {
             return;
         }
-        if !matches!(self.chunks.block_entity(at), Some(BlockEntity::Chest(_))) {
+        // An ender chest shows the player's own slots, not a block's.
+        if !self.is_ender_chest(at)
+            && !matches!(self.chunks.block_entity(at), Some(BlockEntity::Chest(_)))
+        {
             self.chunks.set_block_entity(at, Some(BlockEntity::chest()));
         }
         self.player.container = Some(Container::Chest(at));
@@ -440,7 +443,19 @@ impl Game {
                 .map(|boat| boat.slots.as_slice());
         }
         let at = self.open_block()?;
+        if self.is_ender_chest(at) {
+            return Some(self.player.ender_chest.as_slice());
+        }
         self.chunks.block_entity(at).map(BlockEntity::slots)
+    }
+
+    /// Whether the block at `at` is an ender chest, whose slots are each
+    /// player's own.
+    fn is_ender_chest(&self, at: IVec3) -> bool {
+        self.chunks
+            .world()
+            .block(at.x, at.y, at.z)
+            .is_some_and(|block| block.is(blocks::ENDER_CHEST))
     }
 
     pub(super) fn block_slots_mut(&mut self) -> Option<&mut [Option<ItemStack>]> {
@@ -458,6 +473,9 @@ impl Game {
                 .map(|boat| boat.slots.as_mut_slice());
         }
         let at = self.open_block()?;
+        if self.is_ender_chest(at) {
+            return Some(self.player.ender_chest.as_mut_slice());
+        }
         self.chunks.block_entity_mut(at).map(BlockEntity::slots_mut)
     }
 
@@ -1023,6 +1041,38 @@ mod tests {
             Some(&ItemStack::new(items::DIRT, 5)),
             "nothing placed"
         );
+    }
+
+    #[test]
+    fn every_ender_chest_holds_each_players_own_things() {
+        let mut game = crate::game::tests::flat_game(GameMode::Survival);
+        let (a, b) = (IVec3::new(2, 64, 0), IVec3::new(-2, 64, 0));
+        let ender = BlockState::of(blocks::ENDER_CHEST);
+        game.chunks.set_blocks(&[(a, ender), (b, ender)]);
+        game.others.push(crate::game::PlayerState::new(
+            glam::DVec3::new(0.5, 64.0, 2.5),
+            0.0,
+            0.0,
+        ));
+        game.open_chest(a);
+        game.block_slots_mut().unwrap()[0] = Some(ItemStack::new(items::DIAMOND, 3));
+        game.close_container();
+        // The host finds them in the other ender chest; the guest doesn't.
+        game.open_chest(b);
+        assert_eq!(
+            game.block_slots().unwrap()[0],
+            Some(ItemStack::new(items::DIAMOND, 3))
+        );
+        assert_eq!(
+            game.block_slots().unwrap().len(),
+            crate::game::ENDER_CHEST_SLOTS
+        );
+        game.close_container();
+        game.with_player(1, |guest| {
+            guest.open_chest(a);
+            assert!(guest.block_slots().unwrap().iter().all(Option::is_none));
+        });
+        assert!(game.chunks.block_entity(a).is_none(), "no block entity");
     }
 
     #[test]

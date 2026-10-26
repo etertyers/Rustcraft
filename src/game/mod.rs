@@ -134,12 +134,18 @@ pub enum ShotScreen {
     KeyBinds,
 }
 
+/// Slots in an ender chest (a single chest's).
+pub const ENDER_CHEST_SLOTS: usize = 27;
+
 /// Everything about one player: where they are and how they move, what
 /// they hold and carry, their health and screens, and their settings.
 #[derive(Clone)]
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// The ender chest's 27 slots, the same in every ender chest and
+    /// different for each player.
+    pub ender_chest: Vec<Option<ItemStack>>,
     /// How many times the world has turned the player to face a new way
     /// (teleports), so a client takes the new look instead of its own.
     turned: u32,
@@ -259,6 +265,7 @@ impl PlayerState {
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
+            ender_chest: vec![None; ENDER_CHEST_SLOTS],
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
             view: view::ViewState::new(yaw, pitch, None),
             body,

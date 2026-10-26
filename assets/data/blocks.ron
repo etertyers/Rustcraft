@@ -178,6 +178,7 @@
     (name: "oak_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], burns: (encourage: 5, catch: 20), shape: Stairs, textures: (all: "oak_planks")),
     // No block texture in the pack; 1.0.0 chests are cut from entity/chest/normal.png later.
     (name: "chest", hardness: 2.5, props: [Facing, ChestType, Waterlogged], placement: Facing, activate: Chest, tool: Axe, shape: Chest, textures: (end: "chest_top", side: "chest_side", south: "chest_front")),
+    (name: "ender_chest", hardness: 22.5, props: [Facing, Waterlogged], placement: Facing, activate: Chest, tool: Pickaxe, harvest: (tools: [Pickaxe]), drops: All([(item: "obsidian", min: 8, max: 8)]), shape: Chest, light: 7, textures: (all: "obsidian")),
     (name: "redstone_wire", hardness: 0.0, props: [WireNorth, WireEast, WireSouth, WireWest, Power], item: false, drops: All([(item: "redstone")]), needs_ground: true, shape: RedstoneWire, layer: Cutout, solid: false, textures: (all: "redstone_dust_dot")),
     (name: "diamond_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), drops: All([(item: "diamond")]), textures: (all: "diamond_ore")),
     (name: "diamond_block", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "diamond_block")),
