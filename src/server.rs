@@ -566,6 +566,20 @@ mod tests {
     }
 
     #[test]
+    fn joining_a_stopped_world_puts_the_camera_with_the_player() {
+        let (mut server, mut clients) = world_with(&["Alice"]);
+        server.game.fly_to(DVec3::new(-300.5, 80.0, 41.5));
+        let (client, game) = &mut clients[0];
+        for _ in 0..3 {
+            client.advance(game, 0.0);
+            server.advance(0.0);
+            client.receive(game);
+        }
+        let eye = game.player.camera.position.as_dvec3();
+        assert!(eye.distance(DVec3::new(-300.5, 81.62, 41.5)) < 0.5, "{eye}");
+    }
+
+    #[test]
     fn a_taken_name_and_another_version_are_refused() {
         let (mut server, mut clients) = world_with(&["Alice", "Alice"]);
         run_until(&mut server, &mut clients, |_, clients| {

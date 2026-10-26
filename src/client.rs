@@ -114,8 +114,8 @@ impl Client {
                 }
                 ServerMsg::Snapshot(snapshot) => {
                     let ack = snapshot.ack;
-                    let server = game.apply_snapshot(*snapshot);
-                    self.reconcile(game, ack, server);
+                    let (server, prev) = game.apply_snapshot(*snapshot);
+                    self.reconcile(game, ack, server, prev);
                 }
                 ServerMsg::Sounds(cues) => cues.into_iter().for_each(audio::requeue),
             }
@@ -129,7 +129,7 @@ impl Client {
     /// Checks the server's body after input `ack` against the one predicted
     /// then: if they differ (or the client doesn't predict now), the
     /// server's is taken and the inputs since are played again.
-    fn reconcile(&mut self, game: &mut Game, ack: u32, server: Body) {
+    fn reconcile(&mut self, game: &mut Game, ack: u32, server: Body, prev: glam::DVec3) {
         let predicted = self
             .history
             .iter()
@@ -140,7 +140,7 @@ impl Client {
         if agrees && game.predicts() {
             return;
         }
-        game.player.set_body(server);
+        game.player.set_body(server, prev);
         if game.predicts() {
             let keep = (
                 game.player.keys,

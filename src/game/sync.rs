@@ -102,12 +102,13 @@ impl Game {
     /// Takes in the server's snapshot: the world and the player's state,
     /// except what the client owns (where it looks and aims, the keys held,
     /// its view and settings) and the predicted body, which stays for the
-    /// caller to check against the server's, returned.
-    pub fn apply_snapshot(&mut self, snapshot: Snapshot) -> Body {
+    /// caller to check against the server's, returned with where the
+    /// server had the player a tick before.
+    pub fn apply_snapshot(&mut self, snapshot: Snapshot) -> (Body, DVec3) {
         let mut player = snapshot.player;
         let local = &self.player;
         let server_body = std::mem::replace(&mut player.body, local.body.clone());
-        player.prev_feet = local.prev_feet;
+        let server_prev = std::mem::replace(&mut player.prev_feet, local.prev_feet);
         player.step_lag = local.step_lag;
         // The client's look, unless the world turned the player.
         let (yaw, pitch) = (player.camera.yaw, player.camera.pitch);
@@ -147,7 +148,7 @@ impl Game {
         self.crystals = e.crystals;
         self.dragon_fireballs = e.dragon_fireballs;
         self.breath = e.breath;
-        server_body
+        (server_body, server_prev)
     }
 
     /// A client's player went to `dimension`: its chunks go, and the
@@ -305,9 +306,11 @@ impl super::PlayerState {
         &self.body
     }
 
-    /// Takes the server's body for the player's.
-    pub fn set_body(&mut self, body: Body) {
+    /// Takes the server's body for the player's, and where it was the
+    /// tick before (for drawing between the two).
+    pub fn set_body(&mut self, body: Body, prev_feet: DVec3) {
         self.body = body;
+        self.prev_feet = prev_feet;
     }
 
     /// Flying with the debug flight key (F4), which moves the player
