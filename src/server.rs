@@ -76,6 +76,7 @@ pub struct Server {
 impl Server {
     pub fn new(mut game: Game) -> Self {
         game.chunks.serve();
+        game.keep_sounds();
         let book = Arc::new(crate::inventory::book::all(
             &game.items().recipes,
             game.items(),
@@ -197,20 +198,21 @@ impl Server {
                 .game
                 .with_player(index, |game| game.snapshot(ack, range, views.clone()));
             let feet = self.feet(index);
-            let remote = &mut self.remotes[index];
-            remote.conn.send(ServerMsg::Snapshot(Box::new(snapshot)));
+            self.remotes[index]
+                .conn
+                .send(ServerMsg::Snapshot(Box::new(snapshot)));
+            // Sounds near them, and their own.
+            let own = self
+                .game
+                .with_player(index, |game| std::mem::take(&mut game.player.heard));
             let sounds: Vec<Cue> = heard
                 .iter()
-                .filter(|cue| match cue.at {
-                    Some(at) => at.distance(feet) < HEARING,
-                    // The player's own sounds (the host's, until each
-                    // player's turn keeps its own).
-                    None => index == 0,
-                })
+                .filter(|cue| cue.at.is_some_and(|at| at.distance(feet) < HEARING))
                 .cloned()
+                .chain(own)
                 .collect();
             if !sounds.is_empty() {
-                remote.conn.send(ServerMsg::Sounds(sounds));
+                self.remotes[index].conn.send(ServerMsg::Sounds(sounds));
             }
         }
     }

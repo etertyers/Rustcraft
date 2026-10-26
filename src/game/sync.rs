@@ -60,12 +60,17 @@ impl Game {
     /// `others` in order).
     pub fn with_player<T>(&mut self, index: usize, f: impl FnOnce(&mut Game) -> T) -> T {
         if index == 0 {
-            return f(self);
+            return self.hearing(f);
         }
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
-        let result = f(self);
+        let result = self.hearing(f);
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
         result
+    }
+
+    /// Keeps each player's own sounds apart for them (a server's game).
+    pub fn keep_sounds(&mut self) {
+        self.keeps_sounds = true;
     }
 
     /// The world after this tick as `self.player` sees it: mobs, items and

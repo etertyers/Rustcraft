@@ -143,6 +143,10 @@ pub const ENDER_CHEST_SLOTS: usize = 27;
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// A server's record of the sounds only this player hears (their own,
+    /// with no place), made during their turns, for sending.
+    #[serde(skip)]
+    pub heard: Vec<crate::audio::Cue>,
     /// The ender chest's 27 slots, the same in every ender chest and
     /// different for each player.
     pub ender_chest: Vec<Option<ItemStack>>,
@@ -265,6 +269,7 @@ impl PlayerState {
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
+            heard: Vec::new(),
             ender_chest: vec![None; ENDER_CHEST_SLOTS],
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
             view: view::ViewState::new(yaw, pitch, None),
@@ -341,6 +346,8 @@ pub struct Game {
     pub others: Vec<PlayerState>,
     /// The world itself, or a client's copy of it.
     role: sync::Role,
+    /// Each player's own sounds are kept apart for them (a server's).
+    keeps_sounds: bool,
     /// A client's view of the other players in sight.
     pub remote_players: Vec<crate::net::protocol::PlayerView>,
     spawn: DVec3,
@@ -449,6 +456,7 @@ impl Game {
             others: Vec::new(),
             role: sync::Role::Server,
             remote_players: Vec::new(),
+            keeps_sounds: false,
             spawn,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),
@@ -995,12 +1003,32 @@ impl Game {
     /// Runs `turn` for each player in turn, the host first, with that
     /// player in `self.player`.
     pub(crate) fn for_each_player(&mut self, mut turn: impl FnMut(&mut Game)) {
-        turn(self);
+        self.hearing(&mut turn);
         for i in 0..self.others.len() {
             std::mem::swap(&mut self.player, &mut self.others[i]);
-            turn(self);
+            self.hearing(&mut turn);
             std::mem::swap(&mut self.player, &mut self.others[i]);
         }
+    }
+
+    /// Runs `turn` for `self.player`; on a server, the sounds it makes with
+    /// no place are theirs alone, kept in `self.player.heard`.
+    pub(crate) fn hearing<T>(&mut self, turn: impl FnOnce(&mut Game) -> T) -> T {
+        if !self.keeps_sounds {
+            return turn(self);
+        }
+        let earlier = crate::audio::drain();
+        let result = turn(self);
+        let made = crate::audio::drain();
+        earlier.into_iter().for_each(crate::audio::requeue);
+        for cue in made {
+            if cue.at.is_none() {
+                self.player.heard.push(cue);
+            } else {
+                crate::audio::requeue(cue);
+            }
+        }
+        result
     }
 
     /// A player's part of the tick: moving, riding or sleeping, health,
@@ -1500,6 +1528,31 @@ pub(crate) mod tests {
         assert!(
             game.others[0].stats.health < after_arrow,
             "the blast hurt the guest"
+        );
+    }
+
+    #[test]
+    fn on_a_server_each_players_own_sounds_are_theirs_alone() {
+        let mut game = flat_game(GameMode::Survival);
+        game.keep_sounds();
+        let mut guest = PlayerState::new(DVec3::new(4.5, 64.0, 0.5), 0.0, 0.0);
+        guest.mode = GameMode::Survival;
+        game.others.push(guest);
+        game.run_ticks(2);
+        crate::audio::drain();
+        // A swing at nothing is heard only by the swinger.
+        game.with_player(1, Game::swing_at_air);
+        let swing = |cues: &[crate::audio::Cue]| cues.iter().any(|c| c.event.contains("attack"));
+        assert!(swing(&game.others[0].heard), "{:?}", game.others[0].heard);
+        assert!(!swing(&game.player.heard));
+        assert!(!swing(&crate::audio::drain()), "not left for everyone");
+        // A hurt player's cry is placed, for everyone near to hear.
+        game.others[0].stats.damage(3.0, DamageSource::Magic);
+        game.run_ticks(1);
+        assert!(
+            crate::audio::drain()
+                .iter()
+                .any(|c| c.event == "entity.player.hurt")
         );
     }
 
