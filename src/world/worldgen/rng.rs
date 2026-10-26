@@ -3,7 +3,7 @@
 //! World generation must give the same result for the same seed on every run
 //! and every machine, so it uses this instead of an OS-seeded generator.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Rng(u64);
 
 impl Rng {

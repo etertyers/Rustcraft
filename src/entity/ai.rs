@@ -91,7 +91,7 @@ const BLAZE_HIT: f32 = 6.0;
 const ORBIT_RADIUS: f64 = 16.0;
 const ORBIT_HEIGHT: f64 = 15.0;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AiState {
     path: Vec<IVec3>,
     /// Ticks until the path may be recomputed, the cell the target was in

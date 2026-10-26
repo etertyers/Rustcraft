@@ -21,7 +21,7 @@ const SIZE: f64 = 0.98;
 /// the bottom of the world, 100 lower down).
 const MAX_TICKS: u32 = 600;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FallingBlock {
     pub state: BlockState,
     /// The bottom middle of the box.

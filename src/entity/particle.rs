@@ -21,7 +21,7 @@ const GROUND_FRICTION: f64 = 0.7;
 /// Half the width of the box a particle collides with (1.0.0's 0.2 size).
 const HALF_SIZE: f64 = 0.1;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Particle {
     pub position: DVec3,
     prev_position: DVec3,

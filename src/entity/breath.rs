@@ -24,7 +24,7 @@ pub const HARM: f32 = 12.0;
 const REACH_UP: f64 = 1.5;
 const REACH_DOWN: f64 = 0.5;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DragonFireball {
     pub position: DVec3,
     prev_position: DVec3,
@@ -77,7 +77,7 @@ impl DragonFireball {
 }
 
 /// A cloud of dragon's breath lying on the ground.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BreathCloud {
     pub center: DVec3,
     pub age: u32,

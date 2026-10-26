@@ -25,7 +25,7 @@ pub const SLOTS: usize = 41;
 
 /// A hand: items are used from the main hand, or the off-hand when the
 /// main hand has nothing to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Hand {
     #[default]
     Main,

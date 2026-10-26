@@ -17,7 +17,7 @@ const STEP_DISTANCE: f64 = 1.6;
 const THUD_FALL: f32 = 1.5;
 
 /// What the player was like last tick, to tell what happened since.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Memory {
     health: f32,
     dead: bool,

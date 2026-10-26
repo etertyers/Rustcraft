@@ -139,7 +139,7 @@ pub const ENDER_CHEST_SLOTS: usize = 27;
 
 /// Everything about one player: where they are and how they move, what
 /// they hold and carry, their health and screens, and their settings.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,

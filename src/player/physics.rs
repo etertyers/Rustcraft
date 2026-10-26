@@ -51,7 +51,7 @@ impl MoveInput {
 }
 
 /// How the body is held: it decides the hitbox and the eyes.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Pose {
     #[default]
     Standing,
@@ -120,7 +120,7 @@ const BELOW_FEET: f64 = 0.500_001;
 const FLUID_MARGIN: f64 = 0.001;
 
 /// The player's physical body.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Body {
     /// The hitbox is the stored state: deriving it from the feet position
     /// every tick would let rounding push it into a wall.

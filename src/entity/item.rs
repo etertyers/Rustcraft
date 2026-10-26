@@ -37,7 +37,7 @@ const FIRE_DAMAGE: i32 = 1;
 /// (1.0.0's `boundingBox.expand(1, 0, 1)`).
 const PICKUP_REACH: f64 = 1.0;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ItemEntity {
     pub stack: ItemStack,
     bb: Aabb,

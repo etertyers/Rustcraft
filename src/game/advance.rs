@@ -20,7 +20,7 @@ const SURVEY_EVERY: u64 = 20;
 const LEVITATE_BLOCKS: f64 = 50.0;
 
 /// An advancement just made, still on screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Toast {
     pub index: usize,
     pub ticks: u32,

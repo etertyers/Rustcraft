@@ -16,7 +16,7 @@ const SPEED: (f64, f64) = (0.05, 0.25);
 /// How quickly the vertical speed eases toward a block a tick up or down.
 const LIFT_EASE: f64 = 0.015;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EyeOfEnder {
     pub position: DVec3,
     prev_position: DVec3,

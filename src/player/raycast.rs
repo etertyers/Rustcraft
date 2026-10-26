@@ -6,7 +6,7 @@ use glam::{DVec3, IVec3};
 
 use crate::world::{Face, shape::Cuboid};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Hit {
     pub block: IVec3,
     /// The face the ray entered through; `None` if it started inside the block.

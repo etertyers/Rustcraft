@@ -42,7 +42,7 @@ const SWIRL_IN: f32 = 1.0 / WAIT as f32;
 const SWIRL_OUT: f32 = 0.05;
 
 /// Standing in portals and the swirl on screen.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct PortalState {
     ticks: u32,
     cooldown: u32,

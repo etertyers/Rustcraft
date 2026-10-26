@@ -10,7 +10,7 @@ use crate::world::{
     fluid, shape,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Aabb {
     pub min: DVec3,
     pub max: DVec3,

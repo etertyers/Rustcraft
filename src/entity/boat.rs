@@ -49,7 +49,7 @@ const PADDLE_STEP: f32 = std::f32::consts::PI / 8.0;
 pub const CHEST_SLOTS: usize = 27;
 
 /// Which boat: its wood (an index into `WOODS`) and whether it has a chest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BoatKind {
     pub wood: usize,
     pub chest: bool,
@@ -101,7 +101,7 @@ impl BoatKind {
 }
 
 /// Where a boat is (modern `Boat.Status`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Status {
     InWater,
     UnderWater,
@@ -112,7 +112,7 @@ pub enum Status {
 }
 
 /// Who sits in a seat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Passenger {
     Player,
     Mob(u64),
@@ -127,7 +127,7 @@ pub struct Rowing {
     pub right: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Boat {
     pub id: u64,
     pub kind: BoatKind,

@@ -5,7 +5,7 @@
 use super::stack::{ItemStack, Items};
 
 /// A slot on an open screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SlotRef {
     /// One of the player's 36 slots, hotbar first.
     Inventory(usize),
@@ -18,7 +18,7 @@ pub enum SlotRef {
 }
 
 /// A mouse click on a slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Click {
     Left,
     Right,

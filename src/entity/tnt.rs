@@ -14,7 +14,7 @@ const GROUND_FRICTION: DVec3 = DVec3::new(0.7, -0.5, 0.7);
 /// Width and height of its box.
 const SIZE: f64 = 0.98;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PrimedTnt {
     /// The bottom middle of the box.
     pub position: DVec3,

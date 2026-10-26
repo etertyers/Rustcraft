@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// What's open besides the inventory.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Container {
     /// A `size` × `size` crafting grid, row by row: 2 in the inventory, 3
     /// at a crafting table.
@@ -47,7 +47,7 @@ pub enum Container {
     Merchant(u64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BenchKind {
     Enchanting,
     Anvil,
@@ -61,7 +61,7 @@ pub enum BenchKind {
 /// The screen of an enchanting table, anvil or grindstone. Its input
 /// slots are `SlotRef::Grid`; the anvil's and grindstone's output is
 /// `SlotRef::Result`, worked out from the inputs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Bench {
     pub kind: BenchKind,
     pub at: IVec3,

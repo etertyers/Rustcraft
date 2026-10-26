@@ -38,7 +38,7 @@ pub fn bow_power(ticks: u32) -> Option<f32> {
     (power >= MIN_POWER).then_some(power)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Arrow {
     pub position: DVec3,
     prev_position: DVec3,

@@ -12,7 +12,7 @@ const CRIT_SPEED: f64 = 0.55;
 /// Frames in a sweep and how long each lasts.
 pub const SWEEP_FRAMES: usize = 4;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum EffectKind {
     Crit,
     /// The arc of a sweep, turned toward `yaw`.
@@ -21,7 +21,7 @@ pub enum EffectKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Effect {
     pub kind: EffectKind,
     pub position: DVec3,

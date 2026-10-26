@@ -12,7 +12,7 @@ use crate::{level::Difficulty, options::Options};
 const BUTTON: [f32; 2] = [260.0, 32.0];
 
 /// What the player chose in the pause menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PauseAction {
     Resume,
     SaveAndQuit,

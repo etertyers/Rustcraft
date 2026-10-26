@@ -34,7 +34,7 @@ const LYING_EYE: f64 = 11.0 / 16.0;
 const BED_BLAST: f32 = 5.0;
 
 /// Lying in the bed whose head is at `head`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sleep {
     pub head: IVec3,
     pub ticks: u32,
