@@ -84,6 +84,8 @@ pub enum DamageSource {
     FlyIntoWall,
     /// Another player's blow (M37).
     Player,
+    /// `/kill` (M38).
+    Kill,
 }
 
 impl DamageSource {
@@ -128,6 +130,7 @@ impl DamageSource {
             DamageSource::Wither => "withered away",
             DamageSource::FlyIntoWall => "experienced kinetic energy",
             DamageSource::Player => "was slain by another player",
+            DamageSource::Kill => "was killed",
         }
     }
 
@@ -143,7 +146,8 @@ impl DamageSource {
             | DamageSource::HotFloor
             | DamageSource::Fireball
             | DamageSource::Anvil => DAMAGE_EXHAUSTION,
-            DamageSource::Fall
+            DamageSource::Kill
+            | DamageSource::Fall
             | DamageSource::Drowning
             | DamageSource::Fire
             | DamageSource::Magic

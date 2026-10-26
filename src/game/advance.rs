@@ -86,7 +86,7 @@ impl Game {
     }
 
     /// What the dimension is called in the data: `the_nether`.
-    fn dimension_slug(dimension: Dimension) -> String {
+    pub(super) fn dimension_slug(dimension: Dimension) -> String {
         crate::world::block::strip_namespace(dimension.name()).to_owned()
     }
 

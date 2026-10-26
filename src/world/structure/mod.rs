@@ -150,7 +150,7 @@ impl Kind {
     }
 
     /// The chunks within `reach` of `pos` where one of these may start.
-    fn starts_near(self, seed: u64, pos: ChunkPos) -> Vec<ChunkPos> {
+    pub fn starts_near(self, seed: u64, pos: ChunkPos) -> Vec<ChunkPos> {
         let reach = self.reach();
         let near =
             |start: &ChunkPos| (start.x - pos.x).abs() <= reach && (start.z - pos.z).abs() <= reach;

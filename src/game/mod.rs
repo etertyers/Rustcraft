@@ -9,6 +9,7 @@ mod benches;
 mod boats;
 mod capture;
 mod combat;
+pub mod commands;
 mod containers;
 mod dimensions;
 mod dragon;
