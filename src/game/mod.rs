@@ -1501,6 +1501,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_player_can_hit_another_unless_they_are_in_creative() {
+        let mut game = flat_game(GameMode::Survival);
+        game.player.camera.pitch = 0.0;
+        game.player.camera.yaw = 0.0;
+        let mut guest = PlayerState::new(DVec3::new(0.5, 64.0, -1.5), 0.0, 0.0);
+        guest.mode = GameMode::Survival;
+        game.others.push(guest);
+        game.run_ticks(20);
+        game.on_action(Action::Attack, true, false, true);
+        game.run_ticks(2);
+        game.on_action(Action::Attack, false, false, true);
+        let health = game.others[0].stats.health;
+        assert!(health < 20.0, "hit: {health}");
+        assert_eq!(game.others[0].stats.last_source, Some(DamageSource::Player));
+        // A creative player can't be hurt.
+        game.others[0].mode = GameMode::Creative;
+        game.run_ticks(20);
+        game.on_action(Action::Attack, true, false, true);
+        game.run_ticks(2);
+        assert_eq!(game.others[0].stats.health, health);
+    }
+
+    #[test]
     fn every_player_gets_a_turn_each_tick_and_keeps_their_own_state() {
         let mut game = flat_game(GameMode::Survival);
         let mut guest = PlayerState::new(DVec3::new(4.5, 70.0, 4.5), 0.0, 0.0);

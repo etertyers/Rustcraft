@@ -208,6 +208,108 @@ impl Game {
         }
     }
 
+    /// Hits another player (`self.others[other]`) with the main hand's
+    /// item: the swing's damage by charge and critical as against a mob,
+    /// Sharpness, knockback (more sprinting), Fire Aspect, weapon wear and
+    /// exhaustion; a blocking shield stops it.
+    pub(super) fn attack_player(&mut self, other: usize) {
+        let tool = self.selected_tool().cloned();
+        let sword = tool.as_ref().is_some_and(|t| t.kind == ToolKind::Sword);
+        let axe = tool.as_ref().is_some_and(|t| t.kind == ToolKind::Axe);
+        let charge = self.attack_charge(0.5);
+        let bonus = super::gear::damage_bonus(
+            self.held_level(Enchantment::Sharpness),
+            0,
+            0,
+            super::gear::kind_of("player"),
+        );
+        let blow = resolve_with(self.attack_damage(), bonus, &self.stance(charge), sword);
+        self.player.attack_ticker = 0;
+        let from = self.player.body.position();
+        let yaw = self.player.camera.yaw as f64;
+        let facing = DVec3::new(yaw.sin(), 0.0, -yaw.cos());
+        let knockback = self.held_level(Enchantment::Knockback);
+        let fire = self.held_level(Enchantment::FireAspect);
+        let strike = Strike {
+            amount: blow.damage,
+            source: DamageSource::Player,
+            from: Some(from),
+            ranged: false,
+            axe,
+        };
+        let (hit, here) = self.with_player(other + 1, |victim| {
+            let here = victim.player.body.position();
+            if !victim.player.mode.is_vulnerable() {
+                return (false, here);
+            }
+            let fresh = matches!(victim.hurt_player(strike), Outcome::Hurt { fresh: true });
+            if fresh {
+                crate::entity::mob::knock_back(&mut victim.player.body, from);
+                let push_by = c::KNOCKBACK_PER_LEVEL * f64::from(knockback)
+                    + if blow.sprint_knockback {
+                        c::SPRINT_KNOCKBACK
+                    } else {
+                        0.0
+                    };
+                if push_by > 0.0 {
+                    push(&mut victim.player.body, push_by, facing);
+                }
+                if fire > 0 {
+                    let stats = &mut victim.player.stats;
+                    stats.fire = stats.fire.max(c::FIRE_ASPECT_TICKS * i32::from(fire));
+                }
+            }
+            (fresh, here)
+        });
+        let sound = match (hit, blow.critical) {
+            (false, _) => "entity.player.attack.nodamage",
+            (true, true) => "entity.player.attack.crit",
+            (true, false) if super::combat::is_strong(charge) => "entity.player.attack.strong",
+            (true, false) => "entity.player.attack.weak",
+        };
+        crate::audio::play(sound, here);
+        if hit && blow.sprint_knockback {
+            self.player.body.velocity.x *= 0.6;
+            self.player.body.velocity.z *= 0.6;
+            self.player.body.sprinting = false;
+        }
+        if self.player.mode.is_vulnerable() {
+            self.player.stats.add_exhaustion(c::EXHAUSTION);
+        }
+        if self.player.mode.wears_tools()
+            && let Some(tool) = tool
+        {
+            self.wear_selected(tool.hit_wear);
+        }
+    }
+
+    /// The other player (an index into `self.others`) in front of the
+    /// targeted block within reach, if any, and how far.
+    pub(super) fn target_player(
+        &self,
+        eye: DVec3,
+        block: Option<&crate::player::raycast::Hit>,
+    ) -> Option<(usize, f64)> {
+        let dir = self.player.camera.forward().as_dvec3();
+        let block_distance = block.map_or(f64::MAX, |hit| {
+            (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5
+        });
+        self.others
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.stats.is_dead())
+            .filter_map(|(i, p)| {
+                let distance = p
+                    .body
+                    .aabb()
+                    .grow(c::TARGET_GROW)
+                    .ray_hit(eye, dir, c::REACH)?;
+                Some((i, distance))
+            })
+            .filter(|&(_, distance)| distance < block_distance)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
     /// Hits mob `index` with the main hand's item (modern
     /// `Player.attack`): the swing's damage by charge, a critical bonus,
     /// knockback (more when sprinting), a sweep from swords, weapon wear
@@ -389,7 +491,10 @@ impl Game {
     /// shield wears by one plus the damage for blows of three or more, and
     /// an axe disables it for five seconds.
     pub fn hurt_player(&mut self, strike: Strike) -> Outcome {
-        let blockable = matches!(strike.source, DamageSource::Mob | DamageSource::Arrow);
+        let blockable = matches!(
+            strike.source,
+            DamageSource::Mob | DamageSource::Player | DamageSource::Arrow
+        );
         if blockable && self.is_blocking() && self.faces(strike.from) {
             if strike.amount >= c::SHIELD_WEAR_FROM
                 && self.player.mode.wears_tools()

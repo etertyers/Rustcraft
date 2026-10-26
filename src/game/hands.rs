@@ -289,6 +289,26 @@ impl Game {
             self.attack_end(target);
             return;
         }
+        // Another player in front of any mob or block is hit (PvP).
+        if clicked && let Some((other, distance)) = self.target_player(eye, hit.as_ref()) {
+            let mob_nearer = self.target_mob(eye, hit.as_ref()).is_some_and(|mob| {
+                self.mobs[mob]
+                    .body
+                    .aabb()
+                    .grow(crate::config::combat::TARGET_GROW)
+                    .ray_hit(
+                        eye,
+                        self.player.camera.forward().as_dvec3(),
+                        crate::config::combat::REACH,
+                    )
+                    .is_some_and(|d| d < distance)
+            });
+            if !mob_nearer {
+                self.player.mining = None;
+                self.attack_player(other);
+                return;
+            }
+        }
         // A mob in front of the targeted block is hit instead, once per click.
         if let Some(mob) = self.target_mob(eye, hit.as_ref())
             && (wants_break || self.player.mining.is_none())
