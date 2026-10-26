@@ -334,7 +334,7 @@ impl OptionsScreen {
     }
 
     fn video(&mut self, ui: &mut Ui, options: &mut Options) {
-        let height = (ui.available_height() - 70.0).max(120.0);
+        let height = list_height(ui);
         egui::ScrollArea::vertical()
             .max_height(height)
             .show(ui, |ui| {
@@ -492,7 +492,7 @@ impl OptionsScreen {
     /// another action shares it, `> key <` while waiting for a new one) and
     /// Reset; then Reset Keys and Done.
     fn key_binds(&mut self, ui: &mut Ui, keys: &mut Bindings) {
-        let height = (ui.available_height() - 70.0).max(120.0);
+        let height = list_height(ui);
         egui::ScrollArea::vertical()
             .max_height(height)
             .show(ui, |ui| {
@@ -682,6 +682,13 @@ fn int_slider(
     } else {
         false
     }
+}
+
+/// The height of a page's scrolling list: the screen less the heading
+/// and the buttons under it. (The pause menu's area sizes itself to its
+/// contents, so the space left in it can't be used.)
+fn list_height(ui: &Ui) -> f32 {
+    (ui.ctx().content_rect().height() - 220.0).max(120.0)
 }
 
 fn heading(ui: &mut Ui, text: &str) {

@@ -58,6 +58,7 @@ impl PauseMenu {
         let mut action = None;
         egui::Area::new(egui::Id::unique("pause-menu"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .fade_in(false)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     if let Some(packs) = self.packs.as_mut() {
