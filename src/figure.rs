@@ -98,11 +98,11 @@ pub fn build(
             });
             let item = main.as_ref().map(|(geometry, stack, up)| HandItem {
                 geometry,
-                display: first_person_display(fig, stack, false, *up),
+                display: first_person_display(fig, stack, game.left_handed(), *up),
                 glint: stack.is_enchanted(),
             });
             let input = HandInput {
-                left: false,
+                left: game.left_handed(),
                 swing: view.attack_anim(alpha),
                 equip: view.equip_progress(alpha),
                 lag: view.hand_lag(alpha, game.camera.yaw, game.camera.pitch),
@@ -126,13 +126,13 @@ pub fn build(
             });
             if let Some((geometry, stack, up)) = &off {
                 let input = HandInput {
-                    left: true,
+                    left: !game.left_handed(),
                     swing: 0.0,
                     equip: view.offhand_equip_progress(alpha),
                     using: crate::game::view::HandUse::None,
                     item: Some(HandItem {
                         geometry,
-                        display: first_person_display(fig, stack, true, *up),
+                        display: first_person_display(fig, stack, !game.left_handed(), *up),
                         glint: stack.is_enchanted(),
                     }),
                     ..input
@@ -171,7 +171,16 @@ pub fn add_body(
         _ => icons.icon(stack),
     };
     let blocking = game.is_blocking();
-    add_player(&mut meshes.body, pose, fig.slim, feet, yaw, [1.0; 3], light);
+    add_player(
+        &mut meshes.body,
+        pose,
+        fig.slim,
+        feet,
+        yaw,
+        [1.0; 3],
+        light,
+        game.skin_layers(),
+    );
     if game
         .inventory
         .slot(crate::inventory::player::ARMOR_CHEST)
@@ -208,7 +217,7 @@ pub fn add_body(
         let Some(stack) = game.inventory.hand_stack(hand).cloned() else {
             continue;
         };
-        let left = hand == Hand::Off;
+        let left = (hand == Hand::Off) != game.left_handed();
         let up = blocking && game.shield_hand() == Some(hand);
         let geometry = held.get(&icon(&stack, hand), fig.atlas);
         let display = third_person_display(fig, &stack, left, up);

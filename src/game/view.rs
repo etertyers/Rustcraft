@@ -541,6 +541,12 @@ impl Game {
             }
         };
         let (main, off) = (arm(Hand::Main), arm(Hand::Off));
+        // A left-handed player holds the main hand's item on the left.
+        let (right, left) = if self.left_handed {
+            (off, main)
+        } else {
+            (main, off)
+        };
         PlayerPose {
             limb_swing,
             limb_amount,
@@ -556,10 +562,10 @@ impl Game {
                 0.0
             },
             attack: view.attack_anim(alpha),
-            swing_left: false,
+            swing_left: self.left_handed,
             riding: self.is_riding(),
-            right: main,
-            left: if drawing { ArmPose::Bow } else { off },
+            right: if drawing { ArmPose::Bow } else { right },
+            left: if drawing { ArmPose::Bow } else { left },
             use_time: eating.map_or(0.0, |t| t + alpha),
         }
     }
@@ -930,6 +936,24 @@ mod tests {
         game.set_view_mode(ViewMode::ThirdFront);
         let front = (game.view_camera().position - eye).length();
         assert!(front > 0.1, "{front}");
+    }
+
+    #[test]
+    fn a_left_handed_player_holds_and_swings_on_the_left() {
+        use crate::{
+            game::tests::flat_game,
+            inventory::{items, stack::ItemStack},
+            player::mode::GameMode,
+        };
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory
+            .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
+        let pose = game.player_pose();
+        assert_eq!((pose.right, pose.left), (ArmPose::Item, ArmPose::Empty));
+        game.left_handed = true;
+        let pose = game.player_pose();
+        assert_eq!((pose.right, pose.left), (ArmPose::Empty, ArmPose::Item));
+        assert!(pose.swing_left);
     }
 
     #[test]

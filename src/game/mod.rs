@@ -259,6 +259,9 @@ pub struct Game {
     auto_jump: bool,
     /// The Particles option.
     particle_level: crate::options::Particles,
+    /// Skin Customization: the outer layers worn, and Main Hand: Left.
+    skin_layers: crate::render::player::OuterLayers,
+    pub(crate) left_handed: bool,
     toggle_sneak: bool,
     toggle_sprint: bool,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
@@ -408,6 +411,8 @@ impl Game {
             invert_y: false,
             auto_jump: false,
             particle_level: crate::options::Particles::All,
+            skin_layers: crate::render::player::ALL_LAYERS,
+            left_handed: false,
             toggle_sneak: false,
             toggle_sprint: false,
             tick_time: 0.0,
@@ -684,6 +689,16 @@ impl Game {
         }
     }
 
+    /// The skin's outer layers the player wears.
+    pub fn skin_layers(&self) -> crate::render::player::OuterLayers {
+        self.skin_layers
+    }
+
+    /// Main Hand: Left: the main hand is drawn on the left.
+    pub fn left_handed(&self) -> bool {
+        self.left_handed
+    }
+
     /// Forgets held keys and buttons, e.g. when the cursor is released.
     pub fn release_input(&mut self) {
         self.keys.clear();
@@ -707,6 +722,16 @@ impl Game {
         self.sensitivity = options.sensitivity;
         self.invert_y = options.invert_y;
         self.particle_level = options.particles;
+        let skin = options.skin;
+        self.skin_layers = [
+            skin.hat,
+            skin.jacket,
+            skin.right_sleeve,
+            skin.left_sleeve,
+            skin.right_pants,
+            skin.left_pants,
+        ];
+        self.left_handed = options.main_hand == crate::options::MainHand::Left;
         self.auto_jump = options.auto_jump;
         self.toggle_sneak = options.toggle_sneak;
         self.toggle_sprint = options.toggle_sprint;
