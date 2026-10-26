@@ -230,6 +230,7 @@ impl Game {
         let facing = DVec3::new(yaw.sin(), 0.0, -yaw.cos());
         let knockback = self.held_level(Enchantment::Knockback);
         let fire = self.held_level(Enchantment::FireAspect);
+        let attacker = self.player.name.clone();
         let strike = Strike {
             amount: blow.damage,
             source: DamageSource::Player,
@@ -243,6 +244,7 @@ impl Game {
                 return (false, here);
             }
             let fresh = matches!(victim.hurt_player(strike), Outcome::Hurt { fresh: true });
+            victim.player.stats.last_attacker = Some(attacker.clone());
             if fresh {
                 crate::entity::mob::knock_back(&mut victim.player.body, from);
                 let push_by = c::KNOCKBACK_PER_LEVEL * f64::from(knockback)

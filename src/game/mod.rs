@@ -1210,6 +1210,13 @@ impl Game {
         self.tick_advancements();
         self.tick_sounds();
         self.on_death();
+        if self.player.stats.is_dead() && !self.player.death_told {
+            self.player.death_told = true;
+            let source = self.player.stats.last_source.unwrap_or(DamageSource::Mob);
+            let attacker = self.player.stats.last_attacker.as_deref();
+            let line = format!("{} {}", self.player.name, source.death_message_by(attacker));
+            self.chat_out.push(line);
+        }
     }
 
     fn move_player(&mut self) {
@@ -1383,6 +1390,7 @@ impl Game {
     /// Back beside the bed last slept in, or the world spawn, with full
     /// health and food (1.0.0's respawn).
     pub fn respawn(&mut self) {
+        self.player.death_told = false;
         // Beds and the world spawn are in the Overworld.
         let away = self.dimension != crate::world::dimension::Dimension::Overworld;
         if away {

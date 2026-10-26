@@ -99,6 +99,16 @@ impl DamageSource {
         )
     }
 
+    /// The death message for this source when `attacker` did it (vanilla's
+    /// "was slain by Zombie"), or 1.0.0's plain one.
+    pub fn death_message_by(self, attacker: Option<&str>) -> String {
+        match (self, attacker) {
+            (DamageSource::Mob | DamageSource::Player, Some(who)) => format!("was slain by {who}"),
+            (DamageSource::Arrow, Some(who)) => format!("was shot by {who}"),
+            _ => self.death_message().to_owned(),
+        }
+    }
+
     /// 1.0.0's death messages.
     pub fn death_message(self) -> &'static str {
         match self {
@@ -181,9 +191,12 @@ pub struct Stats {
     /// Ticks left of the hurt cooldown, and the hit that started it.
     hurt_cooldown: u32,
     last_damage: f32,
-    /// What last hurt the player.
+    /// What last hurt the player, and who if a mob or player did (for
+    /// the death message).
     #[serde(skip)]
     pub last_source: Option<DamageSource>,
+    #[serde(skip)]
+    pub last_attacker: Option<String>,
     /// Ticks since the player last slept (phantoms come after three days).
     #[serde(default)]
     pub awake: u32,
@@ -231,6 +244,7 @@ impl Default for Stats {
             hurt_cooldown: 0,
             last_damage: 0.0,
             last_source: None,
+            last_attacker: None,
             awake: 0,
             experience: Default::default(),
             enchant_seed: 0,
@@ -344,6 +358,12 @@ impl Stats {
         };
         self.last_damage = amount;
         self.last_source = Some(source);
+        if !matches!(
+            source,
+            DamageSource::Mob | DamageSource::Player | DamageSource::Arrow
+        ) {
+            self.last_attacker = None;
+        }
         self.add_exhaustion(source.exhaustion());
         fresh
     }
