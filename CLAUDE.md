@@ -573,7 +573,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Test: a headless server with two in-process clients places and breaks blocks and both see the same chunk contents.
 - **Done when:** single player plays the same as v1.1 with no lag added (perf test within the §7.2 gate), all old worlds load, and the two-client test passes. No screenshot needed.
 
-### - [ ] M37 — LAN multiplayer (up to 8 players)
+### - [x] M37 — LAN multiplayer (up to 8 players)
 - **Open to LAN** in the pause menu (vanilla screen): game mode for other players, Allow Cheats on/off, port (default random free port). The host's game becomes the server for up to 8 players.
 - **Discovery:** the host announces itself by UDP multicast to `224.0.2.60:4445` every 1.5 s with vanilla's format `[MOTD]<player> - <world>[/MOTD][AD]<port>[/AD]`. A **Multiplayer** button on the title screen lists LAN worlds found, plus "Direct Connect" by IP:port. Add `NSLocalNetworkUsageDescription` to the `.app`'s Info.plist so macOS allows local network access.
 - **Joining:** players are identified by their player name from Options (no accounts); a duplicate name is refused. Each player's skin is sent to the others. Join/leave messages.
