@@ -143,6 +143,16 @@ impl Game {
         server_body
     }
 
+    /// A client's player went to `dimension`: its chunks go, and the
+    /// renderer is told to drop what it drew.
+    pub fn enter_dimension(&mut self, dimension: crate::world::dimension::Dimension) {
+        if dimension != self.dimension {
+            self.dimension_changed = true;
+        }
+        self.dimension = dimension;
+        self.chunks.unload_all();
+    }
+
     /// Whether the client moves its player itself: walking, swimming,
     /// flying or gliding, but not riding, sleeping, dead or waiting.
     pub fn predicts(&self) -> bool {
@@ -168,6 +178,26 @@ impl Game {
         }
     }
 
+    /// Where player `index` stands (0 is the host, then `others`).
+    pub fn feet_of(&self, index: usize) -> DVec3 {
+        match index {
+            0 => self.player.body.position(),
+            i => self.others[i - 1].body.position(),
+        }
+    }
+
+    /// Where new players start.
+    pub fn spawn_point(&self) -> DVec3 {
+        self.spawn
+    }
+
+    /// Puts the player at `feet` (debug flight, which a client moves
+    /// between ticks).
+    pub fn fly_to(&mut self, feet: DVec3) {
+        self.player.body.set_position(feet);
+        self.player.prev_feet = feet;
+    }
+
     /// The server's side of `input`: the keys and look the player's turn
     /// plays with.
     pub fn take_input(&mut self, input: &Input) {
@@ -175,5 +205,130 @@ impl Game {
         p.keys = input.keys;
         p.camera.yaw = input.yaw;
         p.camera.pitch = input.pitch;
+    }
+}
+
+impl Game {
+    /// Does what `self.player` did on a screen: the slot clicks, drags and
+    /// throws of every inventory screen, creative picks, the recipe book,
+    /// enchanting, naming, trading and cutting, and the death and bed
+    /// screens' buttons. `book` is every recipe in the book's order.
+    pub fn apply_screen_action(
+        &mut self,
+        action: crate::ui::screens::ScreenAction,
+        book: &[crate::inventory::book::BookRecipe],
+    ) {
+        use crate::{
+            inventory::{creative, stack::ItemStack},
+            ui::{recipe_book::BookAction, screens::ScreenAction},
+        };
+        let items = self.items().clone();
+        let p = &mut self.player;
+        match action {
+            ScreenAction::Click(slot, click) => self.click_slot(slot, click),
+            ScreenAction::Drag { slots, click } => self.drag_across(&slots, click),
+            ScreenAction::Collect(_) => self.collect_onto_cursor(),
+            ScreenAction::Throw { all } => {
+                let Some(held) = p.cursor.as_mut() else {
+                    return;
+                };
+                let count = if all { held.count } else { 1 };
+                held.count -= count;
+                let thrown = ItemStack {
+                    count,
+                    ..held.clone()
+                };
+                if held.count == 0 {
+                    p.cursor = None;
+                }
+                self.throw(thrown);
+            }
+            ScreenAction::CreativePick { stack, pick } => {
+                creative::pick(&mut p.cursor, &mut p.inventory, &stack, pick, &items);
+            }
+            ScreenAction::CreativeDestroy { shift } => {
+                creative::destroy(&mut p.cursor, &mut p.inventory, shift);
+            }
+            ScreenAction::Book(BookAction::Open(open)) => p.recipe_book.open = open,
+            ScreenAction::Book(BookAction::Filter(only)) => p.recipe_book.craftable_only = only,
+            ScreenAction::Book(BookAction::Category(category)) => {
+                p.recipe_book.category = category;
+            }
+            ScreenAction::Book(BookAction::Place { index, max }) => {
+                if let Some(recipe) = book.get(index) {
+                    self.place_recipe(recipe, max);
+                }
+            }
+            ScreenAction::Enchant(button) => {
+                self.enchant_item(button);
+            }
+            ScreenAction::AnvilName(name) => self.set_anvil_name(name),
+            ScreenAction::Trade(index) => {
+                self.trade(index);
+            }
+            ScreenAction::Choose(index) => self.choose_cut(index),
+            ScreenAction::Respawn => self.respawn(),
+            ScreenAction::LeaveBed => self.wake(),
+            // The client's own: the book's ghost recipe, the advancements
+            // tab, the pause menu.
+            ScreenAction::Book(BookAction::Ghost(_))
+            | ScreenAction::AdvTab(_)
+            | ScreenAction::Pause(_) => {}
+        }
+    }
+}
+
+impl Game {
+    /// The settings a client plays its player by.
+    pub fn take_settings(&mut self, settings: &crate::net::protocol::PlayerSettings) {
+        let p = &mut self.player;
+        p.auto_jump = settings.auto_jump;
+        p.toggle_sneak = settings.toggle_sneak;
+        p.toggle_sprint = settings.toggle_sprint;
+        p.left_handed = settings.left_handed;
+        p.skin_layers = settings.skin_layers;
+        p.particle_level = settings.particles;
+    }
+}
+
+impl super::PlayerState {
+    /// The player's body as physics moves it.
+    pub fn body_state(&self) -> &Body {
+        &self.body
+    }
+
+    /// Takes the server's body for the player's.
+    pub fn set_body(&mut self, body: Body) {
+        self.body = body;
+    }
+
+    /// Flying with the debug flight key (F4), which moves the player
+    /// between ticks.
+    pub fn is_flying(&self) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            self.flying
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            false
+        }
+    }
+}
+
+impl Game {
+    /// Debug flight's move for `dt` seconds of the held keys; returns
+    /// where the player is now.
+    #[cfg(debug_assertions)]
+    pub fn fly(&mut self, dt: f32) -> DVec3 {
+        let mut feet = self.player.body.position();
+        crate::player::fly::fly(
+            &mut feet,
+            self.player.camera.yaw,
+            &self.player.keys,
+            dt.min(super::MAX_FRAME_DT),
+        );
+        self.fly_to(feet);
+        feet
     }
 }

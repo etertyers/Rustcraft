@@ -48,6 +48,9 @@ pub enum ClientMsg {
     FinishCredits,
     /// The mouse left the game: every held key and button lets go.
     ReleaseInput,
+    /// Where the player is while flying with the debug flight key (F4),
+    /// which moves them between ticks.
+    Fly { feet: glam::DVec3 },
     /// Leaving.
     Disconnect,
 }
@@ -76,13 +79,18 @@ pub struct PlayerSettings {
 
 /// What the server tells a client.
 pub enum ServerMsg {
-    /// Joined; the world's seed (for F3 and `/seed`) and its dimension.
+    /// Joined; the world's seed (for F3 and `/seed`).
     Welcome { seed: Option<u64> },
     /// Not joined, and why (a full world, a taken name, another version).
     Refused(String),
-    /// A chunk to show, new or changed. `urgent` ones (a player's own
-    /// edits) are remeshed at once; the rest in the background.
-    Chunk { chunk: Arc<Chunk>, urgent: bool },
+    /// A chunk to show, new or sent again (its block entities changed).
+    Chunk(Arc<Chunk>),
+    /// Blocks that changed in chunks the client has, remeshed at once when
+    /// `urgent` (a player's own edits) or in the background (fluids, fire).
+    Blocks {
+        edits: Vec<(glam::IVec3, crate::world::block::BlockState)>,
+        urgent: bool,
+    },
     /// A chunk out of the player's view.
     Unload(ChunkPos),
     /// The player went to another dimension: every chunk is forgotten.

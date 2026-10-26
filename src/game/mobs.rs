@@ -615,6 +615,10 @@ impl Game {
     /// back their stashed animals, and place animals in chunks seen for
     /// the first time.
     pub fn on_chunks_loaded(&mut self, chunks: &[ChunkPos]) {
+        // A client's chunks come with their fluids and mobs from the server.
+        if self.is_client() {
+            return;
+        }
         self.schedule_fluids(chunks);
         self.queue_post_process(chunks);
         for &pos in chunks {

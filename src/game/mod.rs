@@ -849,15 +849,7 @@ impl Game {
     pub fn advance(&mut self, dt: f32) {
         #[cfg(debug_assertions)]
         if self.player.flying {
-            let mut feet = self.player.body.position();
-            crate::player::fly::fly(
-                &mut feet,
-                self.player.camera.yaw,
-                &self.player.keys,
-                dt.min(MAX_FRAME_DT),
-            );
-            self.player.body.set_position(feet);
-            self.player.prev_feet = feet;
+            self.fly(dt);
         }
         for _ in 0..self.clock(dt) {
             self.tick();
