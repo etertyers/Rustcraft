@@ -194,7 +194,7 @@ impl Server {
 
     /// Sends each player their snapshot and the sounds they hear.
     fn publish(&mut self, heard: Vec<Cue>) {
-        let views: Vec<_> = (0..self.remotes.len())
+        let views: Vec<_> = (0..self.game.player_count())
             .map(|index| {
                 let view = self.game.with_player(index, |game| game.player_view());
                 (self.game.player_at(index).dimension, view)
