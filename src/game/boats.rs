@@ -38,7 +38,7 @@ const SWIMMERS: [&str; 7] = [
 impl Game {
     /// The boat the player sits in.
     pub fn boat_ridden(&self) -> Option<&Boat> {
-        let id = self.boat?;
+        let id = self.player.boat?;
         self.boats.iter().find(|b| b.id == id)
     }
 
@@ -50,12 +50,12 @@ impl Game {
 
     /// The boat under the crosshair, if it's nearer than the targeted block.
     pub(super) fn target_boat(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let block_distance = block.map_or(f64::MAX, |hit| hit.point.distance(eye));
         self.boats
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.dimension == self.dimension && Some(b.id) != self.boat)
+            .filter(|(_, b)| b.dimension == self.dimension && Some(b.id) != self.player.boat)
             .filter_map(|(i, b)| {
                 let distance = b.aabb().ray_hit(eye, dir, crate::config::combat::REACH)?;
                 (distance < block_distance).then_some((i, distance))
@@ -80,7 +80,7 @@ impl Game {
             return false;
         };
         let world = self.chunks.world();
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let stops = |at: glam::IVec3| {
             world.block(at.x, at.y, at.z).is_some_and(|b| {
                 let def = b.def();
@@ -113,11 +113,11 @@ impl Game {
             return false;
         }
         self.next_boat_id += 1;
-        let mut boat = Boat::new(self.next_boat_id, kind, at, self.camera.yaw);
+        let mut boat = Boat::new(self.next_boat_id, kind, at, self.player.camera.yaw);
         boat.dimension = self.dimension;
         self.boats.push(boat);
-        if self.mode.uses_up_items() {
-            self.inventory.take(self.held_slot(), 1);
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(self.held_slot(), 1);
         }
         true
     }
@@ -127,18 +127,18 @@ impl Game {
         let Some(boat) = self.boats.get(index) else {
             return;
         };
-        if self.keys.sneak && boat.kind.chest {
-            self.container = Some(Container::Boat(boat.id));
+        if self.player.keys.sneak && boat.kind.chest {
+            self.player.container = Some(Container::Boat(boat.id));
             self.release_input();
             return;
         }
-        if self.boat.is_some() || self.is_riding() || !boat.has_room() {
+        if self.player.boat.is_some() || self.is_riding() || !boat.has_room() {
             return;
         }
         let id = boat.id;
         self.boats[index].passengers.push(Passenger::Player);
-        self.boat = Some(id);
-        self.body.velocity = DVec3::ZERO;
+        self.player.boat = Some(id);
+        self.player.body.velocity = DVec3::ZERO;
     }
 
     /// A punch at a boat: it breaks after enough hits (at once in creative).
@@ -146,7 +146,7 @@ impl Game {
         let Some(boat) = self.boats.get_mut(index) else {
             return;
         };
-        if boat.hurt(damage.max(1.0)) || !self.mode.drops_items() {
+        if boat.hurt(damage.max(1.0)) || !self.player.mode.drops_items() {
             self.break_boat(index);
         }
     }
@@ -157,18 +157,18 @@ impl Game {
             return;
         }
         let boat = self.boats.remove(index);
-        if self.boat == Some(boat.id) {
-            self.boat = None;
+        if self.player.boat == Some(boat.id) {
+            self.player.boat = None;
             self.step_out(&boat);
         }
-        if matches!(self.container, Some(Container::Boat(id)) if id == boat.id) {
+        if matches!(self.player.container, Some(Container::Boat(id)) if id == boat.id) {
             self.close_container();
         }
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         let center = boat.position + DVec3::Y * 0.3;
         let mut dropped: Vec<ItemStack> = boat.slots.iter().flatten().cloned().collect();
-        if self.mode.drops_items()
+        if self.player.mode.drops_items()
             && let Some(id) = crate::inventory::items::by_name(&boat.kind.item_name())
         {
             dropped.push(ItemStack::new(id, 1));
@@ -190,22 +190,23 @@ impl Game {
     /// The player's tick in a boat: sneak gets out.
     pub(super) fn ride_boat(&mut self) {
         let Some(index) = self
+            .player
             .boat
             .and_then(|id| self.boats.iter().position(|b| b.id == id))
         else {
-            self.boat = None;
+            self.player.boat = None;
             return;
         };
-        if self.keys.sneak {
+        if self.player.keys.sneak {
             let boat = self.boats[index].clone();
             self.boats[index]
                 .passengers
                 .retain(|p| *p != Passenger::Player);
-            self.boat = None;
+            self.player.boat = None;
             self.step_out(&boat);
             return;
         }
-        self.body.velocity = DVec3::ZERO;
+        self.player.body.velocity = DVec3::ZERO;
     }
 
     /// Stands the player on a free spot beside `boat` (or on top of it).
@@ -215,7 +216,7 @@ impl Game {
             world,
             blocks: self.items.blocks,
         };
-        let size = self.body.aabb();
+        let size = self.player.body.aabb();
         let half = (size.max - size.min) / 2.0;
         let free = |feet: DVec3| {
             let aabb = Aabb::new(
@@ -237,9 +238,9 @@ impl Game {
         .map(|offset| boat.position + offset)
         .find(|&p| free(p))
         .unwrap_or(boat.position + DVec3::Y * crate::entity::boat::HEIGHT);
-        self.body.set_position(feet);
-        self.prev_feet = feet;
-        self.body.velocity = DVec3::ZERO;
+        self.player.body.set_position(feet);
+        self.player.prev_feet = feet;
+        self.player.body.velocity = DVec3::ZERO;
     }
 
     /// One tick of every boat here: the player rows the one they sit in
@@ -248,7 +249,7 @@ impl Game {
         if self.boats.is_empty() {
             return;
         }
-        let keys = &self.keys;
+        let keys = &self.player.keys;
         let rowing = Rowing {
             forward: keys.forward,
             back: keys.back,
@@ -275,8 +276,8 @@ impl Game {
         for index in ejected {
             let boat = self.boats[index].clone();
             self.boats[index].passengers.clear();
-            if self.boat == Some(boat.id) {
-                self.boat = None;
+            if self.player.boat == Some(boat.id) {
+                self.player.boat = None;
                 self.step_out(&boat);
             }
         }
@@ -320,7 +321,7 @@ impl Game {
     /// Sits every passenger in their seat, turns the rower's view with the
     /// boat, and lets go of mobs that died or wandered off.
     fn carry_passengers(&mut self) {
-        let player_boat = self.boat;
+        let player_boat = self.player.boat;
         for index in 0..self.boats.len() {
             let alive = |id: u64| self.mobs.iter().any(|m| m.id == id && !m.is_dead());
             let boat = &mut self.boats[index];
@@ -333,11 +334,11 @@ impl Game {
                 match *passenger {
                     Passenger::Player => {
                         let feet = boat.seat(seat, false);
-                        self.body.set_position(feet);
-                        self.body.velocity = DVec3::ZERO;
-                        self.camera.yaw += boat.yaw - boat.prev_yaw;
-                        let off = wrap(self.camera.yaw - boat.yaw);
-                        self.camera.yaw = boat.yaw + off.clamp(-LOOK_LIMIT, LOOK_LIMIT);
+                        self.player.body.set_position(feet);
+                        self.player.body.velocity = DVec3::ZERO;
+                        self.player.camera.yaw += boat.yaw - boat.prev_yaw;
+                        let off = wrap(self.player.camera.yaw - boat.yaw);
+                        self.player.camera.yaw = boat.yaw + off.clamp(-LOOK_LIMIT, LOOK_LIMIT);
                     }
                     Passenger::Mob(id) => {
                         if let Some(mob) = self.mobs.iter_mut().find(|m| m.id == id) {
@@ -398,12 +399,13 @@ mod tests {
     }
 
     fn put_boat(game: &mut Game, item: &str) -> usize {
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::by_name(item).unwrap(), 1)));
-        game.inventory.selected = 0;
-        game.camera.yaw = 0.0;
-        game.camera.pitch = -0.6;
-        let eye = game.body.position() + DVec3::Y * game.body.eye_height();
+        game.player.inventory.selected = 0;
+        game.player.camera.yaw = 0.0;
+        game.player.camera.pitch = -0.6;
+        let eye = game.player.body.position() + DVec3::Y * game.player.body.eye_height();
         assert!(game.place_boat(eye), "placed");
         game.boats.len() - 1
     }
@@ -414,7 +416,7 @@ mod tests {
         let index = put_boat(&mut game, "oak_boat");
         let boat = &game.boats[index];
         assert!((boat.position.y - (63.0 + 8.0 / 9.0)).abs() < 1e-9);
-        assert!(game.inventory.slot(0).is_none());
+        assert!(game.player.inventory.slot(0).is_none());
         assert_eq!(boat.kind.item_name(), "oak_boat");
     }
 
@@ -425,11 +427,11 @@ mod tests {
         game.use_boat(index);
         assert!(game.boat_ridden().is_some());
         let start = game.boats[index].position;
-        game.keys.forward = true;
+        game.player.keys.forward = true;
         for _ in 0..30 {
             game.tick();
         }
-        game.keys.forward = false;
+        game.player.keys.forward = false;
         let boat = game.boat_ridden().unwrap().clone();
         assert!(
             boat.position.z < start.z - 3.0,
@@ -437,15 +439,15 @@ mod tests {
             boat.position
         );
         assert!(
-            game.body.position().distance(boat.position) < 1.0,
+            game.player.body.position().distance(boat.position) < 1.0,
             "the player rides along"
         );
-        game.keys.sneak = true;
+        game.player.keys.sneak = true;
         game.tick();
-        game.keys.sneak = false;
+        game.player.keys.sneak = false;
         assert!(game.boat_ridden().is_none());
         assert!(
-            game.body.position().distance(boat.position) > 0.9,
+            game.player.body.position().distance(boat.position) > 0.9,
             "stepped out"
         );
     }
@@ -470,11 +472,11 @@ mod tests {
     fn a_chest_boat_opens_with_sneak_and_seats_one() {
         let mut game = pool();
         let index = put_boat(&mut game, "oak_chest_boat");
-        game.keys.sneak = true;
+        game.player.keys.sneak = true;
         game.use_boat(index);
-        assert!(matches!(game.container, Some(Container::Boat(_))));
+        assert!(matches!(game.player.container, Some(Container::Boat(_))));
         game.close_container();
-        game.keys.sneak = false;
+        game.player.keys.sneak = false;
         game.use_boat(index);
         assert!(!game.boats[index].has_room(), "one seat");
     }

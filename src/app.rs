@@ -26,6 +26,7 @@ use crate::{
     audio::{Audio, Listener},
     bench::{self, Bench, FrameTimes},
     bindings::{Action, Input},
+    client::Client,
     config,
     entity::mobs::MobRegistry,
     figure::{self, Figure, PlayerMeshes},
@@ -59,6 +60,7 @@ use crate::{
         icons::ItemIcons,
         models::{DYE_COLORS, add_arrow, add_minecart, add_mob, add_mob_model},
     },
+    server::Server,
     shots,
     ui::{
         DebugStats, DebugUi, Hud,
@@ -181,6 +183,10 @@ pub struct App {
     shot: Option<ShotRun>,
     /// Hide GUI (F1) is on.
     hide_gui: bool,
+    /// The world being played, served in this process, and this client's
+    /// link to it; `game` is the client's copy of the world.
+    server: Option<Server>,
+    link: Option<Client>,
 }
 
 /// How far `--shot` has got with its scene.
@@ -216,6 +222,8 @@ impl App {
             res: None,
             pause: None,
             hide_gui: false,
+            server: None,
+            link: None,
             crack_uvs: Vec::new(),
             effect_uvs: EffectUvs::default(),
             atlas: None,
@@ -329,7 +337,8 @@ impl App {
         self.install_look(look);
         match self.world_kind.clone() {
             Some(kind) => {
-                self.game = Some(self.start_game(kind)?);
+                let world = self.start_game(kind)?;
+                self.play(world);
                 // A click puts the mouse in the window.
                 self.stack.set_in_world(true, false);
             }
@@ -345,19 +354,111 @@ impl App {
     fn start_game(&self, kind: WorldKind) -> Result<Game> {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let mut game = self.start_world(kind)?.with_mobs(mobs);
-        game.apply_options(&self.options);
-        game.set_view_mode(self.start_view);
         if let Some(run) = &self.shot {
             let shot = run.shot;
             game.set_time_and_mode(
                 shot.time.unwrap_or(game.time()),
-                shot.mode.unwrap_or(game.mode),
+                shot.mode.unwrap_or(game.player.mode),
             );
             if let Some((feet, yaw, pitch)) = shot.view {
                 game.teleport(DVec3::from_array(feet), yaw, pitch);
             }
         }
         Ok(game)
+    }
+
+    /// Plays `world`: it's served in this process, with this window as its
+    /// one client, which shows its own copy of the world.
+    fn play(&mut self, world: Game) {
+        let (items, models, mobs) = (
+            self.items.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+            self.mob_defs.clone().expect("loaded in init"),
+        );
+        let mut server = Server::new(world);
+        let (server_end, client_end) = crate::net::transport::local_pair();
+        server.connect(Box::new(server_end));
+        let name = self.options.player_name.clone();
+        let mut link = Client::join(Box::new(client_end), &name, self.player_settings());
+        let mut game = Game::new_client(
+            items,
+            models,
+            mobs,
+            self.options.render_distance,
+            chunk_workers(),
+        );
+        game.apply_options(&self.options);
+        game.set_view_mode(self.start_view);
+        // The welcome, the dimension and the player arrive before the first
+        // frame.
+        server.advance(0.0);
+        link.receive(&mut game);
+        self.server = Some(server);
+        self.link = Some(link);
+        self.game = Some(game);
+    }
+
+    /// The options the server plays this player by.
+    fn player_settings(&self) -> crate::net::protocol::PlayerSettings {
+        let o = &self.options;
+        crate::net::protocol::PlayerSettings {
+            view_distance: o.render_distance,
+            auto_jump: o.auto_jump,
+            toggle_sneak: o.toggle_sneak,
+            toggle_sprint: o.toggle_sprint,
+            left_handed: o.main_hand == crate::options::MainHand::Left,
+            skin_layers: [
+                o.skin.hat,
+                o.skin.jacket,
+                o.skin.right_sleeve,
+                o.skin.left_sleeve,
+                o.skin.right_pants,
+                o.skin.left_pants,
+            ],
+            particles: o.particles,
+        }
+    }
+
+    /// Sends the server `msg` (when playing through one).
+    fn tell_server(&mut self, msg: crate::net::protocol::ClientMsg) {
+        if let Some(link) = self.link.as_mut() {
+            link.send(msg);
+        }
+    }
+
+    /// A bound key's action: the view, the hotbar and movement happen here
+    /// at once (the server hears of them too); everything else is the
+    /// server's to do. A world played without a server (tests) does it all
+    /// itself.
+    fn act(&mut self, action: Action, pressed: bool, repeat: bool, grabbed: bool) {
+        let Some(game) = self.game.as_mut() else {
+            return;
+        };
+        if self.link.is_none() {
+            return game.on_action(action, pressed, repeat, grabbed);
+        }
+        let local = matches!(
+            action,
+            Action::Forward
+                | Action::Back
+                | Action::Left
+                | Action::Right
+                | Action::Jump
+                | Action::Sneak
+                | Action::Sprint
+        ) || action.hotbar_slot().is_some();
+        if action == Action::Perspective {
+            return game.on_action(action, pressed, repeat, grabbed);
+        }
+        if local {
+            game.on_action(action, pressed, repeat, grabbed);
+        }
+        self.tell_server(crate::net::protocol::ClientMsg::Action {
+            action,
+            pressed,
+            repeat,
+            grabbed,
+        });
     }
 
     fn start_world(&self, kind: WorldKind) -> Result<Game> {
@@ -423,7 +524,7 @@ impl App {
                 );
                 let mut game = Game::new(chunks, items, spawn, spawn, 0.0, 0.0)
                     .starting_in(crate::world::dimension::Dimension::End);
-                game.camera.yaw = -std::f32::consts::FRAC_PI_2;
+                game.player.camera.yaw = -std::f32::consts::FRAC_PI_2;
                 return Ok(game);
             }
             // On the grass at the origin.
@@ -495,6 +596,7 @@ impl App {
         self.stack.confirm(grab);
         if !grab && let Some(game) = self.game.as_mut() {
             game.release_input();
+            self.tell_server(crate::net::protocol::ClientMsg::ReleaseInput);
         }
     }
 
@@ -539,6 +641,8 @@ impl App {
             && let Some(game) = self.game.as_mut()
         {
             game.on_scroll(delta);
+            let slot = game.player.inventory.selected;
+            self.tell_server(crate::net::protocol::ClientMsg::SelectSlot(slot));
         }
     }
 
@@ -556,7 +660,8 @@ impl App {
     /// pointer on the slot the scene names.
     fn show_staged_screen(&mut self) {
         use crate::game::ShotScreen;
-        let Some(staged) = self.game.as_ref().and_then(Game::shot_ui) else {
+        let world = self.server.as_ref().map(|s| &s.game).or(self.game.as_ref());
+        let Some(staged) = world.and_then(Game::shot_ui) else {
             return;
         };
         if staged.screen == ShotScreen::KeyBinds {
@@ -594,7 +699,10 @@ impl App {
             egui::Pos2::ZERO,
             egui::vec2(size.width as f32 / ppp, size.height as f32 / ppp),
         );
-        let open = self.game.as_ref().is_some_and(|g| g.recipe_book.open);
+        let open = self
+            .game
+            .as_ref()
+            .is_some_and(|g| g.player.recipe_book.open);
         let shift = match screen {
             Screen::Inventory | Screen::Crafting => crate::ui::recipe_book::shift(open, full),
             _ => 0.0,
@@ -617,7 +725,10 @@ impl App {
             return true;
         }
         let book_search = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting))
-            && self.game.as_ref().is_some_and(|g| g.recipe_book.open)
+            && self
+                .game
+                .as_ref()
+                .is_some_and(|g| g.player.recipe_book.open)
             && self
                 .debug_ui
                 .as_ref()
@@ -716,15 +827,15 @@ impl App {
             self.open_advancements();
         } else if escape && press && rolling {
             // Skipping the poem and credits goes home.
-            if let Some(game) = self.game.as_mut() {
+            if self.link.is_some() {
+                self.tell_server(crate::net::protocol::ClientMsg::FinishCredits);
+            } else if let Some(game) = self.game.as_mut() {
                 game.finish_credits();
             }
         } else if rolling {
             // Nothing else works while they roll.
         } else if escape && pressed && sleeping {
-            if let Some(game) = self.game.as_mut() {
-                game.wake();
-            }
+            self.on_screen_action(ScreenAction::LeaveBed);
         } else if escape && pressed && self.screen.is_some() {
             self.close_screen();
         } else if escape && press && self.pause.is_some() {
@@ -761,9 +872,10 @@ impl App {
         } else if self.pause.is_none()
             && let Some(game) = self.game.as_mut()
         {
+            let _ = game;
             let grabbed = self.stack.reaches_game();
             for action in actions {
-                game.on_action(action, pressed, repeat, grabbed);
+                self.act(action, pressed, repeat, grabbed);
             }
         }
     }
@@ -788,11 +900,14 @@ impl App {
 
     /// Saves the world and goes back to the title screen.
     fn quit_to_title(&mut self) {
-        if let Some(mut game) = self.game.take()
-            && let Err(err) = game.save()
+        self.tell_server(crate::net::protocol::ClientMsg::Disconnect);
+        if let Some(mut server) = self.server.take()
+            && let Err(err) = server.game.save()
         {
             error!("saving on quitting to the title failed: {err:#}");
         }
+        self.link = None;
+        self.game = None;
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.clear_world();
         }
@@ -842,12 +957,12 @@ impl App {
         };
         let (listener, music) = match &self.game {
             Some(game) => {
-                let forward = game.camera.forward();
+                let forward = game.player.camera.forward();
                 let right = glam::DVec3::new(-f64::from(forward.z), 0.0, f64::from(forward.x))
                     .normalize_or_zero();
                 (
                     Listener {
-                        position: game.camera.position.as_dvec3(),
+                        position: game.player.camera.position.as_dvec3(),
                         right,
                     },
                     game.music_event(),
@@ -916,7 +1031,7 @@ impl App {
         renderer.capture_next_frame(dir.join(&name));
         info!("saving screenshot {name}");
         if let Some(game) = self.game.as_mut() {
-            game.message = Some((
+            game.player.message = Some((
                 format!("Saved screenshot as {name}"),
                 SCREENSHOT_MESSAGE_TICKS,
             ));
@@ -963,6 +1078,8 @@ impl App {
         if let Some(game) = self.game.as_mut() {
             game.apply_options(&self.options);
         }
+        let settings = self.player_settings();
+        self.tell_server(crate::net::protocol::ClientMsg::Settings(settings));
         // `--bench` and `--shot` runs leave the player's settings alone.
         if self.bench.is_some() || self.shot.is_some() {
             return;
@@ -975,15 +1092,21 @@ impl App {
 
     /// In a world and alive.
     fn playing(&self) -> bool {
-        self.game.as_ref().is_some_and(|game| !game.stats.is_dead())
+        self.game
+            .as_ref()
+            .is_some_and(|game| !game.player.stats.is_dead())
     }
 
     /// Opens the inventory (or creative item list) and frees the mouse.
     fn open_screen(&mut self) {
-        let Some(game) = self.game.as_ref().filter(|game| !game.stats.is_dead()) else {
+        let Some(game) = self
+            .game
+            .as_ref()
+            .filter(|game| !game.player.stats.is_dead())
+        else {
             return;
         };
-        let screen = if game.mode.has_every_item() {
+        let screen = if game.player.mode.has_every_item() {
             Screen::Creative {
                 tab: self.creative_tab,
                 scroll: 0.0,
@@ -991,7 +1114,9 @@ impl App {
         } else {
             Screen::Inventory
         };
-        if let Some(game) = self.game.as_mut() {
+        if self.link.is_some() {
+            self.tell_server(crate::net::protocol::ClientMsg::OpenInventory);
+        } else if let Some(game) = self.game.as_mut() {
             game.open_inventory();
         }
         if matches!(screen, Screen::Creative { .. })
@@ -1005,7 +1130,14 @@ impl App {
     /// Closes the screen, throwing out whatever was held on the mouse or
     /// left in a crafting grid (1.0.0).
     fn close_screen(&mut self) {
-        if let Some(game) = self.game.as_mut() {
+        if self.link.is_some() {
+            self.tell_server(crate::net::protocol::ClientMsg::CloseScreen);
+            // Closed here at once, so the screen doesn't come back before
+            // the server's next word.
+            if let Some(game) = self.game.as_mut() {
+                game.player.container = None;
+            }
+        } else if let Some(game) = self.game.as_mut() {
             game.close_container();
         }
         self.hide_container();
@@ -1017,7 +1149,11 @@ impl App {
         if self.screen.is_some() {
             return;
         }
-        let Some(container) = self.game.as_ref().and_then(|game| game.container.as_ref()) else {
+        let Some(container) = self
+            .game
+            .as_ref()
+            .and_then(|game| game.player.container.as_ref())
+        else {
             return;
         };
         let screen = match container {
@@ -1048,73 +1184,21 @@ impl App {
     }
 
     fn on_screen_action(&mut self, action: ScreenAction) {
-        let Some(game) = self.game.as_mut() else {
-            return;
-        };
-        let items = game.items().clone();
-        match action {
-            ScreenAction::Click(slot, click) => game.click_slot(slot, click),
-            ScreenAction::Drag { slots, click } => game.drag_across(&slots, click),
-            ScreenAction::Collect(_) => game.collect_onto_cursor(),
-            ScreenAction::Throw { all } => {
-                let Some(held) = game.cursor.as_mut() else {
-                    return;
-                };
-                let count = if all { held.count } else { 1 };
-                held.count -= count;
-                let thrown = ItemStack {
-                    count,
-                    ..held.clone()
-                };
-                if held.count == 0 {
-                    game.cursor = None;
-                }
-                game.throw(thrown);
+        use crate::ui::recipe_book::BookAction;
+        match &action {
+            ScreenAction::AdvTab(tab) => return self.advancements = Some(*tab),
+            ScreenAction::Pause(PauseAction::Resume) => return self.resume(),
+            ScreenAction::Pause(PauseAction::SaveAndQuit) => return self.quit_to_title(),
+            ScreenAction::Book(BookAction::Ghost(index)) => return self.book_ghost = Some(*index),
+            ScreenAction::Book(BookAction::Open(_) | BookAction::Place { .. }) => {
+                self.book_ghost = None;
             }
-            ScreenAction::CreativePick { stack, pick } => {
-                crate::inventory::creative::pick(
-                    &mut game.cursor,
-                    &mut game.inventory,
-                    &stack,
-                    pick,
-                    &items,
-                );
-            }
-            ScreenAction::Book(action) => {
-                use crate::ui::recipe_book::BookAction;
-                match action {
-                    BookAction::Open(open) => {
-                        game.recipe_book.open = open;
-                        self.book_ghost = None;
-                    }
-                    BookAction::Filter(only) => game.recipe_book.craftable_only = only,
-                    BookAction::Category(category) => game.recipe_book.category = category,
-                    BookAction::Place { index, max } => {
-                        let recipes = self.book_recipes.clone();
-                        if let Some(recipe) = recipes.get(index) {
-                            game.place_recipe(recipe, max);
-                        }
-                        self.book_ghost = None;
-                    }
-                    BookAction::Ghost(index) => self.book_ghost = Some(index),
-                }
-            }
-            ScreenAction::CreativeDestroy { shift } => {
-                crate::inventory::creative::destroy(&mut game.cursor, &mut game.inventory, shift);
-            }
-            ScreenAction::Enchant(button) => {
-                game.enchant_item(button);
-            }
-            ScreenAction::AnvilName(name) => game.set_anvil_name(name),
-            ScreenAction::Trade(index) => {
-                game.trade(index);
-            }
-            ScreenAction::Choose(index) => game.choose_cut(index),
-            ScreenAction::AdvTab(tab) => self.advancements = Some(tab),
-            ScreenAction::Respawn => game.respawn(),
-            ScreenAction::LeaveBed => game.wake(),
-            ScreenAction::Pause(PauseAction::Resume) => self.resume(),
-            ScreenAction::Pause(PauseAction::SaveAndQuit) => self.quit_to_title(),
+            _ => {}
+        }
+        if self.link.is_some() {
+            self.tell_server(crate::net::protocol::ClientMsg::Screen(action));
+        } else if let Some(game) = self.game.as_mut() {
+            game.apply_screen_action(action, &self.book_recipes.clone());
         }
     }
 
@@ -1134,10 +1218,8 @@ impl App {
         }
         .map(|game| game.with_mobs(mobs));
         match game {
-            Ok(mut game) => {
-                game.apply_options(&self.options);
-                game.set_view_mode(self.start_view);
-                self.game = Some(game);
+            Ok(world) => {
+                self.play(world);
                 self.menu = None;
                 self.stack.set_in_world(true, true);
                 self.apply_grab();
@@ -1180,23 +1262,36 @@ impl App {
         ) else {
             return;
         };
-        if let Some(bench) = &self.bench {
-            if let Some(start) = bench.start().filter(|_| game.time() == 0) {
-                game.teleport(glam::DVec3::from_array(start), 0.0, -0.35);
+        // The bench flies the world's player; this client follows.
+        if let (Some(bench), Some(server)) = (&self.bench, self.server.as_mut()) {
+            let world = &mut server.game;
+            if let Some(start) = bench.start().filter(|_| world.time() == 0) {
+                world.teleport(glam::DVec3::from_array(start), 0.0, -0.35);
             }
-            game.glide(bench::SPEED * dt as f64, bench.height());
+            world.glide(bench::SPEED * dt as f64, bench.height());
+            // This client looks where the flight does.
+            game.player.camera.yaw = world.player.camera.yaw;
+            game.player.camera.pitch = world.player.camera.pitch;
         }
         // The pause menu stops the game; the camera still follows it. A
         // scene being captured stands still.
         let frozen = self.pause.is_some() || self.shot.is_some();
-        game.advance(if frozen { 0.0 } else { dt });
+        let step = if frozen { 0.0 } else { dt };
+        match (self.link.as_mut(), self.server.as_mut()) {
+            (Some(link), Some(server)) => {
+                link.advance(game, step);
+                server.advance(step);
+                link.receive(game);
+            }
+            _ => game.advance(step),
+        }
         // Another dimension's chunks replace this one's.
         if game.take_dimension_change() {
             renderer.clear_world();
         }
         let ticked = Instant::now();
 
-        let p = game.camera.position;
+        let p = game.player.camera.position;
         let (x, z) = (p.x.floor() as i32, p.z.floor() as i32);
         let changes = game.chunks.update(ChunkPos::of_block(x, z));
         game.on_chunks_loaded(&changes.loaded);
@@ -1212,7 +1307,10 @@ impl App {
         if let Some(run) = self.shot.as_mut() {
             match run.staged {
                 None if game.chunks.settled(center) => {
-                    (run.shot.stage)(game);
+                    match self.server.as_mut() {
+                        Some(server) => (run.shot.stage)(&mut server.game),
+                        None => (run.shot.stage)(game),
+                    }
                     run.staged = Some(0);
                 }
                 Some(frames) if frames >= SHOT_SETTLE_FRAMES && game.chunks.settled(center) => {
@@ -1227,7 +1325,7 @@ impl App {
             }
         }
         let shapes = crate::world::shape::shapes();
-        renderer.set_outline(game.target.and_then(|hit| {
+        renderer.set_outline(game.player.target.and_then(|hit| {
             let block = game
                 .chunks
                 .world()
@@ -1352,7 +1450,7 @@ impl App {
                     };
                     let (feet, _) = game.player_body();
                     let body_light = light_at(feet.as_dvec3() + DVec3::Y);
-                    let hand_light = light_at(game.camera.position.as_dvec3());
+                    let hand_light = light_at(game.player.camera.position.as_dvec3());
                     figure::build(game, &mut self.held, &fig, body_light, hand_light)
                 }
                 _ => PlayerMeshes::default(),
@@ -1365,7 +1463,7 @@ impl App {
                     atlas: atlas.image(),
                     slim: self.skin_slim,
                 };
-                let eye = game.camera.position.as_dvec3();
+                let eye = game.player.camera.position.as_dvec3();
                 figure::add_mob_items(
                     &mut mesh,
                     game,
@@ -1380,7 +1478,7 @@ impl App {
                 && let Some(models) = &self.models
             {
                 let alpha = game.tick_alpha();
-                let eye = game.camera.position.as_dvec3();
+                let eye = game.player.camera.position.as_dvec3();
                 let mut shadows: Vec<Shadow> = game
                     .mobs
                     .iter()
@@ -1425,7 +1523,7 @@ impl App {
             }
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();
-            let eye = game.camera.position.as_dvec3();
+            let eye = game.player.camera.position.as_dvec3();
             let near = |mob: &&crate::entity::mob::Mob| {
                 mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE
             };
@@ -1524,6 +1622,7 @@ impl App {
             meshes.push((mob_kinds + crate::look::EXTRA_ARMOR, player.armor.clone()));
             // Invisible players aren't drawn, but their armor is (modern).
             let invisible = game
+                .player
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility);
@@ -1546,7 +1645,7 @@ impl App {
             seed: chunks.seed(),
             climate: chunks.terrain().map(|t| t.climate(x, z)),
             light: chunks.light_at(x, p.y.floor() as i32, z),
-            mode: game.mode,
+            mode: game.player.mode,
             time: game.time(),
             dimension: game.dimension(),
         };
@@ -1556,9 +1655,9 @@ impl App {
             attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
                 .map(|i| {
-                    let stack = game.inventory.slot(i)?;
+                    let stack = game.player.inventory.slot(i)?;
                     let icons = self.icons.as_ref()?;
-                    let drawn = (i == game.inventory.selected)
+                    let drawn = (i == game.player.inventory.selected)
                         .then(|| game.bow_ticks())
                         .flatten();
                     Some(match drawn {
@@ -1570,23 +1669,26 @@ impl App {
                 })
                 .collect(),
             offhand: game
+                .player
                 .inventory
                 .slot(crate::inventory::player::OFFHAND)
                 .and_then(|stack| Some(SlotView::of(stack, self.icons.as_ref()?, game.items()))),
-            selected: game.inventory.selected,
-            survival: (game.mode.is_vulnerable() && !game.stats.is_dead()).then(|| SurvivalHud {
-                health: game.stats.health.ceil() as i32,
-                food: game.stats.food,
-                air: (game.stats.air < MAX_AIR).then_some(game.stats.air),
-                level: game.stats.experience.level,
-                progress: game.stats.experience.progress,
-            }),
-            death: game.stats.is_dead().then(|| {
-                let source = game.stats.last_source.unwrap_or(DamageSource::Mob);
+            selected: game.player.inventory.selected,
+            survival: (game.player.mode.is_vulnerable() && !game.player.stats.is_dead()).then(
+                || SurvivalHud {
+                    health: game.player.stats.health.ceil() as i32,
+                    food: game.player.stats.food,
+                    air: (game.player.stats.air < MAX_AIR).then_some(game.player.stats.air),
+                    level: game.player.stats.experience.level,
+                    progress: game.player.stats.experience.progress,
+                },
+            ),
+            death: game.player.stats.is_dead().then(|| {
+                let source = game.player.stats.last_source.unwrap_or(DamageSource::Mob);
                 format!("Player {}", source.death_message())
             }),
             sleep: game.sleep_fade(),
-            message: game.message.as_ref().map(|(text, _)| text.clone()),
+            message: game.player.message.as_ref().map(|(text, _)| text.clone()),
             portal: game.portal_swirl(),
             loading: game.is_arriving(),
             boss: game.dragon_bar(),
@@ -1594,9 +1696,13 @@ impl App {
             toasts: toast_views(game, self.icons.as_deref()),
             advancements: self
                 .advancements
-                .or(game.shot_advancements())
+                .or(self
+                    .server
+                    .as_ref()
+                    .map_or(game.shot_advancements(), |s| s.game.shot_advancements()))
                 .and_then(|tab| advancements_view(game, self.icons.as_deref(), tab)),
             effects: game
+                .player
                 .stats
                 .effects
                 .0
@@ -1635,7 +1741,9 @@ impl App {
         };
         // The recipe book's entries, built only while it is open.
         let (entries, ghost) = match (&self.screen, self.icons.as_deref()) {
-            (Some(Screen::Inventory | Screen::Crafting), Some(icons)) if game.recipe_book.open => {
+            (Some(Screen::Inventory | Screen::Crafting), Some(icons))
+                if game.player.recipe_book.open =>
+            {
                 let grid = game.crafting_grid().unwrap_or(&[]);
                 let items = game.items();
                 let entries: Vec<_> = self
@@ -1648,7 +1756,7 @@ impl App {
                             index,
                             icon: SlotView::of(&stack, icons, items),
                             name: items.name(&stack),
-                            craftable: recipe.craftable(&game.inventory, grid),
+                            craftable: recipe.craftable(&game.player.inventory, grid),
                             category: recipe.category,
                             fits_small: recipe.fits(2),
                         }
@@ -1677,7 +1785,7 @@ impl App {
         };
         let book = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting)).then(|| {
             crate::ui::recipe_book::BookView {
-                settings: &game.recipe_book,
+                settings: &game.player.recipe_book,
                 entries: &entries,
                 ghost: ghost.as_ref(),
                 tab_icons: &self.book_tab_icons,
@@ -1687,7 +1795,7 @@ impl App {
             slot: &slot,
             furnace: game.furnace_progress(),
             brewing: game.brewing_progress(),
-            cursor: game.cursor.as_ref().and_then(view_of),
+            cursor: game.player.cursor.as_ref().and_then(view_of),
             catalog: &self.catalog,
             tabs: &self.tab_views,
             bench: bench_view(game, self.icons.as_deref()),
@@ -1702,7 +1810,8 @@ impl App {
             .pause
             .as_mut()
             .map(|menu| (menu, &mut self.options, &mut difficulty));
-        let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
+        let (ui, actions) =
+            debug_ui.frame(window, &game.player.camera, &stats, &hud, screen, pause);
         game.difficulty = difficulty;
         let mut environment = game.environment();
         environment.brightness = self.options.brightness;
@@ -1714,7 +1823,7 @@ impl App {
         let render_distance = game.chunks.radius();
         let place = format!(
             "ended at {:.0}, {} chunks loaded, {} drawn",
-            game.camera.position,
+            game.player.camera.position,
             game.chunks.world().len(),
             renderer.chunks_drawn()
         );
@@ -1734,8 +1843,14 @@ impl App {
                 println!("{report}");
                 if let Some(path) = bench.perf_report.clone() {
                     let work = self.game.as_ref().map(|game| {
+                        // Generation is the server's work, meshing this
+                        // client's.
+                        let generated = self
+                            .server
+                            .as_ref()
+                            .map_or(game.chunks.work_stats(), |s| s.game.chunks.work_stats());
                         let stats = game.chunks.work_stats();
-                        (stats.generated.summary(), stats.meshed.summary())
+                        (generated.generated.summary(), stats.meshed.summary())
                     });
                     let (generated, meshed) = work.unwrap_or(((0, 0.0), (0, 0.0)));
                     let run = bench::RunStats {
@@ -1888,8 +2003,8 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(game) = self.game.as_mut()
-            && let Err(err) = game.save()
+        if let Some(server) = self.server.as_mut()
+            && let Err(err) = server.game.save()
         {
             error!("saving on quit failed: {err:#}");
         }
@@ -1898,6 +2013,8 @@ impl ApplicationHandler for App {
         self.renderer = None;
         // Joins the chunk workers.
         self.game = None;
+        self.link = None;
+        self.server = None;
         self.window = None;
     }
 }
@@ -1992,8 +2109,8 @@ fn bench_view(game: &Game, icons: Option<&ItemIcons>) -> Option<BenchView> {
         ui::screens::{AnvilStatus, OfferView},
     };
     let bench = game.bench()?;
-    let free = game.mode.has_every_item();
-    let level = game.stats.experience.level;
+    let free = game.player.mode.has_every_item();
+    let level = game.player.stats.experience.level;
     let filled = bench.slots.iter().any(Option::is_some);
     let has_result = game.slot_stack(SlotRef::Result).is_some();
     let mut view = BenchView {
@@ -2209,7 +2326,11 @@ mod tests {
 
     fn view_of(app: &App) -> (f32, f32, usize) {
         let game = app.game.as_ref().unwrap();
-        (game.camera.yaw, game.camera.pitch, game.inventory.selected)
+        (
+            game.player.camera.yaw,
+            game.player.camera.pitch,
+            game.player.inventory.selected,
+        )
     }
 
     /// Everything the mouse can do in a window: a click, a drag with the
@@ -2250,13 +2371,16 @@ mod tests {
             .set(Action::Hotbar5, Some(Input::Mouse(MouseButton::Back)));
         app.on_input(Input::Key(KeyCode::KeyW), true, false);
         assert!(
-            !app.game.as_ref().unwrap().keys.forward,
+            !app.game.as_ref().unwrap().player.keys.forward,
             "W does nothing now"
         );
         app.on_input(Input::Key(KeyCode::KeyI), true, false);
-        assert!(app.game.as_ref().unwrap().keys.forward, "I walks forward");
+        assert!(
+            app.game.as_ref().unwrap().player.keys.forward,
+            "I walks forward"
+        );
         app.on_mouse_button(MouseButton::Back, true);
-        assert_eq!(app.game.as_ref().unwrap().inventory.selected, 4);
+        assert_eq!(app.game.as_ref().unwrap().player.inventory.selected, 4);
         // An unbound action does nothing.
         app.options.keys.set(Action::Inventory, None);
         app.on_input(Input::Key(KeyCode::KeyE), true, false);

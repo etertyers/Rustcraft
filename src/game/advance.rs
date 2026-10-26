@@ -29,7 +29,7 @@ pub struct Toast {
 impl Game {
     /// What the world has done.
     pub fn progress(&self) -> &Progress {
-        &self.progress
+        &self.player.progress
     }
 
     /// Shows the advancements screen on tab `tab` in a `--shot` scene.
@@ -52,16 +52,16 @@ impl Game {
     }
 
     pub fn toasts(&self) -> &[Toast] {
-        &self.toasts
+        &self.player.toasts
     }
 
     /// Counts `event`; every advancement it completes pops up a toast
     /// (except a tab's first, which the game makes at its start).
     pub fn note(&mut self, event: Event) {
         let registry = advancements::registry();
-        for index in self.progress.record(registry, &event) {
+        for index in self.player.progress.record(registry, &event) {
             if registry.defs[index].parent.is_some() {
-                self.toasts.push(Toast {
+                self.player.toasts.push(Toast {
                     index,
                     ticks: TOAST_TICKS,
                 });
@@ -90,13 +90,13 @@ impl Game {
     /// One tick: toasts age, and now and then the inventory, the biome and
     /// the structures round the player are looked at.
     pub(super) fn tick_advancements(&mut self) {
-        for toast in &mut self.toasts {
+        for toast in &mut self.player.toasts {
             toast.ticks = toast.ticks.saturating_sub(1);
         }
-        if self.toasts.iter().any(|t| t.ticks == 0) {
+        if self.player.toasts.iter().any(|t| t.ticks == 0) {
             crate::audio::play_here("ui.toast.out");
         }
-        self.toasts.retain(|t| t.ticks > 0);
+        self.player.toasts.retain(|t| t.ticks > 0);
         if self.time == 0 {
             self.note(Event::Used("start".to_owned()));
         }
@@ -114,7 +114,7 @@ impl Game {
         let wanted = advancements::registry().wanted_items();
         let mut have = Vec::new();
         for index in 0..crate::inventory::player::SLOTS {
-            if let Some(stack) = self.inventory.slot(index) {
+            if let Some(stack) = self.player.inventory.slot(index) {
                 let name = stack.id.name();
                 if wanted.contains(name) && !have.contains(&name) {
                     have.push(name);
@@ -128,7 +128,7 @@ impl Game {
 
     /// The biome and any structure the player is in.
     fn survey(&mut self) {
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         let cell = feet.floor().as_ivec3();
         if let Some(biome) = self.chunks.world().biome_at_block(cell.x, cell.y, cell.z) {
             self.note(Event::Biome(biome.name().to_lowercase().replace(' ', "_")));
@@ -164,14 +164,14 @@ impl Game {
 
     /// Levitation lifting the player 50 blocks.
     fn track_levitation(&mut self) {
-        let y = self.body.position().y;
-        if self.stats.effects.has(Effect::Levitation) {
-            let start = *self.levitation_from.get_or_insert(y);
+        let y = self.player.body.position().y;
+        if self.player.stats.effects.has(Effect::Levitation) {
+            let start = *self.player.levitation_from.get_or_insert(y);
             if y - start >= LEVITATE_BLOCKS {
                 self.note(Event::Used("levitate".to_owned()));
             }
-        } else if self.body.on_ground {
-            self.levitation_from = None;
+        } else if self.player.body.on_ground {
+            self.player.levitation_from = None;
         }
     }
 }
@@ -201,7 +201,8 @@ mod tests {
     fn carrying_an_item_makes_its_advancement_and_a_toast_that_fades() {
         let mut game = flat_game(GameMode::Survival);
         game.run_ticks(2);
-        game.inventory
+        game.player
+            .inventory
             .set(3, Some(ItemStack::new(items::COBBLESTONE, 4)));
         game.run_ticks(11);
         assert!(made(&game, "story/mine_stone"));
@@ -211,7 +212,8 @@ mod tests {
         game.run_ticks(TOAST_TICKS + 5);
         assert!(game.toasts().is_empty());
         // Having it again does nothing.
-        game.inventory
+        game.player
+            .inventory
             .set(4, Some(ItemStack::new(items::COBBLESTONE, 4)));
         game.run_ticks(15);
         assert!(game.toasts().is_empty());
@@ -255,7 +257,8 @@ mod tests {
         game.note(Event::Used("kill_dragon".into()));
         game.note(Event::Used("gateway".into()));
         game.note(Event::Structure("end city".into()));
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::ELYTRA, 1)));
         game.run_ticks(12);
         for id in [
@@ -303,14 +306,18 @@ mod tests {
     #[test]
     fn levitating_fifty_blocks_makes_great_view() {
         let mut game = flat_game(GameMode::Survival);
-        game.stats.effects.add(crate::player::effects::Active::new(
-            Effect::Levitation,
-            0,
-            10_000,
-        ));
+        game.player
+            .stats
+            .effects
+            .add(crate::player::effects::Active::new(
+                Effect::Levitation,
+                0,
+                10_000,
+            ));
         game.run_ticks(2);
-        game.body
-            .set_position(game.body.position() + glam::DVec3::Y * 51.0);
+        game.player
+            .body
+            .set_position(game.player.body.position() + glam::DVec3::Y * 51.0);
         game.run_ticks(2);
         assert!(made(&game, "end/levitate"));
     }
@@ -320,7 +327,7 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         game.mob_defs = crate::game::tests::mob_registry();
         let give = |game: &mut Game, slot: usize, id| {
-            game.inventory.set(slot, Some(ItemStack::new(id, 1)));
+            game.player.inventory.set(slot, Some(ItemStack::new(id, 1)));
             game.run_ticks(11);
         };
         game.run_ticks(2);

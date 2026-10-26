@@ -114,7 +114,7 @@ pub fn run(seed: u64) -> Result<()> {
 impl Game {
     /// Monsters and animals loaded within `radius` blocks of the player.
     pub fn mob_counts(&self, radius: f64) -> (usize, usize) {
-        let player = self.body.position();
+        let player = self.player.body.position();
         let (mut monsters, mut animals) = (0, 0);
         for mob in self.mobs.iter().filter(|m| !m.is_dead()) {
             if mob.feet().distance(player) > radius {

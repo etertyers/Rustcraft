@@ -37,10 +37,10 @@ impl Game {
     /// Opens the screen of the enchanting table, anvil or grindstone at
     /// `at`.
     pub(super) fn open_bench(&mut self, kind: BenchKind, at: IVec3) {
-        if kind == BenchKind::Enchanting && self.stats.enchant_seed == 0 {
-            self.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
+        if kind == BenchKind::Enchanting && self.player.stats.enchant_seed == 0 {
+            self.player.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
         }
-        self.container = Some(Container::Bench(Bench {
+        self.player.container = Some(Container::Bench(Bench {
             kind,
             at,
             slots: vec![
@@ -60,7 +60,7 @@ impl Game {
 
     /// The open bench, if there is one.
     pub fn bench(&self) -> Option<&Bench> {
-        match &self.container {
+        match &self.player.container {
             Some(Container::Bench(bench)) => Some(bench),
             _ => None,
         }
@@ -91,7 +91,7 @@ impl Game {
     /// Chooses cut `index` on the open stonecutter, if it's there.
     pub fn choose_cut(&mut self, index: usize) {
         if index < self.stonecutter_cuts().len()
-            && let Some(Container::Bench(bench)) = &mut self.container
+            && let Some(Container::Bench(bench)) = &mut self.player.container
         {
             bench.choice = index;
             crate::audio::play_here("ui.stonecutter.select_recipe");
@@ -100,7 +100,7 @@ impl Game {
 
     /// Whether levels and lapis cost nothing (creative).
     fn bench_is_free(&self) -> bool {
-        self.mode.has_every_item()
+        self.player.mode.has_every_item()
     }
 
     /// Fills the anvil's name box with the first item's name when that
@@ -108,7 +108,7 @@ impl Game {
     /// `AnvilMenu.slotsChanged`).
     pub(super) fn sync_anvil_name(&mut self) {
         let items = self.items.clone();
-        if let Some(Container::Bench(bench)) = &mut self.container
+        if let Some(Container::Bench(bench)) = &mut self.player.container
             && bench.kind == BenchKind::Anvil
         {
             let left = bench.slots[0].clone();
@@ -130,7 +130,7 @@ impl Game {
 
     /// Types in the anvil's name box.
     pub fn set_anvil_name(&mut self, name: String) {
-        if let Some(Container::Bench(bench)) = &mut self.container
+        if let Some(Container::Bench(bench)) = &mut self.player.container
             && bench.kind == BenchKind::Anvil
         {
             bench.name = name;
@@ -175,7 +175,7 @@ impl Game {
             return [None, None, None];
         }
         let power = self.bookshelf_power(bench.at);
-        enchant::offers(&self.items, stack.id, power, self.stats.enchant_seed)
+        enchant::offers(&self.items, stack.id, power, self.player.stats.enchant_seed)
     }
 
     /// Lapis in the table's lapis slot.
@@ -193,11 +193,11 @@ impl Game {
         let Some(offer) = self.enchant_offers().get(button).cloned().flatten() else {
             return false;
         };
-        let level = self.stats.experience.level;
+        let level = self.player.stats.experience.level;
         if !free && (self.lapis_count() < price || level < price || level < offer.requires) {
             return false;
         }
-        let Some(Container::Bench(bench)) = &mut self.container else {
+        let Some(Container::Bench(bench)) = &mut self.player.container else {
             return false;
         };
         let Some(mut item) = bench.slots[0].take() else {
@@ -219,13 +219,13 @@ impl Game {
             Some(rest) => {
                 bench.slots[0] = Some(rest);
                 let items = self.items.clone();
-                if let Some(left) = self.inventory.add(item, &items) {
+                if let Some(left) = self.player.inventory.add(item, &items) {
                     self.throw(left);
                 }
             }
             None => bench.slots[0] = Some(item),
         }
-        let Some(Container::Bench(bench)) = &mut self.container else {
+        let Some(Container::Bench(bench)) = &mut self.player.container else {
             return false;
         };
         if !free {
@@ -235,9 +235,9 @@ impl Game {
                     bench.slots[1] = None;
                 }
             }
-            self.stats.experience.spend_levels(price);
+            self.player.stats.experience.spend_levels(price);
         }
-        self.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
+        self.player.stats.enchant_seed = (self.rng.next_u64() as u32).max(1);
         if let Some(at) = self.bench().map(|bench| bench.at) {
             crate::audio::play(
                 "block.enchantment_table.use",
@@ -302,7 +302,7 @@ impl Game {
                 let Some(Ok(made)) = self.anvil_outcome() else {
                     return;
                 };
-                if !free && self.stats.experience.level < made.cost {
+                if !free && self.player.stats.experience.level < made.cost {
                     return;
                 }
                 (made.output, made.cost, made.right_used, 0)
@@ -338,6 +338,7 @@ impl Game {
         }
         if shift {
             if self
+                .player
                 .inventory
                 .merge(
                     output.clone(),
@@ -348,10 +349,10 @@ impl Game {
             {
                 return;
             }
-        } else if !slots::take_onto_cursor(output, &mut self.cursor, &items) {
+        } else if !slots::take_onto_cursor(output, &mut self.player.cursor, &items) {
             return;
         }
-        if let Some(Container::Bench(bench)) = &mut self.container
+        if let Some(Container::Bench(bench)) = &mut self.player.container
             && kind == BenchKind::Smithing
         {
             // One template and one ingot are used up with the base.
@@ -364,7 +365,7 @@ impl Game {
                 }
             }
             bench.slots[1] = None;
-        } else if let Some(Container::Bench(bench)) = &mut self.container
+        } else if let Some(Container::Bench(bench)) = &mut self.player.container
             && kind == BenchKind::Stonecutter
         {
             // One of the input is cut.
@@ -374,7 +375,7 @@ impl Game {
                     bench.slots[0] = None;
                 }
             }
-        } else if let Some(Container::Bench(bench)) = &mut self.container {
+        } else if let Some(Container::Bench(bench)) = &mut self.player.container {
             bench.slots[0] = None;
             if let Some(right) = bench.slots[1].as_mut() {
                 right.count = right.count.saturating_sub(right_used);
@@ -386,10 +387,10 @@ impl Game {
             bench.named = None;
         }
         if !free {
-            self.stats.experience.spend_levels(cost);
+            self.player.stats.experience.spend_levels(cost);
         }
         if xp > 0 {
-            let at = self.body.position() + DVec3::Y * 0.5;
+            let at = self.player.body.position() + DVec3::Y * 0.5;
             self.spawn_xp(xp, at);
         }
         if kind == BenchKind::Anvil && !free && self.rng.next_f64() < ANVIL_DAMAGE_CHANCE {
@@ -408,8 +409,8 @@ impl Game {
         crate::audio::play("block.anvil.land", at.as_dvec3() + DVec3::splat(0.5));
         let damage = (distance * 2.0).floor().min(40.0) as f32;
         let cell = crate::player::collision::Aabb::new(at.as_dvec3(), at.as_dvec3() + DVec3::ONE);
-        if self.mode.is_vulnerable() && self.body.aabb().intersects(&cell) {
-            self.stats.damage(damage, DamageSource::Anvil);
+        if self.player.mode.is_vulnerable() && self.player.body.aabb().intersects(&cell) {
+            self.player.stats.damage(damage, DamageSource::Anvil);
         }
         for mob in &mut self.mobs {
             if !mob.is_dead() && mob.body.aabb().intersects(&cell) {
@@ -483,12 +484,12 @@ mod tests {
     /// Puts `stack` into the bench's slot `index` by clicking, with it on
     /// the mouse.
     fn put(game: &mut Game, index: usize, stack: ItemStack) {
-        game.cursor = Some(stack);
+        game.player.cursor = Some(stack);
         game.click_slot(SlotRef::Grid(index), Click::Left);
     }
 
     fn give_levels(game: &mut Game, levels: u32) {
-        game.stats.experience.add(points_to_reach(levels));
+        game.player.stats.experience.add(points_to_reach(levels));
     }
 
     #[test]
@@ -521,7 +522,7 @@ mod tests {
         assert_eq!(game.lapis_count(), 3);
         let seed = (1..5000u32)
             .find(|&seed| {
-                game.stats.enchant_seed = seed;
+                game.player.stats.enchant_seed = seed;
                 game.enchant_offers()[2].as_ref().is_some_and(|offer| {
                     offer
                         .enchants
@@ -530,7 +531,7 @@ mod tests {
                 })
             })
             .expect("some seed offers Efficiency");
-        game.stats.enchant_seed = seed;
+        game.player.stats.enchant_seed = seed;
         let offer = game.enchant_offers()[2].clone().unwrap();
         assert_eq!(offer.requires, 30);
 
@@ -540,15 +541,15 @@ mod tests {
         assert_eq!(game.lapis_count(), 3);
         // Enough levels: 3 lapis and 3 levels are spent.
         give_levels(&mut game, 33);
-        let before = game.stats.experience.level;
+        let before = game.player.stats.experience.level;
         assert!(game.enchant_item(2));
-        assert_eq!(game.stats.experience.level, before - 3);
+        assert_eq!(game.player.stats.experience.level, before - 3);
         assert_eq!(game.lapis_count(), 0);
         let bench = game.bench().unwrap();
         let done = bench.slots[0].as_ref().unwrap();
         assert!(done.level_of(Enchantment::Efficiency) >= 1, "{done:?}");
         // The seed moved on, and an enchanted item takes no more.
-        assert_ne!(game.stats.enchant_seed, seed);
+        assert_ne!(game.player.stats.enchant_seed, seed);
         assert!(game.enchant_offers().iter().all(Option::is_none));
     }
 
@@ -557,7 +558,7 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         table_with(&mut game, 15);
         game.open_bench(BenchKind::Enchanting, TABLE);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(ItemStack::new(items::BOOK, 1));
             bench.slots[1] = Some(ItemStack::new(items::LAPIS_LAZULI, 3));
         }
@@ -575,7 +576,7 @@ mod tests {
         let mut game = flat_game(GameMode::Creative);
         table_with(&mut game, 0);
         game.open_bench(BenchKind::Enchanting, TABLE);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(ItemStack::new(items::DIAMOND_SWORD, 1));
         }
         assert!(game.enchant_offers()[0].is_some());
@@ -592,7 +593,7 @@ mod tests {
     fn the_lapis_slot_takes_only_lapis_and_closing_gives_things_back() {
         let mut game = flat_game(GameMode::Survival);
         game.open_bench(BenchKind::Enchanting, TABLE);
-        game.cursor = Some(ItemStack::new(items::DIRT, 5));
+        game.player.cursor = Some(ItemStack::new(items::DIRT, 5));
         game.click_slot(SlotRef::Grid(1), Click::Left);
         assert_eq!(game.slot_stack(SlotRef::Grid(1)), None);
         game.click_slot(SlotRef::Grid(0), Click::Left);
@@ -602,7 +603,7 @@ mod tests {
         );
         game.close_container();
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::DIRT, 5)),
             "back in the pack"
         );
@@ -621,7 +622,7 @@ mod tests {
         game.chunks
             .set_blocks(&[(anvil, BlockState::of(blocks::ANVIL))]);
         game.open_bench(BenchKind::Anvil, anvil);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(enchanted_book(Enchantment::Efficiency, 3));
             bench.slots[1] = Some(enchanted_book(Enchantment::Efficiency, 3));
         }
@@ -630,17 +631,18 @@ mod tests {
         // Without the 4 levels it can't be taken.
         give_levels(&mut game, 3);
         game.click_slot(SlotRef::Result, Click::Left);
-        assert_eq!(game.cursor, None);
+        assert_eq!(game.player.cursor, None);
         give_levels(&mut game, 10);
-        let before = game.stats.experience.level;
+        let before = game.player.stats.experience.level;
         game.click_slot(SlotRef::Result, Click::Left);
         assert_eq!(
-            game.cursor
+            game.player
+                .cursor
                 .as_ref()
                 .map(|c| c.level_of(Enchantment::Efficiency)),
             Some(4)
         );
-        assert_eq!(game.stats.experience.level, before - 4);
+        assert_eq!(game.player.stats.experience.level, before - 4);
         assert_eq!(game.slot_stack(SlotRef::Grid(0)), None);
         assert_eq!(game.slot_stack(SlotRef::Grid(1)), None);
     }
@@ -652,7 +654,7 @@ mod tests {
         game.chunks
             .set_blocks(&[(anvil, BlockState::of(blocks::ANVIL))]);
         game.open_bench(BenchKind::Anvil, anvil);
-        game.cursor = Some(ItemStack::new(items::DIAMOND_PICKAXE, 1));
+        game.player.cursor = Some(ItemStack::new(items::DIAMOND_PICKAXE, 1));
         game.click_slot(SlotRef::Grid(0), Click::Left);
         let name = game.bench().unwrap().name.clone();
         assert_eq!(
@@ -680,7 +682,7 @@ mod tests {
             .set_blocks(&[(anvil, BlockState::of(blocks::ANVIL))]);
         game.open_bench(BenchKind::Anvil, anvil);
         let worn = ItemStack::with_damage(items::DIAMOND_PICKAXE, 1, 1000);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(worn);
             bench.slots[1] = Some(ItemStack::new(items::DIAMOND, 2));
         }
@@ -691,7 +693,7 @@ mod tests {
         give_levels(&mut game, 5);
         game.click_slot(SlotRef::Result, Click::Shift);
         assert!(
-            game.inventory.find(items::DIAMOND_PICKAXE).is_some(),
+            game.player.inventory.find(items::DIAMOND_PICKAXE).is_some(),
             "shift-click sends it to the pack"
         );
         // Both diamonds went in; the bench is empty and the name cleared.
@@ -728,14 +730,14 @@ mod tests {
         let mut pickaxe = ItemStack::new(items::DIAMOND_PICKAXE, 1);
         pickaxe.enchant(Enchantment::Efficiency, 5);
         pickaxe.enchant(Enchantment::Mending, 1);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(pickaxe);
         }
         let shown = game.slot_stack(SlotRef::Result).unwrap();
         assert!(!shown.is_enchanted());
         game.click_slot(SlotRef::Result, Click::Left);
         assert_eq!(
-            game.cursor.as_ref().map(ItemStack::is_enchanted),
+            game.player.cursor.as_ref().map(ItemStack::is_enchanted),
             Some(false)
         );
         let paid: u32 = game.orbs.iter().map(|orb| orb.value).sum();
@@ -753,7 +755,7 @@ mod tests {
         game.open_bench(BenchKind::Stonecutter, cutter);
         assert!(game.stonecutter_cuts().is_empty());
         assert!(game.slot_stack(SlotRef::Result).is_none());
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(ItemStack::new(items::COBBLESTONE, 3));
         }
         let cuts: Vec<_> = game
@@ -782,14 +784,14 @@ mod tests {
         );
         game.click_slot(SlotRef::Result, Click::Left);
         assert_eq!(
-            game.cursor,
+            game.player.cursor,
             Some(ItemStack::new(items::COBBLESTONE_WALL, 1))
         );
         assert_eq!(game.bench().unwrap().slots[0].as_ref().unwrap().count, 2);
         // A second one stacks onto the cursor; the last one empties the slot.
         game.click_slot(SlotRef::Result, Click::Left);
         game.click_slot(SlotRef::Result, Click::Left);
-        assert_eq!(game.cursor.as_ref().unwrap().count, 3);
+        assert_eq!(game.player.cursor.as_ref().unwrap().count, 3);
         assert!(game.bench().unwrap().slots[0].is_none());
         assert!(game.slot_stack(SlotRef::Result).is_none());
     }
@@ -803,7 +805,7 @@ mod tests {
         game.open_bench(BenchKind::Smithing, table);
         let mut sword = ItemStack::with_damage(items::DIAMOND_SWORD, 1, 40);
         sword.enchant(Enchantment::Sharpness, 3);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(ItemStack::new(
                 items::NETHERITE_UPGRADE_SMITHING_TEMPLATE,
                 2,
@@ -816,7 +818,7 @@ mod tests {
             Some(items::NETHERITE_SWORD)
         );
         game.click_slot(SlotRef::Result, Click::Left);
-        let made = game.cursor.clone().unwrap();
+        let made = game.player.cursor.clone().unwrap();
         assert_eq!((made.id, made.damage), (items::NETHERITE_SWORD, 40));
         assert_eq!(made.level_of(Enchantment::Sharpness), 3);
         let slots = &game.bench().unwrap().slots;
@@ -855,15 +857,18 @@ mod tests {
         assert!(hurt == 0.0 || (1.0..=8.0).contains(&hurt), "{hurt}");
         // The numbers behind it: a 20-block drop does 38, never past 40.
         let state = BlockState::of(blocks::ANVIL);
-        let before = game.stats.health;
-        game.body.set_position(DVec3::new(0.5, 64.0, 0.5));
+        let before = game.player.stats.health;
+        game.player.body.set_position(DVec3::new(0.5, 64.0, 0.5));
         game.anvil_lands(state, IVec3::new(0, 64, 0), 20.0);
-        assert_eq!(before - game.stats.health.max(0.0), 20.0f32.min(before));
+        assert_eq!(
+            before - game.player.stats.health.max(0.0),
+            20.0f32.min(before)
+        );
         // A drop of one block or less does nothing.
         let mut other = flat_game(GameMode::Survival);
-        let before = other.stats.health;
+        let before = other.player.stats.health;
         other.anvil_lands(state, IVec3::new(0, 64, 0), 1.0);
-        assert_eq!(other.stats.health, before);
+        assert_eq!(other.player.stats.health, before);
     }
 
     #[test]
@@ -871,7 +876,7 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         table_with(&mut game, 15);
         game.open_bench(BenchKind::Enchanting, TABLE);
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(ItemStack::new(items::BOOK, 5));
             bench.slots[1] = Some(ItemStack::new(items::LAPIS_LAZULI, 3));
         }
@@ -880,12 +885,13 @@ mod tests {
         let bench = game.bench().unwrap();
         assert_eq!(bench.slots[0], Some(ItemStack::new(items::BOOK, 4)));
         let slot = game
+            .player
             .inventory
             .find(items::ENCHANTED_BOOK)
             .expect("the book");
-        assert!(game.inventory.slot(slot).unwrap().is_enchanted());
+        assert!(game.player.inventory.slot(slot).unwrap().is_enchanted());
         // A stack of anything else isn't enchantable.
-        if let Some(Container::Bench(bench)) = &mut game.container {
+        if let Some(Container::Bench(bench)) = &mut game.player.container {
             bench.slots[0] = Some(ItemStack::new(items::STICK, 4));
         }
         assert!(game.enchant_offers().iter().all(Option::is_none));

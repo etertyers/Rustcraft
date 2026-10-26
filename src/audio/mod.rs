@@ -182,6 +182,11 @@ pub fn play_here_with(event: impl Into<Cow<'static, str>>, volume: f32, pitch: f
     });
 }
 
+/// Puts a cue back at the end of the queue.
+pub fn requeue(cue: Cue) {
+    queue(cue);
+}
+
 /// Takes the cues queued so far on this thread.
 pub fn drain() -> Vec<Cue> {
     QUEUE.with(|queue| std::mem::take(&mut *queue.borrow_mut()))

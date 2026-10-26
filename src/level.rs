@@ -23,6 +23,8 @@ use crate::{
 };
 
 const LEVEL_FILE: &str = "level.ron";
+/// Each player's file is in this folder of the world (M36).
+const PLAYER_DIR: &str = "playerdata";
 /// 2 since v1.1 (blocks and items by name); 1 was v1.0.
 pub const LEVEL_VERSION: u32 = 2;
 /// Where an upgraded v1.0 world's original files are kept.
@@ -191,6 +193,20 @@ pub struct PlayerData {
     pub bed: Option<[i32; 3]>,
 }
 
+/// One player's own file, `playerdata/<name>.ron` (added in M36): where
+/// they are, what they carry, their ender chest, health, experience and
+/// effects, their bed, advancements and recipe book.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerFile {
+    pub player: PlayerData,
+    #[serde(default)]
+    pub ender_chest: Vec<Option<crate::inventory::stack::ItemStack>>,
+    #[serde(default)]
+    pub advancements: crate::advancements::Progress,
+    #[serde(default)]
+    pub recipe_book: crate::inventory::book::Settings,
+}
+
 impl Level {
     pub fn new(name: &str, seed: u64, game_mode: GameMode, spawn: [f64; 3]) -> Self {
         Self {
@@ -287,6 +303,35 @@ impl WorldDir {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Where player `name`'s file is.
+    pub fn player_path(&self, name: &str) -> PathBuf {
+        self.path.join(PLAYER_DIR).join(format!("{name}.ron"))
+    }
+
+    /// Player `name`'s file, if they've played here.
+    pub fn load_player(&self, name: &str) -> Result<Option<PlayerFile>> {
+        let path = self.player_path(name);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
+        };
+        let file = ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        Ok(Some(file))
+    }
+
+    /// Writes player `name`'s file through a temporary one.
+    pub fn save_player(&self, name: &str, file: &PlayerFile) -> Result<()> {
+        let path = self.player_path(name);
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+        let text = ron::ser::to_string_pretty(file, ron::ser::PrettyConfig::default())?;
+        let temp = path.with_extension("ron.tmp");
+        fs::write(&temp, text).with_context(|| format!("writing {}", temp.display()))?;
+        fs::rename(&temp, &path).with_context(|| format!("writing {}", path.display()))
     }
 
     /// Whether the folder holds a world.

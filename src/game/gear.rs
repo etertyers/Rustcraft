@@ -44,7 +44,8 @@ pub fn damage_bonus(sharpness: u8, smite: u8, bane: u8, kind: Kind) -> f32 {
 impl Game {
     /// The level of `enchantment` on the main hand's item.
     pub(super) fn held_level(&self, enchantment: Enchantment) -> u8 {
-        self.inventory
+        self.player
+            .inventory
             .selected_stack()
             .map_or(0, |stack| stack.level_of(enchantment))
     }
@@ -70,11 +71,12 @@ impl Game {
     /// Wears the item in `hand`, with Unbreaking. Returns true if it broke.
     pub(super) fn wear_hand(&mut self, hand: Hand, amount: u16) -> bool {
         let level = self
+            .player
             .inventory
             .hand_stack(hand)
             .map_or(0, |stack| stack.level_of(Enchantment::Unbreaking));
         let amount = self.after_unbreaking(level, amount);
-        amount > 0 && self.inventory.damage_hand(hand, amount, &self.items)
+        amount > 0 && self.player.inventory.damage_hand(hand, amount, &self.items)
     }
 }
 
@@ -106,21 +108,22 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         let mut pickaxe = ItemStack::new(items::DIAMOND_PICKAXE, 1);
         pickaxe.enchant(Enchantment::Unbreaking, 3);
-        let slot = game.inventory.selected;
-        game.inventory.set(slot, Some(pickaxe));
+        let slot = game.player.inventory.selected;
+        game.player.inventory.set(slot, Some(pickaxe));
         for _ in 0..4000 {
             game.wear_selected(1);
         }
-        let worn = game.inventory.selected_stack().unwrap().damage;
+        let worn = game.player.inventory.selected_stack().unwrap().damage;
         // A quarter of 4000, give or take chance.
         assert!((850..1150).contains(&worn), "{worn}");
         // Without it every point counts.
-        game.inventory
+        game.player
+            .inventory
             .set(slot, Some(ItemStack::new(items::DIAMOND_PICKAXE, 1)));
         for _ in 0..100 {
             game.wear_selected(1);
         }
-        assert_eq!(game.inventory.selected_stack().unwrap().damage, 100);
+        assert_eq!(game.player.inventory.selected_stack().unwrap().damage, 100);
     }
 }
 
@@ -233,8 +236,8 @@ mod effect_tests {
         let cell = glam::IVec3::new(2, 64, 0);
         game.chunks
             .set_blocks(&[(cell, BlockState::of(blocks::DIAMOND_ORE))]);
-        let slot = game.inventory.selected;
-        game.inventory.set(
+        let slot = game.player.inventory.selected;
+        game.player.inventory.set(
             slot,
             Some(enchanted(
                 items::DIAMOND_PICKAXE,
@@ -250,7 +253,8 @@ mod effect_tests {
         game.entities.clear();
         game.chunks
             .set_blocks(&[(cell, BlockState::of(blocks::DIAMOND_ORE))]);
-        game.inventory
+        game.player
+            .inventory
             .set(slot, Some(ItemStack::new(items::DIAMOND_PICKAXE, 1)));
         game.break_block(cell);
         assert_eq!(game.entities[0].stack.id, items::DIAMOND);
@@ -289,23 +293,26 @@ mod effect_tests {
                 (Enchantment::Infinity, 1),
             ],
         );
-        let slot = game.inventory.selected;
-        game.inventory.set(slot, Some(bow));
-        game.inventory.set(8, Some(ItemStack::new(items::ARROW, 3)));
+        let slot = game.player.inventory.selected;
+        game.player.inventory.set(slot, Some(bow));
+        game.player
+            .inventory
+            .set(8, Some(ItemStack::new(items::ARROW, 3)));
         game.shoot_arrow(1.0, items::ARROW);
         let arrow = &game.arrows[0];
         assert_eq!((arrow.power, arrow.punch, arrow.flame), (5, 2, true));
         assert!(!arrow.pickup, "infinity arrows vanish");
         assert_eq!(
-            game.inventory.slot(8),
+            game.player.inventory.slot(8),
             Some(&ItemStack::new(items::ARROW, 3)),
             "no arrow used"
         );
         // A plain bow uses one and leaves one to pick up.
-        game.inventory
+        game.player
+            .inventory
             .set(slot, Some(ItemStack::new(items::BOW, 1)));
         game.shoot_arrow(1.0, items::ARROW);
-        assert_eq!(game.inventory.slot(8).map(|s| s.count), Some(2));
+        assert_eq!(game.player.inventory.slot(8).map(|s| s.count), Some(2));
         assert!(game.arrows[1].pickup);
     }
 }

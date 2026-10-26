@@ -130,15 +130,15 @@ impl Game {
     /// Hurts and throws what is near a blast.
     fn blast_entities(&mut self, center: DVec3, power: f32) {
         // The player.
-        if !self.stats.is_dead() {
-            let bounds = self.body.aabb();
-            let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        if !self.player.stats.is_dead() {
+            let bounds = self.player.body.aabb();
+            let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
             if let Some((damage, push)) =
-                self.blast_on(center, power, self.body.position(), eye, &bounds)
-                && self.mode.is_vulnerable()
+                self.blast_on(center, power, self.player.body.position(), eye, &bounds)
+                && self.player.mode.is_vulnerable()
             {
-                self.stats.damage(damage, DamageSource::Explosion);
-                self.body.velocity += push;
+                self.player.stats.damage(damage, DamageSource::Explosion);
+                self.player.body.velocity += push;
             }
         }
         // Mobs.
@@ -310,31 +310,37 @@ mod tests {
     #[test]
     fn a_blast_hurts_and_throws_a_survival_player_by_how_close_they_are() {
         let mut game = flat_game(GameMode::Survival);
-        game.body.set_position(DVec3::new(4.5, 64.0, 4.5));
-        let before = game.stats.health;
+        game.player.body.set_position(DVec3::new(4.5, 64.0, 4.5));
+        let before = game.player.stats.health;
         game.explode(DVec3::new(4.5, 64.5, 6.5), 4.0);
-        let near = before - game.stats.health;
+        let near = before - game.player.stats.health;
         assert!(near > 8.0, "two blocks from a TNT blast is deadly: {near}");
-        assert!(game.body.velocity.z < -0.3, "thrown away from it");
+        assert!(game.player.body.velocity.z < -0.3, "thrown away from it");
         let mut far = flat_game(GameMode::Survival);
-        far.body.set_position(DVec3::new(4.5, 64.0, 4.5));
+        far.player.body.set_position(DVec3::new(4.5, 64.0, 4.5));
         far.explode(DVec3::new(4.5, 64.5, 11.5), 4.0);
-        let lost = 20.0 - far.stats.health;
+        let lost = 20.0 - far.player.stats.health;
         assert!(lost > 0.0 && lost < near, "{lost} vs {near}");
         let mut safe = flat_game(GameMode::Survival);
-        safe.body.set_position(DVec3::new(4.5, 64.0, 4.5));
+        safe.player.body.set_position(DVec3::new(4.5, 64.0, 4.5));
         safe.explode(DVec3::new(4.5, 64.5, 14.0), 4.0);
-        assert_eq!(safe.stats.health, 20.0, "more than twice the power away");
+        assert_eq!(
+            safe.player.stats.health, 20.0,
+            "more than twice the power away"
+        );
     }
 
     #[test]
     fn creative_players_are_unhurt_and_walls_shield_from_the_blast() {
         let mut game = flat_game(GameMode::Creative);
-        game.body.set_position(DVec3::new(4.5, 64.0, 4.5));
+        game.player.body.set_position(DVec3::new(4.5, 64.0, 4.5));
         game.explode(DVec3::new(4.5, 64.5, 6.5), 4.0);
-        assert_eq!(game.stats.health, 20.0);
+        assert_eq!(game.player.stats.health, 20.0);
         let mut shielded = flat_game(GameMode::Survival);
-        shielded.body.set_position(DVec3::new(4.5, 64.0, 4.5));
+        shielded
+            .player
+            .body
+            .set_position(DVec3::new(4.5, 64.0, 4.5));
         let wall: Vec<_> = (63..70)
             .flat_map(|y| {
                 (2..8).map(move |x| (IVec3::new(x, y, 5), BlockState::of(blocks::OBSIDIAN)))
@@ -343,7 +349,10 @@ mod tests {
         shielded.set_blocks(&wall);
         shielded.explode(DVec3::new(4.5, 64.5, 6.5), 4.0);
         // Unseen, only the formula's flat point of damage is left.
-        assert!(shielded.stats.health >= 19.0, "an obsidian wall shields");
-        assert!(shielded.body.velocity.z.abs() < 0.01);
+        assert!(
+            shielded.player.stats.health >= 19.0,
+            "an obsidian wall shields"
+        );
+        assert!(shielded.player.body.velocity.z.abs() < 0.01);
     }
 }

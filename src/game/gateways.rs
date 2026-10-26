@@ -22,7 +22,7 @@ const COOLDOWN: u32 = 100;
 impl Game {
     /// The gateway block the player's hitbox is in, if any.
     fn gateway_inside(&self) -> Option<IVec3> {
-        let bb = self.body.aabb();
+        let bb = self.player.body.aabb();
         let min = bb.min.floor().as_ivec3();
         let max = (bb.max - DVec3::splat(1e-7)).floor().as_ivec3();
         let world = self.chunks.world();
@@ -43,16 +43,16 @@ impl Game {
 
     /// One tick of standing in a gateway or not.
     pub(super) fn tick_gateway(&mut self) {
-        self.gateway_cooldown = self.gateway_cooldown.saturating_sub(1);
+        self.player.gateway_cooldown = self.player.gateway_cooldown.saturating_sub(1);
         if self.dimension != Dimension::End || self.is_riding() {
             return;
         }
         let Some(cell) = self.gateway_inside() else {
             return;
         };
-        if self.gateway_cooldown > 0 {
+        if self.player.gateway_cooldown > 0 {
             // Standing in one keeps it from working (modern).
-            self.gateway_cooldown = COOLDOWN;
+            self.player.gateway_cooldown = COOLDOWN;
             return;
         }
         self.take_gateway(cell);
@@ -99,9 +99,9 @@ impl Game {
         crate::audio::play_here("entity.player.teleport");
         self.place_player(feet);
         self.note(crate::advancements::Event::Used("gateway".to_owned()));
-        self.gateway_cooldown = COOLDOWN;
+        self.player.gateway_cooldown = COOLDOWN;
         // Wait for the chunks around the new spot to load.
-        self.arriving = Some(0);
+        self.player.arriving = Some(0);
     }
 }
 
@@ -118,10 +118,11 @@ mod tests {
         game.chunks
             .load_now(ChunkPos::of_block(gateway.x, gateway.z));
         game.set_blocks(&end::gateway(gateway));
-        game.body
+        game.player
+            .body
             .set_position(gateway.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
         game.tick_gateway();
-        let there = game.body.position();
+        let there = game.player.body.position();
         assert!(there.x.hypot(there.z) > OUTER_START, "{there}");
         assert!(game.is_arriving());
         // Standing on end stone, three blocks from a gateway.
@@ -145,12 +146,13 @@ mod tests {
         assert!(along > 0.0);
 
         // Walking into that one comes back to the main island.
-        game.gateway_cooldown = 0;
-        game.arriving = None;
-        game.body
+        game.player.gateway_cooldown = 0;
+        game.player.arriving = None;
+        game.player
+            .body
             .set_position(back.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
         game.tick_gateway();
-        let home = game.body.position();
+        let home = game.player.body.position();
         assert!(home.x.hypot(home.z) < 10.0, "{home}");
     }
 
@@ -163,17 +165,18 @@ mod tests {
             .load_now(ChunkPos::of_block(gateway.x, gateway.z));
         game.set_blocks(&end::gateway(gateway));
         game.set_blocks(&[(gateway, BlockState::of(blocks::END_GATEWAY))]);
-        game.gateway_cooldown = 50;
-        game.body
+        game.player.gateway_cooldown = 50;
+        game.player
+            .body
             .set_position(gateway.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
         game.tick_gateway();
         assert_eq!(
-            game.body.position().x.floor() as i32,
+            game.player.body.position().x.floor() as i32,
             gateway.x,
             "still here"
         );
         assert_eq!(
-            game.gateway_cooldown, COOLDOWN,
+            game.player.gateway_cooldown, COOLDOWN,
             "standing in it resets the wait"
         );
     }

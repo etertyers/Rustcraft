@@ -55,10 +55,10 @@ impl Game {
             "block.end_portal_frame.fill",
             cell.as_dvec3() + DVec3::splat(0.5),
         );
-        if self.mode.uses_up_items() {
-            self.inventory.take(self.held_slot(), 1);
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(self.held_slot(), 1);
         }
-        self.view.swing();
+        self.player.view.swing();
         let world = self.chunks.world();
         let get = |at: IVec3| world.block(at.x, at.y, at.z);
         if let Some(center) = end_portal::find_lit(cell, &get) {
@@ -92,18 +92,18 @@ impl Game {
         if self.dimension != Dimension::Overworld {
             return;
         }
-        let from = self.body.position()
-            + DVec3::Y * (self.body.aabb().max.y - self.body.position().y) / 2.0;
+        let from = self.player.body.position()
+            + DVec3::Y * (self.player.body.aabb().max.y - self.player.body.position().y) / 2.0;
         let Some(toward) = self.nearest_stronghold(from) else {
             return;
         };
         let survives = self.rng.below(BREAK_IN) != 0;
         crate::audio::play_at("entity.ender_eye.launch", from, 1.0, 0.8);
         self.eyes.push(EyeOfEnder::throw(from, toward, survives));
-        if self.mode.uses_up_items() {
-            self.inventory.take(self.held_slot(), 1);
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(self.held_slot(), 1);
         }
-        self.view.swing();
+        self.player.view.swing();
     }
 
     /// One tick of the eyes in flight: those that finish drop as items or
@@ -143,7 +143,7 @@ impl Game {
 
     /// Whether the player's hitbox touches an End portal.
     fn in_end_portal(&self) -> bool {
-        let bb = self.body.aabb();
+        let bb = self.player.body.aabb();
         let min = bb.min.floor().as_ivec3();
         let max = (bb.max - DVec3::splat(1e-7)).floor().as_ivec3();
         let world = self.chunks.world();
@@ -156,7 +156,7 @@ impl Game {
 
     /// Standing in an End portal takes the player through it.
     pub(super) fn tick_end_portal(&mut self) {
-        if self.is_riding() || self.credits.is_some() || !self.in_end_portal() {
+        if self.is_riding() || self.player.credits.is_some() || !self.in_end_portal() {
             return;
         }
         match self.dimension {
@@ -178,8 +178,8 @@ impl Game {
         }
         self.edit(&platform);
         // Facing the island, as modern's arrival does.
-        self.camera.yaw = 0.0_f32.to_radians() - std::f32::consts::FRAC_PI_2;
-        self.camera.pitch = 0.0;
+        self.player.camera.yaw = 0.0_f32.to_radians() - std::f32::consts::FRAC_PI_2;
+        self.player.camera.pitch = 0.0;
         self.start_fight();
         if let Err(err) = self.save() {
             log::error!("saving after going to the End: {err}");
@@ -191,7 +191,7 @@ impl Game {
     pub(super) fn leave_end(&mut self) {
         if !self.end.credits_seen {
             self.end.credits_seen = true;
-            self.credits = Some(0);
+            self.player.credits = Some(0);
             return;
         }
         self.go_home();
@@ -211,30 +211,30 @@ impl Game {
 
     /// Starts the credits `ticks` in, for a `--shot` scene.
     pub fn stage_credits(&mut self, ticks: u32) {
-        self.credits = Some(ticks);
+        self.player.credits = Some(ticks);
     }
 
     /// Ticks the credits are on screen for, or `None` when they aren't.
     pub fn credits_ticks(&self) -> Option<u32> {
-        self.credits
+        self.player.credits
     }
 
     /// Ends the credits (they run out or are skipped): home.
     pub fn finish_credits(&mut self) {
-        if self.credits.take().is_some() {
+        if self.player.credits.take().is_some() {
             self.go_home();
         }
     }
 
     /// One tick of the credits rolling.
     pub(super) fn tick_credits(&mut self) {
-        let Some(ticks) = self.credits else {
+        let Some(ticks) = self.player.credits else {
             return;
         };
         if ticks >= crate::credits::TICKS {
             self.finish_credits();
         } else {
-            self.credits = Some(ticks + 1);
+            self.player.credits = Some(ticks + 1);
         }
     }
 }

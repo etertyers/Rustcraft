@@ -70,7 +70,7 @@ impl Game {
     /// The cart under the crosshair within reach, if it's nearer than the
     /// targeted block.
     pub(super) fn target_cart(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let block_distance = block.map_or(f64::MAX, |hit| {
             (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5
         });
@@ -90,7 +90,7 @@ impl Game {
 
     /// Whether the player is in a cart, on a mob or in a boat.
     pub fn is_riding(&self) -> bool {
-        self.riding.is_some() || self.mounted.is_some() || self.boat.is_some()
+        self.player.riding.is_some() || self.player.mounted.is_some() || self.player.boat.is_some()
     }
 
     /// Right-click on a cart: sit in a plain one, open a chest or hopper
@@ -101,9 +101,9 @@ impl Game {
         };
         match cart.kind {
             CartKind::Rideable => {
-                if self.riding.is_none() && !self.carts[index].rider {
+                if self.player.riding.is_none() && !self.carts[index].rider {
                     self.carts[index].rider = true;
-                    self.riding = Some(index);
+                    self.player.riding = Some(index);
                 }
             }
             CartKind::Chest | CartKind::Hopper => self.open_cart(index),
@@ -117,7 +117,7 @@ impl Game {
         let Some(cart) = self.carts.get_mut(index) else {
             return;
         };
-        let breaks = cart.hurt(damage) || !self.mode.drops_items();
+        let breaks = cart.hurt(damage) || !self.player.mode.drops_items();
         if breaks {
             self.break_cart(index);
         }
@@ -129,9 +129,9 @@ impl Game {
             return;
         }
         let cart = self.carts.remove(index);
-        match self.riding {
+        match self.player.riding {
             Some(r) if r == index => self.dismount(&cart),
-            Some(r) if r > index => self.riding = Some(r - 1),
+            Some(r) if r > index => self.player.riding = Some(r - 1),
             _ => {}
         }
         self.close_if_cart_gone();
@@ -139,7 +139,7 @@ impl Game {
         let mut random = || rng.next_f64() as f32;
         let center = cart.position + DVec3::Y * 0.35;
         let mut dropped: Vec<ItemStack> = cart.slots.iter().flatten().cloned().collect();
-        if self.mode.drops_items() {
+        if self.player.mode.drops_items() {
             dropped.push(ItemStack::new(item_of(cart.kind), 1));
         }
         for stack in dropped {
@@ -158,7 +158,7 @@ impl Game {
 
     /// Gets the player out of `cart`, onto a free spot beside it.
     fn dismount(&mut self, cart: &Minecart) {
-        self.riding = None;
+        self.player.riding = None;
         let world = self.chunks.world();
         let collider = WorldCollider {
             world,
@@ -171,7 +171,7 @@ impl Game {
             DVec3::new(0.0, 0.0, -1.0),
             DVec3::new(0.0, 0.8, 0.0),
         ];
-        let size = self.body.aabb();
+        let size = self.player.body.aabb();
         let half = (size.max - size.min) / 2.0;
         let free = |feet: DVec3| {
             let aabb = Aabb::new(
@@ -187,22 +187,22 @@ impl Game {
             .map(|offset| cart.position + *offset)
             .find(|&p| free(p))
             .unwrap_or(cart.position + DVec3::Y * 0.8);
-        self.body.set_position(feet);
-        self.prev_feet = feet;
-        self.body.velocity = DVec3::ZERO;
+        self.player.body.set_position(feet);
+        self.player.prev_feet = feet;
+        self.player.body.velocity = DVec3::ZERO;
     }
 
     /// The player's tick while sitting in a cart: carried along, and out
     /// again with sneak.
     pub(super) fn ride_cart(&mut self) {
-        let Some(index) = self.riding else {
+        let Some(index) = self.player.riding else {
             return;
         };
         let Some(cart) = self.carts.get(index) else {
-            self.riding = None;
+            self.player.riding = None;
             return;
         };
-        if self.keys.sneak {
+        if self.player.keys.sneak {
             let cart = self.carts[index].clone();
             self.carts[index].rider = false;
             self.dismount(&cart);
@@ -216,22 +216,22 @@ impl Game {
                 1.0,
             );
         }
-        self.body.set_position(cart.position);
-        self.body.velocity = DVec3::ZERO;
+        self.player.body.set_position(cart.position);
+        self.player.body.velocity = DVec3::ZERO;
     }
 
     /// The push a rider's keys give the cart: along where they look.
     fn rider_push(&self) -> DVec3 {
-        let input = self.keys.move_input();
+        let input = self.player.keys.move_input();
         let forward = DVec3::new(
-            self.camera.yaw.sin() as f64,
+            self.player.camera.yaw.sin() as f64,
             0.0,
-            -self.camera.yaw.cos() as f64,
+            -self.player.camera.yaw.cos() as f64,
         );
         let right = DVec3::new(
-            self.camera.yaw.cos() as f64,
+            self.player.camera.yaw.cos() as f64,
             0.0,
-            self.camera.yaw.sin() as f64,
+            self.player.camera.yaw.sin() as f64,
         );
         (forward * input.forward + right * input.strafe) * 0.1
     }
@@ -269,8 +269,8 @@ impl Game {
                     CartKind::Tnt => cart.ignite(),
                     CartKind::Rideable if cart.rider => {
                         cart.rider = false;
-                        if self.riding == Some(index) {
-                            self.riding = None;
+                        if self.player.riding == Some(index) {
+                            self.player.riding = None;
                             ejected = Some(index);
                         }
                     }
@@ -310,9 +310,9 @@ impl Game {
         for (index, center, power) in blasts.into_iter().rev() {
             if index < self.carts.len() {
                 self.carts.remove(index);
-                match self.riding {
-                    Some(r) if r == index => self.riding = None,
-                    Some(r) if r > index => self.riding = Some(r - 1),
+                match self.player.riding {
+                    Some(r) if r == index => self.player.riding = None,
+                    Some(r) if r > index => self.player.riding = Some(r - 1),
                     _ => {}
                 }
             }
@@ -485,17 +485,21 @@ mod tests {
         game.run_ticks(2);
         let cart = game.carts[0].position;
         assert!(
-            (game.body.position() - cart).length() < 0.01,
+            (game.player.body.position() - cart).length() < 0.01,
             "carried with it"
         );
         game.carts[0].velocity.x = 0.3;
         game.run_ticks(10);
-        assert!(game.body.position().x > 6.0, "{}", game.body.position().x);
-        game.keys.sneak = true;
+        assert!(
+            game.player.body.position().x > 6.0,
+            "{}",
+            game.player.body.position().x
+        );
+        game.player.keys.sneak = true;
         game.run_ticks(1);
-        game.keys.sneak = false;
+        game.player.keys.sneak = false;
         assert!(!game.is_riding());
-        assert!((game.body.position().x - game.carts[0].position.x).abs() < 2.0);
+        assert!((game.player.body.position().x - game.carts[0].position.x).abs() < 2.0);
     }
 
     #[test]
@@ -508,7 +512,7 @@ mod tests {
         game.carts[0].slots[3] = Some(ItemStack::new(items::DIRT, 5));
         game.use_cart(0);
         assert!(matches!(
-            game.container,
+            game.player.container,
             Some(crate::game::Container::Cart(0))
         ));
         game.close_container();

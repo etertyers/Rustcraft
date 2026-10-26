@@ -110,8 +110,8 @@ impl Game {
         let podium = end::PODIUM.as_dvec3() + DVec3::new(0.5, 1.0, 0.5);
         Senses {
             // Creative players are never its target.
-            player: (!self.stats.is_dead() && self.mode.is_vulnerable())
-                .then(|| self.body.position()),
+            player: (!self.player.stats.is_dead() && self.player.mode.is_vulnerable())
+                .then(|| self.player.body.position()),
             crystals: self.crystals.len(),
             podium,
             exit: self.exit_point(),
@@ -277,9 +277,9 @@ impl Game {
             .map(|(_, bb)| Aabb::new(bb.min - WING_GROW, bb.max + WING_GROW))
             .collect();
         let sitting = dragon.phase.is_sitting();
-        if !self.stats.is_dead() {
-            let body = self.body.aabb();
-            if strikers.iter().any(|bb| bb.intersects(&body)) && self.mode.is_vulnerable() {
+        if !self.player.stats.is_dead() {
+            let body = self.player.body.aabb();
+            if strikers.iter().any(|bb| bb.intersects(&body)) && self.player.mode.is_vulnerable() {
                 self.hurt_player(Strike {
                     amount: RAM_DAMAGE,
                     source: DamageSource::Mob,
@@ -289,11 +289,13 @@ impl Game {
                 });
             }
             // Creative players are neither pushed nor hurt.
-            if !sitting && self.mode.is_vulnerable() && wings.iter().any(|bb| bb.intersects(&body))
+            if !sitting
+                && self.player.mode.is_vulnerable()
+                && wings.iter().any(|bb| bb.intersects(&body))
             {
-                let away = self.body.position() - from;
+                let away = self.player.body.position() - from;
                 let flat = DVec3::new(away.x, 0.0, away.z).normalize_or_zero();
-                self.body.velocity += flat * WING_PUSH + DVec3::Y * 0.3;
+                self.player.body.velocity += flat * WING_PUSH + DVec3::Y * 0.3;
             }
         }
         for mob in &mut self.mobs {
@@ -314,10 +316,10 @@ impl Game {
 
     /// The perched dragon bites at `at`.
     fn dragon_bites(&mut self, at: DVec3) {
-        if self.stats.is_dead() || !self.mode.is_vulnerable() {
+        if self.player.stats.is_dead() || !self.player.mode.is_vulnerable() {
             return;
         }
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         if feet.distance(at) <= dragon::BITE_REACH {
             self.hurt_player(Strike {
                 amount: BITE_DAMAGE,
@@ -332,7 +334,7 @@ impl Game {
     /// One tick of the dragon's fireballs: those that hit make a cloud.
     pub(super) fn tick_dragon_fireballs(&mut self) {
         let mut balls = std::mem::take(&mut self.dragon_fireballs);
-        let player = (!self.stats.is_dead()).then(|| self.body.aabb());
+        let player = (!self.player.stats.is_dead()).then(|| self.player.body.aabb());
         let mut bursts = Vec::new();
         balls.retain_mut(|ball| {
             let world = self.chunks.world();
@@ -400,9 +402,11 @@ impl Game {
             if !cloud.pulses() {
                 continue;
             }
-            if !self.stats.is_dead() && self.mode.is_vulnerable() && cloud.holds(&self.body.aabb())
+            if !self.player.stats.is_dead()
+                && self.player.mode.is_vulnerable()
+                && cloud.holds(&self.player.body.aabb())
             {
-                self.stats.damage(breath::HARM, DamageSource::Magic);
+                self.player.stats.damage(breath::HARM, DamageSource::Magic);
             }
             for mob in &mut self.mobs {
                 if !mob.is_dead() && cloud.holds(&mob.body.aabb()) {
@@ -464,7 +468,7 @@ impl Game {
         let dragon = self.dragon.as_ref()?;
         // Shown while the dragon is within a few hundred blocks, as modern's
         // boss bars are for those near the fight.
-        let near = dragon.position.distance(self.body.position()) < 300.0;
+        let near = dragon.position.distance(self.player.body.position()) < 300.0;
         (self.dimension == Dimension::End && near)
             .then(|| (dragon.health / dragon::MAX_HEALTH).clamp(0.0, 1.0))
     }
@@ -477,7 +481,7 @@ impl Game {
         if self.dimension != Dimension::End {
             return None;
         }
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let reach = crate::config::combat::REACH;
         let block_distance = block.map_or(f64::MAX, |hit| {
             (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5
@@ -507,7 +511,7 @@ impl Game {
         let sword = tool.as_ref().is_some_and(|t| t.kind == ToolKind::Sword);
         let charge = self.attack_charge(0.5);
         let blow = resolve_with(self.attack_damage(), 0.0, &self.stance(charge), sword);
-        self.attack_ticker = 0;
+        self.player.attack_ticker = 0;
         match target {
             EndTarget::Crystal(index) => self.pop_crystal(index),
             EndTarget::Dragon(part) => {
@@ -516,10 +520,12 @@ impl Game {
                 }
             }
         }
-        if self.mode.is_vulnerable() {
-            self.stats.add_exhaustion(crate::config::combat::EXHAUSTION);
+        if self.player.mode.is_vulnerable() {
+            self.player
+                .stats
+                .add_exhaustion(crate::config::combat::EXHAUSTION);
         }
-        if self.mode.wears_tools()
+        if self.player.mode.wears_tools()
             && let Some(tool) = tool
         {
             self.wear_selected(tool.hit_wear);
@@ -648,10 +654,10 @@ impl Game {
             self.edit(&[(above, BlockState::AIR)]);
         }
         self.crystals.push(probe);
-        if self.mode.uses_up_items() {
-            self.inventory.take(self.held_slot(), 1);
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(self.held_slot(), 1);
         }
-        self.view.swing();
+        self.player.view.swing();
         true
     }
 

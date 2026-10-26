@@ -207,7 +207,6 @@
     (name: "end_stone_brick_slab", hardness: 1.0, placeholder: true, display: "End Stone Brick Slab", shape: Model, model: [(from: (0, 0, 0), to: (16, 8, 16), textures: (all: "end_stone_bricks"))]),
     (name: "end_stone_brick_stairs", hardness: 1.0, placeholder: true, display: "End Stone Brick Stairs", shape: Model, model: [(from: (0, 0, 0), to: (16, 8, 16), textures: (all: "end_stone_bricks")), (from: (8, 8, 0), to: (16, 16, 16), textures: (all: "end_stone_bricks")), (from: (0, 8, 8), to: (8, 16, 16), textures: (all: "end_stone_bricks"))]),
     (name: "end_stone_brick_wall", hardness: 1.0, placeholder: true, display: "End Stone Brick Wall", shape: Model, model: [(from: (4, 0, 4), to: (12, 16, 12), textures: (all: "end_stone_bricks"))]),
-    (name: "ender_chest", hardness: 1.0, placeholder: true, display: "Ender Chest", item_texture: "block/obsidian", textures: (all: "obsidian")),
     (name: "exposed_chiseled_copper", hardness: 1.0, placeholder: true, display: "Exposed Chiseled Copper", textures: (all: "exposed_chiseled_copper")),
     (name: "exposed_copper", hardness: 1.0, placeholder: true, display: "Exposed Copper", textures: (all: "exposed_copper")),
     (name: "exposed_copper_bars", hardness: 1.0, placeholder: true, display: "Exposed Copper Bars", item_texture: "block/exposed_copper_bars", layer: Cutout, shape: Model, model: [(from: (7, 0.001, 7), to: (9, 0.001, 9), textures: (all: "exposed_copper_bars")), (from: (7, 15.999, 7), to: (9, 15.999, 9), textures: (all: "exposed_copper_bars"))]),

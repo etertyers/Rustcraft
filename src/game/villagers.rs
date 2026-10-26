@@ -385,14 +385,14 @@ impl Game {
             return false;
         }
         crate::audio::play("entity.villager.ambient", mob.feet());
-        self.container = Some(Container::Merchant(mob.id));
+        self.player.container = Some(Container::Merchant(mob.id));
         self.release_input();
         true
     }
 
     /// The villager the trading screen shows.
     pub fn merchant(&self) -> Option<&VillagerData> {
-        let Some(Container::Merchant(id)) = self.container else {
+        let Some(Container::Merchant(id)) = self.player.container else {
             return None;
         };
         let index = self.villager_index(id)?;
@@ -402,7 +402,7 @@ impl Game {
     /// How many plain (unenchanted, unnamed) `stack.id` the player carries.
     fn carried(&self, stack: &ItemStack) -> u32 {
         (0..MAIN_SLOTS)
-            .filter_map(|i| self.inventory.slot(i))
+            .filter_map(|i| self.player.inventory.slot(i))
             .filter(|s| s.id == stack.id && s.extra.is_none())
             .map(|s| u32::from(s.count))
             .sum()
@@ -414,14 +414,14 @@ impl Game {
             if left == 0 {
                 break;
             }
-            let Some(slot) = self.inventory.slot(i) else {
+            let Some(slot) = self.player.inventory.slot(i) else {
                 continue;
             };
             if slot.id != stack.id || slot.extra.is_some() {
                 continue;
             }
             let taken = slot.count.min(left);
-            self.inventory.take(i, taken);
+            self.player.inventory.take(i, taken);
             left -= taken;
         }
     }
@@ -445,7 +445,7 @@ impl Game {
         if !self.can_trade(index) {
             return false;
         }
-        let Some(Container::Merchant(id)) = self.container else {
+        let Some(Container::Merchant(id)) = self.player.container else {
             return false;
         };
         let Some(m) = self.villager_index(id) else {
@@ -465,7 +465,7 @@ impl Game {
             self.pay(b);
         }
         let items = self.items.clone();
-        if let Some(left) = self.inventory.add(trade.sell.clone(), &items) {
+        if let Some(left) = self.player.inventory.add(trade.sell.clone(), &items) {
             self.throw(left);
         }
         let mut rng = Rng::new(self.rng.next_u64());
@@ -620,18 +620,22 @@ mod tests {
         };
         let id = game.mobs[i].id;
         assert!(game.talk_to_villager(i));
-        assert_eq!(game.container, Some(Container::Merchant(id)));
+        assert_eq!(game.player.container, Some(Container::Merchant(id)));
         assert!(!game.trade(0), "no wheat yet");
-        game.inventory
+        game.player
+            .inventory
             .set(3, Some(ItemStack::new(items::WHEAT, 64)));
         for _ in 0..3 {
             assert!(game.trade(0));
         }
-        assert_eq!(game.inventory.slot(3).map(|s| s.count), Some(4));
+        assert_eq!(game.player.inventory.slot(3).map(|s| s.count), Some(4));
         assert_eq!(
-            game.inventory
-                .find(items::EMERALD)
-                .map(|s| game.inventory.slot(s).unwrap().count),
+            game.player.inventory.find(items::EMERALD).map(|s| game
+                .player
+                .inventory
+                .slot(s)
+                .unwrap()
+                .count),
             Some(3)
         );
         assert!(!game.orbs.is_empty(), "the player got experience");

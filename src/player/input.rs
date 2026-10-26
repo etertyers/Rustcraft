@@ -5,7 +5,7 @@ use crate::bindings::Action;
 use super::physics::MoveInput;
 
 /// Movement keys currently held.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct MoveKeys {
     pub forward: bool,
     pub back: bool,

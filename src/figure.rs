@@ -63,7 +63,7 @@ pub fn build(
     use crate::game::view::ViewMode;
     let mut meshes = PlayerMeshes::default();
     // Dead or in bed, there's nothing to see of the player.
-    if game.stats.is_dead() || game.is_sleeping() {
+    if game.player.stats.is_dead() || game.is_sleeping() {
         return meshes;
     }
     let alpha = game.tick_alpha() as f32;
@@ -81,7 +81,8 @@ pub fn build(
             // What each hand shows lags the selection while it dips.
             let shown = |id: Option<ItemId>, hand: Hand| {
                 id.map(|id| {
-                    game.inventory
+                    game.player
+                        .inventory
                         .hand_stack(hand)
                         .cloned()
                         .filter(|stack| stack.id == id)
@@ -105,7 +106,7 @@ pub fn build(
                 left: game.left_handed(),
                 swing: view.attack_anim(alpha),
                 equip: view.equip_progress(alpha),
-                lag: view.hand_lag(alpha, game.camera.yaw, game.camera.pitch),
+                lag: view.hand_lag(alpha, game.player.camera.yaw, game.player.camera.pitch),
                 bob: view.view_bob(alpha),
                 using: game.use_progress(),
                 item,
@@ -182,6 +183,7 @@ pub fn add_body(
         game.skin_layers(),
     );
     if game
+        .player
         .inventory
         .slot(crate::inventory::player::ARMOR_CHEST)
         .is_some_and(|s| s.id == items::ELYTRA)
@@ -214,7 +216,7 @@ pub fn add_body(
     let frame = model_matrix(&body_frame(pose, yaw), feet);
     let rig = rig(pose, fig.slim);
     for hand in [Hand::Main, Hand::Off] {
-        let Some(stack) = game.inventory.hand_stack(hand).cloned() else {
+        let Some(stack) = game.player.inventory.hand_stack(hand).cloned() else {
             continue;
         };
         let left = (hand == Hand::Off) != game.left_handed();
@@ -241,7 +243,7 @@ pub fn worn_armor(game: &Game) -> Vec<WornArmor> {
         ArmorSlot::Chest,
         ArmorSlot::Head,
     ] {
-        let Some(stack) = game.inventory.slot(slot.index()) else {
+        let Some(stack) = game.player.inventory.slot(slot.index()) else {
             continue;
         };
         let name = stack.id.name();
@@ -454,9 +456,10 @@ mod tests {
         assert!(m.body.is_empty() && m.items.is_empty());
 
         // With a sword: the item and no arm.
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         game.run_ticks(10);
         let m = build(&game, &mut held, &fig, (15, 0), (15, 0));
         assert!(m.hand_arm.is_empty() && !m.hand_item.is_empty());
@@ -482,11 +485,11 @@ mod tests {
     /// A game with a shield in the off-hand, blocking or not.
     fn shield_game(blocking: bool) -> Game {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory.set(
+        game.player.inventory.set(
             crate::inventory::player::OFFHAND,
             Some(ItemStack::new(items::SHIELD, 1)),
         );
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         game.run_ticks(12);
         if blocking {
             game.on_action(crate::bindings::Action::Use, true, false, true);
@@ -585,7 +588,7 @@ mod tests {
         let fig = figure(&look);
         let mut held = HeldCache::default();
         let mut game = shield_game(false);
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         game.swap_hands();
         game.set_view_mode(crate::game::view::ViewMode::ThirdBack);
         let m = build(&game, &mut held, &fig, (15, 0), (15, 0));
@@ -622,7 +625,7 @@ mod tests {
         };
         let mut held = HeldCache::default();
         let mut game = flat_game(GameMode::Survival);
-        game.stats.health = 0.0;
+        game.player.stats.health = 0.0;
         let m = build(&game, &mut held, &fig, (15, 0), (15, 0));
         assert!(m.hand_arm.is_empty() && m.body.is_empty());
     }
@@ -696,10 +699,12 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         let mut cap = ItemStack::new(items::LEATHER_HELMET, 1);
         cap.enchant(Enchantment::Protection, 1);
-        game.inventory.set(ARMOR_HEAD, Some(cap));
-        game.inventory
+        game.player.inventory.set(ARMOR_HEAD, Some(cap));
+        game.player
+            .inventory
             .set(ARMOR_LEGS, Some(ItemStack::new(items::IRON_LEGGINGS, 1)));
-        game.inventory
+        game.player
+            .inventory
             .set(ARMOR_CHEST, Some(ItemStack::new(items::ELYTRA, 1)));
         let worn = worn_armor(&game);
         assert_eq!(worn.len(), 3, "{worn:?}");

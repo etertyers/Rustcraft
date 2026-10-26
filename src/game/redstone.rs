@@ -132,8 +132,8 @@ impl Game {
     /// wooden plate, living things for a stone one.
     fn pressers(&self) -> Vec<(Aabb, Presser)> {
         let mut boxes = Vec::new();
-        if !self.stats.is_dead() {
-            boxes.push((self.body.aabb(), Presser::Living));
+        if !self.player.stats.is_dead() {
+            boxes.push((self.player.body.aabb(), Presser::Living));
         }
         boxes.extend(
             self.mobs
@@ -338,9 +338,9 @@ impl Game {
             }
             by.map(|amount| step * (amount + 1e-3))
         };
-        if let Some(by) = shift(&self.body.aabb()) {
-            let feet = self.body.position() + by;
-            self.body.set_position(feet);
+        if let Some(by) = shift(&self.player.body.aabb()) {
+            let feet = self.player.body.position() + by;
+            self.player.body.set_position(feet);
         }
         for mob in &mut self.mobs {
             if let Some(by) = shift(&mob.body.aabb()) {
@@ -630,7 +630,9 @@ mod tests {
         assert!(block_at(&game, at(0, 0)).bool(Prop::Powered));
         assert!(lit(&game, lamp));
         // Step off.
-        game.body.set_position(glam::DVec3::new(5.5, 64.0, 5.5));
+        game.player
+            .body
+            .set_position(glam::DVec3::new(5.5, 64.0, 5.5));
         game.run_ticks(30);
         assert!(!block_at(&game, at(0, 0)).bool(Prop::Powered));
         assert!(!lit(&game, lamp));
@@ -885,7 +887,7 @@ mod tests {
         game.set_blocks(&[(at(1, 1), BlockState::of(blocks::REDSTONE_BLOCK))]);
         game.run_ticks(3);
         assert_eq!(id_at(&game, at(0, 0)), blocks::PISTON_HEAD);
-        let x = game.body.aabb().max.x;
+        let x = game.player.body.aabb().max.x;
         assert!(
             x <= 0.0 + 1e-3,
             "the player's box was pushed clear of the head: {x}"

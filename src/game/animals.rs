@@ -162,7 +162,7 @@ impl Game {
         }
         let name = self.mob_defs.get(mob.kind).name.clone();
         let held = self.held().cloned();
-        let survival = self.mode.uses_up_items();
+        let survival = self.player.mode.uses_up_items();
         // Breeding food goes to the animal, not into the player's mouth.
         if let Some(stack) = &held
             && is_breeding_food(&name, stack.id)
@@ -170,7 +170,7 @@ impl Game {
         {
             self.mobs[index].data.love = LOVE_TICKS;
             if survival {
-                self.inventory.take(self.held_slot(), 1);
+                self.player.inventory.take(self.held_slot(), 1);
             }
             return true;
         }
@@ -196,7 +196,7 @@ impl Game {
                     {
                         self.mobs[index].data.color = color;
                         if survival {
-                            self.inventory.take(self.held_slot(), 1);
+                            self.player.inventory.take(self.held_slot(), 1);
                         }
                         return true;
                     }
@@ -211,11 +211,12 @@ impl Game {
     }
 
     fn fill_held_bucket(&mut self, full: ItemId) {
-        if !self.mode.uses_up_items() {
+        if !self.player.mode.uses_up_items() {
             return;
         }
         let slot = self.held_slot();
-        self.inventory
+        self.player
+            .inventory
             .set(slot, Some(ItemStack::with_damage(full, 1, 0)));
     }
 
@@ -237,9 +238,9 @@ impl Game {
                 &mut random,
             ));
         }
-        if self.mode.wears_tools() {
+        if self.player.mode.wears_tools() {
             let slot = self.held_slot();
-            self.inventory.damage_slot(slot, 1, &self.items);
+            self.player.inventory.damage_slot(slot, 1, &self.items);
         }
     }
 
@@ -261,7 +262,7 @@ impl Game {
             && !tamed
         {
             if survival {
-                self.inventory.take(self.held_slot(), 1);
+                self.player.inventory.take(self.held_slot(), 1);
             }
             if self.rng.next_f64() < TAME_CHANCE {
                 let mob = &mut self.mobs[index];
@@ -304,7 +305,7 @@ impl Game {
                 self.mobs[index].data.armor = kind as u8 + 1;
                 crate::audio::play("entity.horse.armor", self.mobs[index].feet());
                 if survival {
-                    self.inventory.take(self.held_slot(), 1);
+                    self.player.inventory.take(self.held_slot(), 1);
                 }
                 return true;
             }
@@ -317,12 +318,12 @@ impl Game {
             self.mobs[index].data.saddled = true;
             crate::audio::play("entity.horse.saddle", self.mobs[index].feet());
             if survival {
-                self.inventory.take(self.held_slot(), 1);
+                self.player.inventory.take(self.held_slot(), 1);
             }
             return true;
         }
-        if self.mounted.is_none() && self.riding.is_none() {
-            self.mounted = Some(self.mobs[index].id);
+        if self.player.mounted.is_none() && self.player.riding.is_none() {
+            self.player.mounted = Some(self.mobs[index].id);
             self.mobs[index].ridden = true;
             self.mobs[index].data.timer = 0;
             return true;
@@ -332,7 +333,7 @@ impl Game {
 
     /// The mob the player sits on.
     pub(super) fn mount_index(&self) -> Option<usize> {
-        let id = self.mounted?;
+        let id = self.player.mounted?;
         self.mobs.iter().position(|m| m.id == id)
     }
 
@@ -367,10 +368,10 @@ impl Game {
         let mob = &mut self.mobs[index];
         mob.ridden = false;
         let feet = mob.feet() + DVec3::new(1.0, 0.1, 0.0);
-        self.mounted = None;
-        self.body.set_position(feet);
-        self.prev_feet = feet;
-        self.body.velocity = if thrown {
+        self.player.mounted = None;
+        self.player.body.set_position(feet);
+        self.player.prev_feet = feet;
+        self.player.body.velocity = if thrown {
             DVec3::new(0.3, 0.3, 0.0)
         } else {
             DVec3::ZERO
@@ -380,24 +381,24 @@ impl Game {
     /// The player's tick while sitting on a mob.
     pub(super) fn ride_mob(&mut self) {
         let Some(index) = self.mount_index() else {
-            self.mounted = None;
+            self.player.mounted = None;
             return;
         };
-        if self.keys.sneak || self.mobs[index].is_dead() {
+        if self.player.keys.sneak || self.mobs[index].is_dead() {
             self.dismount_mob(index, false);
             return;
         }
         let mob = &self.mobs[index];
         let height = mob.size().1;
         let seat = mob.feet() + DVec3::Y * (height * SEAT_FRACTION - SEAT_DROP);
-        self.body.set_position(seat);
-        self.body.velocity = DVec3::ZERO;
+        self.player.body.set_position(seat);
+        self.player.body.velocity = DVec3::ZERO;
     }
 
     /// Turns a ridden mob to where the player looks.
     pub(super) fn steer_ridden(&self, mob: &mut Mob) {
-        mob.yaw = self.camera.yaw;
-        mob.head_yaw = self.camera.yaw;
+        mob.yaw = self.player.camera.yaw;
+        mob.head_yaw = self.player.camera.yaw;
     }
 
     /// What the keys ask of the mob being ridden: a saddled horse goes where
@@ -410,7 +411,7 @@ impl Game {
         if !mob.data.saddled {
             return MoveInput::default();
         }
-        let keys = self.keys.move_input();
+        let keys = self.player.keys.move_input();
         let def = self.mob_defs.get(mob.kind);
         let speed = def.speed;
         // A strider walks where its rider looks, keys or not.

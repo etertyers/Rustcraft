@@ -71,6 +71,7 @@
         (result: (item: "crafting_table", count: 1), pattern: ["##", "##"], key: {'#': (tag: "planks")}),  // crafting table
         (result: (item: "furnace", count: 1), pattern: ["###", "# #", "###"], key: {'#': (item: "cobblestone")}),  // furnace
         (result: (item: "chest", count: 1), pattern: ["###", "# #", "###"], key: {'#': (tag: "planks")}),  // chest
+        (result: (item: "ender_chest", count: 1), pattern: ["###", "#E#", "###"], key: {'#': (item: "obsidian"), 'E': (item: "ender_eye")}),
         (result: (item: "torch", count: 4), pattern: ["X", "#"], key: {'X': (item: "coal"), '#': (item: "stick")}),  // torch (coal)
         (result: (item: "torch", count: 4), pattern: ["X", "#"], key: {'X': (item: "charcoal"), '#': (item: "stick")}),  // torch (charcoal)
         // Tools and weapons

@@ -42,14 +42,14 @@ pub(super) fn end_game(mode: GameMode) -> Game {
     let top = End::new(SEED).top(24, 6).unwrap();
     let feet = DVec3::new(24.5, f64::from(top) + 1.0, 6.5);
     let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).starting_in(Dimension::End);
-    game.mode = mode;
+    game.player.mode = mode;
     game.mob_defs = mob_registry();
     wait_for_chunks(&mut game);
     game
 }
 
 fn wait_for_chunks(game: &mut Game) {
-    let feet = game.body.position();
+    let feet = game.player.body.position();
     let center = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
     let deadline = Instant::now() + Duration::from_secs(30);
     while !game.chunks.ready_around(center, 2) {
@@ -99,9 +99,10 @@ fn the_twelfth_eye_lights_the_portal_and_is_used_up() {
     let mut game = flat_game(GameMode::Survival);
     let center = IVec3::new(8, 64, 8);
     let empty = build_ring(&mut game, center);
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::ENDER_EYE, 2)));
-    game.inventory.selected = 0;
+    game.player.inventory.selected = 0;
     let before = block(&game, center);
     assert!(!before.is(blocks::END_PORTAL));
     game.use_eye(Some(hit_on(empty)));
@@ -109,7 +110,7 @@ fn the_twelfth_eye_lights_the_portal_and_is_used_up() {
     for cell in end_portal::middle(center) {
         assert!(block(&game, cell).is(blocks::END_PORTAL), "{cell}");
     }
-    assert_eq!(game.inventory.slot(0).unwrap().count, 1);
+    assert_eq!(game.player.inventory.slot(0).unwrap().count, 1);
 }
 
 #[test]
@@ -119,13 +120,14 @@ fn an_eye_in_a_frame_that_isnt_the_last_lights_nothing() {
     let empty = build_ring(&mut game, center);
     let (second, face) = end_portal::ring(center)[1];
     game.set_blocks(&[(second, frame(face, false))]);
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::ENDER_EYE, 1)));
     game.use_eye(Some(hit_on(empty)));
     assert!(block(&game, empty).bool(Prop::Eye));
     assert!(!block(&game, center).is(blocks::END_PORTAL));
     // Creative keeps the eye.
-    assert_eq!(game.inventory.slot(0).unwrap().count, 1);
+    assert_eq!(game.player.inventory.slot(0).unwrap().count, 1);
 }
 
 /// A generated world, which has strongholds to point at.
@@ -149,7 +151,7 @@ fn overworld() -> (Game, TempDir) {
 #[test]
 fn a_thrown_eye_floats_toward_the_nearest_stronghold_and_then_drops_or_breaks() {
     let (mut game, _saves) = overworld();
-    let feet = game.body.position();
+    let feet = game.player.body.position();
     let target = game.nearest_stronghold(feet).unwrap();
     // It really is the nearest.
     let hold_distance = |p: (f64, f64)| (p.0 - feet.x).hypot(p.1 - feet.z);
@@ -157,12 +159,13 @@ fn a_thrown_eye_floats_toward_the_nearest_stronghold_and_then_drops_or_breaks() 
         let other = (f64::from(chunk.x * 16 + 8), f64::from(chunk.z * 16 + 8));
         assert!(hold_distance(target) <= hold_distance(other) + 1e-6);
     }
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::ENDER_EYE, 3)));
-    game.inventory.selected = 0;
+    game.player.inventory.selected = 0;
     game.use_eye(None);
     assert_eq!(game.eyes.len(), 1);
-    assert_eq!(game.inventory.slot(0).unwrap().count, 2);
+    assert_eq!(game.player.inventory.slot(0).unwrap().count, 2);
     for _ in 0..40 {
         game.tick_eyes();
     }
@@ -182,7 +185,8 @@ fn a_thrown_eye_floats_toward_the_nearest_stronghold_and_then_drops_or_breaks() 
     let mut dropped = 0;
     let mut tries = 0;
     for _ in 0..60 {
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::ENDER_EYE, 1)));
         game.entities.clear();
         game.use_eye(None);
@@ -198,22 +202,23 @@ fn a_thrown_eye_floats_toward_the_nearest_stronghold_and_then_drops_or_breaks() 
 #[test]
 fn an_eye_does_nothing_outside_the_overworld() {
     let mut game = end_game(GameMode::Survival);
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::ENDER_EYE, 1)));
     game.use_eye(None);
     assert!(game.eyes.is_empty());
-    assert_eq!(game.inventory.slot(0).unwrap().count, 1);
+    assert_eq!(game.player.inventory.slot(0).unwrap().count, 1);
 }
 
 #[test]
 fn stepping_into_an_end_portal_in_the_overworld_lands_on_the_platform() {
     let (mut game, _saves) = overworld();
-    let feet = game.body.position().floor().as_ivec3();
+    let feet = game.player.body.position().floor().as_ivec3();
     game.set_blocks(&[(feet, BlockState::of(blocks::END_PORTAL))]);
     game.tick_end_portal();
     assert_eq!(game.dimension(), Dimension::End);
     assert_eq!(
-        game.body.position(),
+        game.player.body.position(),
         end::PLATFORM.as_dvec3() + DVec3::new(0.5, 0.0, 0.5)
     );
     load_player_chunk(&mut game);
@@ -311,9 +316,9 @@ fn a_blast_far_from_the_dragon_leaves_it_alone() {
 #[test]
 fn a_crosshair_on_the_dragon_or_a_crystal_targets_it_unless_a_block_is_nearer() {
     let mut game = end_game(GameMode::Survival);
-    let eye = game.body.position() + DVec3::Y * 1.62;
-    game.camera.yaw = std::f32::consts::FRAC_PI_2;
-    game.camera.pitch = 0.0;
+    let eye = game.player.body.position() + DVec3::Y * 1.62;
+    game.player.camera.yaw = std::f32::consts::FRAC_PI_2;
+    game.player.camera.pitch = 0.0;
     game.crystals.clear();
     game.crystals.push(crate::entity::crystal::EndCrystal::new(
         DVec3::new(eye.x + 2.0, eye.y - 1.0, eye.z),
@@ -391,7 +396,7 @@ const FLIGHT_TICKS: u32 = 205;
 fn the_dragons_head_hurts_the_player_and_its_wings_throw_them() {
     let mut game = end_game(GameMode::Survival);
     let spot = DVec3::new(24.5, 90.0, 6.5);
-    game.body.set_position(spot);
+    game.player.body.set_position(spot);
     let mut dragon = game.dragon.take().unwrap();
     dragon.position = spot - dragon.facing() * 8.0;
     let head = dragon
@@ -400,10 +405,10 @@ fn the_dragons_head_hurts_the_player_and_its_wings_throw_them() {
         .find(|(p, _)| *p == Part::Head)
         .map(|(_, bb)| (bb.min + bb.max) / 2.0)
         .unwrap();
-    game.body.set_position(head - DVec3::Y);
-    let health = game.stats.health;
+    game.player.body.set_position(head - DVec3::Y);
+    let health = game.player.stats.health;
     game.dragon_hurts_things(&dragon);
-    assert!(game.stats.health < health, "bitten by the head");
+    assert!(game.player.stats.health < health, "bitten by the head");
     // Wings: stand by one.
     let mut game = end_game(GameMode::Survival);
     let mut dragon = game.dragon.take().unwrap();
@@ -414,27 +419,36 @@ fn the_dragons_head_hurts_the_player_and_its_wings_throw_them() {
         .find(|(p, _)| *p == Part::Wing)
         .map(|(_, bb)| (bb.min + bb.max) / 2.0)
         .unwrap();
-    game.body.set_position(wing + DVec3::new(0.0, -1.0, 0.0));
-    game.body.velocity = DVec3::ZERO;
+    game.player
+        .body
+        .set_position(wing + DVec3::new(0.0, -1.0, 0.0));
+    game.player.body.velocity = DVec3::ZERO;
     game.dragon_hurts_things(&dragon);
-    assert!(game.body.velocity.length() > 0.5, "{}", game.body.velocity);
+    assert!(
+        game.player.body.velocity.length() > 0.5,
+        "{}",
+        game.player.body.velocity
+    );
 }
 
 #[test]
 fn breath_clouds_hurt_the_player_once_a_second_and_a_fireball_makes_one() {
     let mut game = end_game(GameMode::Survival);
-    let feet = game.body.position();
+    let feet = game.player.body.position();
     game.breath.push(BreathCloud::new(
         feet,
         crate::entity::breath::FIREBALL_CLOUD,
     ));
-    let start = game.stats.health;
+    let start = game.player.stats.health;
     for _ in 0..19 {
         game.tick_breath();
     }
-    assert_eq!(game.stats.health, start);
+    assert_eq!(game.player.stats.health, start);
     game.tick_breath();
-    assert!(game.stats.health < start, "hurt on the twentieth tick");
+    assert!(
+        game.player.stats.health < start,
+        "hurt on the twentieth tick"
+    );
     // A fireball into the ground leaves a cloud there.
     game.breath.clear();
     game.dragon_fireballs
@@ -492,7 +506,7 @@ fn a_second_kill_gives_less_xp_and_no_egg() {
 #[test]
 fn the_exit_portal_rolls_the_credits_once_then_takes_the_player_home() {
     let (mut game, _saves) = overworld();
-    let home = game.body.position();
+    let home = game.player.body.position();
     game.enter_end();
     load_player_chunk(&mut game);
     game.end.dragon_killed = true;
@@ -502,7 +516,8 @@ fn the_exit_portal_rolls_the_credits_once_then_takes_the_player_home() {
     let portal = end::PODIUM + IVec3::X;
     game.chunks.load_now(ChunkPos::of_block(portal.x, portal.z));
     game.set_blocks(&[(portal, BlockState::of(blocks::END_PORTAL))]);
-    game.body
+    game.player
+        .body
         .set_position(portal.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
     game.tick_end_portal();
     assert_eq!(game.dimension(), Dimension::End, "the poem comes first");
@@ -516,7 +531,7 @@ fn the_exit_portal_rolls_the_credits_once_then_takes_the_player_home() {
     game.tick();
     assert_eq!(game.credits_ticks(), None);
     assert_eq!(game.dimension(), Dimension::Overworld);
-    assert!((game.body.position() - home).length() < 3.0);
+    assert!((game.player.body.position() - home).length() < 3.0);
     assert!(game.end.credits_seen);
     // The second time: straight home.
     game.enter_end();
@@ -529,7 +544,8 @@ fn the_exit_portal_rolls_the_credits_once_then_takes_the_player_home() {
     }
     game.chunks.load_now(ChunkPos::of_block(portal.x, portal.z));
     game.set_blocks(&[(portal, BlockState::of(blocks::END_PORTAL))]);
-    game.body
+    game.player
+        .body
         .set_position(portal.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
     game.tick_end_portal();
     assert_eq!(game.credits_ticks(), None);
@@ -539,7 +555,7 @@ fn the_exit_portal_rolls_the_credits_once_then_takes_the_player_home() {
 #[test]
 fn skipping_the_credits_goes_home_at_once() {
     let mut game = end_game(GameMode::Creative);
-    game.credits = Some(100);
+    game.player.credits = Some(100);
     game.finish_credits();
     assert_eq!(game.credits_ticks(), None);
     assert_eq!(game.dimension(), Dimension::Overworld);
@@ -548,7 +564,7 @@ fn skipping_the_credits_goes_home_at_once() {
 #[test]
 fn the_world_freezes_while_the_credits_roll() {
     let mut game = end_game(GameMode::Survival);
-    game.credits = Some(0);
+    game.player.credits = Some(0);
     let at = game.dragon.as_ref().unwrap().position;
     game.run_ticks(5);
     assert_eq!(game.dragon.as_ref().unwrap().position, at);
@@ -618,9 +634,10 @@ fn end_crystals_go_on_obsidian_and_bedrock_in_the_end_only() {
         (base + IVec3::X * 8, BlockState::of(blocks::BEDROCK)),
         (base + IVec3::X * 8 + IVec3::Y, BlockState::of(blocks::FIRE)),
     ]);
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::END_CRYSTAL, 5)));
-    game.inventory.selected = 0;
+    game.player.inventory.selected = 0;
     assert!(game.place_crystal(&hit_on(base)));
     assert!(!game.place_crystal(&hit_on(base)), "one to a spot");
     assert!(!game.place_crystal(&hit_on(base + IVec3::X * 4)), "stone");
@@ -632,11 +649,12 @@ fn end_crystals_go_on_obsidian_and_bedrock_in_the_end_only() {
     assert_eq!(game.crystals.len(), 2);
     assert_eq!(game.crystals[0].position, DVec3::new(30.5, 81.0, 30.5));
     assert!(game.crystals[0].show_base);
-    assert_eq!(game.inventory.slot(0).unwrap().count, 3);
+    assert_eq!(game.player.inventory.slot(0).unwrap().count, 3);
     // Not in the Overworld.
     let mut flat = flat_game(GameMode::Survival);
     flat.set_blocks(&[(IVec3::new(5, 70, 5), BlockState::of(blocks::OBSIDIAN))]);
-    flat.inventory
+    flat.player
+        .inventory
         .set(0, Some(ItemStack::new(items::END_CRYSTAL, 1)));
     assert!(!flat.place_crystal(&hit_on(IVec3::new(5, 70, 5))));
     assert!(flat.crystals.is_empty());
@@ -684,16 +702,17 @@ fn end_crystals_and_eyes_have_their_recipes() {
 fn a_chest_under_the_crosshair_takes_the_eyes_right_click_instead_of_a_throw() {
     let mut game = flat_game(GameMode::Survival);
     game.set_blocks(&[(IVec3::new(0, 63, 0), BlockState::of(blocks::CHEST))]);
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::ENDER_EYE, 2)));
-    game.inventory.selected = 0;
+    game.player.inventory.selected = 0;
     game.advance(0.0);
-    game.placing = true;
-    game.place_clicked = true;
+    game.player.placing = true;
+    game.player.place_clicked = true;
     game.use_hands();
-    assert!(game.container.is_some(), "the chest opened");
+    assert!(game.player.container.is_some(), "the chest opened");
     assert!(game.eyes.is_empty());
-    assert_eq!(game.inventory.slot(0).unwrap().count, 2);
+    assert_eq!(game.player.inventory.slot(0).unwrap().count, 2);
 }
 
 /// A game in the End with a player standing beside a wing of the dragon.
@@ -707,8 +726,10 @@ fn beside_a_wing(mode: GameMode) -> (Game, EnderDragon) {
         .find(|(p, _)| *p == Part::Wing)
         .map(|(_, bb)| (bb.min + bb.max) / 2.0)
         .unwrap();
-    game.body.set_position(wing + DVec3::new(0.0, -1.0, 0.0));
-    game.body.velocity = DVec3::ZERO;
+    game.player
+        .body
+        .set_position(wing + DVec3::new(0.0, -1.0, 0.0));
+    game.player.body.velocity = DVec3::ZERO;
     (game, dragon)
 }
 
@@ -716,20 +737,24 @@ fn beside_a_wing(mode: GameMode) -> (Game, EnderDragon) {
 fn creative_players_are_neither_pushed_nor_targeted_by_the_dragon_but_survival_ones_are() {
     let (mut creative, dragon) = beside_a_wing(GameMode::Creative);
     creative.dragon_hurts_things(&dragon);
-    assert_eq!(creative.body.velocity, DVec3::ZERO, "no push in a wing");
+    assert_eq!(
+        creative.player.body.velocity,
+        DVec3::ZERO,
+        "no push in a wing"
+    );
     assert!(
         creative.dragon_senses().player.is_none(),
         "never its target"
     );
     let (mut survival, dragon) = beside_a_wing(GameMode::Survival);
     survival.dragon_hurts_things(&dragon);
-    assert!(survival.body.velocity.length() > 0.5, "pushed");
+    assert!(survival.player.body.velocity.length() > 0.5, "pushed");
     assert!(survival.dragon_senses().player.is_some());
     // Not for ten ticks after the dragon was hurt.
     let (mut hurt, mut dragon) = beside_a_wing(GameMode::Survival);
     assert!(dragon.hurt(Part::Head, 1.0));
     hurt.dragon_hurts_things(&dragon);
-    assert_eq!(hurt.body.velocity, DVec3::ZERO);
+    assert_eq!(hurt.player.body.velocity, DVec3::ZERO);
 }
 
 #[test]

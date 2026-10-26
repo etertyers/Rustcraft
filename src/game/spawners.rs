@@ -19,7 +19,7 @@ const MAX_BLOCK_LIGHT: u8 = 11;
 
 impl Game {
     pub(super) fn tick_spawners(&mut self) {
-        let player = self.body.position();
+        let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
         let mut near = Vec::new();
         for dz in -2..=2 {
@@ -136,7 +136,9 @@ mod tests {
         );
         // Far from the player it rests.
         game.mobs.clear();
-        game.body.set_position(DVec3::new(200.5, 64.0, 200.5));
+        game.player
+            .body
+            .set_position(DVec3::new(200.5, 64.0, 200.5));
         for _ in 0..2000 {
             game.tick_spawners();
         }

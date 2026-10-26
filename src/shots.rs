@@ -527,9 +527,10 @@ pub static SHOTS: &[Shot] = &[
 /// Puts `item` in the hotbar's first slot and selects it, settling the
 /// hand's equip dip.
 fn hold(game: &mut Game, item: crate::inventory::item::ItemId) {
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(crate::inventory::stack::ItemStack::new(item, 1)));
-    game.inventory.selected = 0;
+    game.player.inventory.selected = 0;
     game.run_ticks(10);
 }
 
@@ -555,8 +556,8 @@ fn glint_scene(game: &mut Game) {
     };
     let mut pickaxe = ItemStack::new(items::DIAMOND_PICKAXE, 1);
     pickaxe.enchant(Enchantment::Efficiency, 5);
-    game.inventory.set(0, Some(pickaxe));
-    game.inventory.selected = 0;
+    game.player.inventory.set(0, Some(pickaxe));
+    game.player.inventory.selected = 0;
     let mut sword = ItemStack::new(items::DIAMOND_SWORD, 1);
     sword.enchant(Enchantment::Sharpness, 5);
     for (x, stack) in [
@@ -571,7 +572,8 @@ fn glint_scene(game: &mut Game) {
             0.0,
         ));
     }
-    game.stats
+    game.player
+        .stats
         .experience
         .add(crate::player::experience::points_to_reach(12) + 14);
     game.spawn_xp(37, glam::DVec3::new(0.5, 64.6, -3.5));
@@ -694,11 +696,14 @@ fn brewing_scene(game: &mut Game) {
         s.slots[brewing::INGREDIENT] = Some(ItemStack::new(items::MAGMA_CREAM, 3));
         s.slots[brewing::FUEL] = Some(ItemStack::new(items::BLAZE_POWDER, 4));
     }
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(potion::stack(items::POTION, "fire_resistance")));
-    game.inventory
+    game.player
+        .inventory
         .set(1, Some(potion::stack(items::SPLASH_POTION, "healing")));
-    game.inventory
+    game.player
+        .inventory
         .set(2, Some(potion::stack(items::POTION, "water")));
     game.run_ticks(180);
 }
@@ -712,7 +717,8 @@ fn effects_scene(game: &mut Game) {
         (Effect::Strength, 0, 2400),
         (Effect::NightVision, 0, 9600),
     ] {
-        game.stats
+        game.player
+            .stats
             .apply(Active::new(effect, amplifier, ticks), false, true);
     }
     let mut lava = Vec::new();
@@ -875,10 +881,10 @@ fn inventory_with_book(game: &mut Game) {
         (11, ItemStack::new(items::COAL, 16)),
         (12, ItemStack::new(items::BREAD, 5)),
     ] {
-        game.inventory.set(slot, Some(stack));
+        game.player.inventory.set(slot, Some(stack));
     }
-    game.inventory.selected = 0;
-    game.recipe_book.open = true;
+    game.player.inventory.selected = 0;
+    game.player.recipe_book.open = true;
     game.stage_ui(ShotUi {
         screen: ShotScreen::Inventory,
         hover: Some(SlotRef::Inventory(10)),
@@ -920,10 +926,10 @@ fn inventory_with_armor(game: &mut Game) {
         (2, ItemStack::new(items::OAK_SIGN, 16)),
         (9, ItemStack::new(items::BUCKET, 16)),
     ] {
-        game.inventory.set(slot, Some(stack));
+        game.player.inventory.set(slot, Some(stack));
     }
-    game.inventory.selected = 0;
-    game.recipe_book.open = false;
+    game.player.inventory.selected = 0;
+    game.player.recipe_book.open = false;
     game.stage_ui(ShotUi {
         screen: ShotScreen::Inventory,
         hover: Some(SlotRef::Inventory(0)),
@@ -937,9 +943,11 @@ fn creative_tabs(game: &mut Game) {
         inventory::{items, slots::SlotRef, stack::ItemStack},
     };
     game.run_ticks(2);
-    game.inventory
+    game.player
+        .inventory
         .set(0, Some(ItemStack::new(items::DIAMOND_PICKAXE, 1)));
-    game.inventory
+    game.player
+        .inventory
         .set(1, Some(ItemStack::new(items::STONE_BRICKS, 64)));
     game.stage_ui(ShotUi {
         screen: ShotScreen::Creative(0),

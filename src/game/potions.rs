@@ -43,27 +43,27 @@ impl Game {
     /// The end of drinking `stack` from `slot`: its effects (or, for milk,
     /// none at all), and the bottle or bucket back.
     pub(super) fn finish_drinking(&mut self, slot: usize, stack: &ItemStack) {
-        let vulnerable = self.mode.is_vulnerable();
+        let vulnerable = self.player.mode.is_vulnerable();
         let empty = if stack.id == items::MILK_BUCKET {
-            self.stats.effects.clear();
-            self.stats.absorption = 0.0;
+            self.player.stats.effects.clear();
+            self.player.stats.absorption = 0.0;
             items::BUCKET
         } else {
             if let Some(potion) = potion::of(stack) {
                 for effect in potion::effects(potion) {
-                    self.stats.apply(effect, false, vulnerable);
+                    self.player.stats.apply(effect, false, vulnerable);
                 }
             }
             items::GLASS_BOTTLE
         };
-        if !self.mode.uses_up_items() {
+        if !self.player.mode.uses_up_items() {
             return;
         }
-        self.inventory.take(slot, 1);
+        self.player.inventory.take(slot, 1);
         let left = ItemStack::new(empty, 1);
-        if self.inventory.slot(slot).is_none() {
-            self.inventory.set(slot, Some(left));
-        } else if let Some(rest) = self.inventory.add(left, &self.items) {
+        if self.player.inventory.slot(slot).is_none() {
+            self.player.inventory.set(slot, Some(left));
+        } else if let Some(rest) = self.player.inventory.add(left, &self.items) {
             self.throw(rest);
         }
     }
@@ -114,7 +114,7 @@ impl Game {
     /// Fills the held glass bottle from the water source looked at.
     pub(super) fn fill_bottle(&mut self, eye: DVec3) -> bool {
         let world = self.chunks.world();
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let water = |at: glam::IVec3| {
             world
                 .block(at.x, at.y, at.z)
@@ -138,44 +138,53 @@ impl Game {
     /// Uses up one of the held item for `got` (a bottle filled, a bucket
     /// emptied), into the hand if it's free, the inventory if not.
     fn swap_held(&mut self, got: ItemStack) {
-        if !self.mode.uses_up_items() {
-            if got.id == items::POTION && self.inventory.add(got.clone(), &self.items).is_some() {
+        if !self.player.mode.uses_up_items() {
+            if got.id == items::POTION
+                && self
+                    .player
+                    .inventory
+                    .add(got.clone(), &self.items)
+                    .is_some()
+            {
                 self.throw(got);
             }
             return;
         }
         let slot = self.held_slot();
-        self.inventory.take(slot, 1);
-        if self.inventory.slot(slot).is_none() {
-            self.inventory.set(slot, Some(got));
-        } else if let Some(rest) = self.inventory.add(got, &self.items) {
+        self.player.inventory.take(slot, 1);
+        if self.player.inventory.slot(slot).is_none() {
+            self.player.inventory.set(slot, Some(got));
+        } else if let Some(rest) = self.player.inventory.add(got, &self.items) {
             self.throw(rest);
         }
     }
 
     /// The effects eating `food` gives.
     pub(super) fn food_effects(&mut self, food: crate::inventory::item::ItemId) {
-        let vulnerable = self.mode.is_vulnerable();
+        let vulnerable = self.player.mode.is_vulnerable();
         for &(name, effect, amplifier, duration, chance) in &FOOD_EFFECTS {
             if items::by_name(name) == Some(food) && self.rng.next_f64() < chance {
-                self.stats
-                    .apply(Active::new(effect, amplifier, duration), false, vulnerable);
+                self.player.stats.apply(
+                    Active::new(effect, amplifier, duration),
+                    false,
+                    vulnerable,
+                );
             }
         }
     }
 
     /// Throws the splash potion in `slot` the way the player looks.
     pub(super) fn throw_potion(&mut self, slot: usize) {
-        let Some(stack) = self.inventory.slot(slot).cloned() else {
+        let Some(stack) = self.player.inventory.slot(slot).cloned() else {
             return;
         };
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
         let thrown = ThrownPotion::throw(
             stack.with_count(1),
             eye,
-            self.camera.yaw,
-            self.camera.pitch,
-            self.body.velocity,
+            self.player.camera.yaw,
+            self.player.camera.pitch,
+            self.player.body.velocity,
         );
         self.thrown.push(thrown);
         crate::audio::play_at(
@@ -184,16 +193,16 @@ impl Game {
             0.5,
             0.4 / (self.rng.next_f64() as f32 * 0.4 + 0.8),
         );
-        if self.mode.uses_up_items() {
-            self.inventory.take(slot, 1);
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(slot, 1);
         }
-        self.view.swing();
+        self.player.view.swing();
     }
 
     /// One tick of thrown potions, bursting those that hit something.
     pub(super) fn tick_thrown(&mut self) {
         let mut flying = std::mem::take(&mut self.thrown);
-        let player = self.body.aabb();
+        let player = self.player.body.aabb();
         let mut bursts = Vec::new();
         flying.retain_mut(|potion| {
             let world = self.chunks.world();
@@ -241,11 +250,11 @@ impl Game {
                 ..effect
             })
         };
-        let vulnerable = self.mode.is_vulnerable();
-        if let Some(strength) = splash_strength(at, &self.body.aabb()) {
+        let vulnerable = self.player.mode.is_vulnerable();
+        if let Some(strength) = splash_strength(at, &self.player.body.aabb()) {
             for &effect in &effects {
                 if let Some(effect) = scaled(effect, strength) {
-                    apply_scaled(&mut self.stats, effect, strength, false, vulnerable);
+                    apply_scaled(&mut self.player.stats, effect, strength, false, vulnerable);
                 }
             }
         }
@@ -305,7 +314,7 @@ impl Game {
         };
         let in_third_person = self.view_mode() != super::view::ViewMode::First;
         if in_third_person {
-            around(&self.stats, self.body.aabb(), &mut self.rng);
+            around(&self.player.stats, self.player.body.aabb(), &mut self.rng);
         }
         for mob in &self.mobs {
             if !mob.is_dead() && !mob.stats.effects.is_empty() {
@@ -351,13 +360,13 @@ mod tests {
     };
 
     fn drink(game: &mut Game, stack: ItemStack) {
-        game.inventory.set(0, Some(stack));
-        game.inventory.selected = 0;
-        game.placing = true;
+        game.player.inventory.set(0, Some(stack));
+        game.player.inventory.selected = 0;
+        game.player.placing = true;
         for _ in 0..40 {
             game.tick();
         }
-        game.placing = false;
+        game.player.placing = false;
     }
 
     #[test]
@@ -365,6 +374,7 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         drink(&mut game, potion::stack(items::POTION, "fire_resistance"));
         let active = game
+            .player
             .stats
             .effects
             .get(Effect::FireResistance)
@@ -372,11 +382,11 @@ mod tests {
             .expect("drunk");
         assert!(active.duration > 3500 && active.duration <= 3600);
         assert_eq!(
-            game.inventory.slot(0).map(|s| s.id),
+            game.player.inventory.slot(0).map(|s| s.id),
             Some(items::GLASS_BOTTLE)
         );
         // In lava, unhurt.
-        let feet = game.body.position().floor().as_ivec3();
+        let feet = game.player.body.position().floor().as_ivec3();
         game.chunks.set_blocks(&[
             (feet, BlockState::of(blocks::LAVA)),
             (feet + IVec3::Y, BlockState::of(blocks::LAVA)),
@@ -384,47 +394,55 @@ mod tests {
         for _ in 0..60 {
             game.tick();
         }
-        assert_eq!(game.stats.health, 20.0);
+        assert_eq!(game.player.stats.health, 20.0);
         game.chunks
             .set_blocks(&[(feet, BlockState::AIR), (feet + IVec3::Y, BlockState::AIR)]);
-        game.stats.fire = 0;
+        game.player.stats.fire = 0;
         drink(&mut game, ItemStack::new(items::MILK_BUCKET, 1));
-        assert!(game.stats.effects.is_empty(), "milk clears it");
-        assert_eq!(game.inventory.slot(0).map(|s| s.id), Some(items::BUCKET));
+        assert!(game.player.stats.effects.is_empty(), "milk clears it");
+        assert_eq!(
+            game.player.inventory.slot(0).map(|s| s.id),
+            Some(items::BUCKET)
+        );
     }
 
     #[test]
     fn a_splash_of_healing_heals_the_player_and_hurts_the_undead() {
         let mut game = flat_game(GameMode::Survival);
         game.mob_defs = mob_registry();
-        game.stats.health = 10.0;
-        let at = game.body.position() + DVec3::new(1.0, 0.0, 0.0);
+        game.player.stats.health = 10.0;
+        let at = game.player.body.position() + DVec3::new(1.0, 0.0, 0.0);
         game.summon("zombie", at, 0.0);
         game.splash(
             at + DVec3::Y * 0.5,
             &potion::stack(items::SPLASH_POTION, "healing"),
         );
-        assert!(game.stats.health > 10.0, "healed: {}", game.stats.health);
+        assert!(
+            game.player.stats.health > 10.0,
+            "healed: {}",
+            game.player.stats.health
+        );
         assert!(game.mobs[0].stats.health < 20.0, "the zombie is hurt");
     }
 
     #[test]
     fn a_thrown_splash_potion_lands_and_bursts() {
         let mut game = flat_game(GameMode::Survival);
-        game.camera.pitch = -1.2;
-        game.inventory
+        game.player.camera.pitch = -1.2;
+        game.player
+            .inventory
             .set(0, Some(potion::stack(items::SPLASH_POTION, "swiftness")));
-        game.inventory.selected = 0;
-        game.place_clicked = true;
+        game.player.inventory.selected = 0;
+        game.player.place_clicked = true;
         game.tick();
         assert_eq!(game.thrown.len(), 1);
-        assert!(game.inventory.slot(0).is_none());
+        assert!(game.player.inventory.slot(0).is_none());
         for _ in 0..60 {
             game.tick();
         }
         assert!(game.thrown.is_empty());
         assert!(
-            game.stats.effects.has(Effect::Speed),
+            game.player.stats.effects.has(Effect::Speed),
             "splashed at their feet"
         );
     }
@@ -432,11 +450,14 @@ mod tests {
     #[test]
     fn a_golden_apple_gives_regeneration_and_absorption() {
         let mut game = flat_game(GameMode::Survival);
-        game.stats.food = 10;
+        game.player.stats.food = 10;
         drink_like_food(&mut game, items::GOLDEN_APPLE);
-        assert_eq!(game.stats.effects.amplifier(Effect::Regeneration), Some(1));
-        assert!(game.stats.effects.has(Effect::Absorption));
-        assert_eq!(game.stats.absorption, 4.0);
+        assert_eq!(
+            game.player.stats.effects.amplifier(Effect::Regeneration),
+            Some(1)
+        );
+        assert!(game.player.stats.effects.has(Effect::Absorption));
+        assert_eq!(game.player.stats.absorption, 4.0);
     }
 
     #[test]
@@ -446,12 +467,17 @@ mod tests {
         let cauldron = IVec3::new(0, 64, -2);
         game.chunks
             .set_blocks(&[(cauldron, BlockState::of(blocks::CAULDRON))]);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::WATER_BUCKET, 1)));
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         assert!(game.use_cauldron(cauldron));
-        assert_eq!(game.inventory.slot(0).map(|s| s.id), Some(items::BUCKET));
-        game.inventory
+        assert_eq!(
+            game.player.inventory.slot(0).map(|s| s.id),
+            Some(items::BUCKET)
+        );
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::GLASS_BOTTLE, 3)));
         for _ in 0..3 {
             assert!(game.use_cauldron(cauldron));
@@ -465,7 +491,7 @@ mod tests {
             "emptied"
         );
         let bottles: u8 = (0..36)
-            .filter_map(|i| game.inventory.slot(i))
+            .filter_map(|i| game.player.inventory.slot(i))
             .filter(|s| potion::of(s).is_some_and(|p| p.id == "water"))
             .map(|s| s.count)
             .sum();
@@ -504,7 +530,7 @@ mod tests {
         for _ in 0..402 {
             game.tick();
         }
-        assert!(matches!(game.container, Some(Container::Brewing(_))));
+        assert!(matches!(game.player.container, Some(Container::Brewing(_))));
         let slots = game.block_slots().unwrap().to_vec();
         for i in brewing::BOTTLES {
             assert_eq!(
@@ -524,16 +550,17 @@ mod tests {
         let walk = |speed: bool| {
             let mut game = flat_game(GameMode::Survival);
             if speed {
-                game.stats
+                game.player
+                    .stats
                     .apply(Active::new(Effect::Speed, 0, 600), false, true);
             }
-            game.camera.pitch = 0.0;
+            game.player.camera.pitch = 0.0;
             game.on_action(crate::bindings::Action::Forward, true, false, true);
-            let start = game.body.position();
+            let start = game.player.body.position();
             for _ in 0..60 {
                 game.tick();
             }
-            (game.body.position() - start).length()
+            (game.player.body.position() - start).length()
         };
         let ratio = walk(true) / walk(false);
         assert!((ratio - 1.2).abs() < 0.03, "{ratio}");
@@ -541,7 +568,8 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         game.time = 18000;
         assert!(game.environment().ambient < 0.5);
-        game.stats
+        game.player
+            .stats
             .apply(Active::new(Effect::NightVision, 0, 3600), false, true);
         assert_eq!(game.environment().ambient, 1.0);
     }
@@ -552,16 +580,16 @@ mod tests {
         game.mob_defs = mob_registry();
         game.summon(
             "wither_skeleton",
-            game.body.position() + DVec3::new(1.2, 0.0, 0.0),
+            game.player.body.position() + DVec3::new(1.2, 0.0, 0.0),
             0.0,
         );
         for _ in 0..60 {
             game.tick();
-            if game.stats.effects.has(Effect::Wither) {
+            if game.player.stats.effects.has(Effect::Wither) {
                 break;
             }
         }
-        assert!(game.stats.effects.has(Effect::Wither));
+        assert!(game.player.stats.effects.has(Effect::Wither));
     }
 
     fn drink_like_food(game: &mut Game, food: crate::inventory::item::ItemId) {

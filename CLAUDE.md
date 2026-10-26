@@ -143,6 +143,7 @@ src/
   inventory/{creative,book}.rs, assets/data/creative_tabs.ron   # creative tabs' contents, search and click rules; the recipe book's recipes, categories and placing
   entity/boat.rs, game/boats.rs, render/{boat,lightmap}.rs, world/plants.rs   # boats and rafts (floating, rowing, seats), placing/riding/breaking them, their models; the lightmap formula (tested copy of the shader's); where sugar cane may stand
   world/worldgen/caves.rs   # modern caves: cheese, spaghetti and noodle noise caves, worm tunnels and ravines, aquifers and deep lava
+  server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
@@ -562,7 +563,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Options save to `options.ron` beside `saves/` and load at startup; unknown keys are ignored so older files still load.
 - **Done when:** every key can be rebound and the game obeys the new binding, conflicts show red, auto-jump works when toggled, and options survive a restart. One screenshot: the Key Binds screen.
 
-### - [ ] M36 — Client/server split
+### - [x] M36 — Client/server split
 - Split the game into a **server** (world, chunks, ticks, mobs, redstone, fluids, dimensions, inventories, saving) and a **client** (rendering, input, UI, sound, prediction), like vanilla's integrated server. Single player runs an in-process server with one client, so there is one code path. Do this as a series of small refactor commits; the game must stay playable at every commit.
 - **Protocol:** versioned message types (`serde` + `bincode` + `lz4_flex` for chunk data) over a transport trait with two implementations: in-process channels (single player) and TCP (LAN, M37). Messages for login, chunk data and block changes, entity spawn/move/remove, player movement, inventory and container updates, sounds and particles, time and weather, dimension change, and disconnect.
 - **Client-side prediction** for the local player's movement and block breaking/placing, corrected by the server, so single player feels exactly like before. 20 ticks/second on the server; entity positions interpolated on the client.

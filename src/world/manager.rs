@@ -42,6 +42,9 @@ pub enum ChunkSource {
     Flat,
     /// Fixed chunks (the block gallery); anywhere else is empty.
     Fixed(HashMap<ChunkPos, Chunk>),
+    /// Chunks a server sends (a client's world): nothing is generated,
+    /// saved or dropped unless the server says.
+    Remote,
 }
 
 impl ChunkSource {
@@ -54,6 +57,7 @@ impl ChunkSource {
             ChunkSource::Fixed(chunks) => {
                 chunks.get(&pos).cloned().unwrap_or_else(|| Chunk::new(pos))
             }
+            ChunkSource::Remote => Chunk::new(pos),
         }
     }
 
@@ -89,9 +93,10 @@ impl ChunkSource {
 
 enum Job {
     Generate(ChunkPos),
-    /// The chunk's edit revision when the job was sent, and the models
-    /// to mesh with (they change when the resource packs do).
-    Mesh(ChunkPos, ChunkArea, u32, Arc<BlockModels>),
+    /// The chunk's edit revision when the job was sent, the models to mesh
+    /// with (they change when the resource packs do) and whether to mesh
+    /// at all (a server only lights).
+    Mesh(ChunkPos, ChunkArea, u32, Arc<BlockModels>, bool),
 }
 
 enum Done {
@@ -147,6 +152,15 @@ pub struct ChunkManager {
     stats: Arc<WorkStats>,
     /// Chunks `load_now` brought in, reported by the next `update`.
     loaded_now: Vec<ChunkPos>,
+    /// Chunks are meshed for drawing; a server's are only lit.
+    draws: bool,
+    /// A server's record of what changed since it last told its clients:
+    /// block edits (and whether they were a player's, to remesh at once),
+    /// and chunks whose block entities changed, to send again.
+    edits: Option<Vec<(IVec3, BlockState, bool)>>,
+    rewritten: FastSet<ChunkPos>,
+    /// Chunks the server dropped, reported by the next `update`.
+    forgotten: Vec<ChunkPos>,
 }
 
 /// Offsets within `radius + 1` chunks (one ring more is generated so the
@@ -286,9 +300,13 @@ impl ChunkManager {
                                     stats.generated.record(started.elapsed());
                                     Done::Generated(Box::new(chunk))
                                 }
-                                Job::Mesh(pos, area, revision, models) => {
+                                Job::Mesh(pos, area, revision, models, draws) => {
                                     let light = light_chunk(&models, &area);
-                                    let mesh = mesh_chunk(&models, &area, &light);
+                                    let mesh = if draws {
+                                        mesh_chunk(&models, &area, &light)
+                                    } else {
+                                        Mesh::default()
+                                    };
                                     stats.meshed.record(started.elapsed());
                                     Done::Meshed(pos, mesh, light, revision)
                                 }
@@ -328,6 +346,10 @@ impl ChunkManager {
             lights: FastMap::default(),
             stats,
             loaded_now: Vec::new(),
+            draws: true,
+            edits: None,
+            rewritten: FastSet::default(),
+            forgotten: Vec::new(),
         }
     }
 
@@ -370,9 +392,10 @@ impl ChunkManager {
     pub fn update(&mut self, center: ChunkPos) -> Changes {
         let mut changes = Changes {
             meshes: std::mem::take(&mut self.remeshed),
-            unloaded: Vec::new(),
+            unloaded: std::mem::take(&mut self.forgotten),
             loaded: std::mem::take(&mut self.loaded_now),
         };
+        let remote = matches!(*self.source, ChunkSource::Remote);
 
         for _ in 0..MAX_RESULTS_PER_FRAME {
             match self.done.try_recv() {
@@ -406,7 +429,7 @@ impl ChunkManager {
         let far: Vec<ChunkPos> = self
             .world
             .positions()
-            .filter(|&pos| Self::distance(pos, center) > keep)
+            .filter(|&pos| !remote && Self::distance(pos, center) > keep)
             .collect();
         for pos in far {
             if let Some(chunk) = self.world.remove(pos)
@@ -443,7 +466,9 @@ impl ChunkManager {
             }
             let pos = center.offset(dx, dz);
             if self.world.get(pos).is_none() {
-                if let Some(chunk) = self.unloaded_edits.remove(&pos) {
+                if remote {
+                    // The server sends it when it's ready.
+                } else if let Some(chunk) = self.unloaded_edits.remove(&pos) {
                     changes.loaded.push(pos);
                     self.world.insert_shared(chunk);
                 } else if self.generating.insert(pos) {
@@ -464,6 +489,7 @@ impl ChunkManager {
                     area,
                     self.revision(pos),
                     self.models.clone(),
+                    self.draws,
                 ));
             }
         }
@@ -603,7 +629,12 @@ impl ChunkManager {
             };
             let (x, z) = (at.x.rem_euclid(size), at.z.rem_euclid(size));
             chunk.set(x as usize, at.y, z as usize, block);
-            self.unsaved.insert(pos);
+            if !matches!(*self.source, ChunkSource::Remote) {
+                self.unsaved.insert(pos);
+            }
+            if let Some(log) = self.edits.as_mut() {
+                log.push((at, block, remesh_now));
+            }
             touched.insert(pos);
             let low = ChunkPos::of_block(at.x - LIGHT_REACH, at.z - LIGHT_REACH);
             let high = ChunkPos::of_block(at.x + LIGHT_REACH, at.z + LIGHT_REACH);
@@ -639,8 +670,10 @@ impl ChunkManager {
                 area.smooth = self.smooth;
                 area.fast_leaves = self.fast_leaves;
                 let light = light_chunk(&self.models, &area);
-                self.remeshed
-                    .push((pos, mesh_chunk(&self.models, &area, &light)));
+                if self.draws {
+                    self.remeshed
+                        .push((pos, mesh_chunk(&self.models, &area, &light)));
+                }
                 self.lights.insert(pos, light);
                 self.relight.remove(&pos);
             }
@@ -666,6 +699,50 @@ impl ChunkManager {
         list
     }
 
+    /// Makes this a server's chunks: lit but never meshed, with every edit
+    /// recorded for `take_edits`.
+    pub fn serve(&mut self) {
+        self.draws = false;
+        self.edits = Some(Vec::new());
+    }
+
+    /// Whether this is a server's (`serve`).
+    pub fn serves(&self) -> bool {
+        self.edits.is_some()
+    }
+
+    /// A server's edits since the last call, and the chunks whose block
+    /// entities changed.
+    pub fn take_edits(&mut self) -> (Vec<(IVec3, BlockState, bool)>, Vec<ChunkPos>) {
+        let edits = self.edits.as_mut().map(std::mem::take).unwrap_or_default();
+        let rewritten = self.rewritten.drain().collect();
+        (edits, rewritten)
+    }
+
+    /// A chunk from the server, new or sent again (a client's world); it's
+    /// meshed once its neighbors are here, or remeshed soon.
+    pub fn receive(&mut self, chunk: Arc<Chunk>) {
+        let pos = chunk.pos;
+        let fresh = self.world.get(pos).is_none();
+        self.world.insert_shared(chunk);
+        *self.revisions.entry(pos).or_default() += 1;
+        if fresh {
+            self.loaded_now.push(pos);
+        } else if self.meshed.contains(&pos) {
+            self.relight.insert(pos);
+        }
+    }
+
+    /// Drops a chunk the server took out of view.
+    pub fn forget(&mut self, pos: ChunkPos) {
+        self.world.remove(pos);
+        self.relight.remove(&pos);
+        self.lights.remove(&pos);
+        if self.meshed.remove(&pos) {
+            self.forgotten.push(pos);
+        }
+    }
+
     /// Whether the chunk at `pos` and the eight around it are loaded.
     pub fn loaded_around(&self, pos: ChunkPos) -> bool {
         (-1..=1).all(|dz| (-1..=1).all(|dx| self.world.get(pos.offset(dx, dz)).is_some()))
@@ -683,6 +760,9 @@ impl ChunkManager {
         let chunk = self.world.get_mut(pos)?;
         chunk.block_entity(local)?;
         self.unsaved.insert(pos);
+        if self.edits.is_some() {
+            self.rewritten.insert(pos);
+        }
         chunk.block_entity_mut(local)
     }
 
@@ -696,6 +776,9 @@ impl ChunkManager {
         let (pos, local) = local_pos(at)?;
         let chunk = self.world.get_mut(pos)?;
         self.unsaved.insert(pos);
+        if self.edits.is_some() {
+            self.rewritten.insert(pos);
+        }
         chunk.set_block_entity(local, entity)
     }
 
@@ -773,6 +856,74 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         (meshed, unloaded)
+    }
+
+    #[test]
+    fn a_servers_chunks_are_lit_not_meshed_and_its_edits_are_recorded() {
+        let mut server = ChunkManager::new(ChunkSource::Flat, models(), 1, 2);
+        server.serve();
+        let center = ChunkPos::new(0, 0);
+        let (meshed, _) = run_until(&mut server, center, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        assert_eq!(meshed.len(), 9);
+        assert!(server.light_at(0, 64, 0).is_some(), "lit");
+        let changes = server.update(center);
+        assert!(changes.meshes.iter().all(|(_, mesh)| mesh.is_empty()));
+        let stone = BlockState::of(blocks::STONE);
+        server.set_blocks(&[(IVec3::new(1, 64, 1), stone)]);
+        server.set_blocks_later(&[(IVec3::new(2, 64, 2), stone)]);
+        assert!(
+            server.update(center).meshes.is_empty(),
+            "no mesh for an edit"
+        );
+        let (edits, rewritten) = server.take_edits();
+        assert_eq!(
+            edits,
+            [
+                (IVec3::new(1, 64, 1), stone, true),
+                (IVec3::new(2, 64, 2), stone, false)
+            ]
+        );
+        assert!(rewritten.is_empty());
+        assert!(server.take_edits().0.is_empty(), "taken once");
+    }
+
+    #[test]
+    fn a_clients_chunks_come_from_the_server_and_go_when_it_says() {
+        let mut source = ChunkManager::new(ChunkSource::Flat, models(), 1, 2);
+        let center = ChunkPos::new(0, 0);
+        run_until(&mut source, center, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        let mut client = ChunkManager::new(ChunkSource::Remote, models(), 1, 2);
+        // Nothing is generated: it waits for chunks.
+        for _ in 0..20 {
+            assert!(client.update(center).meshes.is_empty());
+        }
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                if let Some(chunk) = source.world().get(center.offset(dx, dz)) {
+                    client.receive(chunk.clone());
+                }
+            }
+        }
+        let (meshed, _) = run_until(&mut client, center, |m, meshed| {
+            meshed.len() >= 9 && m.in_flight() == 0
+        });
+        assert_eq!(meshed.len(), 9, "meshed where all neighbors arrived");
+        // Edits from the server remesh; far chunks stay until forgotten.
+        client.set_blocks(&[(IVec3::new(1, 64, 1), BlockState::of(blocks::STONE))]);
+        assert_eq!(client.update(center).meshes.len(), 1);
+        client.forget(center);
+        assert_eq!(client.update(center).unloaded, [center]);
+        assert!(client.world().get(center).is_none());
+        client.update(ChunkPos::new(40, 40));
+        assert!(
+            client.world().get(center.offset(1, 1)).is_some(),
+            "not dropped for distance"
+        );
+        assert!(client.unsaved.is_empty(), "a client keeps nothing to save");
     }
 
     #[test]

@@ -17,8 +17,8 @@ impl Game {
     /// One tick of every bullet in flight.
     pub(super) fn tick_bullets(&mut self) {
         let mut bullets = std::mem::take(&mut self.bullets);
-        let alive = !self.stats.is_dead();
-        let body = self.body.aabb();
+        let alive = !self.player.stats.is_dead();
+        let body = self.player.body.aabb();
         let middle = (body.min + body.max) / 2.0;
         let mut hits = Vec::new();
         bullets.retain_mut(|bullet| {
@@ -47,7 +47,7 @@ impl Game {
         self.bullets = bullets;
         for from in hits {
             crate::audio::play("entity.shulker_bullet.hit", from);
-            if self.mode.is_vulnerable() {
+            if self.player.mode.is_vulnerable() {
                 self.hurt_player(super::combat::Strike {
                     amount: bullet::DAMAGE,
                     source: DamageSource::Arrow,
@@ -55,7 +55,7 @@ impl Game {
                     ranged: true,
                     axe: false,
                 });
-                self.stats.effects.add(Active::new(
+                self.player.stats.effects.add(Active::new(
                     Effect::Levitation,
                     0,
                     bullet::LEVITATION_TICKS,
@@ -77,19 +77,25 @@ mod tests {
     #[test]
     fn a_bullet_that_reaches_the_player_hurts_them_and_lifts_them_off_the_ground() {
         let mut game = flat_game(GameMode::Survival);
-        let eye = game.body.position() + DVec3::new(4.0, 1.0, 0.0);
-        game.bullets
-            .push(ShulkerBullet::new(eye, game.body.position() + DVec3::Y));
-        let health = game.stats.health;
+        let eye = game.player.body.position() + DVec3::new(4.0, 1.0, 0.0);
+        game.bullets.push(ShulkerBullet::new(
+            eye,
+            game.player.body.position() + DVec3::Y,
+        ));
+        let health = game.player.stats.health;
         game.run_ticks(60);
-        assert!(game.stats.health <= health - 1.0, "{}", game.stats.health);
-        assert!(game.stats.effects.has(Effect::Levitation));
-        let y = game.body.position().y;
+        assert!(
+            game.player.stats.health <= health - 1.0,
+            "{}",
+            game.player.stats.health
+        );
+        assert!(game.player.stats.effects.has(Effect::Levitation));
+        let y = game.player.body.position().y;
         game.run_ticks(40);
         assert!(
-            game.body.position().y > y + 1.5,
+            game.player.body.position().y > y + 1.5,
             "lifted {}",
-            game.body.position().y - y
+            game.player.body.position().y - y
         );
         assert!(game.bullets.is_empty());
     }
@@ -100,11 +106,11 @@ mod tests {
         game.mob_defs = mob_registry();
         game.summon(
             "shulker",
-            game.body.position() + DVec3::new(6.0, 0.0, 0.0),
+            game.player.body.position() + DVec3::new(6.0, 0.0, 0.0),
             0.0,
         )
         .expect("a shulker");
-        game.mode = GameMode::Survival;
+        game.player.mode = GameMode::Survival;
         let mut shot = false;
         for _ in 0..120 {
             game.run_ticks(1);
@@ -130,15 +136,15 @@ mod tests {
             None,
             Some(ItemStack::with_damage(items::IRON_PICKAXE, 1, 7)),
         ]);
-        game.inventory.set(0, Some(boxed.clone()));
-        game.inventory.selected = 0;
-        game.camera.pitch = -0.7;
+        game.player.inventory.set(0, Some(boxed.clone()));
+        game.player.inventory.selected = 0;
+        game.player.camera.pitch = -0.7;
         game.advance(0.0);
-        let at = game.target.unwrap().adjacent().unwrap();
-        game.placing = true;
-        game.place_clicked = true;
+        let at = game.player.target.unwrap().adjacent().unwrap();
+        game.player.placing = true;
+        game.player.place_clicked = true;
         game.use_hands();
-        game.placing = false;
+        game.player.placing = false;
         assert!(
             game.chunks
                 .world()
