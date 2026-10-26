@@ -15,6 +15,11 @@ pub struct Cli {
     pub bench: Option<bench::Bench>,
     pub shot: Option<ShotArgs>,
     pub view: ViewMode,
+    /// LAN: the player name for this run, a world to join, and a port to
+    /// open the world to LAN on at once (0 for any).
+    pub name: Option<String>,
+    pub join: Option<String>,
+    pub lan: Option<u16>,
 }
 
 /// The world `--creative` makes when no `--world` names one.
@@ -37,6 +42,11 @@ Usage: cargo run --release -- [flags]
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
   --perf-test           the performance gate (writes docs/perf/m<N>.md)
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
+  --name <player>       play as this name this time (Options keeps yours)
+  --join <ip:port>      join a world open to LAN
+  --lan [port]          open the world to LAN as soon as it's up
+  --lan-test <n>        a server with n bots walking, mining and placing
+                        for 60 s; prints tick times and bandwidth
   --help                this text
 Tools: --write-structures, --asset-report, --gen-placeholders,
        --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>],
@@ -86,6 +96,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let mut nether = false;
     let mut end = false;
     let mut view = ViewMode::First;
+    let (mut name, mut join, mut lan) = (None, None, None);
     fn value(
         args: &mut impl Iterator<Item = String>,
         flag: &str,
@@ -148,6 +159,30 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                         )));
                     }
                 };
+            }
+            "--name" => {
+                let text = value(&mut args, "--name", "a player name")?;
+                if !crate::options::valid_name(&text) {
+                    return Err(CliError::wrong(format!(
+                        "bad name {text:?} (3 to 16 letters, digits or underscores)"
+                    )));
+                }
+                name = Some(text);
+            }
+            "--join" => {
+                join = Some(value(
+                    &mut args,
+                    "--join",
+                    "an address like 192.168.1.5:51234",
+                )?)
+            }
+            "--lan" => {
+                lan = Some(match args.next_if(|next| !next.starts_with("--")) {
+                    Some(text) => text
+                        .parse()
+                        .map_err(|_| CliError::wrong(format!("bad port {text:?}")))?,
+                    None => 0,
+                });
             }
             "--gallery" => test_world = Some(WorldKind::Gallery),
             // Read in `main`.
@@ -214,6 +249,9 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             bench,
             shot: None,
             view,
+            name,
+            join: None,
+            lan: None,
         });
     }
     let world = match (world, seed) {
@@ -238,6 +276,9 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         bench: None,
         shot,
         view,
+        name,
+        join,
+        lan,
     })
 }
 

@@ -111,6 +111,8 @@ pub enum WorldKind {
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
 /// `isInRangeToRenderDist` for a mob about a block across).
 const MOB_DRAW_DISTANCE: f64 = 64.0;
+/// How long joining a LAN world waits for the host to answer.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
 
@@ -187,6 +189,10 @@ pub struct App {
     /// link to it; `game` is the client's copy of the world.
     server: Option<Server>,
     link: Option<Client>,
+    /// `--name`, `--join` and `--lan`.
+    name_override: Option<String>,
+    join: Option<String>,
+    lan_at_start: Option<u16>,
 }
 
 /// How far `--shot` has got with its scene.
@@ -224,6 +230,9 @@ impl App {
             hide_gui: false,
             server: None,
             link: None,
+            name_override: None,
+            join: None,
+            lan_at_start: None,
             crack_uvs: Vec::new(),
             effect_uvs: EffectUvs::default(),
             atlas: None,
@@ -280,6 +289,19 @@ impl App {
     }
 
     /// Starts worlds in the given view (`--view`).
+    /// `--name`, `--join` and `--lan`.
+    pub fn with_lan(
+        mut self,
+        name: Option<String>,
+        join: Option<String>,
+        lan: Option<u16>,
+    ) -> Self {
+        self.name_override = name;
+        self.join = join;
+        self.lan_at_start = lan;
+        self
+    }
+
     pub fn with_view(mut self, view: crate::game::view::ViewMode) -> Self {
         self.start_view = view;
         self
@@ -335,10 +357,27 @@ impl App {
         self.items = Some(items);
         self.mob_defs = Some(mob_defs);
         self.install_look(look);
+        if let Some(address) = self.join.clone() {
+            self.renderer = Some(renderer);
+            self.window = Some(window.clone());
+            if let Err(err) = self.join_world(&address) {
+                return Err(err.context(format!("joining {address}")));
+            }
+            self.stack.set_in_world(true, false);
+            window.request_redraw();
+            return Ok(());
+        }
         match self.world_kind.clone() {
             Some(kind) => {
                 let world = self.start_game(kind)?;
                 self.play(world);
+                if let (Some(port), Some(server)) = (self.lan_at_start, self.server.as_mut()) {
+                    let mode = server.game.player.mode;
+                    match server.open_to_lan(port, mode, false) {
+                        Ok(port) => println!("open to LAN on port {port}"),
+                        Err(err) => error!("can't open to LAN: {err}"),
+                    }
+                }
                 // A click puts the mouse in the window.
                 self.stack.set_in_world(true, false);
             }
@@ -378,7 +417,7 @@ impl App {
         let mut server = Server::new(world);
         let (server_end, client_end) = crate::net::transport::local_pair();
         server.connect(Box::new(server_end));
-        let name = self.options.player_name.clone();
+        let name = self.player_name();
         let mut link = Client::join(Box::new(client_end), &name, self.player_settings());
         let mut game = Game::new_client(
             items,
@@ -396,6 +435,47 @@ impl App {
         self.server = Some(server);
         self.link = Some(link);
         self.game = Some(game);
+    }
+
+    /// Joins the world open to LAN at `address` (host:port): this window is
+    /// only a client, with no world of its own.
+    fn join_world(&mut self, address: &str) -> Result<()> {
+        use std::net::ToSocketAddrs;
+        let (items, models, mobs) = (
+            self.items.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+            self.mob_defs.clone().expect("loaded in init"),
+        );
+        let target = address
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no address for {address}"))?;
+        let stream = std::net::TcpStream::connect_timeout(&target, JOIN_TIMEOUT)?;
+        let conn = crate::net::transport::Tcp::new(stream)?;
+        let name = self.player_name();
+        let link = Client::join(Box::new(conn), &name, self.player_settings());
+        let mut game = Game::new_client(
+            items,
+            models,
+            mobs,
+            self.options.render_distance,
+            chunk_workers(),
+        );
+        game.apply_options(&self.options);
+        game.set_view_mode(self.start_view);
+        info!("joining {target} as {name}");
+        self.server = None;
+        self.link = Some(link);
+        self.game = Some(game);
+        self.menu = None;
+        Ok(())
+    }
+
+    /// This run's player name: `--name`, or Options' Player Name.
+    fn player_name(&self) -> String {
+        self.name_override
+            .clone()
+            .unwrap_or_else(|| self.options.player_name.clone())
     }
 
     /// The options the server plays this player by.
@@ -898,13 +978,24 @@ impl App {
         self.apply_grab();
     }
 
+    /// The server sent this player away or went away: back to the title,
+    /// saying why.
+    fn leave_world(&mut self, reason: String) {
+        warn!("left the world: {reason}");
+        self.quit_to_title();
+        if let Some(menu) = self.menu.as_mut() {
+            menu.error = Some(reason);
+        }
+    }
+
     /// Saves the world and goes back to the title screen.
     fn quit_to_title(&mut self) {
         self.tell_server(crate::net::protocol::ClientMsg::Disconnect);
-        if let Some(mut server) = self.server.take()
-            && let Err(err) = server.game.save()
-        {
-            error!("saving on quitting to the title failed: {err:#}");
+        if let Some(mut server) = self.server.take() {
+            server.shut_down();
+            if let Err(err) = server.game.save() {
+                error!("saving on quitting to the title failed: {err:#}");
+            }
         }
         self.link = None;
         self.game = None;
@@ -1283,7 +1374,15 @@ impl App {
                 server.advance(step);
                 link.receive(game);
             }
+            // A guest in someone else's world doesn't stop for its menu.
+            (Some(link), None) => {
+                link.advance(game, dt);
+                link.receive(game);
+            }
             _ => game.advance(step),
+        }
+        if let Some(reason) = self.link.as_ref().and_then(|link| link.gone.clone()) {
+            return self.leave_world(reason);
         }
         // Another dimension's chunks replace this one's.
         if game.take_dimension_change() {
@@ -2003,10 +2102,11 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(server) = self.server.as_mut()
-            && let Err(err) = server.game.save()
-        {
-            error!("saving on quit failed: {err:#}");
+        if let Some(server) = self.server.as_mut() {
+            server.shut_down();
+            if let Err(err) = server.game.save() {
+                error!("saving on quit failed: {err:#}");
+            }
         }
         // Drop the GPU surface before the window it points to.
         self.debug_ui = None;

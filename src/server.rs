@@ -108,6 +108,17 @@ impl Server {
         Ok(port)
     }
 
+    /// Tells every guest the world is closing (the host saved and quit);
+    /// the caller saves the world, everyone in it included.
+    pub fn shut_down(&mut self) {
+        for remote in self.remotes.iter_mut().skip(1) {
+            remote.conn.send(ServerMsg::Disconnect(
+                "The host closed the world".to_owned(),
+            ));
+        }
+        self.lan = None;
+    }
+
     /// The port the world is open to LAN on, if it is.
     pub fn lan_port(&self) -> Option<u16> {
         self.lan.as_ref().map(|lan| lan.listener.port)
