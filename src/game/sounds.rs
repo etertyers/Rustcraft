@@ -53,7 +53,7 @@ pub fn hurt_event(source: DamageSource, damage: f32) -> &'static str {
 /// at the feet if it has a sound of its own (snow layers, carpets, plants),
 /// else the one below.
 fn ground_name(game: &Game) -> Option<String> {
-    let feet = game.body.position();
+    let feet = game.player.body.position();
     let world = game.chunks.world();
     let cell = feet.floor().as_ivec3();
     let solid = |at: IVec3| {
@@ -70,46 +70,52 @@ fn ground_name(game: &Game) -> Option<String> {
 impl Game {
     /// Queues the player's sounds for what changed this tick.
     pub(super) fn tick_sounds(&mut self) {
-        let at = self.body.position();
-        let mut mem = std::mem::take(&mut self.sounds);
+        let at = self.player.body.position();
+        let mut mem = std::mem::take(&mut self.player.sounds);
         if !mem.started {
             mem = Memory {
-                health: self.stats.health,
-                level: self.stats.experience.level,
-                air: self.stats.air,
-                fire: self.stats.fire,
-                on_ground: self.body.on_ground,
-                liquid: self.body.liquid,
+                health: self.player.stats.health,
+                level: self.player.stats.experience.level,
+                air: self.player.stats.air,
+                fire: self.player.stats.fire,
+                on_ground: self.player.body.on_ground,
+                liquid: self.player.body.liquid,
                 started: true,
                 ..Memory::default()
             };
         }
         // Hurt, and dying.
-        let dead = self.stats.is_dead();
+        let dead = self.player.stats.is_dead();
         if dead && !mem.dead {
             audio::play("entity.player.death", at);
-        } else if !dead && self.stats.health < mem.health {
-            let source = self.stats.last_source.unwrap_or(DamageSource::Mob);
-            audio::play(hurt_event(source, mem.health - self.stats.health), at);
+        } else if !dead && self.player.stats.health < mem.health {
+            let source = self.player.stats.last_source.unwrap_or(DamageSource::Mob);
+            audio::play(
+                hurt_event(source, mem.health - self.player.stats.health),
+                at,
+            );
         }
         mem.dead = dead;
-        mem.health = self.stats.health;
-        if self.stats.experience.level > mem.level {
+        mem.health = self.player.stats.health;
+        if self.player.stats.experience.level > mem.level {
             audio::play_here_with("entity.player.levelup", 0.75, 1.0);
         }
-        mem.level = self.stats.experience.level;
+        mem.level = self.player.stats.experience.level;
         // Fire going out.
-        if mem.fire > 0 && self.stats.fire == 0 && !dead {
+        if mem.fire > 0 && self.player.stats.fire == 0 && !dead {
             audio::play_at("entity.generic.extinguish_fire", at, 0.7, 1.6);
         }
-        mem.fire = self.stats.fire;
+        mem.fire = self.player.stats.fire;
         // Bubbles popping as the air runs low under water.
-        if self.stats.air < mem.air && self.stats.air < 300 && self.stats.air % 30 == 0 {
+        if self.player.stats.air < mem.air
+            && self.player.stats.air < 300
+            && self.player.stats.air % 30 == 0
+        {
             audio::play_here("ui.hud.bubble_pop");
         }
-        mem.air = self.stats.air;
+        mem.air = self.player.stats.air;
         // Into the water and out, and a splash.
-        let liquid = self.body.liquid;
+        let liquid = self.player.body.liquid;
         if liquid == Some(Fluid::Water) && mem.liquid.is_none() {
             let fast = mem.fall > 3.0;
             audio::play_at(
@@ -124,7 +130,7 @@ impl Game {
             );
         }
         // Landing: a thud from the block, once a fall was long enough.
-        if self.body.on_ground
+        if self.player.body.on_ground
             && !mem.on_ground
             && mem.fall >= THUD_FALL
             && liquid.is_none()
@@ -132,33 +138,34 @@ impl Game {
         {
             audio::play_at(events::block_event(&name, "fall"), at, 0.5, 0.75);
         }
-        if self.body.on_ground || liquid.is_some() {
+        if self.player.body.on_ground || liquid.is_some() {
             mem.fall = 0.0;
         } else {
-            mem.fall = mem.fall.max(self.stats.fall_distance);
+            mem.fall = mem.fall.max(self.player.stats.fall_distance);
         }
         // Footsteps: one every so far walked on the ground, swimming strokes
         // in water; flying and gliding are silent.
-        let moved = at - self.prev_feet;
+        let moved = at - self.player.prev_feet;
         let flat = moved.x.hypot(moved.z);
-        let quiet = self.body.flying || self.body.fall_flying || dead || self.is_sleeping();
+        let quiet =
+            self.player.body.flying || self.player.body.fall_flying || dead || self.is_sleeping();
         if !quiet && flat > 0.0 {
             mem.walked += flat;
             if mem.walked >= STEP_DISTANCE {
                 mem.walked -= STEP_DISTANCE;
                 if liquid == Some(Fluid::Water) {
                     audio::play_at("entity.player.swim", at, 0.3, 1.0);
-                } else if self.body.on_ground
+                } else if self.player.body.on_ground
                     && let Some(name) = ground_name(self)
                 {
-                    let quiet = if self.body.sneaking { 0.5 } else { 1.0 };
+                    let quiet = if self.player.body.sneaking { 0.5 } else { 1.0 };
                     audio::play_at(events::block_event(&name, "step"), at, 0.15 * quiet, 1.0);
                 }
             }
         }
-        mem.on_ground = self.body.on_ground;
+        mem.on_ground = self.player.body.on_ground;
         mem.liquid = liquid;
-        self.sounds = mem;
+        self.player.sounds = mem;
         if !dead {
             self.tick_ambient();
         }
@@ -169,7 +176,7 @@ impl Game {
     /// whispering. A few random spots near the player are tried each tick.
     fn tick_ambient(&mut self) {
         use crate::world::{blocks, dimension::Dimension, props::Prop};
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         for _ in 0..12 {
             let offset = IVec3::new(
                 self.rng.below(21) as i32 - 10,
@@ -284,10 +291,10 @@ impl Game {
         use crate::entity::dragon::Phase;
         let at = dragon.position;
         let dying = dragon.in_death_sequence();
-        if dying && !self.sounds.dragon_dying {
+        if dying && !self.player.sounds.dragon_dying {
             audio::play_at("entity.ender_dragon.death", at, 5.0, 1.0);
         } else if !dying {
-            if dragon.health < self.sounds.dragon_health {
+            if dragon.health < self.player.sounds.dragon_health {
                 audio::play_at("entity.ender_dragon.hurt", at, 5.0, 1.0);
             }
             if dragon.age.is_multiple_of(12) && dragon.phase != Phase::SittingScanning {
@@ -301,8 +308,8 @@ impl Game {
                 audio::play_at("entity.ender_dragon.ambient", at, 5.0, 1.0);
             }
         }
-        self.sounds.dragon_dying = dying;
-        self.sounds.dragon_health = dragon.health;
+        self.player.sounds.dragon_dying = dying;
+        self.player.sounds.dragon_health = dragon.health;
     }
 
     /// The sounds of a block going away or arriving by the player's hand.

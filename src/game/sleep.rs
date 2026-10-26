@@ -42,18 +42,19 @@ pub struct Sleep {
 
 impl Game {
     pub fn is_sleeping(&self) -> bool {
-        self.sleep.is_some()
+        self.player.sleep.is_some()
     }
 
     /// How dark the screen is while falling asleep, 0–1.
     pub fn sleep_fade(&self) -> Option<f32> {
-        self.sleep
+        self.player
+            .sleep
             .map(|sleep| (sleep.ticks as f32 / SLEEP_TICKS as f32).min(1.0))
     }
 
     /// Shows a notice for a while, in place of 1.0.0's chat line.
     pub(super) fn say(&mut self, text: &str) {
-        self.message = Some((text.to_owned(), MESSAGE_TICKS));
+        self.player.message = Some((text.to_owned(), MESSAGE_TICKS));
     }
 
     /// Right-click on either half of the bed at `cell`.
@@ -75,14 +76,14 @@ impl Game {
             return;
         }
         let center = head.as_dvec3() + DVec3::splat(0.5);
-        let away = (self.body.position() - center).abs();
+        let away = (self.player.body.position() - center).abs();
         if away.cmpgt(BED_REACH).any() {
             return self.say("You may not rest now; the bed is too far away");
         }
         // Using a bed, day or night, makes it where the player respawns
         // (modern `ServerPlayer.startSleepInBed`).
-        let newly_set = self.bed != Some(head);
-        self.bed = Some(head);
+        let newly_set = self.player.bed != Some(head);
+        self.player.bed = Some(head);
         let angle = daytime::celestial_angle(self.time, 0.0);
         if daytime::is_daytime(angle) {
             return self.say(if newly_set {
@@ -101,22 +102,22 @@ impl Game {
         if monster_near {
             return self.say("You may not rest now, there are monsters nearby");
         }
-        self.mining = None;
-        self.eating = None;
-        self.drawing = None;
+        self.player.mining = None;
+        self.player.eating = None;
+        self.player.drawing = None;
         self.release_input();
-        self.body = Body::new(center.with_y(head.y as f64 + 0.5625));
-        self.prev_feet = self.body.position();
+        self.player.body = Body::new(center.with_y(head.y as f64 + 0.5625));
+        self.player.prev_feet = self.player.body.position();
         // Looking from the pillow toward the foot.
         let foot = -bed_direction(block).as_vec3();
-        self.camera.yaw = foot.x.atan2(-foot.z);
-        self.sleep = Some(Sleep { head, ticks: 0 });
+        self.player.camera.yaw = foot.x.atan2(-foot.z);
+        self.player.sleep = Some(Sleep { head, ticks: 0 });
     }
 
     /// One tick in bed: after `SLEEP_TICKS`, morning comes and the bed
     /// becomes the spawn point (1.0.0's `wakeAllPlayers`).
     pub(super) fn tick_sleep(&mut self) {
-        let Some(sleep) = self.sleep.as_mut() else {
+        let Some(sleep) = self.player.sleep.as_mut() else {
             return;
         };
         sleep.ticks += 1;
@@ -125,7 +126,7 @@ impl Game {
         }
         let head = sleep.head;
         self.time = (self.time + DAY_TICKS) / DAY_TICKS * DAY_TICKS;
-        self.bed = Some(head);
+        self.player.bed = Some(head);
         self.note(crate::advancements::Event::Used("sleep".to_owned()));
         self.wake();
     }
@@ -133,21 +134,21 @@ impl Game {
     /// Gets up next to the bed.
     pub fn wake(&mut self) {
         let feet = self.standing_feet();
-        if self.sleep.take().is_some() {
-            self.stats.awake = 0;
-            self.body = Body::new(feet);
-            self.prev_feet = feet;
+        if self.player.sleep.take().is_some() {
+            self.player.stats.awake = 0;
+            self.player.body = Body::new(feet);
+            self.player.prev_feet = feet;
         }
     }
 
     /// Where the player's feet are, or for a sleeping player, where they'll
     /// stand on getting up (beside the bed, or on it if that's boxed in).
     pub(super) fn standing_feet(&self) -> DVec3 {
-        match self.sleep {
+        match self.player.sleep {
             Some(sleep) => self
                 .bed_exit(sleep.head)
                 .unwrap_or_else(|| sleep.head.as_dvec3() + DVec3::new(0.5, 1.0, 0.5)),
-            None => self.body.position(),
+            None => self.player.body.position(),
         }
     }
 
@@ -168,7 +169,7 @@ impl Game {
     /// Where the player comes back after dying: beside their bed if it's
     /// still there, or else the world spawn.
     pub(super) fn respawn_point(&mut self) -> DVec3 {
-        let Some(head) = self.bed else {
+        let Some(head) = self.player.bed else {
             return self.spawn;
         };
         let pos = ChunkPos::of_block(head.x, head.z);
@@ -179,7 +180,7 @@ impl Game {
         match self.bed_exit(head) {
             Some(feet) => feet,
             None => {
-                self.bed = None;
+                self.player.bed = None;
                 self.say("You have no home bed or charged respawn anchor, or it was obstructed");
                 self.spawn
             }
@@ -188,7 +189,7 @@ impl Game {
 
     /// The eye position while lying in bed.
     pub(super) fn lying_eye(&self) -> Option<DVec3> {
-        let head = self.sleep?.head;
+        let head = self.player.sleep?.head;
         Some(head.as_dvec3() + DVec3::new(0.5, LYING_EYE, 0.5))
     }
 }
@@ -269,7 +270,7 @@ mod tests {
             })
             .count();
         assert!(fires > 0, "fire in the crater");
-        assert!(game.stats.health < 20.0);
+        assert!(game.player.stats.health < 20.0);
     }
 
     #[test]
@@ -278,14 +279,14 @@ mod tests {
         // By day a bed only sets the respawn point (modern).
         game.use_bed(head);
         assert!(!game.is_sleeping());
-        assert_eq!(game.bed, Some(head));
+        assert_eq!(game.player.bed, Some(head));
         assert_eq!(
-            game.message.as_ref().map(|(text, _)| text.as_str()),
+            game.player.message.as_ref().map(|(text, _)| text.as_str()),
             Some("Respawn point set")
         );
         game.use_bed(head);
         assert_eq!(
-            game.message.as_ref().map(|(text, _)| text.as_str()),
+            game.player.message.as_ref().map(|(text, _)| text.as_str()),
             Some("You can sleep only at night")
         );
         let (mut game, head) = game_with_bed(18000);
@@ -296,7 +297,7 @@ mod tests {
         game.use_bed(head);
         assert!(!game.is_sleeping());
         assert_eq!(
-            game.message.as_ref().map(|(text, _)| text.as_str()),
+            game.player.message.as_ref().map(|(text, _)| text.as_str()),
             Some("You may not rest now, there are monsters nearby")
         );
         // A pig is no reason to stay up.
@@ -311,7 +312,7 @@ mod tests {
         let (mut game, head) = game_with_bed(24000 * 3 + 15000);
         // Clicking the foot lies down in the head.
         game.use_bed(head + IVec3::Z);
-        assert_eq!(game.sleep, Some(Sleep { head, ticks: 0 }));
+        assert_eq!(game.player.sleep, Some(Sleep { head, ticks: 0 }));
         for _ in 0..SLEEP_TICKS - 1 {
             game.tick();
         }
@@ -320,21 +321,21 @@ mod tests {
         game.tick();
         assert!(!game.is_sleeping());
         assert_eq!(game.time, 24000 * 4 + 1, "sunrise, plus the waking tick");
-        assert_eq!(game.bed, Some(head));
-        let feet = game.body.position();
+        assert_eq!(game.player.bed, Some(head));
+        let feet = game.player.body.position();
         assert_eq!(feet.y, 64.0, "standing beside the bed");
         assert!(feet.distance(head.as_dvec3()) < 3.0, "{feet}");
 
         // Respawning comes back beside the bed, until it's broken.
-        game.body = Body::new(DVec3::new(20.5, 64.0, 20.5));
+        game.player.body = Body::new(DVec3::new(20.5, 64.0, 20.5));
         game.respawn();
-        assert!(game.body.position().distance(head.as_dvec3()) < 3.0);
+        assert!(game.player.body.position().distance(head.as_dvec3()) < 3.0);
         game.break_block(head);
         game.respawn();
-        assert_eq!(game.body.position(), game.spawn);
-        assert_eq!(game.bed, None);
+        assert_eq!(game.player.body.position(), game.spawn);
+        assert_eq!(game.player.bed, None);
         assert_eq!(
-            game.message.as_ref().map(|(text, _)| text.as_str()),
+            game.player.message.as_ref().map(|(text, _)| text.as_str()),
             Some("You have no home bed or charged respawn anchor, or it was obstructed")
         );
     }
@@ -343,13 +344,13 @@ mod tests {
     fn getting_hurt_or_leaving_wakes_without_morning() {
         let (mut game, head) = game_with_bed(18000);
         game.use_bed(head);
-        game.stats.fire = 25;
+        game.player.stats.fire = 25;
         for _ in 0..10 {
             game.tick();
         }
         assert!(!game.is_sleeping(), "the fire woke them");
         // Lying down already set the respawn point (modern).
-        assert_eq!(game.bed, Some(head));
+        assert_eq!(game.player.bed, Some(head));
         assert_eq!(game.time, 18010);
 
         let (mut game, head) = game_with_bed(18000);
@@ -357,18 +358,18 @@ mod tests {
         game.tick();
         game.wake();
         assert!(!game.is_sleeping());
-        assert_eq!((game.bed, game.time), (Some(head), 18001));
+        assert_eq!((game.player.bed, game.time), (Some(head), 18001));
     }
 
     #[test]
     fn a_bed_too_far_away_says_so() {
         let (mut game, head) = game_with_bed(18000);
-        game.body = Body::new(head.as_dvec3() + DVec3::new(6.5, 0.0, 0.5));
+        game.player.body = Body::new(head.as_dvec3() + DVec3::new(6.5, 0.0, 0.5));
         game.use_bed(head);
         assert!(!game.is_sleeping());
-        assert_eq!(game.bed, None);
+        assert_eq!(game.player.bed, None);
         assert_eq!(
-            game.message.as_ref().map(|(text, _)| text.as_str()),
+            game.player.message.as_ref().map(|(text, _)| text.as_str()),
             Some("You may not rest now; the bed is too far away")
         );
     }

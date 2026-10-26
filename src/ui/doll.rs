@@ -97,7 +97,7 @@ pub struct Doll {
 /// they are in the game.
 pub fn build(game: &Game, held: &mut HeldCache, fig: &Figure, angles: DollAngles) -> Doll {
     let arm = |hand: Hand| {
-        if game.inventory.hand_stack(hand).is_some() {
+        if game.player.inventory.hand_stack(hand).is_some() {
             ArmPose::Item
         } else {
             ArmPose::Empty
@@ -265,9 +265,10 @@ mod tests {
             slim: false,
         };
         let mut game = flat_game(GameMode::Survival);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         let doll = build(&game, &mut HeldCache::default(), &fig, angles);
         let feet = pos2(SURVIVAL.feet[0] * 3.0, SURVIVAL.feet[1] * 3.0);
         let id = egui::TextureId::default();

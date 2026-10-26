@@ -21,7 +21,7 @@ impl Game {
     /// Whether wings are on the chest and not worn out (modern
     /// `Elytra.isFlyEnabled`: one point of wear short of breaking).
     pub fn elytra_ready(&self) -> bool {
-        let Some(stack) = self.inventory.slot(ARMOR_CHEST) else {
+        let Some(stack) = self.player.inventory.slot(ARMOR_CHEST) else {
             return false;
         };
         stack.id == items::ELYTRA
@@ -33,82 +33,86 @@ impl Game {
 
     /// Whether the player is gliding.
     pub fn is_gliding(&self) -> bool {
-        self.body.fall_flying
+        self.player.body.fall_flying
     }
 
     /// Ticks spent gliding, for the model's pose.
     pub fn glide_ticks(&self) -> u32 {
-        self.glide_ticks
+        self.player.glide_ticks
     }
 
     /// One tick before the body moves: a fresh jump press in the air with
     /// wings on starts a glide; gliding wears the wings and ends when they
     /// give out.
     pub(super) fn tick_elytra(&mut self) {
-        let jump = self.keys.jump;
-        let pressed = jump && !self.jump_was;
-        self.jump_was = jump;
-        if !self.body.fall_flying {
-            self.glide_ticks = 0;
-            self.rocket = 0;
+        let jump = self.player.keys.jump;
+        let pressed = jump && !self.player.jump_was;
+        self.player.jump_was = jump;
+        if !self.player.body.fall_flying {
+            self.player.glide_ticks = 0;
+            self.player.rocket = 0;
             if pressed
-                && !self.body.on_ground
-                && !self.body.flying
-                && self.body.liquid.is_none()
-                && self.body.velocity.y < 0.0
+                && !self.player.body.on_ground
+                && !self.player.body.flying
+                && self.player.body.liquid.is_none()
+                && self.player.body.velocity.y < 0.0
                 && !self.is_riding()
                 && self.elytra_ready()
             {
-                self.body.fall_flying = true;
+                self.player.body.fall_flying = true;
             }
             return;
         }
         if !self.elytra_ready() {
-            self.body.fall_flying = false;
+            self.player.body.fall_flying = false;
             return;
         }
-        self.glide_ticks += 1;
-        if self.glide_ticks.is_multiple_of(20) {
+        self.player.glide_ticks += 1;
+        if self.player.glide_ticks.is_multiple_of(20) {
             crate::audio::play_here_with("item.elytra.flying", 0.3, 1.0);
         }
-        if self.mode.wears_tools() && self.glide_ticks.is_multiple_of(WEAR_EVERY) {
-            self.inventory.damage_slot(ARMOR_CHEST, 1, &self.items);
+        if self.player.mode.wears_tools() && self.player.glide_ticks.is_multiple_of(WEAR_EVERY) {
+            self.player
+                .inventory
+                .damage_slot(ARMOR_CHEST, 1, &self.items);
         }
-        if self.rocket > 0 {
-            self.rocket -= 1;
-            let look = self.camera.forward().as_dvec3();
-            let v = self.body.velocity;
-            self.body.velocity += look * 0.1 + (look * 1.5 - v) * 0.5;
+        if self.player.rocket > 0 {
+            self.player.rocket -= 1;
+            let look = self.player.camera.forward().as_dvec3();
+            let v = self.player.body.velocity;
+            self.player.body.velocity += look * 0.1 + (look * 1.5 - v) * 0.5;
         }
         // A glide that isn't diving fast isn't a fall (modern keeps the
         // fall distance at a block until it drops faster than half a
         // block a tick).
-        if self.body.velocity.y > -0.5 {
-            self.stats.fall_distance = self.stats.fall_distance.min(1.0);
+        if self.player.body.velocity.y > -0.5 {
+            self.player.stats.fall_distance = self.player.stats.fall_distance.min(1.0);
         }
     }
 
     /// What the glide's last tick did to a wall it met.
     pub(super) fn glide_impact(&mut self) {
-        let impact = self.body.glide_impact;
-        if impact > 0.0 && self.mode.is_vulnerable() {
-            self.stats.damage(impact as f32, DamageSource::FlyIntoWall);
+        let impact = self.player.body.glide_impact;
+        if impact > 0.0 && self.player.mode.is_vulnerable() {
+            self.player
+                .stats
+                .damage(impact as f32, DamageSource::FlyIntoWall);
         }
     }
 
     /// Right-click with a firework rocket while gliding: it boosts, and is
     /// used up. Returns whether it did.
     pub(super) fn use_rocket(&mut self) -> bool {
-        if !self.body.fall_flying {
+        if !self.player.body.fall_flying {
             return false;
         }
         let jitter = self.rng.below(6) + self.rng.below(7);
-        self.rocket = ROCKET_TICKS + jitter;
+        self.player.rocket = ROCKET_TICKS + jitter;
         crate::audio::play_here("entity.firework_rocket.launch");
-        if self.mode.uses_up_items() {
-            self.inventory.take(self.held_slot(), 1);
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(self.held_slot(), 1);
         }
-        self.view.swing();
+        self.player.view.swing();
         true
     }
 
@@ -116,7 +120,7 @@ impl Game {
     /// blocks each way with ground under it and room to stand (modern
     /// `ChorusFruitItem`), taking the first.
     pub(super) fn chorus_teleport(&mut self) {
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         for _ in 0..16 {
             let spot = glam::IVec3::new(
                 (feet.x + (self.rng.next_f64() - 0.5) * 16.0).floor() as i32,
@@ -149,7 +153,7 @@ impl Game {
 
     /// How fast the player is going, for the debug overlay and tests.
     pub fn speed(&self) -> f64 {
-        DVec3::length(self.body.velocity)
+        DVec3::length(self.player.body.velocity)
     }
 }
 
@@ -167,21 +171,22 @@ mod tests {
     /// A player high over a flat world with elytra on, falling.
     fn airborne(mode: GameMode) -> Game {
         let mut game = flat_game(mode);
-        game.inventory
+        game.player
+            .inventory
             .set(ARMOR_CHEST, Some(ItemStack::new(items::ELYTRA, 1)));
-        game.body.set_position(DVec3::new(0.5, 150.0, 0.5));
-        game.prev_feet = game.body.position();
-        game.camera.pitch = 0.0;
+        game.player.body.set_position(DVec3::new(0.5, 150.0, 0.5));
+        game.player.prev_feet = game.player.body.position();
+        game.player.camera.pitch = 0.0;
         game.run_ticks(3);
         game
     }
 
     fn press_jump(game: &mut Game) {
-        game.keys.jump = false;
+        game.player.keys.jump = false;
         game.run_ticks(1);
-        game.keys.jump = true;
+        game.player.keys.jump = true;
         game.run_ticks(1);
-        game.keys.jump = false;
+        game.player.keys.jump = false;
     }
 
     #[test]
@@ -191,7 +196,7 @@ mod tests {
         press_jump(&mut game);
         assert!(game.is_gliding());
         let mut bare = flat_game(GameMode::Survival);
-        bare.body.set_position(DVec3::new(0.5, 150.0, 0.5));
+        bare.player.body.set_position(DVec3::new(0.5, 150.0, 0.5));
         bare.run_ticks(3);
         press_jump(&mut bare);
         assert!(!bare.is_gliding());
@@ -200,24 +205,24 @@ mod tests {
     #[test]
     fn a_level_glide_sinks_slowly_and_diving_trades_height_for_speed() {
         let mut level = airborne(GameMode::Creative);
-        level.mode = GameMode::Survival;
+        level.player.mode = GameMode::Survival;
         press_jump(&mut level);
-        let y0 = level.body.position().y;
+        let y0 = level.player.body.position().y;
         level.run_ticks(60);
-        let sink = y0 - level.body.position().y;
+        let sink = y0 - level.player.body.position().y;
         assert!(level.is_gliding());
         assert!(sink > 5.0 && sink < 60.0, "sank {sink}");
 
         let mut dive = airborne(GameMode::Survival);
         press_jump(&mut dive);
-        dive.camera.pitch = -1.0;
+        dive.player.camera.pitch = -1.0;
         dive.run_ticks(40);
         assert!(dive.speed() > 1.0, "dove at {}", dive.speed());
         // Pulling up climbs back, spending the speed.
-        let low = dive.body.position().y;
-        dive.camera.pitch = 0.9;
+        let low = dive.player.body.position().y;
+        dive.player.camera.pitch = 0.9;
         dive.run_ticks(30);
-        assert!(dive.body.position().y > low - 1.0);
+        assert!(dive.player.body.position().y > low - 1.0);
     }
 
     #[test]
@@ -225,9 +230,9 @@ mod tests {
         let mut game = airborne(GameMode::Survival);
         press_jump(&mut game);
         game.run_ticks(60);
-        assert_eq!(game.inventory.slot(ARMOR_CHEST).unwrap().damage, 3);
+        assert_eq!(game.player.inventory.slot(ARMOR_CHEST).unwrap().damage, 3);
         // One point from breaking is as good as broken.
-        game.inventory.set(
+        game.player.inventory.set(
             ARMOR_CHEST,
             Some(ItemStack::with_damage(items::ELYTRA, 1, 431)),
         );
@@ -239,12 +244,12 @@ mod tests {
     #[test]
     fn eating_chorus_fruit_moves_you_a_few_blocks_to_somewhere_you_can_stand() {
         let mut game = flat_game(GameMode::Survival);
-        let from = game.body.position();
+        let from = game.player.body.position();
         let mut moved = 0;
         for _ in 0..20 {
-            game.body.set_position(from);
+            game.player.body.set_position(from);
             game.chorus_teleport();
-            let at = game.body.position();
+            let at = game.player.body.position();
             if at != from {
                 moved += 1;
                 assert!((at - from).length() < 14.0, "{at}");
@@ -259,26 +264,27 @@ mod tests {
         let mut game = airborne(GameMode::Creative);
         press_jump(&mut game);
         game.run_ticks(45);
-        assert_eq!(game.inventory.slot(ARMOR_CHEST).unwrap().damage, 0);
+        assert_eq!(game.player.inventory.slot(ARMOR_CHEST).unwrap().damage, 0);
     }
 
     #[test]
     fn a_rocket_pushes_along_the_look_and_is_used_up_and_does_nothing_on_the_ground() {
         let mut game = airborne(GameMode::Survival);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::FIREWORK_ROCKET, 3)));
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         assert!(!game.use_rocket(), "not gliding");
         press_jump(&mut game);
-        game.camera.pitch = 0.3;
+        game.player.camera.pitch = 0.3;
         game.run_ticks(5);
         let slow = game.speed();
         assert!(game.use_rocket());
-        assert_eq!(game.inventory.slot(0).unwrap().count, 2);
+        assert_eq!(game.player.inventory.slot(0).unwrap().count, 2);
         game.run_ticks(15);
         assert!(game.speed() > slow + 0.5, "{} vs {slow}", game.speed());
         // Heading where it looks: up and north.
-        assert!(game.body.velocity.y > 0.0 && game.body.velocity.z < 0.0);
+        assert!(game.player.body.velocity.y > 0.0 && game.player.body.velocity.z < 0.0);
     }
 
     #[test]
@@ -291,23 +297,26 @@ mod tests {
             .collect();
         game.set_blocks(&wall);
         press_jump(&mut game);
-        game.camera.pitch = -0.6;
+        game.player.camera.pitch = -0.6;
         game.run_ticks(10);
-        game.camera.pitch = 0.0;
-        let health = game.stats.health;
+        game.player.camera.pitch = 0.0;
+        let health = game.player.stats.health;
         game.run_ticks(40);
         assert!(
-            game.stats.health < health || game.stats.is_dead(),
+            game.player.stats.health < health || game.player.stats.is_dead(),
             "kinetic energy"
         );
-        assert_eq!(game.stats.last_source, Some(DamageSource::FlyIntoWall));
+        assert_eq!(
+            game.player.stats.last_source,
+            Some(DamageSource::FlyIntoWall)
+        );
         let mut landing = airborne(GameMode::Creative);
-        landing.body.set_position(DVec3::new(0.5, 75.0, 0.5));
+        landing.player.body.set_position(DVec3::new(0.5, 75.0, 0.5));
         landing.run_ticks(2);
         press_jump(&mut landing);
-        landing.camera.pitch = -1.4;
+        landing.player.camera.pitch = -1.4;
         landing.run_ticks(200);
         assert!(!landing.is_gliding());
-        assert!(landing.body.on_ground);
+        assert!(landing.player.body.on_ground);
     }
 }

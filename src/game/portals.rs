@@ -92,7 +92,7 @@ impl Game {
 
     /// The portal block the player's hitbox is in, if any.
     fn portal_inside(&self) -> Option<(IVec3, BlockState)> {
-        let bb = self.body.aabb();
+        let bb = self.player.body.aabb();
         let world = self.chunks.world();
         let min = bb.min.floor().as_ivec3();
         let max = (bb.max - DVec3::splat(1e-7)).floor().as_ivec3();
@@ -113,8 +113,8 @@ impl Game {
     /// One tick of standing in a portal or not, and travel when it's time.
     pub(super) fn tick_portal(&mut self) {
         let inside = self.portal_inside();
-        let blocked = self.is_riding() || self.stats.is_dead();
-        let state = &mut self.portal;
+        let blocked = self.is_riding() || self.player.stats.is_dead();
+        let state = &mut self.player.portal;
         match inside {
             Some(_) => state.swirl = (state.swirl + SWIRL_IN).min(1.0),
             None => state.swirl = (state.swirl - SWIRL_OUT).max(0.0),
@@ -132,7 +132,7 @@ impl Game {
         if state.ticks == 1 {
             crate::audio::play_here_with("block.portal.trigger", 0.25, 1.0);
         }
-        let wait = if self.mode == GameMode::Creative {
+        let wait = if self.player.mode == GameMode::Creative {
             1
         } else {
             WAIT
@@ -144,7 +144,7 @@ impl Game {
 
     /// How strongly the portal's swirl covers the screen, 0–1.
     pub fn portal_swirl(&self) -> f32 {
-        self.portal.swirl
+        self.player.portal.swirl
     }
 
     /// Takes the player through the portal at `cell` to the linked portal
@@ -155,7 +155,7 @@ impl Game {
             Dimension::Nether => (Dimension::Overworld, 8.0),
             Dimension::End => return,
         };
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         let (lo, hi) = height_range(to);
         let target = IVec3::new(
             (feet.x * scale).floor() as i32,
@@ -166,8 +166,8 @@ impl Game {
         self.change_dimension(to, target.as_dvec3() + DVec3::new(0.5, 0.0, 0.5));
         let exit = self.portal_near(target, axis);
         self.place_player(exit);
-        self.portal.ticks = 0;
-        self.portal.cooldown = COOLDOWN;
+        self.player.portal.ticks = 0;
+        self.player.portal.cooldown = COOLDOWN;
         if let Err(err) = self.save() {
             log::error!("saving after going to {}: {err}", to.name());
         }
@@ -331,7 +331,7 @@ mod tests {
     fn settle(game: &mut Game) {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            let feet = game.body.position();
+            let feet = game.player.body.position();
             let center = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
             let changes = game.chunks.update(center);
             game.on_chunks_loaded(&changes.loaded);
@@ -378,7 +378,7 @@ mod tests {
         game.tick();
         settle(&mut game);
         assert_eq!(game.dimension(), Dimension::Nether);
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         let (cell, _) = game.portal_inside().expect("standing in the new portal");
         assert!(cell.x.abs() <= BUILD_RADIUS && cell.z.abs() <= BUILD_RADIUS);
         assert!(feet.y > nether::LAVA_LEVEL as f64 && feet.y < nether::HEIGHT as f64);
@@ -392,7 +392,7 @@ mod tests {
             game.tick();
         }
         assert_eq!(game.dimension(), Dimension::Nether);
-        let back_in = game.body.position();
+        let back_in = game.player.body.position();
         game.place_player(back_in + DVec3::new(0.0, 0.0, 3.0));
         game.chunks.set_blocks(&[(
             back_in.floor().as_ivec3() + IVec3::new(0, -1, 3),
@@ -406,7 +406,7 @@ mod tests {
         settle(&mut game);
         assert_eq!(game.dimension(), Dimension::Overworld);
         assert_eq!(
-            game.body.position(),
+            game.player.body.position(),
             DVec3::new(5.0, 65.0, 0.5),
             "out of the first portal"
         );

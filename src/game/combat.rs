@@ -149,24 +149,24 @@ impl Game {
         let base = self
             .selected_tool()
             .map_or(c::HAND_DAMAGE, |tool| tool.attack);
-        (base + self.stats.effects.attack_bonus()).max(0.0)
+        (base + self.player.stats.effects.attack_bonus()).max(0.0)
     }
 
     /// How charged the next swing is, `partial` of the way into a tick.
     pub fn attack_charge(&self, partial: f32) -> f32 {
-        charge(self.attack_ticker, self.attack_speed(), partial)
+        charge(self.player.attack_ticker, self.attack_speed(), partial)
     }
 
     /// One tick of recharging; switching items starts over.
     pub(super) fn tick_combat(&mut self) {
-        let item = self.inventory.selected_stack().map(|stack| stack.id);
-        if item != self.last_main_item {
-            self.last_main_item = item;
-            self.attack_ticker = 0;
+        let item = self.player.inventory.selected_stack().map(|stack| stack.id);
+        if item != self.player.last_main_item {
+            self.player.last_main_item = item;
+            self.player.attack_ticker = 0;
         } else {
-            self.attack_ticker = self.attack_ticker.saturating_add(1);
+            self.player.attack_ticker = self.player.attack_ticker.saturating_add(1);
         }
-        self.shield_cooldown = self.shield_cooldown.saturating_sub(1);
+        self.player.shield_cooldown = self.player.shield_cooldown.saturating_sub(1);
     }
 
     /// What the attack indicator shows now: the bar while recharging, the
@@ -174,8 +174,8 @@ impl Game {
     /// takes over a quarter second to recharge).
     pub fn attack_indicator(&self) -> crate::ui::gui::AttackIndicator {
         let charge = self.attack_charge(self.tick_alpha() as f32);
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let on_mob = self.target_mob(eye, self.target.as_ref()).is_some();
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
+        let on_mob = self.target_mob(eye, self.player.target.as_ref()).is_some();
         crate::ui::gui::AttackIndicator {
             charge,
             ready: charge >= 1.0 && on_mob && 20.0 / self.attack_speed() > 5.0,
@@ -185,22 +185,22 @@ impl Game {
     /// Swinging at nothing wastes the swing.
     pub(super) fn swing_at_air(&mut self) {
         crate::audio::play_here_with("entity.player.attack.weak", 0.6, 1.0);
-        self.attack_ticker = 0;
+        self.player.attack_ticker = 0;
     }
 
     /// The attacker's situation this tick.
     pub(super) fn stance(&self, charge: f32) -> Stance {
-        let (walked, speed) = self.view.walk_step();
+        let (walked, speed) = self.player.view.walk_step();
         Stance {
             charge,
-            sprinting: self.body.sprinting,
-            falling: self.stats.fall_distance > 0.0,
-            on_ground: self.body.on_ground,
-            in_water: self.body.liquid == Some(crate::world::block::Fluid::Water),
-            in_lava: self.body.liquid == Some(crate::world::block::Fluid::Lava),
-            on_climbable: self.body.on_climbable,
+            sprinting: self.player.body.sprinting,
+            falling: self.player.stats.fall_distance > 0.0,
+            on_ground: self.player.body.on_ground,
+            in_water: self.player.body.liquid == Some(crate::world::block::Fluid::Water),
+            in_lava: self.player.body.liquid == Some(crate::world::block::Fluid::Lava),
+            on_climbable: self.player.body.on_climbable,
             walked,
-            speed: if self.body.sprinting {
+            speed: if self.player.body.sprinting {
                 speed * 1.3
             } else {
                 speed
@@ -224,9 +224,9 @@ impl Game {
             kind,
         );
         let blow = resolve_with(self.attack_damage(), bonus, &self.stance(charge), sword);
-        self.attack_ticker = 0;
-        let from = self.body.position();
-        let yaw = self.camera.yaw as f64;
+        self.player.attack_ticker = 0;
+        let from = self.player.body.position();
+        let yaw = self.player.camera.yaw as f64;
         let facing = DVec3::new(yaw.sin(), 0.0, -yaw.cos());
         let target = self.mobs[index].body.aabb();
         let hit = self.mobs[index].hurt(blow.damage, Some(from), DamageSource::Mob);
@@ -268,9 +268,9 @@ impl Game {
             }
             if blow.sprint_knockback {
                 push(&mut self.mobs[index].body, c::SPRINT_KNOCKBACK, facing);
-                self.body.velocity.x *= 0.6;
-                self.body.velocity.z *= 0.6;
-                self.body.sprinting = false;
+                self.player.body.velocity.x *= 0.6;
+                self.player.body.velocity.z *= 0.6;
+                self.player.body.sprinting = false;
             }
             if blow.sweep {
                 // Sweeping Edge: 1 plus the swing's damage by level/(level+1).
@@ -290,10 +290,10 @@ impl Game {
                 }
             }
         }
-        if self.mode.is_vulnerable() {
-            self.stats.add_exhaustion(c::EXHAUSTION);
+        if self.player.mode.is_vulnerable() {
+            self.player.stats.add_exhaustion(c::EXHAUSTION);
         }
-        if self.mode.wears_tools()
+        if self.player.mode.wears_tools()
             && let Some(tool) = tool
         {
             self.wear_selected(tool.hit_wear);
@@ -315,7 +315,7 @@ impl Game {
             target.min - DVec3::new(gx, gy, gz),
             target.max + DVec3::new(gx, gy, gz),
         );
-        let from = self.body.position();
+        let from = self.player.body.position();
         for (i, mob) in self.mobs.iter_mut().enumerate() {
             if i == hit
                 || mob.is_dead()
@@ -328,13 +328,13 @@ impl Game {
             mob.hurt(damage, Some(from), DamageSource::Mob);
             mob.hit_by_player();
         }
-        let yaw = self.camera.yaw as f64;
-        let in_front = self.body.position()
+        let yaw = self.player.camera.yaw as f64;
+        let in_front = self.player.body.position()
             + DVec3::new(yaw.sin(), 0.0, -yaw.cos()) * 2.0
-            + DVec3::Y * self.body.aabb().max.y * 0.5;
+            + DVec3::Y * self.player.body.aabb().max.y * 0.5;
         if self.shows_particle() {
             self.effects
-                .extend(Effect::sweep(in_front, self.camera.yaw));
+                .extend(Effect::sweep(in_front, self.player.camera.yaw));
         }
     }
 
@@ -342,20 +342,21 @@ impl Game {
     /// or lowers it. A disabled shield stays down.
     pub(super) fn keep_blocking(&mut self, hand: Option<Hand>) {
         let raised = hand.filter(|&h| {
-            self.shield_cooldown == 0
+            self.player.shield_cooldown == 0
                 && self
+                    .player
                     .inventory
                     .hand_stack(h)
                     .is_some_and(|stack| stack.id == items::SHIELD)
         });
         match raised {
             Some(h) => {
-                self.shield_hand = Some(h);
-                self.shield_ticks += 1;
+                self.player.shield_hand = Some(h);
+                self.player.shield_ticks += 1;
             }
             None => {
-                self.shield_hand = None;
-                self.shield_ticks = 0;
+                self.player.shield_hand = None;
+                self.player.shield_ticks = 0;
             }
         }
     }
@@ -363,24 +364,24 @@ impl Game {
     /// Whether a shield is up and ready to take a blow (it takes 5 ticks to
     /// raise).
     pub fn is_blocking(&self) -> bool {
-        self.shield_hand.is_some() && self.shield_ticks >= c::SHIELD_RAISE_TICKS
+        self.player.shield_hand.is_some() && self.player.shield_ticks >= c::SHIELD_RAISE_TICKS
     }
 
     /// The hand holding a raised shield, for drawing it.
     pub fn shield_hand(&self) -> Option<Hand> {
-        self.shield_hand
+        self.player.shield_hand
     }
 
     /// Ticks left before a disabled shield can be raised again.
     pub fn shield_cooldown(&self) -> u32 {
-        self.shield_cooldown
+        self.player.shield_cooldown
     }
 
     /// Puts the shield out of use for `ticks` (an axe blow: 100).
     pub fn disable_shield(&mut self, ticks: u32) {
-        self.shield_cooldown = ticks;
-        self.shield_hand = None;
-        self.shield_ticks = 0;
+        self.player.shield_cooldown = ticks;
+        self.player.shield_hand = None;
+        self.player.shield_ticks = 0;
     }
 
     /// Hurts the player, unless a raised shield facing the blow takes it
@@ -391,23 +392,23 @@ impl Game {
         let blockable = matches!(strike.source, DamageSource::Mob | DamageSource::Arrow);
         if blockable && self.is_blocking() && self.faces(strike.from) {
             if strike.amount >= c::SHIELD_WEAR_FROM
-                && self.mode.wears_tools()
-                && let Some(hand) = self.shield_hand
+                && self.player.mode.wears_tools()
+                && let Some(hand) = self.player.shield_hand
             {
                 let wear = 1 + strike.amount.floor() as u16;
                 if self.wear_hand(hand, wear) {
-                    self.shield_hand = None;
-                    self.shield_ticks = 0;
-                    crate::audio::play("item.shield.break", self.body.position());
+                    self.player.shield_hand = None;
+                    self.player.shield_ticks = 0;
+                    crate::audio::play("item.shield.break", self.player.body.position());
                 }
             }
             if strike.axe {
                 self.disable_shield(c::SHIELD_DISABLE_TICKS);
             }
-            crate::audio::play("item.shield.block", self.body.position());
+            crate::audio::play("item.shield.block", self.player.body.position());
             return Outcome::Blocked;
         }
-        if self.stats.damage(strike.amount, strike.source) {
+        if self.player.stats.damage(strike.amount, strike.source) {
             Outcome::Hurt { fresh: true }
         } else {
             Outcome::Unhurt
@@ -419,9 +420,13 @@ impl Game {
         let Some(from) = from else {
             return false;
         };
-        let to_player = self.body.position() - from;
+        let to_player = self.player.body.position() - from;
         let flat = DVec3::new(to_player.x, 0.0, to_player.z);
-        flat.length_squared() > 1e-9 && flat.normalize().dot(self.camera.forward().as_dvec3()) < 0.0
+        flat.length_squared() > 1e-9
+            && flat
+                .normalize()
+                .dot(self.player.camera.forward().as_dvec3())
+                < 0.0
     }
 
     /// Whether the main hand's item is an axe.
@@ -646,18 +651,18 @@ mod tests {
             0.0,
         );
         game.mobs.push(zombie);
-        game.inventory.set(0, Some(ItemStack::new(item, 1)));
-        game.inventory.selected = 0;
-        game.camera.pitch = 0.0;
+        game.player.inventory.set(0, Some(ItemStack::new(item, 1)));
+        game.player.inventory.selected = 0;
+        game.player.camera.pitch = 0.0;
         game.time = 18000;
         game.run_ticks(1);
-        game.attack_ticker = 100;
+        game.player.attack_ticker = 100;
         game.mobs[0].body.set_position(DVec3::new(0.5, 64.0, -1.5));
         game
     }
 
     fn swing(game: &mut Game) {
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
     }
 
@@ -672,11 +677,12 @@ mod tests {
 
         // A swing right after switching to the sword does about a fifth.
         let mut game = duel(items::IRON_SWORD);
-        game.inventory
+        game.player
+            .inventory
             .set(1, Some(ItemStack::new(items::DIAMOND_SWORD, 1)));
-        game.inventory.selected = 1;
+        game.player.inventory.selected = 1;
         game.tick();
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
         let dealt = 20.0 - game.mobs[0].stats.health;
         assert!(
@@ -702,9 +708,9 @@ mod tests {
         assert!(!alone.ready && alone.charge == 1.0, "{alone:?}");
         // Bare hands recharge in a quarter second, too fast for the sword icon.
         let mut hands = duel(items::STICK);
-        hands.inventory.set(0, None);
+        hands.player.inventory.set(0, None);
         hands.advance(0.0);
-        hands.attack_ticker = 100;
+        hands.player.attack_ticker = 100;
         assert!(!hands.attack_indicator().ready);
     }
 
@@ -712,9 +718,10 @@ mod tests {
     fn switching_items_and_swinging_at_air_start_the_charge_over() {
         let mut game = duel(items::IRON_SWORD);
         assert_eq!(game.attack_charge(0.0), 1.0);
-        game.inventory
+        game.player
+            .inventory
             .set(1, Some(ItemStack::new(items::IRON_AXE, 1)));
-        game.inventory.selected = 1;
+        game.player.inventory.selected = 1;
         game.tick();
         assert!(game.attack_charge(0.0) < 0.1, "{}", game.attack_charge(0.0));
         for _ in 0..30 {
@@ -723,9 +730,9 @@ mod tests {
         assert_eq!(game.attack_charge(0.0), 1.0);
         // Nothing in reach: a swing at the air.
         game.mobs.clear();
-        game.camera.pitch = 0.4;
+        game.player.camera.pitch = 0.4;
         game.advance(0.0);
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
         assert!(game.attack_charge(0.0) < 0.1, "{}", game.attack_charge(0.0));
     }
@@ -733,8 +740,8 @@ mod tests {
     #[test]
     fn a_falling_strong_hit_is_critical_and_throws_stars() {
         let mut game = duel(items::DIAMOND_SWORD);
-        game.body.on_ground = false;
-        game.stats.fall_distance = 1.0;
+        game.player.body.on_ground = false;
+        game.player.stats.fall_distance = 1.0;
         game.attack(0);
         assert_eq!(game.mobs[0].stats.health, 20.0 - 10.5);
         assert!(game.effects.len() >= 40, "{}", game.effects.len());
@@ -744,9 +751,9 @@ mod tests {
     fn a_sprinting_strong_hit_knocks_back_further_and_ends_the_sprint() {
         let kick = |sprint: bool| {
             let mut game = duel(items::WOODEN_SWORD);
-            game.body.sprinting = sprint;
+            game.player.body.sprinting = sprint;
             game.attack(0);
-            (game.mobs[0].body.velocity.z, game.body.sprinting)
+            (game.mobs[0].body.velocity.z, game.player.body.sprinting)
         };
         let (plain, _) = kick(false);
         let (sprinted, still_sprinting) = kick(true);
@@ -772,7 +779,7 @@ mod tests {
         );
         game.mobs.push(near);
         game.mobs.push(far);
-        game.body.on_ground = true;
+        game.player.body.on_ground = true;
         swing(&mut game);
         assert_eq!(game.mobs[0].stats.health, 14.0, "the target");
         assert_eq!(game.mobs[1].stats.health, 19.0, "swept");
@@ -788,7 +795,7 @@ mod tests {
             0.0,
         );
         axe.mobs.push(near);
-        axe.body.on_ground = true;
+        axe.player.body.on_ground = true;
         swing(&mut axe);
         assert_eq!(axe.mobs[0].stats.health, 20.0 - 9.0);
         assert_eq!(axe.mobs[1].stats.health, 20.0);
@@ -809,7 +816,8 @@ mod tests {
     fn sharpness_and_smite_add_to_a_full_swing_but_bane_does_not_work_on_zombies() {
         let swing_dealt = |enchants: &[(Enchantment, u8)]| {
             let mut game = duel(items::IRON_SWORD);
-            game.inventory
+            game.player
+                .inventory
                 .set(0, Some(enchanted(items::IRON_SWORD, enchants)));
             swing(&mut game);
             20.0 - game.mobs[0].stats.health
@@ -825,7 +833,7 @@ mod tests {
     #[test]
     fn fire_aspect_and_knockback_work_on_the_mob_hit() {
         let mut game = duel(items::DIAMOND_SWORD);
-        game.inventory.set(
+        game.player.inventory.set(
             0,
             Some(enchanted(
                 items::DIAMOND_SWORD,
@@ -847,7 +855,7 @@ mod tests {
     #[test]
     fn unbreaking_spares_a_sword_some_of_its_hits() {
         let mut game = duel(items::IRON_SWORD);
-        game.inventory.set(
+        game.player.inventory.set(
             0,
             Some(enchanted(
                 items::IRON_SWORD,
@@ -857,7 +865,7 @@ mod tests {
         let mut worn = 0;
         for _ in 0..200 {
             game.wear_selected(1);
-            worn = game.inventory.selected_stack().unwrap().damage;
+            worn = game.player.inventory.selected_stack().unwrap().damage;
         }
         assert!(worn < 100, "{worn}");
     }

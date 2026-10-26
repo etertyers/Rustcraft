@@ -175,7 +175,7 @@ impl Game {
         };
         match self.hurt_player(strike) {
             Outcome::Hurt { fresh: true } => {
-                knock_back(&mut self.body, mob.feet());
+                knock_back(&mut self.player.body, mob.feet());
                 // A wither skeleton's blow withers (modern: 10 s).
                 if self.mob_defs.get(mob.kind).name == "wither_skeleton" {
                     let wither = crate::player::effects::Active::new(
@@ -183,11 +183,11 @@ impl Game {
                         0,
                         WITHER_TICKS,
                     );
-                    self.stats.apply(wither, false, true);
+                    self.player.stats.apply(wither, false, true);
                 }
                 if toss {
                     let lift = 0.25 + self.rng.next_f64() * 0.25;
-                    self.body.velocity.y = self.body.velocity.y.max(0.0) + lift;
+                    self.player.body.velocity.y = self.player.body.velocity.y.max(0.0) + lift;
                 }
                 // Tame wolves take up the fight against whatever hit.
                 self.threat_id = mob.id;

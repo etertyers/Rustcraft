@@ -48,7 +48,8 @@ impl Game {
 
     /// Whether the selected item is a bucket.
     pub(super) fn holding_bucket(&self) -> bool {
-        self.inventory
+        self.player
+            .inventory
             .selected_stack()
             .is_some_and(|stack| self.items.bucket(stack.id).is_some())
     }
@@ -61,6 +62,7 @@ impl Game {
     /// Minecraft does).
     pub(super) fn use_bucket(&mut self, eye: DVec3) {
         let Some(bucket) = self
+            .player
             .inventory
             .selected_stack()
             .and_then(|stack| self.items.bucket(stack.id))
@@ -72,7 +74,7 @@ impl Game {
         let def_at = |at: IVec3| blocks.get(world.block(at.x, at.y, at.z)?.id());
         let (edit, after) = match bucket {
             Bucket::Empty => {
-                let dir = self.camera.forward().as_dvec3();
+                let dir = self.player.camera.forward().as_dvec3();
                 let source = |at: IVec3| {
                     let Some(block) = world.block(at.x, at.y, at.z) else {
                         return false;
@@ -117,20 +119,24 @@ impl Game {
         };
         crate::audio::play(sound, edit.0.as_dvec3() + DVec3::splat(0.5));
         self.edit(&[edit]);
-        let keeps = after == Bucket::Empty && !self.mode.uses_up_items();
+        let keeps = after == Bucket::Empty && !self.player.mode.uses_up_items();
         if !keeps && let Some(id) = self.items.bucket_item(after) {
             // One bucket of a stack fills; the full one goes beside the
             // rest (modern `ItemUtils.createFilledResult`).
-            let slot = self.inventory.selected;
+            let slot = self.player.inventory.selected;
             let got = ItemStack::with_damage(id, 1, 0);
-            let many = self.inventory.slot(slot).is_some_and(|s| s.count > 1);
-            if many && self.mode.uses_up_items() {
-                self.inventory.take(slot, 1);
-                if let Some(rest) = self.inventory.add(got, &self.items) {
+            let many = self
+                .player
+                .inventory
+                .slot(slot)
+                .is_some_and(|s| s.count > 1);
+            if many && self.player.mode.uses_up_items() {
+                self.player.inventory.take(slot, 1);
+                if let Some(rest) = self.player.inventory.add(got, &self.items) {
                     self.throw(rest);
                 }
             } else {
-                self.inventory.set(slot, Some(got));
+                self.player.inventory.set(slot, Some(got));
             }
         }
     }
@@ -193,7 +199,7 @@ impl Game {
     /// One tick of fire, and random ticks for the lava in chunks within
     /// `RANDOM_TICK_CHUNKS` of the player.
     pub(super) fn tick_fires(&mut self) {
-        let feet = self.body.position().floor().as_ivec3();
+        let feet = self.player.body.position().floor().as_ivec3();
         let center = ChunkPos::of_block(feet.x, feet.z);
         let reach = RANDOM_TICK_CHUNKS;
         let near: Vec<_> = (-reach..=reach)
@@ -269,7 +275,7 @@ impl Game {
     /// Swings and wears the flint after it lit something; a fire charge
     /// is used up instead.
     fn finish_flint(&mut self) {
-        self.view.swing();
+        self.player.view.swing();
         let charge = self
             .held()
             .is_some_and(|s| s.id == crate::inventory::items::FIRE_CHARGE);
@@ -279,23 +285,24 @@ impl Game {
             } else {
                 "item.flintandsteel.use"
             },
-            self.body.position(),
+            self.player.body.position(),
             1.0,
             0.8 + self.rng.next_f64() as f32 * 0.4,
         );
-        let slot = self.inventory.hand_slot(self.use_hand);
+        let slot = self.player.inventory.hand_slot(self.player.use_hand);
         let charge = self
+            .player
             .inventory
             .slot(slot)
             .is_some_and(|stack| stack.id == crate::inventory::items::FIRE_CHARGE);
         if charge {
-            if self.mode.uses_up_items() {
-                self.inventory.take(slot, 1);
+            if self.player.mode.uses_up_items() {
+                self.player.inventory.take(slot, 1);
             }
-        } else if self.mode.wears_tools() {
-            self.inventory.damage_slot(slot, 1, &self.items);
+        } else if self.player.mode.wears_tools() {
+            self.player.inventory.damage_slot(slot, 1, &self.items);
         }
-        self.place_cooldown = crate::player::interaction::PLACE_REPEAT_TICKS;
+        self.player.place_cooldown = crate::player::interaction::PLACE_REPEAT_TICKS;
     }
 
     /// Schedules the flowing fluid and fire in chunks that just loaded.
@@ -362,8 +369,8 @@ mod tests {
         }
         assert!(water_level(&game, 0, 0).is_some());
         let start = DVec3::new(0.5, 64.0, 0.5);
-        game.body = Body::new(start);
-        game.prev_feet = start;
+        game.player.body = Body::new(start);
+        game.player.prev_feet = start;
         game.entities.clear();
         game.entities.push(ItemEntity::new(
             ItemStack::new(items::COBBLESTONE, 1),
@@ -376,9 +383,9 @@ mod tests {
         }
         // Away from the source, which is east.
         assert!(
-            game.body.position().x < start.x - 0.3,
+            game.player.body.position().x < start.x - 0.3,
             "{}",
-            game.body.position()
+            game.player.body.position()
         );
         assert!(
             game.entities[0].center().x < 0.2,
@@ -414,12 +421,12 @@ mod tests {
 
         // Standing in the fire hurts and sets the player alight.
         let feet = DVec3::new(-2.5, 64.0, 3.5);
-        game.body = Body::new(feet);
-        game.prev_feet = feet;
-        let health = game.stats.health;
+        game.player.body = Body::new(feet);
+        game.player.prev_feet = feet;
+        let health = game.player.stats.health;
         game.tick();
-        assert_eq!(game.stats.health, health - 1.0);
-        assert!(game.stats.fire >= 150);
+        assert_eq!(game.player.stats.health, health - 1.0);
+        assert!(game.player.stats.fire >= 150);
     }
 
     /// Right-clicks once with `id` in the first hotbar slot, standing at
@@ -428,14 +435,14 @@ mod tests {
     /// below it.
     fn click_with(game: &mut Game, id: ItemId, pitch: f32) {
         let feet = DVec3::new(0.5, 64.0, 0.5);
-        game.body = Body::new(feet);
-        game.prev_feet = feet;
-        game.inventory.set(0, Some(ItemStack::new(id, 1)));
-        game.inventory.selected = 0;
-        game.camera.yaw = 0.0;
-        game.camera.pitch = pitch;
+        game.player.body = Body::new(feet);
+        game.player.prev_feet = feet;
+        game.player.inventory.set(0, Some(ItemStack::new(id, 1)));
+        game.player.inventory.selected = 0;
+        game.player.camera.yaw = 0.0;
+        game.player.camera.pitch = pitch;
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
     }
 
@@ -443,19 +450,20 @@ mod tests {
     fn one_bucket_of_a_stack_fills_and_the_rest_stay() {
         let mut game = flat_game(GameMode::Survival);
         game.edit(&[(IVec3::new(0, 64, -2), BlockState::of(blocks::WATER))]);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::BUCKET, 16)));
-        game.inventory.selected = 0;
-        game.camera.yaw = 0.0;
-        game.camera.pitch = -0.51;
+        game.player.inventory.selected = 0;
+        game.player.camera.yaw = 0.0;
+        game.player.camera.pitch = -0.51;
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::BUCKET, 15))
         );
-        assert!(game.inventory.find(items::WATER_BUCKET).is_some());
+        assert!(game.player.inventory.find(items::WATER_BUCKET).is_some());
     }
 
     #[test]
@@ -466,7 +474,7 @@ mod tests {
         click_with(&mut game, items::BUCKET, -0.51);
         assert_eq!(game.chunks.world().block(0, 64, -2), Some(BlockState::AIR));
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::WATER_BUCKET, 1))
         );
 
@@ -475,7 +483,7 @@ mod tests {
         let poured = game.chunks.world().block(0, 64, -3).unwrap();
         assert_eq!(poured, SOURCE);
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::BUCKET, 1))
         );
         for _ in 0..60 {
@@ -487,7 +495,7 @@ mod tests {
         assert_eq!(water_level(&game, 0, -2), Some(1));
         click_with(&mut game, items::BUCKET, -0.68);
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::BUCKET, 1))
         );
 
@@ -498,14 +506,14 @@ mod tests {
         let poured = game.chunks.world().block(0, 64, -3).unwrap();
         assert_eq!(poured.id(), blocks::LAVA);
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::LAVA_BUCKET, 1))
         );
         game.edit(&[(at, BlockState::of(blocks::LAVA))]);
         click_with(&mut game, items::BUCKET, -0.51);
         assert_eq!(game.chunks.world().block(0, 64, -2), Some(BlockState::AIR));
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::LAVA_BUCKET, 1))
         );
     }

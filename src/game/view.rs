@@ -398,84 +398,85 @@ impl ViewState {
 impl Game {
     /// The player's view settings.
     pub fn view(&self) -> &ViewState {
-        &self.view
+        &self.player.view
     }
 
     /// Chooses the view directly (for `--view`).
     pub fn set_view_mode(&mut self, mode: ViewMode) {
-        self.view.mode = mode;
+        self.player.view.mode = mode;
     }
 
     pub fn view_mode(&self) -> ViewMode {
-        self.view.mode
+        self.player.view.mode
     }
 
     /// Starts a swing and runs `ticks` of it (for `--shot` scenes).
     pub fn swing_for_shot(&mut self, ticks: u32) {
-        self.view.swing();
+        self.player.view.swing();
         self.run_ticks(ticks + 1);
     }
 
     /// Holds sneak for a moment (for `--shot` scenes).
     pub fn sneak_for_shot(&mut self) {
-        self.keys.set_key(Action::Sneak, true);
+        self.player.keys.set_key(Action::Sneak, true);
         self.run_ticks(3);
     }
 
     /// F5.
     pub fn cycle_view(&mut self) {
-        self.view.mode = self.view.mode.next();
+        self.player.view.mode = self.player.view.mode.next();
     }
 
     /// Feeds the view one tick of the player's movement.
     pub(super) fn tick_view(&mut self) {
         let info = TickInfo {
-            moved: self.body.position() - self.prev_feet,
-            on_ground: self.body.on_ground,
-            yaw: self.camera.yaw,
-            pitch: self.camera.pitch,
-            swimming: self.body.pose() == crate::player::physics::Pose::Swimming,
-            item: self.inventory.selected_stack().map(|stack| stack.id),
+            moved: self.player.body.position() - self.player.prev_feet,
+            on_ground: self.player.body.on_ground,
+            yaw: self.player.camera.yaw,
+            pitch: self.player.camera.pitch,
+            swimming: self.player.body.pose() == crate::player::physics::Pose::Swimming,
+            item: self.player.inventory.selected_stack().map(|stack| stack.id),
             offhand: self
+                .player
                 .inventory
                 .slot(crate::inventory::player::OFFHAND)
                 .map(|stack| stack.id),
-            sprinting: self.body.sprinting,
-            flying: self.body.flying,
-            bow_ticks: self.drawing,
-            eye_height: self.body.eye_height(),
+            sprinting: self.player.body.sprinting,
+            flying: self.player.body.flying,
+            bow_ticks: self.player.drawing,
+            eye_height: self.player.body.eye_height(),
         };
-        self.view.tick(&info);
+        self.player.view.tick(&info);
     }
 
     /// Swimming: sprinting in water after putting the head under (modern
     /// `isSwimming`).
     pub fn is_swimming(&self) -> bool {
-        self.body.swimming
+        self.player.body.swimming
     }
 
     /// The view's roll just after a hit (vanilla `bobHurt`), scaled by
     /// Damage Tilt: up to 14° over half a second.
     pub fn hurt_tilt(&self, alpha: f32) -> f32 {
-        let ticks = self.stats.hurt_ticks();
-        if ticks == 0 || self.stats.is_dead() {
+        let ticks = self.player.stats.hurt_ticks();
+        if ticks == 0 || self.player.stats.is_dead() {
             return 0.0;
         }
         let f = ((ticks as f32 - alpha) / HURT_TICKS as f32).max(0.0);
-        -((f.powi(4) * PI).sin() * 14.0 * self.damage_tilt).to_radians()
+        -((f.powi(4) * PI).sin() * 14.0 * self.player.damage_tilt).to_radians()
     }
 
     /// The camera drawing the frame: the player's eyes, or pulled back
     /// (or around in front) for F5, shaking with each step.
     pub fn view_camera(&self) -> Camera {
         let alpha = self.tick_alpha() as f32;
-        let mut camera = self.camera;
-        camera.bob = self.view.view_bob(alpha);
+        let mut camera = self.player.camera;
+        camera.bob = self.player.view.view_bob(alpha);
         camera.bob.roll += self.hurt_tilt(alpha);
         // FOV Effects scales how far sprinting, flying and potions move it.
-        let modifier = 1.0 + (self.view.fov_modifier(alpha) - 1.0) * self.fov_effects;
+        let modifier = 1.0 + (self.player.view.fov_modifier(alpha) - 1.0) * self.player.fov_effects;
         camera.fov = (camera.fov * modifier).clamp(1.0, 170.0);
-        let flip = match self.view.mode {
+        let flip = match self.player.view.mode {
             ViewMode::First => return camera,
             ViewMode::ThirdBack => false,
             ViewMode::ThirdFront => true,
@@ -486,7 +487,7 @@ impl Game {
             camera.pitch = -camera.pitch;
         }
         camera.bob = ViewBob::NONE;
-        let eye = self.camera.position.as_dvec3();
+        let eye = self.player.camera.position.as_dvec3();
         let back = -camera.forward().as_dvec3();
         let distance = self.clip_distance(eye, back, THIRD_PERSON_DISTANCE);
         camera.position = (eye + back * distance).as_vec3();
@@ -536,19 +537,19 @@ impl Game {
     /// The player as the model draws it this frame.
     pub fn player_pose(&self) -> PlayerPose {
         let alpha = self.tick_alpha() as f32;
-        let view = &self.view;
+        let view = &self.player.view;
         let body_yaw = view.body_yaw(alpha);
         let (limb_swing, limb_amount) = view.limbs(alpha);
-        let eating = self.eating.map(|(_, ticks)| ticks as f32);
-        let drawing = self.drawing.is_some();
+        let eating = self.player.eating.map(|(_, ticks)| ticks as f32);
+        let drawing = self.player.drawing.is_some();
         let blocking = self.is_blocking();
         let arm = |hand: Hand| {
-            let holding = self.inventory.hand_stack(hand).is_some();
-            if drawing && self.drawing_hand == hand {
+            let holding = self.player.inventory.hand_stack(hand).is_some();
+            if drawing && self.player.drawing_hand == hand {
                 ArmPose::Bow
-            } else if blocking && self.shield_hand == Some(hand) {
+            } else if blocking && self.player.shield_hand == Some(hand) {
                 ArmPose::Block
-            } else if eating.is_some() && self.use_hand == hand {
+            } else if eating.is_some() && self.player.use_hand == hand {
                 ArmPose::Eat
             } else if holding {
                 ArmPose::Item
@@ -558,7 +559,7 @@ impl Game {
         };
         let (main, off) = (arm(Hand::Main), arm(Hand::Off));
         // A left-handed player holds the main hand's item on the left.
-        let (right, left) = if self.left_handed {
+        let (right, left) = if self.player.left_handed {
             (off, main)
         } else {
             (main, off)
@@ -567,18 +568,18 @@ impl Game {
             limb_swing,
             limb_amount,
             age: view.age(alpha),
-            head_yaw: wrap(self.camera.yaw - body_yaw),
-            head_pitch: -self.camera.pitch,
-            crouching: self.body.pose() == crate::player::physics::Pose::Crouching,
+            head_yaw: wrap(self.player.camera.yaw - body_yaw),
+            head_pitch: -self.player.camera.pitch,
+            crouching: self.player.body.pose() == crate::player::physics::Pose::Crouching,
             swim_amount: view.swim_amount(alpha),
-            in_water: self.body.liquid == Some(crate::world::block::Fluid::Water),
-            fall_flying: if self.body.fall_flying {
+            in_water: self.player.body.liquid == Some(crate::world::block::Fluid::Water),
+            fall_flying: if self.player.body.fall_flying {
                 self.glide_ticks() as f32 + alpha
             } else {
                 0.0
             },
             attack: view.attack_anim(alpha),
-            swing_left: self.left_handed,
+            swing_left: self.player.left_handed,
             riding: self.is_riding(),
             right: if drawing { ArmPose::Bow } else { right },
             left: if drawing { ArmPose::Bow } else { left },
@@ -589,8 +590,11 @@ impl Game {
     /// The body's facing and feet, `alpha` of the way between ticks.
     pub fn player_body(&self) -> (Vec3, f32) {
         let alpha = self.tick_alpha();
-        let feet = self.prev_feet.lerp(self.body.position(), alpha);
-        (feet.as_vec3(), self.view.body_yaw(alpha as f32))
+        let feet = self
+            .player
+            .prev_feet
+            .lerp(self.player.body.position(), alpha);
+        (feet.as_vec3(), self.player.view.body_yaw(alpha as f32))
     }
 
     /// The hand's use of the selected item: eating (ticks left and the
@@ -598,13 +602,13 @@ impl Game {
     /// first-person hand.
     pub fn use_progress(&self) -> HandUse {
         let alpha = self.tick_alpha() as f32;
-        if let Some(ticks) = self.drawing {
+        if let Some(ticks) = self.player.drawing {
             return HandUse::Bow {
                 drawn: ticks as f32 + alpha,
                 full: BOW_FULL_DRAW,
             };
         }
-        if let Some((_, ticks)) = self.eating {
+        if let Some((_, ticks)) = self.player.eating {
             return HandUse::Eat {
                 remaining: EAT_TICKS - ticks as f32 - alpha,
                 total: EAT_TICKS,
@@ -879,9 +883,9 @@ mod tests {
             world::{block::BlockState, blocks},
         };
         let mut game = flat_game(GameMode::Survival);
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         game.advance(0.0);
-        let eye = game.camera.position;
+        let eye = game.player.camera.position;
         // First person is the eyes themselves.
         assert_eq!(game.view_camera().position, eye);
 
@@ -894,8 +898,8 @@ mod tests {
             "{eye} {}",
             behind.position
         );
-        assert_eq!(behind.yaw, game.camera.yaw);
-        assert_eq!(behind.pitch, game.camera.pitch);
+        assert_eq!(behind.yaw, game.player.camera.yaw);
+        assert_eq!(behind.pitch, game.player.camera.pitch);
 
         // A wall two blocks behind pulls the camera in front of it.
         let wall: Vec<_> = (-2..=3)
@@ -913,7 +917,7 @@ mod tests {
         game.cycle_view();
         let front = game.view_camera();
         assert!((front.position - eye - Vec3::new(0.0, 0.0, -4.0)).length() < 1e-4);
-        assert!((front.forward() + game.camera.forward()).length() < 1e-4);
+        assert!((front.forward() + game.player.camera.forward()).length() < 1e-4);
 
         // And around to first person again.
         game.cycle_view();
@@ -929,7 +933,7 @@ mod tests {
             world::{Face, block::BlockState, blocks, props::Prop},
         };
         let mut game = flat_game(GameMode::Survival);
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         // A wall just north of the player with a ladder in the player's cell,
         // and a slab behind them.
         let ladder = BlockState::of(blocks::LADDER).with_face(Prop::Facing, Face::South);
@@ -939,7 +943,7 @@ mod tests {
             (IVec3::new(0, 64, 2), BlockState::of(blocks::OAK_SLAB)),
         ]);
         game.advance(0.0);
-        let eye = game.camera.position;
+        let eye = game.player.camera.position;
         game.set_view_mode(ViewMode::ThirdBack);
         let behind = game.view_camera();
         assert!(
@@ -962,24 +966,24 @@ mod tests {
         };
         let mut game = flat_game(GameMode::Survival);
         assert_eq!(game.hurt_tilt(0.0), 0.0);
-        game.stats.damage(2.0, DamageSource::Mob);
+        game.player.stats.damage(2.0, DamageSource::Mob);
         game.run_ticks(2);
         let tilt = game.hurt_tilt(0.0);
         assert!(tilt < -1f32.to_radians(), "tilted {tilt}");
-        game.damage_tilt = 0.0;
+        game.player.damage_tilt = 0.0;
         assert_eq!(game.hurt_tilt(0.0), 0.0);
         game.run_ticks(12);
-        game.damage_tilt = 1.0;
+        game.player.damage_tilt = 1.0;
         assert_eq!(game.hurt_tilt(0.0), 0.0, "over after half a second");
 
-        game.view.fov = 1.15;
-        game.view.prev_fov = 1.15;
+        game.player.view.fov = 1.15;
+        game.player.view.prev_fov = 1.15;
         let fov = |game: &Game| game.view_camera().fov;
-        let base = game.camera.fov;
+        let base = game.player.camera.fov;
         assert!((fov(&game) - base * 1.15).abs() < 1e-3);
-        game.fov_effects = 0.0;
+        game.player.fov_effects = 0.0;
         assert!((fov(&game) - base).abs() < 1e-3);
-        game.fov_effects = 0.5;
+        game.player.fov_effects = 0.5;
         assert!((fov(&game) - base * 1.075).abs() < 1e-3);
     }
 
@@ -991,11 +995,12 @@ mod tests {
             player::mode::GameMode,
         };
         let mut game = flat_game(GameMode::Survival);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
         let pose = game.player_pose();
         assert_eq!((pose.right, pose.left), (ArmPose::Item, ArmPose::Empty));
-        game.left_handed = true;
+        game.player.left_handed = true;
         let pose = game.player_pose();
         assert_eq!((pose.right, pose.left), (ArmPose::Empty, ArmPose::Item));
         assert!(pose.swing_left);
@@ -1013,23 +1018,23 @@ mod tests {
 
         game.sneak_for_shot();
         assert!(game.player_pose().crouching);
-        game.keys.clear();
+        game.player.keys.clear();
         game.run_ticks(3);
 
-        game.view.swing();
+        game.player.view.swing();
         game.run_ticks(3);
         assert!(game.player_pose().attack > 0.0);
         game.run_ticks(10);
         assert_eq!(game.player_pose().attack, 0.0);
 
-        game.inventory.set(
+        game.player.inventory.set(
             0,
             Some(crate::inventory::stack::ItemStack::new(
                 crate::inventory::items::IRON_SWORD,
                 1,
             )),
         );
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         assert_eq!(game.player_pose().right, ArmPose::Item);
     }
 
@@ -1039,7 +1044,7 @@ mod tests {
         let mut game = flat_game(GameMode::Creative);
         assert!(!game.view().is_swinging());
         // A click that hits nothing still swings.
-        game.camera.pitch = 0.5;
+        game.player.camera.pitch = 0.5;
         game.on_action(Action::Attack, true, false, true);
         game.on_action(Action::Attack, false, false, true);
         game.run_ticks(1);
@@ -1048,16 +1053,16 @@ mod tests {
         assert!(!game.view().is_swinging());
         // Placing a block swings.
         // Looking at the ground a couple of blocks ahead.
-        game.camera.pitch = -0.6;
+        game.player.camera.pitch = -0.6;
         game.advance(0.0);
-        game.inventory.set(
+        game.player.inventory.set(
             0,
             Some(crate::inventory::stack::ItemStack::new(
                 crate::inventory::items::STONE,
                 4,
             )),
         );
-        game.inventory.selected = 0;
+        game.player.inventory.selected = 0;
         game.on_action(Action::Use, true, false, true);
         game.on_action(Action::Use, false, false, true);
         game.run_ticks(1);
@@ -1129,13 +1134,13 @@ mod tests {
     fn sprinting_widens_the_game_view_and_sneaking_lowers_the_camera() {
         use crate::{game::tests::flat_game, player::mode::GameMode};
         let mut game = flat_game(GameMode::Survival);
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         let base = game.view_camera().fov;
         game.on_action(Action::Forward, true, false, true);
         game.on_action(Action::Sprint, true, false, true);
         game.run_ticks(15);
         game.advance(0.0);
-        assert!(game.body.sprinting);
+        assert!(game.player.body.sprinting);
         let fov = game.view_camera().fov;
         assert!((fov / base - 1.15).abs() < 0.02, "{base} -> {fov}");
         game.on_action(Action::Forward, false, false, true);
@@ -1145,12 +1150,12 @@ mod tests {
         assert!((game.view_camera().fov / base - 1.0).abs() < 0.01);
 
         // Sneaking: the hitbox and eyes drop, the camera follows.
-        let standing_eye = game.camera.position.y - game.body.position().y as f32;
+        let standing_eye = game.player.camera.position.y - game.player.body.position().y as f32;
         assert!((standing_eye - 1.62).abs() < 0.01, "{standing_eye}");
         game.on_action(Action::Sneak, true, false, true);
         game.run_ticks(10);
         game.advance(0.0);
-        let sneaking_eye = game.camera.position.y - game.body.position().y as f32;
+        let sneaking_eye = game.player.camera.position.y - game.player.body.position().y as f32;
         assert!((sneaking_eye - 1.27).abs() < 0.01, "{sneaking_eye}");
         assert!(game.player_pose().crouching);
     }

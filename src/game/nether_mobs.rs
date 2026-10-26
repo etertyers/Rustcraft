@@ -58,7 +58,7 @@ impl Game {
     /// One tick of the fireballs in flight.
     pub(super) fn tick_fireballs(&mut self) {
         let mut balls = std::mem::take(&mut self.fireballs);
-        let player = (!self.stats.is_dead()).then(|| self.body.aabb());
+        let player = (!self.player.stats.is_dead()).then(|| self.player.body.aabb());
         let mut bursts = Vec::new();
         balls.retain_mut(|ball| {
             let world = self.chunks.world();
@@ -91,7 +91,7 @@ impl Game {
                 FireballHit::Spent => continue,
                 FireballHit::Block(at) => at,
                 FireballHit::Player(at) => {
-                    if self.mode.is_vulnerable() {
+                    if self.player.mode.is_vulnerable() {
                         self.hurt_player(super::combat::Strike {
                             amount: fireball::HIT_DAMAGE,
                             source: DamageSource::Fireball,
@@ -125,7 +125,7 @@ impl Game {
     fn small_fireball_hits(&mut self, hit: FireballHit, heading: DVec3) {
         match hit {
             FireballHit::Player(at) => {
-                if self.mode.is_vulnerable() {
+                if self.player.mode.is_vulnerable() {
                     self.hurt_player(super::combat::Strike {
                         amount: fireball::SMALL_HIT_DAMAGE,
                         source: DamageSource::Fireball,
@@ -133,7 +133,7 @@ impl Game {
                         ranged: true,
                         axe: false,
                     });
-                    self.stats.fire = self.stats.fire.max(fireball::SMALL_FIRE_TICKS);
+                    self.player.stats.fire = self.player.stats.fire.max(fireball::SMALL_FIRE_TICKS);
                 }
             }
             FireballHit::Mob { index, at } => {
@@ -175,7 +175,7 @@ impl Game {
     /// A left click at a fireball in reach sends it back where the player
     /// looks. Returns whether one was there.
     pub(super) fn deflect_fireball(&mut self, eye: DVec3) -> bool {
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let nearest = self
             .fireballs
             .iter()
@@ -187,7 +187,7 @@ impl Game {
             return false;
         };
         self.fireballs[index].send_back(dir);
-        self.attack_ticker = 0;
+        self.player.attack_ticker = 0;
         true
     }
 
@@ -285,7 +285,9 @@ impl Game {
         };
         let count = least + self.rng.below(u32::from(most - least) + 1) as u8;
         crate::audio::play("entity.piglin.celebrate", at);
-        let toward = (self.body.position() - at).with_y(0.0).normalize_or_zero();
+        let toward = (self.player.body.position() - at)
+            .with_y(0.0)
+            .normalize_or_zero();
         let velocity = toward * 0.3 + DVec3::Y * 0.3;
         let hover = self.rng.next_f64() as f32 * std::f32::consts::TAU;
         self.entities.push(ItemEntity::new(
@@ -305,13 +307,13 @@ impl Game {
             && !mob.data.saddled
         {
             mob.data.saddled = true;
-            if self.mode.uses_up_items() {
-                self.inventory.take(self.held_slot(), 1);
+            if self.player.mode.uses_up_items() {
+                self.player.inventory.take(self.held_slot(), 1);
             }
             return true;
         }
-        if mob.data.saddled && self.mounted.is_none() && self.riding.is_none() {
-            self.mounted = Some(mob.id);
+        if mob.data.saddled && self.player.mounted.is_none() && self.player.riding.is_none() {
+            self.player.mounted = Some(mob.id);
             mob.ridden = true;
             return true;
         }
@@ -397,14 +399,14 @@ mod tests {
         for _ in 0..200 {
             game.tick();
             loosed |= !game.fireballs.is_empty();
-            if game.stats.health < 20.0 {
+            if game.player.stats.health < 20.0 {
                 break;
             }
         }
         assert!(loosed, "a fireball flew");
-        assert!(game.stats.health < 20.0, "and hit");
+        assert!(game.player.stats.health < 20.0, "and hit");
         assert!(matches!(
-            game.stats.last_source,
+            game.player.stats.last_source,
             Some(DamageSource::Fireball | DamageSource::Explosion)
         ));
     }
@@ -417,18 +419,18 @@ mod tests {
         let mut burnt = false;
         for _ in 0..200 {
             game.tick();
-            burnt |= game.stats.fire > 0;
+            burnt |= game.player.stats.fire > 0;
             if burnt {
                 break;
             }
         }
         assert!(burnt, "set alight");
-        assert!(game.stats.health < 20.0);
+        assert!(game.player.stats.health < 20.0);
         // Blazes' fireballs can't be punched back.
         game.loose_small_fireball(DVec3::new(0.5, 65.6, -3.0), DVec3::new(0.5, 65.6, 0.5));
-        game.camera.pitch = 0.0;
-        game.camera.yaw = 0.0;
-        let eye = game.body.position() + DVec3::Y * game.body.eye_height();
+        game.player.camera.pitch = 0.0;
+        game.player.camera.yaw = 0.0;
+        let eye = game.player.body.position() + DVec3::Y * game.player.body.eye_height();
         assert!(!game.deflect_fireball(eye));
     }
 
@@ -462,17 +464,22 @@ mod tests {
         assert_eq!(mob.data.variant, 0, "warm");
 
         // Saddled and ridden with a warped fungus on a stick, looking east.
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::SADDLE, 1)));
         assert!(game.use_strider(0, Some(ItemStack::new(items::SADDLE, 1))));
         assert!(game.use_strider(0, None));
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::WARPED_FUNGUS_ON_A_STICK, 1)));
-        game.camera.yaw = std::f32::consts::FRAC_PI_2;
+        game.player.camera.yaw = std::f32::consts::FRAC_PI_2;
         let start = game.mobs[0].feet();
         for _ in 0..40 {
             game.tick();
-            assert!(game.mounted.is_some(), "a strider never throws its rider");
+            assert!(
+                game.player.mounted.is_some(),
+                "a strider never throws its rider"
+            );
         }
         let moved = game.mobs[0].feet() - start;
         assert!(moved.x > 2.0 && moved.z.abs() < 1.0, "went east: {moved}");
@@ -510,7 +517,7 @@ mod tests {
         let feet = DVec3::new(0.5, 70.0, 0.5);
         let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0)
             .starting_in(crate::world::dimension::Dimension::Nether);
-        game.mode = GameMode::Creative;
+        game.player.mode = GameMode::Creative;
         for second in 0..40 {
             let started = std::time::Instant::now();
             while started.elapsed().as_secs_f32() < 1.0 {
@@ -518,7 +525,7 @@ mod tests {
                     game.glide(10.9 * 0.05, 72.0);
                 }
                 game.advance(0.05);
-                let at = game.body.position();
+                let at = game.player.body.position();
                 game.chunks
                     .update(ChunkPos::of_block(at.x as i32, at.z as i32));
                 std::thread::sleep(std::time::Duration::from_millis(5));

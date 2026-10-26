@@ -63,21 +63,21 @@ pub fn water_fog(biome: Biome, vision: f32, view: f32) -> (Vec3, f32) {
 impl Game {
     /// The liquid the camera is in, if any.
     pub fn eye_in(&self) -> Option<Fluid> {
-        self.fluid_at(self.camera.position.as_dvec3())
+        self.fluid_at(self.player.camera.position.as_dvec3())
     }
 
     /// The sound event music is taken from where the player is: the credits'
     /// poem, the End (with its own track for the dragon fight), the Nether's
     /// biomes, creative mode, under water, else the game's tracks.
     pub fn music_event(&self) -> Option<&'static str> {
-        if self.credits.is_some() {
+        if self.player.credits.is_some() {
             return Some("music.credits");
         }
         Some(match self.dimension {
             Dimension::End if self.dragon.is_some() => "music.dragon",
             Dimension::End => "music.end",
             Dimension::Nether => {
-                let p = self.camera.position.floor().as_ivec3();
+                let p = self.player.camera.position.floor().as_ivec3();
                 match self.chunks.world().biome_at(p.x, p.z).unwrap_or_default() {
                     Biome::CrimsonForest => "music.nether.crimson_forest",
                     Biome::SoulSandValley => "music.nether.soul_sand_valley",
@@ -87,7 +87,7 @@ impl Game {
                 }
             }
             Dimension::Overworld if self.eye_in() == Some(Fluid::Water) => "music.under_water",
-            Dimension::Overworld if self.mode == crate::player::mode::GameMode::Creative => {
+            Dimension::Overworld if self.player.mode == crate::player::mode::GameMode::Creative => {
                 "music.creative"
             }
             Dimension::Overworld => "music.game",
@@ -95,7 +95,7 @@ impl Game {
     }
 
     pub fn environment(&self) -> Environment {
-        let p = self.camera.position.floor().as_ivec3();
+        let p = self.player.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();
         let view = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
         let mut environment = match self.dimension {
@@ -110,7 +110,7 @@ impl Game {
             Dimension::Overworld => self.overworld_environment(biome, view),
         };
         if self.eye_in() == Some(Fluid::Water) {
-            let (color, end) = water_fog(biome, water_vision(self.water_vision), view);
+            let (color, end) = water_fog(biome, water_vision(self.player.water_vision), view);
             environment.fog_color = color;
             environment.sky_color = color;
             environment.fog_density = 0.0;
@@ -121,6 +121,7 @@ impl Game {
         // Night vision lights everything, flickering in its last 10 s
         // (modern `GameRenderer.getNightVisionScale`).
         if let Some(active) = self
+            .player
             .stats
             .effects
             .get(crate::player::effects::Effect::NightVision)
@@ -141,7 +142,7 @@ impl Game {
             self.time,
             self.tick_alpha() as f32,
             biome,
-            self.camera.forward(),
+            self.player.camera.forward(),
             self.eye_in(),
         );
         // Fog ends at the chosen render distance.

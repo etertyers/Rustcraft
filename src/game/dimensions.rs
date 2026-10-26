@@ -87,11 +87,11 @@ impl Game {
         if let Some(index) = self.mount_index() {
             self.dismount_mob(index, false);
         }
-        self.riding = None;
-        self.mining = None;
-        self.eating = None;
-        self.drawing = None;
-        self.target = None;
+        self.player.riding = None;
+        self.player.mining = None;
+        self.player.eating = None;
+        self.player.drawing = None;
+        self.player.target = None;
 
         // Leave: keep the old dimension's chunks saved and its things parked.
         if let Err(err) = self.chunks.save() {
@@ -167,16 +167,16 @@ impl Game {
         self.restore_mobs(&arrived.mobs);
         self.place_player(feet);
         self.dimension_changed = true;
-        self.arriving = Some(0);
+        self.player.arriving = Some(0);
         self.note_dimension(to);
     }
 
     /// Puts the player's feet at `feet`, standing still.
     pub(super) fn place_player(&mut self, feet: DVec3) {
-        self.body.set_position(feet);
-        self.body.velocity = DVec3::ZERO;
-        self.prev_feet = feet;
-        self.stats.fall_distance = 0.0;
+        self.player.body.set_position(feet);
+        self.player.body.velocity = DVec3::ZERO;
+        self.player.prev_feet = feet;
+        self.player.stats.fall_distance = 0.0;
     }
 
     /// The animals and populated chunks of the dimensions the player isn't
@@ -215,21 +215,21 @@ impl Game {
     /// While the chunks around a player who just arrived load, the game
     /// waits; `Some(ticks)` counts how long it has.
     pub fn is_arriving(&self) -> bool {
-        self.arriving.is_some()
+        self.player.arriving.is_some()
     }
 
     /// Ends the wait once the chunks around the player are drawn, or after
     /// ten seconds whatever happens.
     pub(super) fn tick_arrival(&mut self) {
-        let Some(ticks) = self.arriving else {
+        let Some(ticks) = self.player.arriving else {
             return;
         };
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         let center = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
         if self.chunks.ready_around(center, 1) || ticks >= ARRIVAL_TIMEOUT {
-            self.arriving = None;
+            self.player.arriving = None;
         } else {
-            self.arriving = Some(ticks + 1);
+            self.player.arriving = Some(ticks + 1);
         }
     }
 }
@@ -269,18 +269,24 @@ mod tests {
         ] {
             let mut game = flat_game(GameMode::Survival);
             game.dimension = dimension;
-            game.inventory.set(0, Some(ItemStack::new(fluid_bucket, 1)));
-            game.camera.pitch = -0.6;
+            game.player
+                .inventory
+                .set(0, Some(ItemStack::new(fluid_bucket, 1)));
+            game.player.camera.pitch = -0.6;
             game.advance(0.0);
-            let at = game.target.unwrap().adjacent().unwrap();
-            let eye = game.body.position() + DVec3::Y * game.body.eye_height();
+            let at = game.player.target.unwrap().adjacent().unwrap();
+            let eye = game.player.body.position() + DVec3::Y * game.player.body.eye_height();
             game.use_bucket(eye);
             let block = game.chunks.world().block(at.x, at.y, at.z).unwrap();
             match stays {
                 Some(id) => assert!(block.is(id), "{dimension:?}"),
                 None => assert!(block.is_air(), "boiled away"),
             }
-            assert_eq!(game.inventory.slot(0).unwrap().id, items::BUCKET, "emptied");
+            assert_eq!(
+                game.player.inventory.slot(0).unwrap().id,
+                items::BUCKET,
+                "emptied"
+            );
         }
     }
 
@@ -305,7 +311,7 @@ mod tests {
         .unwrap()
         .with_mobs(crate::game::tests::mob_registry());
         load_player_chunk(&mut game);
-        let home = game.body.position();
+        let home = game.player.body.position();
         let mark = home.floor().as_ivec3() + IVec3::new(0, 3, 0);
         game.chunks
             .set_blocks(&[(mark, BlockState::of(blocks::GOLD_BLOCK))]);
@@ -329,7 +335,7 @@ mod tests {
             .unwrap()
             .with_mobs(crate::game::tests::mob_registry());
         assert_eq!(game.dimension(), Dimension::Nether);
-        assert_eq!(game.body.position(), there);
+        assert_eq!(game.player.body.position(), there);
         assert!(game.fluids.warm);
         assert_eq!(game.portals, vec![(Dimension::Overworld, [1, 2, 3])]);
         load_player_chunk(&mut game);

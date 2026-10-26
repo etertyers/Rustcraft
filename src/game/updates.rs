@@ -285,7 +285,7 @@ impl Game {
         let Some(item) = self.items.items.of_block(state.id()) else {
             return;
         };
-        let at = cell.unwrap_or_else(|| self.body.position().floor().as_ivec3());
+        let at = cell.unwrap_or_else(|| self.player.body.position().floor().as_ivec3());
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         self.entities.push(ItemEntity::from_block(

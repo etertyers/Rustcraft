@@ -264,9 +264,9 @@ impl Game {
     /// One tick of every mob: AI, movement, daylight, hits and shots, drops,
     /// despawning and stashing mobs whose chunk unloaded.
     pub(super) fn tick_mobs(&mut self) {
-        let player_feet = self.body.position();
-        let player_eye = player_feet + DVec3::Y * self.body.eye_height();
-        let attackable = self.mode.is_vulnerable() && !self.stats.is_dead();
+        let player_feet = self.player.body.position();
+        let player_eye = player_feet + DVec3::Y * self.player.body.eye_height();
+        let attackable = self.player.mode.is_vulnerable() && !self.player.stats.is_dead();
         let daytime = daytime::is_daytime(self.celestial_angle());
         let ridden_input = self.ridden_input();
         let mut mobs = std::mem::take(&mut self.mobs);
@@ -289,7 +289,7 @@ impl Game {
                 }
             })
             .collect();
-        let look = self.camera.forward().as_dvec3();
+        let look = self.player.camera.forward().as_dvec3();
         let threat = (self.threat_ticks > 0)
             .then(|| mobs.iter().position(|m| m.id == self.threat_id))
             .flatten();
@@ -318,6 +318,7 @@ impl Game {
             );
             // An invisible player is noticed only up close.
             let sight = if self
+                .player
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility)
@@ -334,6 +335,7 @@ impl Game {
             let visible = attackable && hunts && near_player && self.sees(eye, player_eye);
             // A carved pumpkin on the head hides the face from endermen.
             let pumpkin = self
+                .player
                 .inventory
                 .slot(crate::inventory::player::ARMOR_HEAD)
                 .is_some_and(|s| s.id == crate::inventory::items::CARVED_PUMPKIN);
@@ -345,7 +347,7 @@ impl Game {
             let target = (attackable && hunts && near_player).then(|| Target {
                 feet: player_feet,
                 eye: player_eye,
-                aabb: self.body.aabb(),
+                aabb: self.player.body.aabb(),
                 visible,
                 stares,
             });
@@ -504,8 +506,8 @@ impl Game {
     pub(super) fn spawn_phantoms(&mut self) {
         if !self.time.is_multiple_of(60)
             || self.dimension() != crate::world::dimension::Dimension::Overworld
-            || self.stats.is_dead()
-            || !self.mode.is_vulnerable()
+            || self.player.stats.is_dead()
+            || !self.player.mode.is_vulnerable()
             || daytime::is_daytime(self.celestial_angle())
         {
             return;
@@ -517,13 +519,13 @@ impl Game {
         else {
             return;
         };
-        let feet = self.body.position();
+        let feet = self.player.body.position();
         let head = (feet + DVec3::Y * 1.0).floor().as_ivec3();
         let open_sky = self
             .chunks
             .light_at(head.x, head.y, head.z)
             .is_some_and(|(sky, _)| sky == 15);
-        if !open_sky || self.rng.below(self.stats.awake.max(1)) < PHANTOM_AFTER {
+        if !open_sky || self.rng.below(self.player.stats.awake.max(1)) < PHANTOM_AFTER {
             return;
         }
         let count = 1 + self.rng.below(3);
@@ -559,13 +561,13 @@ impl Game {
             let near = |bb: crate::player::collision::Aabb| {
                 crate::player::collision::Aabb::new(bb.min - reach, bb.max + reach)
             };
-            if !self.body.flying
+            if !self.player.body.flying
                 && !mobs[i].ridden
-                && near(mobs[i].body.aabb()).intersects(&self.body.aabb())
+                && near(mobs[i].body.aabb()).intersects(&self.player.body.aabb())
             {
-                let push = push_between(mobs[i].feet(), self.body.position());
+                let push = push_between(mobs[i].feet(), self.player.body.position());
                 mobs[i].body.velocity += push;
-                self.body.velocity -= push;
+                self.player.body.velocity -= push;
             }
             for j in i + 1..mobs.len() {
                 if !mobs[j].is_dead() && near(mobs[i].body.aabb()).intersects(&mobs[j].body.aabb())
@@ -778,7 +780,7 @@ impl Game {
         if !self.time.is_multiple_of(category.every) {
             return;
         }
-        let player = self.body.position();
+        let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
         let chunks = self.spawnable_chunks(center);
         // The cap grows with the chunks in range: 70 for a full 17 × 17.
@@ -879,7 +881,7 @@ impl Game {
 
     /// Far enough from the player and the world spawn, and not out of range.
     fn right_distance(&self, feet: DVec3) -> bool {
-        let player = feet.distance(self.body.position());
+        let player = feet.distance(self.player.body.position());
         (spawning::MIN_DISTANCE..=spawning::MAX_DISTANCE).contains(&player)
             && feet.distance(self.spawn) >= spawning::MIN_DISTANCE
     }
@@ -914,7 +916,7 @@ impl Game {
     /// The monsters near the player (for the tests and the cap).
     #[cfg(test)]
     pub(super) fn monster_count(&self) -> usize {
-        let player = self.body.position();
+        let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
         self.counted_in(&spawning::MONSTER, center)
     }
@@ -1105,7 +1107,7 @@ impl Game {
         if count >= STRIDER_CAP {
             return;
         }
-        let player = self.body.position();
+        let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
         let reach = SPAWN_CHUNK_RADIUS as u32 * 2 + 1;
         let pos = center.offset(
@@ -1150,7 +1152,7 @@ impl Game {
         if !self.time.is_multiple_of(20) {
             return;
         }
-        let player = self.body.position();
+        let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
         let side = SPAWN_CHUNK_RADIUS * 2 + 1;
         let cap = WATER_MOBS_PER_256_CHUNKS * (side * side) as usize / 256;

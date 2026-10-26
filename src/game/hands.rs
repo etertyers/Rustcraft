@@ -37,39 +37,42 @@ const EAT_TICKS: u32 = 32;
 impl Game {
     /// Ticks a bow has been drawn, with the part of a tick.
     pub fn bow_ticks(&self) -> Option<f32> {
-        self.drawing
+        self.player
+            .drawing
             .map(|ticks| ticks as f32 + self.tick_alpha() as f32)
     }
 
     /// Eating or drawing a bow, which slows the player to a fifth.
     pub(super) fn using_item(&self) -> bool {
-        self.eating.is_some() || self.drawing.is_some() || self.shield_hand.is_some()
+        self.player.eating.is_some()
+            || self.player.drawing.is_some()
+            || self.player.shield_hand.is_some()
     }
 
     /// The F key: swaps what the hands hold, ending whatever was in use.
     pub fn swap_hands(&mut self) {
-        self.eating = None;
-        self.drawing = None;
-        self.shield_hand = None;
-        self.shield_ticks = 0;
-        self.inventory.swap_hands();
+        self.player.eating = None;
+        self.player.drawing = None;
+        self.player.shield_hand = None;
+        self.player.shield_ticks = 0;
+        self.player.inventory.swap_hands();
     }
 
     /// What the hand being used holds.
     pub(super) fn held(&self) -> Option<&ItemStack> {
-        self.inventory.hand_stack(self.use_hand)
+        self.player.inventory.hand_stack(self.player.use_hand)
     }
 
     /// The slot of the hand being used.
     pub(super) fn held_slot(&self) -> usize {
-        self.inventory.hand_slot(self.use_hand)
+        self.player.inventory.hand_slot(self.player.use_hand)
     }
 
     /// Whether `hand`'s item has something to do on a right-click now:
     /// raising a shield, drawing a bow, eating, pouring a bucket, striking
     /// flint, or placing a block against something looked at.
     fn hand_uses(&self, hand: Hand, hit: Option<&Hit>) -> bool {
-        let Some(stack) = self.inventory.hand_stack(hand) else {
+        let Some(stack) = self.player.inventory.hand_stack(hand) else {
             return false;
         };
         let Some(item) = self.items.item(stack.id) else {
@@ -94,7 +97,8 @@ impl Game {
             return true;
         }
         if let Some(food) = item.food {
-            return self.mode.is_vulnerable() && (food.always_edible || self.stats.can_eat());
+            return self.player.mode.is_vulnerable()
+                && (food.always_edible || self.player.stats.can_eat());
         }
         hit.is_some()
             && (matches!(
@@ -105,7 +109,8 @@ impl Game {
 
     /// Whether `hand` holds something that shoots.
     fn is_bow(&self, hand: Hand) -> bool {
-        self.inventory
+        self.player
+            .inventory
             .hand_stack(hand)
             .and_then(|stack| self.items.item(stack.id))
             .is_some_and(|item| item.shoots.is_some())
@@ -133,35 +138,35 @@ impl Game {
 
     /// The block being mined and how far along it is (0–1), for the crack.
     pub fn mining_progress(&self) -> Option<(IVec3, f32)> {
-        self.mining
+        self.player.mining
     }
 
     /// The tool in the selected slot, if it's a tool.
     pub(super) fn selected_tool(&self) -> Option<&Tool> {
-        let stack = self.inventory.selected_stack()?;
+        let stack = self.player.inventory.selected_stack()?;
         self.items.tool(stack.id)
     }
 
     /// Breaks or places once per tick while a button is held.
     pub(super) fn use_hands(&mut self) {
-        self.break_cooldown = self.break_cooldown.saturating_sub(1);
-        self.place_cooldown = self.place_cooldown.saturating_sub(1);
-        let wants_break = self.breaking || self.break_clicked;
-        let using = self.placing || self.place_clicked;
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        self.player.break_cooldown = self.player.break_cooldown.saturating_sub(1);
+        self.player.place_cooldown = self.player.place_cooldown.saturating_sub(1);
+        let wants_break = self.player.breaking || self.player.break_clicked;
+        let using = self.player.placing || self.player.place_clicked;
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
         let hit = self.find_target(eye);
         let candidate = using.then(|| self.pick_use_hand(hit.as_ref())).flatten();
         // Vanilla's order: the mob looked at, then the block, then the item
         // by itself. Food, drink, bows and shields wait their turn.
-        if self.place_clicked
+        if self.player.place_clicked
             && !wants_break
             && candidate.is_some()
             && self.interact_first(eye, hit.as_ref())
         {
-            self.view.swing();
-            self.place_clicked = false;
-            self.break_clicked = false;
-            self.mining = None;
+            self.player.view.swing();
+            self.player.place_clicked = false;
+            self.player.break_clicked = false;
+            self.player.mining = None;
             return;
         }
         // A shield stays up while its hand holds right-click, even while
@@ -169,73 +174,76 @@ impl Game {
         self.keep_blocking(candidate);
         let hand = candidate.filter(|_| !wants_break);
         let bow_hand = hand.filter(|&h| self.is_bow(h));
-        self.use_hand = match (bow_hand, self.drawing) {
+        self.player.use_hand = match (bow_hand, self.player.drawing) {
             (Some(h), _) => h,
-            (None, Some(_)) => self.drawing_hand,
+            (None, Some(_)) => self.player.drawing_hand,
             (None, None) => hand.unwrap_or(Hand::Main),
         };
         if self.keep_drawing(bow_hand.is_some()) {
-            self.break_clicked = false;
-            self.place_clicked = false;
-            self.mining = None;
+            self.player.break_clicked = false;
+            self.player.place_clicked = false;
+            self.player.mining = None;
             return;
         }
         if let Some(h) = hand {
-            self.use_hand = h;
+            self.player.use_hand = h;
         }
         if hand.is_some() && self.keep_eating() {
-            self.break_clicked = false;
-            self.place_clicked = false;
-            self.mining = None;
+            self.player.break_clicked = false;
+            self.player.place_clicked = false;
+            self.player.mining = None;
             return;
         }
         // Buckets and bottles in a cauldron, bottles filled from water.
-        if self.place_clicked && !wants_break && hit.is_some_and(|h| self.use_cauldron(h.block)) {
-            self.view.swing();
-            self.place_clicked = false;
+        if self.player.place_clicked
+            && !wants_break
+            && hit.is_some_and(|h| self.use_cauldron(h.block))
+        {
+            self.player.view.swing();
+            self.player.place_clicked = false;
             return;
         }
         if hand.is_some()
-            && self.place_clicked
+            && self.player.place_clicked
             && self.held().is_some_and(|s| s.id == items::GLASS_BOTTLE)
         {
-            self.place_clicked = false;
+            self.player.place_clicked = false;
             if self.fill_bottle(eye) {
-                self.view.swing();
+                self.player.view.swing();
             }
             return;
         }
         // A splash potion is thrown, once per click.
         if hand.is_some()
-            && self.place_clicked
+            && self.player.place_clicked
             && self.held().is_some_and(|s| s.id == items::SPLASH_POTION)
         {
             let slot = self.held_slot();
             self.throw_potion(slot);
-            self.break_clicked = false;
-            self.place_clicked = false;
+            self.player.break_clicked = false;
+            self.player.place_clicked = false;
             return;
         }
         // A firework rocket boosts a glide, once per click.
         if hand.is_some()
-            && self.place_clicked
+            && self.player.place_clicked
             && self.held().is_some_and(|s| s.id == items::FIREWORK_ROCKET)
         {
             self.use_rocket();
-            self.break_clicked = false;
-            self.place_clicked = false;
+            self.player.break_clicked = false;
+            self.player.place_clicked = false;
             return;
         }
         // Armor is put on, once per click.
-        if hand.is_some() && self.place_clicked && self.equip_held() {
-            self.view.swing();
-            self.break_clicked = false;
-            self.place_clicked = false;
+        if hand.is_some() && self.player.place_clicked && self.equip_held() {
+            self.player.view.swing();
+            self.player.break_clicked = false;
+            self.player.place_clicked = false;
             return;
         }
         // An eye of ender is set in a frame or thrown, once per click.
         if hand.is_some()
-            && self.place_clicked
+            && self.player.place_clicked
             && self.held().is_some_and(|s| s.id == items::ENDER_EYE)
         {
             // A block with something to do (a chest, a door) takes the click.
@@ -243,23 +251,23 @@ impl Game {
             if !used {
                 self.use_eye(hit);
             }
-            self.break_clicked = false;
-            self.place_clicked = false;
+            self.player.break_clicked = false;
+            self.player.place_clicked = false;
             return;
         }
-        self.eating = None;
+        self.player.eating = None;
         if let Some(h) = hand {
-            self.use_hand = h;
+            self.player.use_hand = h;
         }
-        let wants_place = using && self.place_cooldown == 0;
-        let place_pressed = self.place_clicked;
-        let clicked = self.break_clicked;
+        let wants_place = using && self.player.place_cooldown == 0;
+        let place_pressed = self.player.place_clicked;
+        let clicked = self.player.break_clicked;
         if clicked {
             // Every left click swings, whatever it hits.
-            self.view.swing();
+            self.player.view.swing();
         }
-        self.break_clicked = false;
-        self.place_clicked = false;
+        self.player.break_clicked = false;
+        self.player.place_clicked = false;
         // Right-clicking an animal: milk, shears, dye, a bone, a saddle, a seat.
         if using
             && place_pressed
@@ -267,25 +275,25 @@ impl Game {
             && let Some(mob) = self.target_mob(eye, hit.as_ref())
             && self.use_mob(mob)
         {
-            self.view.swing();
+            self.player.view.swing();
             return;
         }
         // A punched fireball flies back.
         if clicked && self.deflect_fireball(eye) {
-            self.mining = None;
+            self.player.mining = None;
             return;
         }
         // A crystal or the dragon in front of the targeted block is hit.
         if clicked && let Some(target) = self.target_end(eye, hit.as_ref()) {
-            self.mining = None;
+            self.player.mining = None;
             self.attack_end(target);
             return;
         }
         // A mob in front of the targeted block is hit instead, once per click.
         if let Some(mob) = self.target_mob(eye, hit.as_ref())
-            && (wants_break || self.mining.is_none())
+            && (wants_break || self.player.mining.is_none())
         {
-            self.mining = None;
+            self.player.mining = None;
             if clicked {
                 self.attack(mob);
             }
@@ -295,53 +303,53 @@ impl Game {
         // used (sat in, opened).
         if let Some(cart) = self.target_cart(eye, hit.as_ref()) {
             if clicked {
-                self.mining = None;
-                self.attack_ticker = 0;
+                self.player.mining = None;
+                self.player.attack_ticker = 0;
                 let damage = self.attack_damage();
                 self.hit_cart(cart, damage);
                 return;
             }
             if using && place_pressed && !wants_break {
                 self.use_cart(cart);
-                self.view.swing();
+                self.player.view.swing();
                 return;
             }
         }
         // A boat: punched to break, or got into (or opened, sneaking).
         if let Some(boat) = self.target_boat(eye, hit.as_ref()) {
             if clicked {
-                self.mining = None;
-                self.attack_ticker = 0;
+                self.player.mining = None;
+                self.player.attack_ticker = 0;
                 let damage = self.attack_damage();
                 self.hit_boat(boat, damage);
                 return;
             }
             if using && place_pressed && !wants_break {
                 self.use_boat(boat);
-                self.view.swing();
+                self.player.view.swing();
                 return;
             }
         }
         // A boat is put on the water (or the ground) looked at.
         if using && place_pressed && !wants_break && self.holding_boat() {
             if self.place_boat(eye) {
-                self.view.swing();
+                self.player.view.swing();
             }
-            self.place_cooldown = PLACE_REPEAT_TICKS;
+            self.player.place_cooldown = PLACE_REPEAT_TICKS;
             return;
         }
-        if !wants_break || hit.is_none() || self.shield_hand.is_some() {
+        if !wants_break || hit.is_none() || self.player.shield_hand.is_some() {
             // Letting go or looking away starts the block over (1.0.0); a
             // raised shield keeps both hands busy.
-            self.mining = None;
+            self.player.mining = None;
         }
-        if self.shield_hand.is_some() && wants_break {
+        if self.player.shield_hand.is_some() && wants_break {
             if clicked && hit.is_none() {
                 self.swing_at_air();
             }
             return;
         }
-        if using && !wants_break && self.use_hand == Hand::Main && self.holding_bucket() {
+        if using && !wants_break && self.player.use_hand == Hand::Main && self.holding_bucket() {
             // A bucket works on a fresh click, unless it's on a chest or
             // door, which opens as usual.
             let used = hit.is_some_and(|hit| self.activate(hit.block, place_pressed));
@@ -358,10 +366,10 @@ impl Game {
             return;
         };
         if wants_break {
-            self.view.swing();
+            self.player.view.swing();
             self.mine(hit.block);
             // Chips fly off the face while it's being mined.
-            if self.mining.is_some()
+            if self.player.mining.is_some()
                 && let Some(face) = hit.face
                 && let Some(block) =
                     self.chunks
@@ -376,7 +384,7 @@ impl Game {
         } else if using {
             if self.activate(hit.block, place_pressed) {
                 if place_pressed {
-                    self.view.swing();
+                    self.player.view.swing();
                 }
             } else if wants_place {
                 if self.held().is_some_and(|stack| {
@@ -385,7 +393,7 @@ impl Game {
                     self.strike_flint(&hit);
                 } else if self.holding_crystal() {
                     if self.place_crystal(&hit) {
-                        self.place_cooldown = PLACE_REPEAT_TICKS;
+                        self.player.place_cooldown = PLACE_REPEAT_TICKS;
                     }
                 } else if let Some(kind) = self
                     .held()
@@ -393,11 +401,11 @@ impl Game {
                 {
                     // A minecart goes on a rail, not beside it.
                     if self.place_cart(hit.block, kind) {
-                        self.view.swing();
-                        if self.mode.uses_up_items() {
-                            self.inventory.take(self.held_slot(), 1);
+                        self.player.view.swing();
+                        if self.player.mode.uses_up_items() {
+                            self.player.inventory.take(self.held_slot(), 1);
                         }
-                        self.place_cooldown = PLACE_REPEAT_TICKS;
+                        self.player.place_cooldown = PLACE_REPEAT_TICKS;
                     }
                 } else {
                     self.place(&hit);
@@ -408,7 +416,7 @@ impl Game {
 
     /// One tick of mining `cell`; breaks it once the progress reaches 1.
     fn mine(&mut self, cell: IVec3) {
-        if self.break_cooldown > 0 {
+        if self.player.break_cooldown > 0 {
             return;
         }
         let world = self.chunks.world();
@@ -418,18 +426,18 @@ impl Game {
         else {
             return;
         };
-        let progress = if self.mode.breaks_instantly() {
+        let progress = if self.player.mode.breaks_instantly() {
             1.0
         } else {
             let in_water = self.eye_in() == Some(Fluid::Water);
             let per_tick = harvest::progress_per_tick_with(
                 def,
                 self.selected_tool(),
-                self.body.on_ground,
+                self.player.body.on_ground,
                 in_water,
                 self.held_level(Enchantment::Efficiency),
             );
-            let so_far = match self.mining {
+            let so_far = match self.player.mining {
                 Some((mining, progress)) if mining == cell => progress,
                 _ => 0.0,
             };
@@ -442,11 +450,11 @@ impl Game {
             {
                 self.block_sound(&block.def().name, "hit", cell);
             }
-            self.mining = Some((cell, progress));
+            self.player.mining = Some((cell, progress));
             return;
         }
-        self.mining = None;
-        self.break_cooldown = BREAK_REPEAT_TICKS;
+        self.player.mining = None;
+        self.player.break_cooldown = BREAK_REPEAT_TICKS;
         self.break_block(cell);
     }
 
@@ -482,11 +490,12 @@ impl Game {
             self.add_particles(burst);
         }
         let world = self.chunks.world();
-        if self.mode.drops_items() {
+        if self.player.mode.drops_items() {
             let mut mined = Vec::new();
             let fortune = self.held_level(Enchantment::Fortune);
             let silk = self.held_level(Enchantment::SilkTouch) > 0;
             let tool = self
+                .player
                 .inventory
                 .selected_stack()
                 .and_then(|stack| self.items.tool(stack.id));
@@ -532,7 +541,7 @@ impl Game {
                 if let Some(entity) = &entity {
                     stack.set_contents(entity.slots().to_vec());
                 }
-                if self.mode.drops_items() || !stack.contents().is_empty() {
+                if self.player.mode.drops_items() || !stack.contents().is_empty() {
                     self.entities
                         .push(ItemEntity::from_block(stack, at, &mut random));
                 }
@@ -546,10 +555,10 @@ impl Game {
                     .push(ItemEntity::from_block(stack, at, &mut random));
             }
         }
-        if self.mode.is_vulnerable() {
-            self.stats.add_exhaustion(BREAK_EXHAUSTION);
+        if self.player.mode.is_vulnerable() {
+            self.player.stats.add_exhaustion(BREAK_EXHAUSTION);
         }
-        if self.mode.wears_tools()
+        if self.player.mode.wears_tools()
             && let Some(wear) = self.selected_tool().map(|tool| tool.wear)
         {
             self.wear_selected(wear);
@@ -568,16 +577,16 @@ impl Game {
             .and_then(|stack| self.items.item(stack.id))
             .and_then(|item| item.shoots);
         let Some(ammo) = ammo else {
-            self.drawing = None;
+            self.player.drawing = None;
             return false;
         };
-        let has_ammo = !self.mode.uses_up_items() || self.find_ammo(ammo).is_some();
+        let has_ammo = !self.player.mode.uses_up_items() || self.find_ammo(ammo).is_some();
         if using && has_ammo {
-            self.drawing_hand = self.use_hand;
-            self.drawing = Some(self.drawing.map_or(1, |ticks| ticks + 1));
+            self.player.drawing_hand = self.player.use_hand;
+            self.player.drawing = Some(self.player.drawing.map_or(1, |ticks| ticks + 1));
             return true;
         }
-        if let Some(ticks) = self.drawing.take()
+        if let Some(ticks) = self.player.drawing.take()
             && let Some(power) = arrow::bow_power(ticks)
         {
             self.shoot_arrow(power, ammo);
@@ -588,23 +597,24 @@ impl Game {
     /// The slot holding ammunition: the off-hand first, then the pack.
     fn find_ammo(&self, ammo: crate::inventory::item::ItemId) -> Option<usize> {
         if self
+            .player
             .inventory
             .slot(crate::inventory::player::OFFHAND)
             .is_some_and(|stack| stack.id == ammo)
         {
             return Some(crate::inventory::player::OFFHAND);
         }
-        self.inventory.find(ammo)
+        self.player.inventory.find(ammo)
     }
 
     /// Looses an arrow at `power` (0–1) from the bow in hand.
     pub(super) fn shoot_arrow(&mut self, power: f32, ammo: crate::inventory::item::ItemId) {
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let forward = self.camera.forward().as_dvec3();
-        let pickup = self.mode.uses_up_items();
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
+        let forward = self.player.camera.forward().as_dvec3();
+        let pickup = self.player.mode.uses_up_items();
         // The arrow carries the shooter's own motion, up and down only in the air.
-        let mut carried = self.body.velocity;
-        if self.body.on_ground {
+        let mut carried = self.player.body.velocity;
+        if self.player.body.on_ground {
             carried.y = 0.0;
         }
         let level = |e: Enchantment| self.held().map_or(0, |bow| bow.level_of(e));
@@ -638,10 +648,10 @@ impl Game {
             && !infinity
             && let Some(slot) = self.find_ammo(ammo)
         {
-            self.inventory.take(slot, 1);
+            self.player.inventory.take(slot, 1);
         }
-        if self.mode.wears_tools() {
-            let hand = self.use_hand;
+        if self.player.mode.wears_tools() {
+            let hand = self.player.use_hand;
             self.wear_hand(hand, 1);
         }
     }
@@ -649,7 +659,7 @@ impl Game {
     /// Moves arrows: hits on mobs, sticking in blocks, picking them up.
     pub(super) fn tick_arrows(&mut self) {
         let mut arrows = std::mem::take(&mut self.arrows);
-        let player = self.body.aabb();
+        let player = self.player.body.aabb();
         let mut hits = Vec::new();
         let mut end_hits = Vec::new();
         for arrow in &mut arrows {
@@ -686,7 +696,7 @@ impl Game {
                 end_hits.push((target, damage));
                 continue;
             }
-            let at_player = (arrow.hostile && !self.stats.is_dead()).then_some(&player);
+            let at_player = (arrow.hostile && !self.player.stats.is_dead()).then_some(&player);
             let was_stuck = arrow.stuck;
             let event = arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random);
             if !was_stuck && arrow.stuck {
@@ -730,7 +740,7 @@ impl Game {
             self.arrow_strikes_end(target, damage);
         }
         for (damage, from, slows) in hits {
-            if self.mode.is_vulnerable() {
+            if self.player.mode.is_vulnerable() {
                 let strike = super::combat::Strike {
                     amount: damage,
                     source: DamageSource::Arrow,
@@ -740,17 +750,21 @@ impl Game {
                 };
                 self.hurt_player(strike);
                 if slows {
-                    self.stats.effects.add(crate::player::effects::Active::new(
-                        crate::player::effects::Effect::Slowness,
-                        0,
-                        super::mob_acts::STRAY_SLOWNESS_TICKS,
-                    ));
+                    self.player
+                        .stats
+                        .effects
+                        .add(crate::player::effects::Active::new(
+                            crate::player::effects::Effect::Slowness,
+                            0,
+                            super::mob_acts::STRAY_SLOWNESS_TICKS,
+                        ));
                 }
             }
         }
         arrows.retain(|arrow| {
             if arrow.can_pick_up(&player)
                 && self
+                    .player
                     .inventory
                     .add(ItemStack::new(items::ARROW, 1), &self.items)
                     .is_none()
@@ -775,18 +789,18 @@ impl Game {
             let Some(food) = food else {
                 return false;
             };
-            let hungry = food.always_edible || self.stats.can_eat();
-            if !self.mode.is_vulnerable() || !hungry {
+            let hungry = food.always_edible || self.player.stats.can_eat();
+            if !self.player.mode.is_vulnerable() || !hungry {
                 return false;
             }
         }
-        let ticks = match self.eating {
+        let ticks = match self.player.eating {
             Some((eating_slot, ticks)) if eating_slot == slot => ticks + 1,
             _ => 1,
         };
         // Munching or gulping every fourth tick.
         if ticks % 4 == 0 && ticks < EAT_TICKS {
-            let at = self.body.position() + DVec3::Y * self.body.eye_height();
+            let at = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
             let pitch = 0.9 + self.rng.next_f64() as f32 * 0.2;
             crate::audio::play_at(
                 if drink {
@@ -800,10 +814,10 @@ impl Game {
             );
         }
         if ticks < EAT_TICKS {
-            self.eating = Some((slot, ticks));
+            self.player.eating = Some((slot, ticks));
             return true;
         }
-        self.eating = None;
+        self.player.eating = None;
         if drink {
             self.finish_drinking(slot, &stack);
             return true;
@@ -811,14 +825,14 @@ impl Game {
         let Some(food) = food else {
             return false;
         };
-        self.inventory.take(slot, 1);
+        self.player.inventory.take(slot, 1);
         crate::audio::play_at(
             "entity.player.burp",
-            self.body.position() + DVec3::Y * self.body.eye_height(),
+            self.player.body.position() + DVec3::Y * self.player.body.eye_height(),
             0.5,
             0.9 + self.rng.next_f64() as f32 * 0.2,
         );
-        self.stats.eat(food.hunger, food.saturation);
+        self.player.stats.eat(food.hunger, food.saturation);
         self.note(crate::advancements::Event::Ate(stack.id.name().to_owned()));
         self.food_effects(stack.id);
         if stack.id == items::CHORUS_FRUIT {
@@ -826,9 +840,9 @@ impl Game {
         }
         if let Some(leftover) = self.items.item(stack.id).and_then(|item| item.leftover) {
             let bowl = ItemStack::with_damage(leftover, 1, 0);
-            if self.inventory.slot(slot).is_none() {
-                self.inventory.set(slot, Some(bowl));
-            } else if let Some(rest) = self.inventory.add(bowl, &self.items) {
+            if self.player.inventory.slot(slot).is_none() {
+                self.player.inventory.set(slot, Some(bowl));
+            } else if let Some(rest) = self.player.inventory.add(bowl, &self.items) {
                 self.throw(rest);
             }
         }
@@ -838,7 +852,7 @@ impl Game {
     /// The living mob under the crosshair within reach, if it's nearer
     /// than the targeted block.
     pub(super) fn target_mob(&self, eye: DVec3, block: Option<&Hit>) -> Option<usize> {
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let block_distance = block.map_or(f64::MAX, |hit| {
             (hit.block.as_dvec3() + DVec3::splat(0.5)).distance(eye) - 0.5
         });
@@ -866,7 +880,7 @@ impl Game {
     /// over and over. Returns whether the block is usable, so nothing gets
     /// placed against it.
     fn activate(&mut self, cell: IVec3, pressed: bool) -> bool {
-        if self.keys.sneak && self.inventory.selected_stack().is_some() {
+        if self.player.keys.sneak && self.player.inventory.selected_stack().is_some() {
             return false;
         }
         let Some(action) = self
@@ -947,8 +961,8 @@ impl Game {
             return;
         };
         let world = self.chunks.world();
-        let player = self.body.aabb();
-        let yaw = self.camera.yaw;
+        let player = self.player.body.aabb();
+        let yaw = self.player.camera.yaw;
         let Some(edits) = interaction::place_block_looking(
             world,
             self.items.blocks,
@@ -956,7 +970,7 @@ impl Game {
             block,
             &player,
             yaw,
-            self.camera.pitch,
+            self.player.camera.pitch,
         ) else {
             return;
         };
@@ -976,18 +990,18 @@ impl Game {
                 Some(crate::world::block_entity::BlockEntity::Chest(slots)),
             );
         }
-        self.view.swing();
-        if self.mode.uses_up_items() {
-            self.inventory.take(self.held_slot(), 1);
+        self.player.view.swing();
+        if self.player.mode.uses_up_items() {
+            self.player.inventory.take(self.held_slot(), 1);
         }
-        self.place_cooldown = PLACE_REPEAT_TICKS;
+        self.player.place_cooldown = PLACE_REPEAT_TICKS;
     }
 
     /// Middle click (1.0.0's pick block): selects the hotbar slot holding
     /// the targeted block's item, or with every item to hand, puts a stack
     /// of it in the selected slot.
     pub fn pick_block(&mut self) {
-        let Some(hit) = self.target else {
+        let Some(hit) = self.player.target else {
             return;
         };
         let Some(block) = self
@@ -1002,18 +1016,21 @@ impl Game {
         };
         let stack = ItemStack::with_damage(item, 1, 0);
         let in_hotbar = (0..HOTBAR_SLOTS).find(|&i| {
-            self.inventory
+            self.player
+                .inventory
                 .slot(i)
                 .is_some_and(|held| held.stacks_with(&stack))
         });
         if let Some(slot) = in_hotbar {
-            self.inventory.selected = slot;
-        } else if self.mode.has_every_item() {
+            self.player.inventory.selected = slot;
+        } else if self.player.mode.has_every_item() {
             let full = ItemStack {
                 count: self.items.max_stack(stack.id),
                 ..stack
             };
-            self.inventory.set(self.inventory.selected, Some(full));
+            self.player
+                .inventory
+                .set(self.player.inventory.selected, Some(full));
         }
     }
 
@@ -1035,7 +1052,11 @@ impl Game {
             (items::TORCH, 64),
         ];
         for (id, count) in KIT {
-            if let Some(rest) = self.inventory.add(ItemStack::new(id, count), &self.items) {
+            if let Some(rest) = self
+                .player
+                .inventory
+                .add(ItemStack::new(id, count), &self.items)
+            {
                 self.throw(rest);
             }
         }
@@ -1046,7 +1067,7 @@ impl Game {
     /// all of them, two in three (Decreased) or none (Minimal). Blocks'
     /// breaking and mining particles always show, as in vanilla.
     pub(super) fn shows_particle(&mut self) -> bool {
-        match self.particle_level {
+        match self.player.particle_level {
             crate::options::Particles::All => true,
             crate::options::Particles::Decreased => self.rng.below(3) != 0,
             crate::options::Particles::Minimal => false,
@@ -1074,7 +1095,11 @@ impl Game {
 
     /// Throws one of the selected item forward (1.0.0's Q).
     pub fn throw_selected(&mut self) {
-        let Some(stack) = self.inventory.take(self.inventory.selected, 1) else {
+        let Some(stack) = self
+            .player
+            .inventory
+            .take(self.player.inventory.selected, 1)
+        else {
             return;
         };
         self.throw(stack);
@@ -1082,8 +1107,8 @@ impl Game {
 
     /// Throws `stack` from the player's eyes.
     pub fn throw(&mut self, stack: ItemStack) {
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let forward = self.camera.forward().as_dvec3();
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
+        let forward = self.player.camera.forward().as_dvec3();
         let rng = &mut self.rng;
         let mut random = || rng.next_f64() as f32;
         self.entities
@@ -1096,11 +1121,11 @@ impl Game {
             world: self.chunks.world(),
             blocks: self.items.blocks,
         };
-        let player = self.body.aabb();
-        let alive = !self.stats.is_dead();
+        let player = self.player.body.aabb();
+        let alive = !self.player.stats.is_dead();
         for item in &mut self.entities {
             item.tick(&collider);
-            if alive && item.pick_up(&player, &mut self.inventory, &self.items) {
+            if alive && item.pick_up(&player, &mut self.player.inventory, &self.items) {
                 let pitch = 1.4 + (item.center().x * 7.0).sin().abs() as f32 * 0.8;
                 crate::audio::play_at("entity.item.pickup", item.center(), 0.2, pitch);
             }

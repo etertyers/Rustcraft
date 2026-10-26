@@ -133,9 +133,9 @@ pub enum ShotScreen {
     KeyBinds,
 }
 
-pub struct Game {
-    pub chunks: ChunkManager,
-    items: Items,
+/// Everything about one player: where they are and how they move, what
+/// they hold and carry, their health and screens, and their settings.
+pub struct PlayerState {
     /// Look direction comes from the mouse; position follows `body` each frame.
     pub camera: Camera,
     /// How the player looks to the camera: swinging, bobbing, F5.
@@ -147,7 +147,6 @@ pub struct Game {
     prev_feet: DVec3,
     /// How far the camera still trails below the feet after a step up (≤ 0).
     step_lag: f64,
-    spawn: DVec3,
     pub(crate) keys: MoveKeys,
     /// The block under the crosshair this frame.
     pub target: Option<Hit>,
@@ -170,24 +169,13 @@ pub struct Game {
     sleep: Option<sleep::Sleep>,
     /// The head of the bed the player last slept in, where they respawn.
     bed: Option<glam::IVec3>,
-    /// The world's game rules.
-    pub rules: crate::level::GameRules,
-    pub difficulty: crate::level::Difficulty,
     /// A notice on screen and the ticks it has left (1.0.0's chat lines).
     pub message: Option<(String, u32)>,
     /// The capture tool's two corners (creative).
     capture: [Option<glam::IVec3>; 2],
-    /// Dropped items lying around.
-    pub entities: Vec<ItemEntity>,
-    /// Experience orbs lying around.
-    pub orbs: Vec<crate::entity::orb::XpOrb>,
     /// Ticks the eyes have been under water, for how far the fog reaches
     /// (`environment::water_vision`).
     water_vision: u32,
-    /// Bits of broken and mined blocks.
-    pub particles: Vec<Particle>,
-    /// Stars of critical hits and arcs of sweeps.
-    pub effects: Vec<crate::entity::effects::Effect>,
     /// Ticks since the last swing or item change, which the next swing's
     /// charge builds from.
     attack_ticker: u32,
@@ -201,56 +189,15 @@ pub struct Game {
     /// The hand holding a raised shield and for how many ticks.
     shield_hand: Option<crate::inventory::player::Hand>,
     shield_ticks: u32,
-    pub arrows: Vec<Arrow>,
-    /// Ghasts' fireballs in flight.
-    pub fireballs: Vec<crate::entity::fireball::Fireball>,
-    /// Shulkers' bullets in flight (M28).
-    pub bullets: Vec<crate::entity::bullet::ShulkerBullet>,
-    /// Splash potions in flight.
-    pub thrown: Vec<crate::entity::thrown::ThrownPotion>,
-    /// Sand and gravel falling.
-    pub falling: Vec<crate::entity::falling::FallingBlock>,
-    /// Blocks due to start falling, by tick.
-    falls_due: Vec<(u64, glam::IVec3)>,
-    /// Loaded chunks with upgraded v1.0 blocks to join to their neighbors.
-    post_processing: Vec<ChunkPos>,
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
-    mob_defs: Arc<MobRegistry>,
-    pub mobs: Vec<Mob>,
-    /// The id the next mob gets, the mob that last hurt the player (tame
-    /// wolves attack it) and for how many more ticks, and the mob the
-    /// player sits on.
-    next_mob_id: u64,
-    threat_id: u64,
-    threat_ticks: u32,
     mounted: Option<u64>,
-    /// Animals in unloaded chunks, waiting for their chunk to come back.
-    stashed_mobs: FastMap<ChunkPos, Vec<Mob>>,
-    /// Chunks that have had their animals placed (once per chunk).
-    populated: FastSet<ChunkPos>,
     /// The hotbar slot being eaten from and for how many ticks.
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
     mining: Option<(glam::IVec3, f32)>,
-    /// Scheduled water and lava updates.
-    fluids: Fluids,
-    fires: Fires,
-    redstone: Redstone,
-    /// Minecarts, and which one the player sits in.
-    pub carts: Vec<crate::entity::minecart::Minecart>,
-    /// Boats in every dimension, the one the player sits in, and the last
-    /// id given out.
-    pub boats: Vec<crate::entity::boat::Boat>,
     boat: Option<u64>,
-    next_boat_id: u64,
     pub riding: Option<usize>,
-    /// TNT with its fuse lit.
-    pub primed: Vec<crate::entity::tnt::PrimedTnt>,
-    /// The last notes note blocks played: (block, instrument, note).
-    pub played_notes: Vec<(glam::IVec3, u8, u8)>,
-    /// For drops and throws.
-    rng: Rng,
     /// Trackpad scroll not yet turned into slot changes.
     scroll_pixels: f64,
     /// Mouse look speed, 1 for the default.
@@ -269,40 +216,15 @@ pub struct Game {
     pub(crate) left_handed: bool,
     toggle_sneak: bool,
     toggle_sprint: bool,
-    /// Game time not yet simulated, in seconds (less than one tick after a frame).
-    tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
     #[cfg(debug_assertions)]
     flying: bool,
     pub mode: GameMode,
-    /// Ticks since the world was created.
-    time: u64,
-    /// Where the world is saved; `None` for the test worlds.
-    saved: Option<SavedWorld>,
-    ticks_since_save: u32,
-    /// The dimension the player is in, and the others as they were left.
-    dimension: crate::world::dimension::Dimension,
-    away: FastMap<crate::world::dimension::Dimension, dimensions::Away>,
-    /// Set on going to another dimension, until the app has seen it.
-    dimension_changed: bool,
     /// Ticks spent waiting for the chunks around a player who just went
     /// to another dimension.
     arriving: Option<u32>,
-    /// Every Nether portal lit or built, by dimension: a block of its
-    /// bottom row (where linking looks first).
-    portals: Vec<(crate::world::dimension::Dimension, [i32; 3])>,
     /// Standing in a portal.
     portal: portals::PortalState,
-    /// Eyes of ender in flight.
-    pub eyes: Vec<crate::entity::eye::EyeOfEnder>,
-    /// How the End stands (the dragon fight, the credits seen).
-    end: crate::level::EndData,
-    /// The ender dragon, while there is one, and what it left: crystals,
-    /// its fireballs and clouds of its breath.
-    pub dragon: Option<crate::entity::dragon::EnderDragon>,
-    pub crystals: Vec<crate::entity::crystal::EndCrystal>,
-    pub dragon_fireballs: Vec<crate::entity::breath::DragonFireball>,
-    pub breath: Vec<crate::entity::breath::BreathCloud>,
     /// Ticks the poem and credits have rolled, while they do.
     credits: Option<u32>,
     /// Gliding on elytra: ticks so far, ticks of a rocket's push left,
@@ -319,6 +241,91 @@ pub struct Game {
     pub recipe_book: crate::inventory::book::Settings,
     toasts: Vec<advance::Toast>,
     levitation_from: Option<f64>,
+}
+
+pub struct Game {
+    pub chunks: ChunkManager,
+    items: Items,
+    /// The player whose turn it is: the only one in single player.
+    pub player: PlayerState,
+    spawn: DVec3,
+    /// The world's game rules.
+    pub rules: crate::level::GameRules,
+    pub difficulty: crate::level::Difficulty,
+    /// Dropped items lying around.
+    pub entities: Vec<ItemEntity>,
+    /// Experience orbs lying around.
+    pub orbs: Vec<crate::entity::orb::XpOrb>,
+    /// Bits of broken and mined blocks.
+    pub particles: Vec<Particle>,
+    /// Stars of critical hits and arcs of sweeps.
+    pub effects: Vec<crate::entity::effects::Effect>,
+    pub arrows: Vec<Arrow>,
+    /// Ghasts' fireballs in flight.
+    pub fireballs: Vec<crate::entity::fireball::Fireball>,
+    /// Shulkers' bullets in flight (M28).
+    pub bullets: Vec<crate::entity::bullet::ShulkerBullet>,
+    /// Splash potions in flight.
+    pub thrown: Vec<crate::entity::thrown::ThrownPotion>,
+    /// Sand and gravel falling.
+    pub falling: Vec<crate::entity::falling::FallingBlock>,
+    /// Blocks due to start falling, by tick.
+    falls_due: Vec<(u64, glam::IVec3)>,
+    /// Loaded chunks with upgraded v1.0 blocks to join to their neighbors.
+    post_processing: Vec<ChunkPos>,
+    mob_defs: Arc<MobRegistry>,
+    pub mobs: Vec<Mob>,
+    /// The id the next mob gets, the mob that last hurt the player (tame
+    /// wolves attack it) and for how many more ticks, and the mob the
+    /// player sits on.
+    next_mob_id: u64,
+    threat_id: u64,
+    threat_ticks: u32,
+    /// Animals in unloaded chunks, waiting for their chunk to come back.
+    stashed_mobs: FastMap<ChunkPos, Vec<Mob>>,
+    /// Chunks that have had their animals placed (once per chunk).
+    populated: FastSet<ChunkPos>,
+    /// Scheduled water and lava updates.
+    fluids: Fluids,
+    fires: Fires,
+    redstone: Redstone,
+    /// Minecarts, and which one the player sits in.
+    pub carts: Vec<crate::entity::minecart::Minecart>,
+    /// Boats in every dimension, the one the player sits in, and the last
+    /// id given out.
+    pub boats: Vec<crate::entity::boat::Boat>,
+    next_boat_id: u64,
+    /// TNT with its fuse lit.
+    pub primed: Vec<crate::entity::tnt::PrimedTnt>,
+    /// The last notes note blocks played: (block, instrument, note).
+    pub played_notes: Vec<(glam::IVec3, u8, u8)>,
+    /// For drops and throws.
+    rng: Rng,
+    /// Game time not yet simulated, in seconds (less than one tick after a frame).
+    tick_time: f32,
+    /// Ticks since the world was created.
+    time: u64,
+    /// Where the world is saved; `None` for the test worlds.
+    saved: Option<SavedWorld>,
+    ticks_since_save: u32,
+    /// The dimension the player is in, and the others as they were left.
+    dimension: crate::world::dimension::Dimension,
+    away: FastMap<crate::world::dimension::Dimension, dimensions::Away>,
+    /// Set on going to another dimension, until the app has seen it.
+    dimension_changed: bool,
+    /// Every Nether portal lit or built, by dimension: a block of its
+    /// bottom row (where linking looks first).
+    portals: Vec<(crate::world::dimension::Dimension, [i32; 3])>,
+    /// Eyes of ender in flight.
+    pub eyes: Vec<crate::entity::eye::EyeOfEnder>,
+    /// How the End stands (the dragon fight, the credits seen).
+    end: crate::level::EndData,
+    /// The ender dragon, while there is one, and what it left: crystals,
+    /// its fireballs and clouds of its breath.
+    pub dragon: Option<crate::entity::dragon::EnderDragon>,
+    pub crystals: Vec<crate::entity::crystal::EndCrystal>,
+    pub dragon_fireballs: Vec<crate::entity::breath::DragonFireball>,
+    pub breath: Vec<crate::entity::breath::BreathCloud>,
     shot_tab: Option<usize>,
     /// An inventory screen a `--shot` scene wants open.
     shot_ui: Option<ShotUi>,
@@ -345,43 +352,76 @@ impl Game {
         Self {
             chunks,
             items,
-            camera: Camera::new(eye.as_vec3(), yaw, pitch),
-            view: view::ViewState::new(yaw, pitch, None),
-            body,
-            sounds: Default::default(),
-            prev_feet: feet,
-            step_lag: 0.0,
+            player: PlayerState {
+                camera: Camera::new(eye.as_vec3(), yaw, pitch),
+                view: view::ViewState::new(yaw, pitch, None),
+                body,
+                sounds: Default::default(),
+                prev_feet: feet,
+                step_lag: 0.0,
+                keys: MoveKeys::default(),
+                target: None,
+                breaking: false,
+                placing: false,
+                break_clicked: false,
+                place_clicked: false,
+                break_cooldown: 0,
+                place_cooldown: 0,
+                inventory: Inventory::default(),
+                stats: Stats::default(),
+                cursor: None,
+                container: None,
+                sleep: None,
+                bed: None,
+                message: None,
+                capture: [None, None],
+                water_vision: 0,
+                attack_ticker: 100,
+                last_main_item: None,
+                shield_cooldown: 0,
+                use_hand: Default::default(),
+                drawing_hand: Default::default(),
+                shield_hand: None,
+                shield_ticks: 0,
+                drawing: None,
+                mounted: None,
+                mining: None,
+                eating: None,
+                boat: None,
+                riding: None,
+                scroll_pixels: 0.0,
+                sensitivity: 1.0,
+                invert_y: false,
+                auto_jump: false,
+                particle_level: crate::options::Particles::All,
+                fov_effects: 1.0,
+                damage_tilt: 1.0,
+                skin_layers: crate::render::player::ALL_LAYERS,
+                left_handed: false,
+                toggle_sneak: false,
+                toggle_sprint: false,
+                #[cfg(debug_assertions)]
+                flying: false,
+                mode: GameMode::default(),
+                arriving: None,
+                portal: Default::default(),
+                credits: None,
+                glide_ticks: 0,
+                rocket: 0,
+                jump_was: false,
+                gateway_cooldown: 0,
+                progress: Default::default(),
+                recipe_book: Default::default(),
+                toasts: Vec::new(),
+                levitation_from: None,
+            },
             spawn,
-            keys: MoveKeys::default(),
-            target: None,
-            breaking: false,
-            placing: false,
-            break_clicked: false,
-            place_clicked: false,
-            break_cooldown: 0,
-            place_cooldown: 0,
-            inventory: Inventory::default(),
-            stats: Stats::default(),
-            cursor: None,
-            container: None,
-            sleep: None,
-            bed: None,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),
-            message: None,
-            capture: [None, None],
             entities: Vec::new(),
             orbs: Vec::new(),
-            water_vision: 0,
             particles: Vec::new(),
             effects: Vec::new(),
-            attack_ticker: 100,
-            last_main_item: None,
-            shield_cooldown: 0,
-            use_hand: Default::default(),
-            drawing_hand: Default::default(),
-            shield_hand: None,
-            shield_ticks: 0,
             arrows: Vec::new(),
             fireballs: Vec::new(),
             thrown: Vec::new(),
@@ -389,67 +429,36 @@ impl Game {
             falling: Vec::new(),
             falls_due: Vec::new(),
             post_processing: Vec::new(),
-            drawing: None,
             mob_defs: Arc::new(MobRegistry::empty()),
             mobs: Vec::new(),
             next_mob_id: 0,
             threat_id: 0,
             threat_ticks: 0,
-            mounted: None,
             stashed_mobs: FastMap::default(),
             populated: FastSet::default(),
-            mining: None,
-            eating: None,
             fluids: Fluids::default(),
             fires: Fires::default(),
             redstone: Redstone::default(),
             primed: Vec::new(),
             carts: Vec::new(),
             boats: Vec::new(),
-            boat: None,
             next_boat_id: 0,
-            riding: None,
             played_notes: Vec::new(),
             rng: Rng::new(level_random_seed()),
-            scroll_pixels: 0.0,
-            sensitivity: 1.0,
-            invert_y: false,
-            auto_jump: false,
-            particle_level: crate::options::Particles::All,
-            fov_effects: 1.0,
-            damage_tilt: 1.0,
-            skin_layers: crate::render::player::ALL_LAYERS,
-            left_handed: false,
-            toggle_sneak: false,
-            toggle_sprint: false,
             tick_time: 0.0,
-            #[cfg(debug_assertions)]
-            flying: false,
-            mode: GameMode::default(),
             time: 0,
             saved: None,
             ticks_since_save: 0,
             dimension: Default::default(),
             away: FastMap::default(),
             dimension_changed: false,
-            arriving: None,
             portals: Vec::new(),
-            portal: Default::default(),
             eyes: Vec::new(),
             end: Default::default(),
             dragon: None,
             crystals: Vec::new(),
             dragon_fireballs: Vec::new(),
             breath: Vec::new(),
-            credits: None,
-            glide_ticks: 0,
-            rocket: 0,
-            jump_was: false,
-            gateway_cooldown: 0,
-            progress: Default::default(),
-            recipe_book: Default::default(),
-            toasts: Vec::new(),
-            levitation_from: None,
             shot_tab: None,
             shot_ui: None,
         }
@@ -483,17 +492,17 @@ impl Game {
             player.yaw,
             player.pitch,
         );
-        game.mode = level.game_mode;
+        game.player.mode = level.game_mode;
         game.time = level.time;
-        game.inventory = player.inventory.clone();
-        game.stats = player.stats.clone();
-        game.bed = player.bed.map(glam::IVec3::from_array);
+        game.player.inventory = player.inventory.clone();
+        game.player.stats = player.stats.clone();
+        game.player.bed = player.bed.map(glam::IVec3::from_array);
         game.rules = level.rules.clone();
         game.difficulty = level.difficulty;
         game.load_boats(&level.boats);
-        game.inventory.repair(&game.items);
-        game.body.may_fly = game.mode.can_fly();
-        game.body.flying = player.flying && game.body.may_fly;
+        game.player.inventory.repair(&game.items);
+        game.player.body.may_fly = game.player.mode.can_fly();
+        game.player.body.flying = player.flying && game.player.body.may_fly;
         game.populated = level
             .populated
             .iter()
@@ -503,8 +512,8 @@ impl Game {
         game.fluids.warm = level.dimension == crate::world::dimension::Dimension::Nether;
         game.portals = level.portals.clone();
         game.end = level.end.clone();
-        game.progress = level.advancements.clone();
-        game.recipe_book = level.recipe_book.clone();
+        game.player.progress = level.advancements.clone();
+        game.player.recipe_book = level.recipe_book.clone();
         game.restore_fight(level.end.dragon);
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
@@ -550,8 +559,8 @@ impl Game {
         let populated = self.populated.iter().map(|pos| (pos.x, pos.z)).collect();
         let (away_mobs, away_populated) = self.away_for_saving();
         let crystals = self.fight_for_saving();
-        let progress = self.progress.clone();
-        let recipe_book = self.recipe_book.clone();
+        let progress = self.player.progress.clone();
+        let recipe_book = self.player.recipe_book.clone();
         let dragon = self.dragon.as_ref().map(|d| d.save());
         if self.saved.is_none() {
             return Ok(());
@@ -559,14 +568,16 @@ impl Game {
         let chunks = self.chunks.save()?;
         // A stack held in an open inventory screen, and the crafting grid,
         // go back in the inventory rather than being lost.
-        let mut inventory = self.inventory.clone();
+        let mut inventory = self.player.inventory.clone();
         let grid = self
+            .player
             .container
             .as_ref()
             .and_then(Container::grid)
             .map(<[_]>::to_vec)
             .unwrap_or_default();
         for held in self
+            .player
             .cursor
             .clone()
             .into_iter()
@@ -581,12 +592,12 @@ impl Game {
         };
         saved.level.player = PlayerData {
             position: feet.to_array(),
-            yaw: self.camera.yaw,
-            pitch: self.camera.pitch,
+            yaw: self.player.camera.yaw,
+            pitch: self.player.camera.pitch,
             inventory,
-            flying: self.body.flying,
-            stats: self.stats.clone(),
-            bed: self.bed.map(|bed| bed.to_array()),
+            flying: self.player.body.flying,
+            stats: self.player.stats.clone(),
+            bed: self.player.bed.map(|bed| bed.to_array()),
         };
         saved.level.time = self.time;
         saved.level.mobs = mobs;
@@ -655,42 +666,42 @@ impl Game {
             }
             #[cfg(debug_assertions)]
             Action::DevFlight if press => {
-                self.flying = !self.flying;
-                self.body.velocity = DVec3::ZERO;
-                info!("flying {}", if self.flying { "on" } else { "off" });
+                self.player.flying = !self.player.flying;
+                self.player.body.velocity = DVec3::ZERO;
+                info!("flying {}", if self.player.flying { "on" } else { "off" });
             }
             Action::Perspective if press => self.cycle_view(),
             Action::CaptureCorner1 if press => self.mark_corner(0),
             Action::CaptureCorner2 if press => self.mark_corner(1),
             Action::CaptureSave if press => self.save_capture(),
             _ if pressed && action.hotbar_slot().is_some() => {
-                self.inventory.selected = action.hotbar_slot().unwrap_or(0);
+                self.player.inventory.selected = action.hotbar_slot().unwrap_or(0);
             }
             Action::Drop if pressed && grabbed => self.throw_selected(),
             Action::SwapHands if press && grabbed => self.swap_hands(),
             Action::Attack if grabbed || !pressed => {
-                self.breaking = pressed;
-                self.break_clicked |= pressed;
-                self.break_cooldown = 0;
+                self.player.breaking = pressed;
+                self.player.break_clicked |= pressed;
+                self.player.break_cooldown = 0;
             }
             Action::Use if grabbed || !pressed => {
-                self.placing = pressed;
-                self.place_clicked |= pressed;
-                self.place_cooldown = 0;
+                self.player.placing = pressed;
+                self.player.place_clicked |= pressed;
+                self.player.place_cooldown = 0;
             }
             Action::PickBlock if press && grabbed => self.pick_block(),
-            Action::Sneak if grabbed && self.toggle_sneak => {
+            Action::Sneak if grabbed && self.player.toggle_sneak => {
                 if press {
-                    self.keys.sneak = !self.keys.sneak;
+                    self.player.keys.sneak = !self.player.keys.sneak;
                 }
             }
-            Action::Sprint if grabbed && self.toggle_sprint => {
+            Action::Sprint if grabbed && self.player.toggle_sprint => {
                 if press {
-                    self.keys.sprint = !self.keys.sprint;
+                    self.player.keys.sprint = !self.player.keys.sprint;
                 }
             }
             _ if grabbed => {
-                self.keys.set_key(action, pressed);
+                self.player.keys.set_key(action, pressed);
             }
             _ => {}
         }
@@ -698,21 +709,21 @@ impl Game {
 
     /// The skin's outer layers the player wears.
     pub fn skin_layers(&self) -> crate::render::player::OuterLayers {
-        self.skin_layers
+        self.player.skin_layers
     }
 
     /// Main Hand: Left: the main hand is drawn on the left.
     pub fn left_handed(&self) -> bool {
-        self.left_handed
+        self.player.left_handed
     }
 
     /// Forgets held keys and buttons, e.g. when the cursor is released.
     pub fn release_input(&mut self) {
-        self.keys.clear();
-        self.breaking = false;
-        self.placing = false;
-        self.break_clicked = false;
-        self.place_clicked = false;
+        self.player.keys.clear();
+        self.player.breaking = false;
+        self.player.placing = false;
+        self.player.break_clicked = false;
+        self.player.place_clicked = false;
     }
 
     /// Applies the player's settings: render distance, biome blend, field
@@ -724,15 +735,15 @@ impl Game {
             options.smooth_lighting,
             options.graphics == crate::options::Graphics::Fast,
         );
-        self.camera.fov = options.fov;
-        self.view.bobbing = options.view_bobbing;
-        self.sensitivity = options.sensitivity;
-        self.invert_y = options.invert_y;
-        self.particle_level = options.particles;
-        self.fov_effects = options.fov_effects;
-        self.damage_tilt = options.damage_tilt;
+        self.player.camera.fov = options.fov;
+        self.player.view.bobbing = options.view_bobbing;
+        self.player.sensitivity = options.sensitivity;
+        self.player.invert_y = options.invert_y;
+        self.player.particle_level = options.particles;
+        self.player.fov_effects = options.fov_effects;
+        self.player.damage_tilt = options.damage_tilt;
         let skin = options.skin;
-        self.skin_layers = [
+        self.player.skin_layers = [
             skin.hat,
             skin.jacket,
             skin.right_sleeve,
@@ -740,16 +751,16 @@ impl Game {
             skin.right_pants,
             skin.left_pants,
         ];
-        self.left_handed = options.main_hand == crate::options::MainHand::Left;
-        self.auto_jump = options.auto_jump;
-        self.toggle_sneak = options.toggle_sneak;
-        self.toggle_sprint = options.toggle_sprint;
+        self.player.left_handed = options.main_hand == crate::options::MainHand::Left;
+        self.player.auto_jump = options.auto_jump;
+        self.player.toggle_sneak = options.toggle_sneak;
+        self.player.toggle_sprint = options.toggle_sprint;
     }
 
     pub fn look(&mut self, dx: f64, dy: f64) {
-        let s = config::MOUSE_SENSITIVITY * self.sensitivity;
-        let dy = if self.invert_y { -dy } else { dy };
-        self.camera.rotate(dx as f32 * s, -dy as f32 * s);
+        let s = config::MOUSE_SENSITIVITY * self.player.sensitivity;
+        let dy = if self.player.invert_y { -dy } else { dy };
+        self.player.camera.rotate(dx as f32 * s, -dy as f32 * s);
     }
 
     /// Scrolling down moves right along the hotbar, like Minecraft.
@@ -757,32 +768,32 @@ impl Game {
         let steps = match delta {
             MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
             MouseScrollDelta::PixelDelta(pos) => {
-                self.scroll_pixels -= pos.y;
-                let steps = (self.scroll_pixels / SCROLL_PIXELS_PER_SLOT).trunc();
-                self.scroll_pixels -= steps * SCROLL_PIXELS_PER_SLOT;
+                self.player.scroll_pixels -= pos.y;
+                let steps = (self.player.scroll_pixels / SCROLL_PIXELS_PER_SLOT).trunc();
+                self.player.scroll_pixels -= steps * SCROLL_PIXELS_PER_SLOT;
                 steps as i32
             }
         };
-        let slot = self.inventory.selected as i32 + steps;
-        self.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
+        let slot = self.player.inventory.selected as i32 + steps;
+        self.player.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
 
     /// Puts the player's feet at `feet`, looking along `yaw` and `pitch`
     /// (for `--shot` scenes).
     pub fn teleport(&mut self, feet: DVec3, yaw: f32, pitch: f32) {
-        self.body = Body::new(feet);
-        self.body.flying = self.mode.can_fly();
-        self.body.may_fly = self.mode.can_fly();
-        self.prev_feet = feet;
-        self.camera.yaw = yaw;
-        self.camera.pitch = pitch;
+        self.player.body = Body::new(feet);
+        self.player.body.flying = self.player.mode.can_fly();
+        self.player.body.may_fly = self.player.mode.can_fly();
+        self.player.prev_feet = feet;
+        self.player.camera.yaw = yaw;
+        self.player.camera.pitch = pitch;
         self.advance(0.0);
     }
 
     /// Sets the time of day and game mode (for `--shot` scenes).
     pub fn set_time_and_mode(&mut self, time: u64, mode: GameMode) {
         self.time = time;
-        self.mode = mode;
+        self.player.mode = mode;
     }
 
     /// Changes blocks the way the player's edits do, waking fluids, fire
@@ -802,26 +813,31 @@ impl Game {
     /// Flies the player `distance` blocks north at feet height `height`, in
     /// creative, looking a little down (`--bench`'s route).
     pub fn glide(&mut self, distance: f64, height: f64) {
-        self.mode = GameMode::Creative;
-        self.body.flying = true;
-        let mut feet = self.body.position();
+        self.player.mode = GameMode::Creative;
+        self.player.body.flying = true;
+        let mut feet = self.player.body.position();
         feet.y = height;
         feet.z -= distance;
-        self.body.set_position(feet);
-        self.prev_feet = feet;
-        self.camera.yaw = 0.0;
-        self.camera.pitch = -0.35;
+        self.player.body.set_position(feet);
+        self.player.prev_feet = feet;
+        self.player.camera.yaw = 0.0;
+        self.player.camera.pitch = -0.35;
     }
 
     /// Advances the game by `dt` seconds of real time: runs any ticks due,
     /// then places the camera between the last two ticks.
     pub fn advance(&mut self, dt: f32) {
         #[cfg(debug_assertions)]
-        if self.flying {
-            let mut feet = self.body.position();
-            crate::player::fly::fly(&mut feet, self.camera.yaw, &self.keys, dt.min(MAX_FRAME_DT));
-            self.body.set_position(feet);
-            self.prev_feet = feet;
+        if self.player.flying {
+            let mut feet = self.player.body.position();
+            crate::player::fly::fly(
+                &mut feet,
+                self.player.camera.yaw,
+                &self.player.keys,
+                dt.min(MAX_FRAME_DT),
+            );
+            self.player.body.set_position(feet);
+            self.player.prev_feet = feet;
         }
         self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
         while self.tick_time >= TICK {
@@ -829,39 +845,42 @@ impl Game {
             self.tick_time -= TICK;
         }
         let alpha = (self.tick_time / TICK) as f64;
-        let feet = self.prev_feet.lerp(self.body.position(), alpha);
+        let feet = self
+            .player
+            .prev_feet
+            .lerp(self.player.body.position(), alpha);
         let eye = self
             .lying_eye()
-            .unwrap_or(feet + DVec3::Y * self.body.eye_height());
+            .unwrap_or(feet + DVec3::Y * self.player.body.eye_height());
         // The camera eases between eye heights; what you aim and reach with
         // is the eye itself.
         let seen = self
             .lying_eye()
-            .unwrap_or(feet + DVec3::Y * self.view.eye_height(alpha as f32) as f64);
+            .unwrap_or(feet + DVec3::Y * self.player.view.eye_height(alpha as f32) as f64);
         // A step up eases the camera instead of snapping it.
-        self.camera.position = (seen + DVec3::Y * self.step_lag).as_vec3();
-        self.target = self.find_target(eye);
+        self.player.camera.position = (seen + DVec3::Y * self.player.step_lag).as_vec3();
+        self.player.target = self.find_target(eye);
     }
 
     /// One game tick: player physics, then breaking and placing.
     fn tick(&mut self) {
-        self.prev_feet = self.body.position();
+        self.player.prev_feet = self.player.body.position();
         // Nothing happens until the chunks around an arriving player load.
         self.tick_arrival();
         if self.is_arriving() {
             return;
         }
         // The poem and credits stop the world while they roll.
-        if self.credits.is_some() {
+        if self.player.credits.is_some() {
             self.tick_credits();
             return;
         }
-        if !self.stats.is_dead() {
+        if !self.player.stats.is_dead() {
             if self.is_sleeping() {
                 self.tick_sleep();
-            } else if self.boat.is_some() {
+            } else if self.player.boat.is_some() {
                 self.ride_boat();
-            } else if self.mounted.is_some() {
+            } else if self.player.mounted.is_some() {
                 self.ride_mob();
             } else if self.is_riding() {
                 self.ride_cart();
@@ -871,10 +890,10 @@ impl Game {
                 self.glide_impact();
             }
             self.tick_armor();
-            let health = self.stats.health;
+            let health = self.player.stats.health;
             self.tick_stats();
             // Getting hurt wakes a sleeping player (1.0.0).
-            if self.stats.health < health {
+            if self.player.stats.health < health {
                 self.wake();
             }
             if !self.is_sleeping() {
@@ -886,19 +905,21 @@ impl Game {
         }
         self.tick_view();
         if self.eye_in() == Some(crate::world::block::Fluid::Water) {
-            self.water_vision = (self.water_vision + 1).min(environment::WATER_VISION_TICKS);
+            self.player.water_vision =
+                (self.player.water_vision + 1).min(environment::WATER_VISION_TICKS);
         } else {
-            self.water_vision = self
+            self.player.water_vision = self
+                .player
                 .water_vision
                 .saturating_sub(environment::WATER_VISION_FADE);
         }
         if !self.is_sleeping() {
-            self.stats.awake = self.stats.awake.saturating_add(1);
+            self.player.stats.awake = self.player.stats.awake.saturating_add(1);
         }
-        if let Some((_, ticks)) = &mut self.message {
+        if let Some((_, ticks)) = &mut self.player.message {
             *ticks = ticks.saturating_sub(1);
             if *ticks == 0 {
-                self.message = None;
+                self.player.message = None;
             }
         }
         self.tick_combat();
@@ -940,30 +961,32 @@ impl Game {
 
     fn move_player(&mut self) {
         #[cfg(debug_assertions)]
-        if self.flying {
+        if self.player.flying {
             return;
         }
         let collider = WorldCollider {
             world: self.chunks.world(),
             blocks: self.items.blocks,
         };
-        self.body.may_fly = self.mode.can_fly();
+        self.player.body.may_fly = self.player.mode.can_fly();
         // Wait for the chunks around the player to load before moving them.
-        if !collider.is_loaded(&self.body.aabb()) {
+        if !collider.is_loaded(&self.player.body.aabb()) {
             return;
         }
         let input = MoveInput {
-            look_y: self.camera.pitch.sin() as f64,
+            look_y: self.player.camera.pitch.sin() as f64,
             using_item: self.using_item(),
-            auto_jump: self.auto_jump,
-            ..self.keys.move_input()
+            auto_jump: self.player.auto_jump,
+            ..self.player.keys.move_input()
         };
-        effects_move(&mut self.body, &self.stats.effects);
-        self.body.tick(&input, self.camera.yaw, &collider);
-        self.step_lag = self.step_lag * 0.5 - self.body.step_up();
-        if self.body.position().y < VOID_Y {
-            if self.mode.is_vulnerable() {
-                self.stats.damage(VOID_DAMAGE, DamageSource::Fall);
+        effects_move(&mut self.player.body, &self.player.stats.effects);
+        self.player
+            .body
+            .tick(&input, self.player.camera.yaw, &collider);
+        self.player.step_lag = self.player.step_lag * 0.5 - self.player.body.step_up();
+        if self.player.body.position().y < VOID_Y {
+            if self.player.mode.is_vulnerable() {
+                self.player.stats.damage(VOID_DAMAGE, DamageSource::Fall);
             } else {
                 // Creative players can't die, so the void sends them home:
                 // to the world's spawn, or in the End to the island's middle.
@@ -977,8 +1000,8 @@ impl Game {
                 } else {
                     self.spawn
                 };
-                self.body = Body::new(home);
-                self.prev_feet = home;
+                self.player.body = Body::new(home);
+                self.player.prev_feet = home;
             }
         }
     }
@@ -998,32 +1021,37 @@ impl Game {
     /// Exhaustion from moving, then a tick of health, hunger, air and fire
     /// (`Player.checkMovementStatistics` and 1.0.0's `onEntityUpdate`).
     fn tick_stats(&mut self) {
-        let vulnerable = self.mode.is_vulnerable();
-        let moved = self.body.position() - self.prev_feet;
+        let vulnerable = self.player.mode.is_vulnerable();
+        let moved = self.player.body.position() - self.player.prev_feet;
         let horizontal = moved.x.hypot(moved.z) as f32;
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
         let eyes_in_water = self.fluid_at(eye) == Some(Fluid::Water);
-        let liquid = self.body.liquid;
+        let liquid = self.player.body.liquid;
         if vulnerable {
-            if self.body.jumped {
-                let cost = if self.body.sprinting {
+            if self.player.body.jumped {
+                let cost = if self.player.body.sprinting {
                     SPRINT_JUMP_EXHAUSTION
                 } else {
                     JUMP_EXHAUSTION
                 };
-                self.stats.add_exhaustion(cost);
+                self.player.stats.add_exhaustion(cost);
             }
             if eyes_in_water {
-                self.stats
+                self.player
+                    .stats
                     .add_exhaustion(SWIM_EXHAUSTION * moved.length() as f32);
             } else if liquid == Some(Fluid::Water) {
-                self.stats.add_exhaustion(SWIM_EXHAUSTION * horizontal);
-            } else if self.body.on_ground && self.body.sprinting {
-                self.stats.add_exhaustion(SPRINT_EXHAUSTION * horizontal);
+                self.player
+                    .stats
+                    .add_exhaustion(SWIM_EXHAUSTION * horizontal);
+            } else if self.player.body.on_ground && self.player.body.sprinting {
+                self.player
+                    .stats
+                    .add_exhaustion(SPRINT_EXHAUSTION * horizontal);
             }
         }
         let around = Surroundings {
-            on_ground: self.body.on_ground,
+            on_ground: self.player.body.on_ground,
             fell: -moved.y as f32,
             in_water: liquid == Some(Fluid::Water),
             in_lava: liquid == Some(Fluid::Lava),
@@ -1031,23 +1059,23 @@ impl Game {
                 world: self.chunks.world(),
                 blocks: self.items.blocks,
             }
-            .in_fire(&self.body.aabb()),
+            .in_fire(&self.player.body.aabb()),
             eyes_in_water,
-            flying: self.body.flying,
-            no_fall: self.body.on_climbable || self.body.bounced,
-            on_magma: self.body.on_ground
-                && !self.body.sneaking
+            flying: self.player.body.flying,
+            no_fall: self.player.body.on_climbable || self.player.body.bounced,
+            on_magma: self.player.body.on_ground
+                && !self.player.body.sneaking
                 && self.standing_on(crate::world::blocks::MAGMA_BLOCK),
         };
-        self.stats.difficulty = self.difficulty;
-        self.stats.tick(&around, vulnerable);
+        self.player.stats.difficulty = self.difficulty;
+        self.player.stats.tick(&around, vulnerable);
         if vulnerable {
-            self.stats.tick_food();
+            self.player.stats.tick_food();
             if self.difficulty == crate::level::Difficulty::Peaceful {
-                self.stats.tick_peaceful(self.time);
+                self.player.stats.tick_peaceful(self.time);
             }
         }
-        self.body.can_sprint = !vulnerable || self.stats.can_sprint();
+        self.player.body.can_sprint = !vulnerable || self.player.stats.can_sprint();
     }
 
     /// A dead player's items and experience fall where they died, however
@@ -1055,7 +1083,7 @@ impl Game {
     /// keeps them. Run every tick while dead; once they're dropped there's
     /// nothing left to drop.
     fn on_death(&mut self) {
-        if !self.stats.is_dead() || self.rules.keep_inventory {
+        if !self.player.stats.is_dead() || self.rules.keep_inventory {
             return;
         }
         self.drop_experience();
@@ -1064,16 +1092,16 @@ impl Game {
 
     /// Scatters every stack in the inventory (and the mouse) around the player.
     fn drop_everything(&mut self) {
-        let eye = self.body.position() + DVec3::Y * self.body.eye_height();
-        let mut stacks: Vec<ItemStack> = self.cursor.take().into_iter().collect();
-        match self.container.take() {
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
+        let mut stacks: Vec<ItemStack> = self.player.cursor.take().into_iter().collect();
+        match self.player.container.take() {
             Some(Container::Crafting { grid, .. }) => stacks.extend(grid.into_iter().flatten()),
             Some(Container::Bench(bench)) => stacks.extend(bench.slots.into_iter().flatten()),
             _ => {}
         }
         for slot in 0..crate::inventory::player::SLOTS {
-            if let Some(stack) = self.inventory.slot(slot).cloned() {
-                self.inventory.set(slot, None);
+            if let Some(stack) = self.player.inventory.slot(slot).cloned() {
+                self.player.inventory.set(slot, None);
                 stacks.push(stack);
             }
         }
@@ -1089,7 +1117,9 @@ impl Game {
 
     /// Whether the block under the player's feet is `id`.
     fn standing_on(&self, id: crate::world::block::BlockId) -> bool {
-        let below = (self.body.position() - DVec3::Y * 0.01).floor().as_ivec3();
+        let below = (self.player.body.position() - DVec3::Y * 0.01)
+            .floor()
+            .as_ivec3();
         self.chunks
             .world()
             .block(below.x, below.y, below.z)
@@ -1106,10 +1136,10 @@ impl Game {
             self.change_dimension(crate::world::dimension::Dimension::Overworld, spawn);
         }
         let feet = self.respawn_point();
-        self.body = Body::new(feet);
-        self.prev_feet = feet;
-        self.stats = Stats::default();
-        self.mining = None;
+        self.player.body = Body::new(feet);
+        self.player.prev_feet = feet;
+        self.player.stats = Stats::default();
+        self.player.mining = None;
         self.release_input();
         if away && let Err(err) = self.save() {
             error!("saving after respawning: {err}");
@@ -1120,7 +1150,7 @@ impl Game {
     /// first block outline the view passes through.
     fn find_target(&self, eye: DVec3) -> Option<Hit> {
         let world = self.chunks.world();
-        let dir = self.camera.forward().as_dvec3();
+        let dir = self.player.camera.forward().as_dvec3();
         let shapes = crate::world::shape::shapes();
         raycast::raycast_boxes(eye, dir, config::REACH, |cell| {
             world
@@ -1201,7 +1231,7 @@ pub(crate) mod tests {
 
     /// Runs chunk loading until the player's chunk is in memory.
     pub(crate) fn load_player_chunk(game: &mut Game) {
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         let center = ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32);
         let deadline = Instant::now() + Duration::from_secs(20);
         while game.chunks.world().get(center).is_none() {
@@ -1215,7 +1245,7 @@ pub(crate) mod tests {
     fn the_particles_option_shows_all_two_in_three_or_none() {
         let mut game = flat_game(GameMode::Survival);
         let shown = |game: &mut Game, level| {
-            game.particle_level = level;
+            game.player.particle_level = level;
             (0..300).filter(|_| game.shows_particle()).count()
         };
         use crate::options::Particles;
@@ -1228,31 +1258,31 @@ pub(crate) mod tests {
     #[test]
     fn controls_options_invert_the_mouse_and_toggle_sneak_and_sprint() {
         let mut game = flat_game(GameMode::Survival);
-        game.camera.pitch = 0.0;
-        let pitch = game.camera.pitch;
+        game.player.camera.pitch = 0.0;
+        let pitch = game.player.camera.pitch;
         game.look(0.0, 50.0);
-        let down = game.camera.pitch - pitch;
+        let down = game.player.camera.pitch - pitch;
         game.apply_options(&Options {
             invert_y: true,
             toggle_sneak: true,
             toggle_sprint: true,
             ..Options::default()
         });
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         game.look(0.0, 50.0);
         assert!(
-            down != 0.0 && (game.camera.pitch + down).abs() < 1e-6,
+            down != 0.0 && (game.player.camera.pitch + down).abs() < 1e-6,
             "inverted"
         );
         game.on_action(Action::Sneak, true, false, true);
         game.on_action(Action::Sneak, false, false, true);
-        assert!(game.keys.sneak, "still sneaking after letting go");
+        assert!(game.player.keys.sneak, "still sneaking after letting go");
         game.on_action(Action::Sneak, true, false, true);
-        assert!(!game.keys.sneak, "a second press stops");
+        assert!(!game.player.keys.sneak, "a second press stops");
         game.on_action(Action::Sprint, true, false, true);
         game.on_action(Action::Sprint, true, true, true);
         assert!(
-            game.keys.sprint,
+            game.player.keys.sprint,
             "a held key's repeats don't toggle it back"
         );
     }
@@ -1271,7 +1301,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         load_player_chunk(&mut game);
-        let feet = game.body.position() + DVec3::new(0.25, 0.0, -0.5);
+        let feet = game.player.body.position() + DVec3::new(0.25, 0.0, -0.5);
         let at = IVec3::new(
             feet.x.floor() as i32,
             feet.y as i32 + 3,
@@ -1279,46 +1309,50 @@ pub(crate) mod tests {
         );
         let bricks = BlockState::of(blocks::BRICKS);
         game.chunks.set_blocks(&[(at, bricks)]);
-        game.body = Body::new(feet);
-        game.camera.yaw = 1.25;
-        game.camera.pitch = -0.5;
+        game.player.body = Body::new(feet);
+        game.player.camera.yaw = 1.25;
+        game.player.camera.pitch = -0.5;
         game.time = 500;
-        game.inventory.set(
+        game.player.inventory.set(
             3,
             Some(ItemStack::with_damage(items::WOODEN_PICKAXE, 1, 12)),
         );
-        game.inventory
+        game.player
+            .inventory
             .set(20, Some(ItemStack::new(items::RED_WOOL, 40)));
-        game.inventory.selected = 3;
-        game.cursor = Some(ItemStack::new(items::TORCH, 7));
-        game.body.flying = true;
-        game.bed = Some(IVec3::new(3, 70, -9));
+        game.player.inventory.selected = 3;
+        game.player.cursor = Some(ItemStack::new(items::TORCH, 7));
+        game.player.body.flying = true;
+        game.player.bed = Some(IVec3::new(3, 70, -9));
         game.save().unwrap();
         drop(game);
 
         // As after quitting and relaunching.
         let dir = WorldDir::new(saves.path().join("Creative Test"));
         let mut game = Game::open(dir, items, models).unwrap();
-        assert_eq!(game.mode, GameMode::Creative);
+        assert_eq!(game.player.mode, GameMode::Creative);
         assert_eq!(game.time, 500);
-        assert_eq!(game.body.position(), feet);
-        assert_eq!((game.camera.yaw, game.camera.pitch), (1.25, -0.5));
+        assert_eq!(game.player.body.position(), feet);
         assert_eq!(
-            game.inventory.slot(3),
+            (game.player.camera.yaw, game.player.camera.pitch),
+            (1.25, -0.5)
+        );
+        assert_eq!(
+            game.player.inventory.slot(3),
             Some(&ItemStack::with_damage(items::WOODEN_PICKAXE, 1, 12))
         );
         assert_eq!(
-            game.inventory.slot(20),
+            game.player.inventory.slot(20),
             Some(&ItemStack::new(items::RED_WOOL, 40))
         );
-        assert_eq!(game.inventory.selected, 3);
+        assert_eq!(game.player.inventory.selected, 3);
         // The held torches went back into the first free slot.
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::TORCH, 7))
         );
-        assert!(game.body.flying);
-        assert_eq!(game.bed, Some(IVec3::new(3, 70, -9)));
+        assert!(game.player.body.flying);
+        assert_eq!(game.player.bed, Some(IVec3::new(3, 70, -9)));
         load_player_chunk(&mut game);
         assert_eq!(game.chunks.world().block(at.x, at.y, at.z), Some(bricks));
     }
@@ -1355,7 +1389,7 @@ pub(crate) mod tests {
         assert!(saves.path().join(name).read_dir().unwrap().count() > 2);
         println!(
             "opened at {:?}, {} chunks, seed {:?}",
-            game.body.position(),
+            game.player.body.position(),
             game.chunks.world().len(),
             game.chunks.seed()
         );
@@ -1368,7 +1402,7 @@ pub(crate) mod tests {
         let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 1, 2);
         let feet = DVec3::new(0.5, 64.0, 0.5);
         let mut game = Game::new(chunks, items, feet, feet, 0.0, -std::f32::consts::FRAC_PI_2);
-        game.mode = mode;
+        game.player.mode = mode;
         let deadline = Instant::now() + Duration::from_secs(20);
         while game.chunks.world().len() < 9 {
             assert!(Instant::now() < deadline, "chunks never loaded");
@@ -1385,7 +1419,7 @@ pub(crate) mod tests {
     fn survival_mining_takes_1_0_0_time_and_the_drop_is_picked_up() {
         let mut game = flat_game(GameMode::Survival);
         let grass = |game: &Game| game.chunks.world().block(0, 63, 0);
-        game.breaking = true;
+        game.player.breaking = true;
         // Grass by hand: 1 / 0.6 / 30 per tick, so 18 ticks.
         for _ in 0..17 {
             game.tick();
@@ -1403,37 +1437,38 @@ pub(crate) mod tests {
             ItemStack::new(items::DIRT, 1),
             "grass drops dirt"
         );
-        game.breaking = false;
+        game.player.breaking = false;
         for _ in 0..40 {
             game.tick();
         }
         assert!(game.entities.is_empty(), "picked up");
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::DIRT, 1))
         );
 
         // Placing it on the grass two blocks north uses it up.
-        game.camera.pitch = -0.3;
+        game.player.camera.pitch = -0.3;
         game.advance(0.0);
-        game.placing = true;
+        game.player.placing = true;
         game.tick();
         assert_eq!(
             game.chunks.world().block(0, 64, -2),
             Some(BlockState::of(blocks::DIRT))
         );
-        assert_eq!(game.inventory.slot(0), None);
+        assert_eq!(game.player.inventory.slot(0), None);
     }
 
     #[test]
     fn a_bed_goes_down_as_two_halves_and_breaks_into_one_bed() {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::RED_BED, 1)));
         // Looking north at the grass two blocks ahead.
-        game.camera.pitch = -0.7;
+        game.player.camera.pitch = -0.7;
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
         let block = |game: &Game, z| game.chunks.world().block(0, 64, z);
         let foot = BlockState::of(blocks::RED_BED).with_face(Prop::Facing, Face::North);
@@ -1443,7 +1478,7 @@ pub(crate) mod tests {
             Some(foot.with(Prop::BedPart, bed_part::HEAD)),
             "the head"
         );
-        assert_eq!(game.inventory.slot(0), None);
+        assert_eq!(game.player.inventory.slot(0), None);
         game.break_block(IVec3::new(0, 64, -3));
         assert_eq!(block(&game, -2), Some(BlockState::AIR));
         let drops: Vec<ItemStack> = game
@@ -1457,11 +1492,12 @@ pub(crate) mod tests {
     #[test]
     fn a_closed_door_blocks_the_way_until_right_clicked_open() {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::OAK_DOOR, 1)));
-        game.camera.pitch = -0.7;
+        game.player.camera.pitch = -0.7;
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
         let door = |game: &Game, y| game.chunks.world().block(0, y, -2);
         let lower = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
@@ -1469,25 +1505,25 @@ pub(crate) mod tests {
         assert_eq!(door(&game, 64), Some(lower));
         assert_eq!(door(&game, 65), Some(upper));
         // Walking north stops against the door's slab on the cell's south side.
-        game.camera.pitch = 0.0;
-        game.keys.set_key(Action::Forward, true);
+        game.player.camera.pitch = 0.0;
+        game.player.keys.set_key(Action::Forward, true);
         for _ in 0..40 {
             game.tick();
         }
-        let front = game.body.position().z;
+        let front = game.player.body.position().z;
         assert!((front - (-1.0 + 0.3)).abs() < 0.01, "stopped at {front}");
         // Right-clicking the upper half opens both.
-        game.keys.set_key(Action::Forward, false);
+        game.player.keys.set_key(Action::Forward, false);
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
         assert_eq!(door(&game, 64), Some(lower.with_bool(Prop::Open, true)));
         assert_eq!(door(&game, 65), Some(upper.with_bool(Prop::Open, true)));
-        game.keys.set_key(Action::Forward, true);
+        game.player.keys.set_key(Action::Forward, true);
         for _ in 0..40 {
             game.tick();
         }
-        assert!(game.body.position().z < -3.0, "walked through");
+        assert!(game.player.body.position().z < -3.0, "walked through");
     }
 
     #[test]
@@ -1497,12 +1533,12 @@ pub(crate) mod tests {
             .map(|z| (IVec3::new(0, 64, z), BlockState::of(blocks::OAK_SLAB)))
             .collect();
         game.chunks.set_blocks(&slabs);
-        game.camera.pitch = 0.0;
-        game.keys.set_key(Action::Forward, true);
+        game.player.camera.pitch = 0.0;
+        game.player.keys.set_key(Action::Forward, true);
         for _ in 0..30 {
             game.tick();
         }
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         assert!(feet.z < -2.0, "stepped up without jumping: {feet}");
         assert_eq!(feet.y, 64.5);
     }
@@ -1520,16 +1556,17 @@ pub(crate) mod tests {
                 })
                 .collect();
             game.chunks.set_blocks(&edits);
-            game.body = crate::player::physics::Body::new(glam::DVec3::new(0.5, 63.9375, 2.5));
-            game.body.on_ground = true;
-            game.camera.pitch = 0.0;
-            game.keys.set_key(Action::Forward, true);
+            game.player.body =
+                crate::player::physics::Body::new(glam::DVec3::new(0.5, 63.9375, 2.5));
+            game.player.body.on_ground = true;
+            game.player.camera.pitch = 0.0;
+            game.player.keys.set_key(Action::Forward, true);
             let mut jumped = false;
             for _ in 0..60 {
                 game.tick();
-                jumped |= game.body.velocity.y > 0.1;
+                jumped |= game.player.body.velocity.y > 0.1;
             }
-            let feet = game.body.position();
+            let feet = game.player.body.position();
             assert!(feet.z < -5.0, "walked on: {feet}");
             assert!(!jumped, "jumped");
             assert_eq!(feet.y, 64.0);
@@ -1539,16 +1576,16 @@ pub(crate) mod tests {
     /// A game looking north with `held` in the first slot, hunger at `food`.
     fn eater(held: crate::inventory::item::ItemId, food: i32) -> Game {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory.set(0, Some(ItemStack::new(held, 4)));
-        game.stats.food = food;
-        game.camera.pitch = 0.0;
+        game.player.inventory.set(0, Some(ItemStack::new(held, 4)));
+        game.player.stats.food = food;
+        game.player.camera.pitch = 0.0;
         game.advance(0.0);
         game
     }
 
     fn right_click(game: &mut Game) {
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
     }
 
@@ -1560,9 +1597,9 @@ pub(crate) mod tests {
             BlockState::of(blocks::CRAFTING_TABLE),
         )]);
         right_click(&mut game);
-        assert!(game.container.is_some(), "the crafting table opened");
-        assert!(game.eating.is_none(), "and nothing was eaten");
-        assert_eq!(game.inventory.slot(0).map(|s| s.count), Some(4));
+        assert!(game.player.container.is_some(), "the crafting table opened");
+        assert!(game.player.eating.is_none(), "and nothing was eaten");
+        assert_eq!(game.player.inventory.slot(0).map(|s| s.count), Some(4));
 
         let mut game = eater(items::BREAD, 10);
         let door = BlockState::of(blocks::OAK_DOOR).with_face(Prop::Facing, Face::North);
@@ -1576,37 +1613,37 @@ pub(crate) mod tests {
         right_click(&mut game);
         let opened = game.chunks.world().block(0, 65, -2);
         assert_eq!(opened, Some(door.with_bool(Prop::Open, true)));
-        assert!(game.eating.is_none());
+        assert!(game.player.eating.is_none());
     }
 
     #[test]
     fn bread_is_eaten_only_when_nothing_is_there_to_use_and_hunger_is_below_20() {
         let mut game = eater(items::BREAD, 10);
-        game.keys.set_key(Action::Forward, false);
-        game.place_clicked = true;
+        game.player.keys.set_key(Action::Forward, false);
+        game.player.place_clicked = true;
         game.tick();
         assert!(
-            game.eating.is_some(),
+            game.player.eating.is_some(),
             "looking at air with an empty belly eats"
         );
         let mut game = eater(items::BREAD, 20);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
-        assert!(game.eating.is_none(), "a full belly doesn't");
+        assert!(game.player.eating.is_none(), "a full belly doesn't");
     }
 
     #[test]
     fn wheat_goes_to_the_cow_not_the_mouth() {
         let mut game = eater(items::WHEAT, 10).with_mobs(mob_registry());
-        game.camera.pitch = -0.2;
+        game.player.camera.pitch = -0.2;
         let kind = game.mob_defs.find("cow").expect("cows exist");
         let cow = game.new_mob(kind, glam::DVec3::new(0.5, 64.0, -1.5), 0.0);
         game.add_mob(cow);
         right_click(&mut game);
         let cow = game.mobs.iter().find(|m| m.kind == kind).expect("cow");
         assert!(cow.data.love > 0, "the cow is in love");
-        assert!(game.eating.is_none());
-        assert_eq!(game.inventory.slot(0).map(|s| s.count), Some(3));
+        assert!(game.player.eating.is_none());
+        assert_eq!(game.player.inventory.slot(0).map(|s| s.count), Some(3));
     }
 
     #[test]
@@ -1621,12 +1658,12 @@ pub(crate) mod tests {
             (IVec3::new(1, 65, -6), BlockState::of(blocks::STONE)),
             (IVec3::new(0, 65, -6), wall_torch),
         ]);
-        game.camera.pitch = 0.0;
-        game.keys.set_key(Action::Forward, true);
+        game.player.camera.pitch = 0.0;
+        game.player.keys.set_key(Action::Forward, true);
         for _ in 0..40 {
             game.tick();
         }
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         assert!(feet.z < -7.0, "walked through them all: {feet}");
         assert_eq!(feet.y, 64.0);
 
@@ -1636,13 +1673,13 @@ pub(crate) mod tests {
             .map(|x| (IVec3::new(x, 64, -2), BlockState::of(blocks::OAK_FENCE)))
             .collect();
         game.chunks.set_blocks(&fences);
-        game.camera.pitch = 0.0;
-        game.keys.set_key(Action::Forward, true);
-        game.keys.set_key(Action::Jump, true);
+        game.player.camera.pitch = 0.0;
+        game.player.keys.set_key(Action::Forward, true);
+        game.player.keys.set_key(Action::Jump, true);
         for _ in 0..60 {
             game.tick();
         }
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         assert!(feet.z > -1.5, "stopped by the fence: {feet}");
     }
 
@@ -1657,7 +1694,7 @@ pub(crate) mod tests {
                 lower.with(Prop::DoubleBlockHalf, door_half::UPPER),
             ),
         ]);
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         game.advance(0.0);
         // One press, held for a second and a half.
         game.on_action(Action::Use, true, false, true);
@@ -1669,11 +1706,11 @@ pub(crate) mod tests {
         assert_eq!(door, Some(lower.with_bool(Prop::Open, true)), "opened once");
         // Open, it lies along the west side of its cell: looking straight
         // on passes beside it, so aim at it.
-        game.camera.yaw = (-0.4f32).atan2(2.0);
-        game.camera.pitch = (-0.12f32 / 2.04).atan();
+        game.player.camera.yaw = (-0.4f32).atan2(2.0);
+        game.player.camera.pitch = (-0.12f32 / 2.04).atan();
         game.advance(0.0);
         assert_eq!(
-            game.target.map(|hit| hit.block),
+            game.player.target.map(|hit| hit.block),
             Some(IVec3::new(0, 65, -2))
         );
         game.on_action(Action::Use, true, false, true);
@@ -1685,8 +1722,10 @@ pub(crate) mod tests {
     #[test]
     fn creative_breaks_instantly_without_drops_and_keeps_placed_items() {
         let mut game = flat_game(GameMode::Creative);
-        game.inventory.set(0, Some(ItemStack::new(items::STONE, 1)));
-        game.break_clicked = true;
+        game.player
+            .inventory
+            .set(0, Some(ItemStack::new(items::STONE, 1)));
+        game.player.break_clicked = true;
         game.tick();
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
         assert!(game.entities.is_empty());
@@ -1694,16 +1733,16 @@ pub(crate) mod tests {
         for _ in 0..20 {
             game.tick();
         }
-        game.camera.pitch = -0.3;
+        game.player.camera.pitch = -0.3;
         game.advance(0.0);
-        game.place_clicked = true;
+        game.player.place_clicked = true;
         game.tick();
         assert_eq!(
             game.chunks.world().block(0, 64, -2),
             Some(BlockState::of(blocks::STONE))
         );
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::STONE, 1))
         );
     }
@@ -1713,9 +1752,10 @@ pub(crate) mod tests {
         let mut game = flat_game(GameMode::Survival);
         let stone = BlockState::of(blocks::STONE);
         game.chunks.set_blocks(&[(IVec3::new(0, 63, 0), stone)]);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::WOODEN_PICKAXE, 1)));
-        game.breaking = true;
+        game.player.breaking = true;
         // Wooden pickaxe on stone: 2 / 1.5 / 30 per tick, so 23 ticks.
         for _ in 0..22 {
             game.tick();
@@ -1728,13 +1768,17 @@ pub(crate) mod tests {
             ItemStack::new(items::COBBLESTONE, 1),
             "cobblestone"
         );
-        assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "one use worn");
+        assert_eq!(
+            game.player.inventory.slot(0).unwrap().damage,
+            1,
+            "one use worn"
+        );
     }
 
     #[test]
     fn mining_chips_and_breaking_bursts_into_particles_that_fade() {
         let mut game = flat_game(GameMode::Survival);
-        game.breaking = true;
+        game.player.breaking = true;
         game.tick();
         assert_eq!(game.particles.len(), 1, "a chip from the face being mined");
         for _ in 0..17 {
@@ -1742,7 +1786,7 @@ pub(crate) mod tests {
         }
         assert_eq!(game.chunks.world().block(0, 63, 0), Some(BlockState::AIR));
         assert!(game.particles.len() >= 64, "{}", game.particles.len());
-        game.breaking = false;
+        game.player.breaking = false;
         for _ in 0..100 {
             game.tick();
         }
@@ -1754,7 +1798,7 @@ pub(crate) mod tests {
         let mut game = flat_game(GameMode::Survival);
         game.chunks
             .set_blocks(&[(IVec3::new(0, 63, 0), BlockState::of(blocks::STONE))]);
-        game.breaking = true;
+        game.player.breaking = true;
         // 1 / 1.5 / 100 per tick, summed in f32 as 1.0.0 does: 151 ticks.
         for _ in 0..151 {
             game.tick();
@@ -1767,64 +1811,71 @@ pub(crate) mod tests {
     fn a_ten_block_fall_hurts_7_in_survival_and_nothing_in_creative() {
         for (mode, hurt) in [(GameMode::Survival, 7), (GameMode::Creative, 0)] {
             let mut game = flat_game(mode);
-            game.body = Body::new(DVec3::new(0.5, 74.0, 0.5));
+            game.player.body = Body::new(DVec3::new(0.5, 74.0, 0.5));
             // No saturation, so healing doesn't start within the 3 seconds.
-            game.stats.saturation = 0.0;
+            game.player.stats.saturation = 0.0;
             for _ in 0..60 {
                 game.tick();
             }
-            assert_eq!(game.body.position().y, 64.0);
-            assert_eq!(MAX_HEALTH - game.stats.health, hurt as f32, "{mode:?}");
+            assert_eq!(game.player.body.position().y, 64.0);
+            assert_eq!(
+                MAX_HEALTH - game.player.stats.health,
+                hurt as f32,
+                "{mode:?}"
+            );
         }
     }
 
     #[test]
     fn dying_scatters_the_inventory_and_respawning_starts_fresh() {
         let mut game = flat_game(GameMode::Survival);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::COBBLESTONE, 30)));
-        game.inventory
+        game.player
+            .inventory
             .set(20, Some(ItemStack::new(items::WOODEN_PICKAXE, 1)));
-        game.body = Body::new(DVec3::new(0.5, 100.0, 0.5));
+        game.player.body = Body::new(DVec3::new(0.5, 100.0, 0.5));
         for _ in 0..100 {
             game.tick();
         }
-        assert!(game.stats.is_dead());
-        assert_eq!(game.stats.last_source, Some(DamageSource::Fall));
-        assert_eq!(game.inventory.slot(0), None);
+        assert!(game.player.stats.is_dead());
+        assert_eq!(game.player.stats.last_source, Some(DamageSource::Fall));
+        assert_eq!(game.player.inventory.slot(0), None);
         assert_eq!(game.entities.len(), 2, "both stacks dropped");
         game.respawn();
-        assert_eq!(game.stats, Stats::default());
-        assert_eq!(game.body.position(), game.spawn);
+        assert_eq!(game.player.stats, Stats::default());
+        assert_eq!(game.player.body.position(), game.spawn);
     }
 
     #[test]
     fn holding_right_click_for_32_ticks_eats_a_porkchop() {
         let mut game = flat_game(GameMode::Survival);
-        game.stats.food = 10;
-        game.stats.saturation = 0.0;
-        game.inventory
+        game.player.stats.food = 10;
+        game.player.stats.saturation = 0.0;
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::COOKED_PORKCHOP, 2)));
-        game.camera.pitch = 1.5;
+        game.player.camera.pitch = 1.5;
         game.advance(0.0);
-        game.placing = true;
+        game.player.placing = true;
         for _ in 0..31 {
             game.tick();
         }
-        assert_eq!(game.stats.food, 10, "still chewing");
+        assert_eq!(game.player.stats.food, 10, "still chewing");
         game.tick();
-        assert_eq!(game.stats.food, 18);
+        assert_eq!(game.player.stats.food, 18);
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::COOKED_PORKCHOP, 1))
         );
         // Full: no more eating.
-        game.stats.food = 20;
+        game.player.stats.food = 20;
         for _ in 0..40 {
             game.tick();
         }
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::COOKED_PORKCHOP, 1))
         );
     }
@@ -1832,31 +1883,33 @@ pub(crate) mod tests {
     #[test]
     fn stew_leaves_its_bowl_and_creative_doesnt_eat() {
         let mut game = flat_game(GameMode::Survival);
-        game.stats.food = 5;
-        game.inventory
+        game.player.stats.food = 5;
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::MUSHROOM_STEW, 1)));
-        game.camera.pitch = 1.5;
-        game.placing = true;
+        game.player.camera.pitch = 1.5;
+        game.player.placing = true;
         for _ in 0..32 {
             game.tick();
         }
         assert_eq!(
-            game.inventory.slot(0),
+            game.player.inventory.slot(0),
             Some(&ItemStack::new(items::BOWL, 1))
         );
 
         let mut creative = flat_game(GameMode::Creative);
-        creative.stats.food = 5;
+        creative.player.stats.food = 5;
         creative
+            .player
             .inventory
             .set(0, Some(ItemStack::new(items::COOKED_PORKCHOP, 1)));
-        creative.camera.pitch = 1.5;
-        creative.placing = true;
+        creative.player.camera.pitch = 1.5;
+        creative.player.placing = true;
         for _ in 0..40 {
             creative.tick();
         }
         assert_eq!(
-            creative.inventory.slot(0),
+            creative.player.inventory.slot(0),
             Some(&ItemStack::new(items::COOKED_PORKCHOP, 1))
         );
     }
@@ -1872,7 +1925,7 @@ pub(crate) mod tests {
         let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 8, 4);
         let feet = DVec3::new(0.5, 64.0, 0.5);
         let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).with_mobs(mob_registry());
-        game.mode = mode;
+        game.player.mode = mode;
         let deadline = Instant::now() + Duration::from_secs(60);
         while game.chunks.world().len() < 289
             || game.chunks.light_at(-127, 64, -127).is_none()
@@ -1903,7 +1956,7 @@ pub(crate) mod tests {
         let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 2, 4);
         let feet = DVec3::new(0.5, 64.0, 0.5);
         let mut game = Game::new(chunks, items, feet, feet, 0.0, 0.0).with_mobs(mob_registry());
-        game.mode = mode;
+        game.player.mode = mode;
         let deadline = Instant::now() + Duration::from_secs(30);
         while game.chunks.light_at(-31, 64, -31).is_none()
             || game.chunks.light_at(47, 64, 47).is_none()
@@ -1923,41 +1976,47 @@ pub(crate) mod tests {
             player::{ARMOR_HEAD, OFFHAND},
         };
         let stuff = |game: &mut Game| {
-            game.inventory
+            game.player
+                .inventory
                 .set(0, Some(ItemStack::new(items::DIAMOND, 5)));
-            game.inventory
+            game.player
+                .inventory
                 .set(20, Some(ItemStack::new(items::OAK_LOG, 30)));
-            game.inventory
+            game.player
+                .inventory
                 .set(ARMOR_HEAD, Some(ItemStack::new(items::IRON_HELMET, 1)));
-            game.inventory
+            game.player
+                .inventory
                 .set(OFFHAND, Some(ItemStack::new(items::SHIELD, 1)));
             let mut cursed = ItemStack::new(items::GOLDEN_SWORD, 1);
             cursed.enchant(Enchantment::VanishingCurse, 1);
-            game.inventory.set(1, Some(cursed));
-            game.stats.experience.level = 20;
+            game.player.inventory.set(1, Some(cursed));
+            game.player.stats.experience.level = 20;
         };
         let mut game = flat_game(GameMode::Survival);
         stuff(&mut game);
         // Killed outside the stats tick (a mob's hit lands after it).
-        game.stats.health = 0.0;
+        game.player.stats.health = 0.0;
         game.tick();
         game.tick();
         let dropped: Vec<_> = game.entities.iter().map(|e| e.stack.id).collect();
         assert_eq!(dropped.len(), 4, "{dropped:?}");
         assert!(!dropped.contains(&items::GOLDEN_SWORD), "vanishing curse");
-        assert!((0..crate::inventory::player::SLOTS).all(|s| game.inventory.slot(s).is_none()));
-        assert_eq!(game.stats.experience.level, 0);
+        assert!(
+            (0..crate::inventory::player::SLOTS).all(|s| game.player.inventory.slot(s).is_none())
+        );
+        assert_eq!(game.player.stats.experience.level, 0);
         let orbs: u32 = game.orbs.iter().map(|o| o.value).sum();
         assert_eq!(orbs, 100, "7 a level, at most 100");
 
         let mut kept = flat_game(GameMode::Survival);
         kept.rules.keep_inventory = true;
         stuff(&mut kept);
-        kept.stats.health = 0.0;
+        kept.player.stats.health = 0.0;
         kept.tick();
         assert!(kept.entities.is_empty());
-        assert!(kept.inventory.slot(ARMOR_HEAD).is_some());
-        assert_eq!(kept.stats.experience.level, 20);
+        assert!(kept.player.inventory.slot(ARMOR_HEAD).is_some());
+        assert_eq!(kept.player.stats.experience.level, 20);
     }
 
     #[test]
@@ -1980,7 +2039,7 @@ pub(crate) mod tests {
             for monster in &game.mobs {
                 assert!(game.mob_defs.get(monster.kind).ai.is_monster());
                 assert_eq!(monster.feet().y, 64.0, "on the ground");
-                assert!(monster.feet().distance(game.body.position()) >= 24.0);
+                assert!(monster.feet().distance(game.player.body.position()) >= 24.0);
             }
             kinds.extend(
                 game.mobs
@@ -2042,27 +2101,28 @@ pub(crate) mod tests {
             0.0,
         );
         game.mobs.push(zombie);
-        game.inventory
+        game.player
+            .inventory
             .set(0, Some(ItemStack::new(items::DIAMOND_SWORD, 1)));
-        game.camera.pitch = 0.0;
+        game.player.camera.pitch = 0.0;
         game.time = 18000;
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
         // A diamond sword swings for 7 at full charge.
         assert_eq!(game.mobs[0].stats.health, 13.0, "diamond sword: 7");
         assert!(game.mobs[0].body.velocity.length() > 0.0, "knocked back");
         assert_eq!(
-            game.inventory.slot(0).unwrap().damage,
+            game.player.inventory.slot(0).unwrap().damage,
             1,
             "a sword wears 1 per hit"
         );
         // The hurt cooldown absorbs a second hit straight away.
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
         assert_eq!(game.mobs[0].stats.health, 13.0);
         // The sword recharges in 12.5 ticks; wait for a full swing.
         let front = |game: &mut Game| {
-            let feet = game.body.position() + DVec3::new(0.0, 0.0, -1.5);
+            let feet = game.player.body.position() + DVec3::new(0.0, 0.0, -1.5);
             game.mobs[0].body = crate::player::physics::Body::sized(feet, 0.6, 1.8, 1.53);
         };
         for _ in 0..14 {
@@ -2070,14 +2130,14 @@ pub(crate) mod tests {
         }
         // Knocked back out of reach? Bring it back in front and hit again.
         front(&mut game);
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
         assert_eq!(game.mobs[0].stats.health, 6.0);
         for _ in 0..14 {
             game.tick();
         }
         front(&mut game);
-        game.break_clicked = true;
+        game.player.break_clicked = true;
         game.tick();
         assert!(game.mobs[0].is_dead());
         for _ in 0..25 {
@@ -2098,19 +2158,31 @@ pub(crate) mod tests {
             0.0,
         );
         game.mobs.push(zombie);
-        game.inventory.set(0, Some(ItemStack::new(items::BOW, 1)));
-        game.inventory.set(5, Some(ItemStack::new(items::ARROW, 5)));
-        game.camera.pitch = 0.0;
+        game.player
+            .inventory
+            .set(0, Some(ItemStack::new(items::BOW, 1)));
+        game.player
+            .inventory
+            .set(5, Some(ItemStack::new(items::ARROW, 5)));
+        game.player.camera.pitch = 0.0;
         game.time = 18000;
-        game.placing = true;
+        game.player.placing = true;
         for _ in 0..20 {
             game.tick();
         }
         assert!(game.arrows.is_empty(), "drawing, not shot yet");
-        game.placing = false;
+        game.player.placing = false;
         game.tick();
-        assert_eq!(game.inventory.slot(5).unwrap().count, 4, "one arrow used");
-        assert_eq!(game.inventory.slot(0).unwrap().damage, 1, "the bow wears");
+        assert_eq!(
+            game.player.inventory.slot(5).unwrap().count,
+            4,
+            "one arrow used"
+        );
+        assert_eq!(
+            game.player.inventory.slot(0).unwrap().damage,
+            1,
+            "the bow wears"
+        );
         for _ in 0..5 {
             game.tick();
         }
@@ -2123,14 +2195,15 @@ pub(crate) mod tests {
         // Creative shoots without arrows and its arrows can't be picked up.
         let mut creative = flat_game(GameMode::Creative);
         creative
+            .player
             .inventory
             .set(0, Some(ItemStack::new(items::BOW, 1)));
-        creative.camera.pitch = 0.0;
-        creative.placing = true;
+        creative.player.camera.pitch = 0.0;
+        creative.player.placing = true;
         for _ in 0..20 {
             creative.tick();
         }
-        creative.placing = false;
+        creative.player.placing = false;
         creative.tick();
         assert_eq!(creative.arrows.len(), 1);
         assert!(!creative.arrows[0].pickup);
@@ -2154,10 +2227,10 @@ pub(crate) mod tests {
                 game.tick();
             }
             assert_eq!(
-                game.stats.health < MAX_HEALTH,
+                game.player.stats.health < MAX_HEALTH,
                 hurt,
                 "{mode:?}: {}",
-                game.stats.health
+                game.player.stats.health
             );
         }
     }

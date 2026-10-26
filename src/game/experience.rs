@@ -72,9 +72,11 @@ impl Game {
             world: self.chunks.world(),
             blocks: self.items.blocks,
         };
-        let body = self.body.aabb();
-        let alive = !self.stats.is_dead();
-        let pull = alive.then(|| self.body.position() + DVec3::Y * (self.body.eye_height() * 0.5));
+        let body = self.player.body.aabb();
+        let alive = !self.player.stats.is_dead();
+        let pull = alive.then(|| {
+            self.player.body.position() + DVec3::Y * (self.player.body.eye_height() * 0.5)
+        });
         let mut collected = 0;
         for orb in &mut self.orbs {
             orb.tick(&collider, pull);
@@ -95,8 +97,8 @@ impl Game {
     /// either hand: two durability a point, the rest into the bar.
     pub fn collect_xp(&mut self, points: u32) {
         let mut left = points;
-        for slot in [self.inventory.selected, OFFHAND] {
-            let Some(stack) = self.inventory.slot(slot) else {
+        for slot in [self.player.inventory.selected, OFFHAND] {
+            let Some(stack) = self.player.inventory.slot(slot) else {
                 continue;
             };
             if stack.level_of(Enchantment::Mending) == 0 || stack.damage == 0 {
@@ -105,21 +107,21 @@ impl Game {
             let repair = (left * u32::from(MENDING_PER_POINT)).min(u32::from(stack.damage)) as u16;
             let mut repaired = stack.clone();
             repaired.damage -= repair;
-            self.inventory.set(slot, Some(repaired));
+            self.player.inventory.set(slot, Some(repaired));
             left -= u32::from(repair).div_ceil(u32::from(MENDING_PER_POINT));
             if left == 0 {
                 break;
             }
         }
-        self.stats.experience.add(left);
+        self.player.stats.experience.add(left);
     }
 
     /// Dying drops seven points a level, at most a hundred, and empties
     /// the bar.
     pub(super) fn drop_experience(&mut self) {
-        let points = self.stats.experience.death_drop();
-        self.stats.experience.die();
-        let at = self.body.position() + DVec3::Y * (self.body.eye_height() * 0.5);
+        let points = self.player.stats.experience.death_drop();
+        self.player.stats.experience.die();
+        let at = self.player.body.position() + DVec3::Y * (self.player.body.eye_height() * 0.5);
         self.spawn_xp(points, at);
     }
 }
@@ -141,26 +143,29 @@ mod tests {
     #[test]
     fn spawned_experience_is_picked_up_into_the_bar() {
         let mut game = survival();
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         game.spawn_xp(17, feet + DVec3::new(0.0, 0.3, 0.0));
         assert!(!game.orbs.is_empty());
         for _ in 0..40 {
             game.tick_orbs();
         }
         assert!(game.orbs.is_empty(), "all collected");
-        assert_eq!(game.stats.experience.points(), 17);
-        assert_eq!(game.stats.experience.level, 2, "7 + 9 points reach level 2");
+        assert_eq!(game.player.stats.experience.points(), 17);
+        assert_eq!(
+            game.player.stats.experience.level, 2,
+            "7 + 9 points reach level 2"
+        );
     }
 
     #[test]
     fn orbs_near_the_player_drift_in_from_a_few_blocks() {
         let mut game = survival();
-        let feet = game.body.position();
+        let feet = game.player.body.position();
         game.spawn_xp(3, feet + DVec3::new(4.0, 0.3, 0.0));
         for _ in 0..120 {
             game.tick_orbs();
         }
-        assert_eq!(game.stats.experience.points(), 3);
+        assert_eq!(game.player.stats.experience.points(), 3);
     }
 
     #[test]
@@ -168,26 +173,29 @@ mod tests {
         let mut game = survival();
         let mut pickaxe = ItemStack::with_damage(items::DIAMOND_PICKAXE, 1, 30);
         pickaxe.enchant(Enchantment::Mending, 1);
-        let slot = game.inventory.selected;
-        game.inventory.set(slot, Some(pickaxe));
+        let slot = game.player.inventory.selected;
+        game.player.inventory.set(slot, Some(pickaxe));
         game.collect_xp(10);
         // 10 points repair 20 durability, leaving 10 damage and no xp.
-        assert_eq!(game.inventory.selected_stack().unwrap().damage, 10);
-        assert_eq!(game.stats.experience.points(), 0);
+        assert_eq!(game.player.inventory.selected_stack().unwrap().damage, 10);
+        assert_eq!(game.player.stats.experience.points(), 0);
         game.collect_xp(10);
         // 5 points finish the repair; 5 are left for the bar.
-        assert_eq!(game.inventory.selected_stack().unwrap().damage, 0);
-        assert_eq!(game.stats.experience.points(), 5);
+        assert_eq!(game.player.inventory.selected_stack().unwrap().damage, 0);
+        assert_eq!(game.player.stats.experience.points(), 5);
     }
 
     #[test]
     fn dying_drops_orbs_worth_seven_a_level_and_resets_the_bar() {
         let mut game = survival();
-        game.stats.experience.add(experience::points_to_reach(5));
+        game.player
+            .stats
+            .experience
+            .add(experience::points_to_reach(5));
         game.drop_experience();
         let dropped: u32 = game.orbs.iter().map(|orb| orb.value).sum();
         assert_eq!(dropped, 35);
-        assert_eq!(game.stats.experience.level, 0);
+        assert_eq!(game.player.stats.experience.level, 0);
         // Doing it again drops nothing more.
         game.drop_experience();
         assert_eq!(game.orbs.iter().map(|orb| orb.value).sum::<u32>(), 35);
@@ -220,7 +228,7 @@ mod tests {
         let furnace_block = BlockState::of(blocks::FURNACE);
         game.chunks.set_blocks(&[(at, furnace_block)]);
         game.open_furnace(at);
-        let Some(Container::Furnace(_)) = game.container else {
+        let Some(Container::Furnace(_)) = game.player.container else {
             panic!("the furnace screen is open");
         };
         let Some(BlockEntity::Furnace(f)) = game.chunks.block_entity_mut(at) else {

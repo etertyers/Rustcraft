@@ -21,15 +21,15 @@ const MESSAGE_TICKS: u32 = 100;
 impl Game {
     /// Marks corner `which` (0 or 1) at the block under the crosshair.
     pub(super) fn mark_corner(&mut self, which: usize) {
-        if !self.mode.has_every_item() {
+        if !self.player.mode.has_every_item() {
             return;
         }
-        let Some(hit) = self.target.as_ref().map(|hit| hit.block) else {
-            self.message = Some(("Look at a block to mark a corner".into(), MESSAGE_TICKS));
+        let Some(hit) = self.player.target.as_ref().map(|hit| hit.block) else {
+            self.player.message = Some(("Look at a block to mark a corner".into(), MESSAGE_TICKS));
             return;
         };
-        self.capture[which] = Some(hit);
-        self.message = Some((
+        self.player.capture[which] = Some(hit);
+        self.player.message = Some((
             format!("Corner {} at {} {} {}", which + 1, hit.x, hit.y, hit.z),
             MESSAGE_TICKS,
         ));
@@ -37,7 +37,7 @@ impl Game {
 
     /// Saves the marked region, telling the player where.
     pub(super) fn save_capture(&mut self) {
-        if !self.mode.has_every_item() {
+        if !self.player.mode.has_every_item() {
             return;
         }
         let text = match self.capture_to(&crate::assets::dir().join("structures/captured")) {
@@ -45,12 +45,12 @@ impl Game {
             Err(err) => format!("Couldn't save: {err}"),
         };
         log::info!("{text}");
-        self.message = Some((text, MESSAGE_TICKS));
+        self.player.message = Some((text, MESSAGE_TICKS));
     }
 
     /// The marked region as a template, its corner at the origin.
     pub(super) fn capture_sketch(&self) -> Result<Sketch> {
-        let [Some(a), Some(b)] = self.capture else {
+        let [Some(a), Some(b)] = self.player.capture else {
             bail!("mark both corners first (F8, F9)");
         };
         let (lo, hi) = (a.min(b), a.max(b));
@@ -115,7 +115,7 @@ mod tests {
     };
 
     fn aim(game: &mut Game, at: IVec3) {
-        game.target = Some(Hit {
+        game.player.target = Some(Hit {
             block: at,
             face: None,
             point: at.as_dvec3(),
@@ -160,6 +160,6 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         aim(&mut game, IVec3::new(2, 63, 2));
         game.mark_corner(0);
-        assert_eq!(game.capture, [None, None]);
+        assert_eq!(game.player.capture, [None, None]);
     }
 }

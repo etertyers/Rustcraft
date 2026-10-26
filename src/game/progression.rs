@@ -40,13 +40,13 @@ const UNDERFOOT: IVec3 = IVec3::new(0, 63, 0);
 /// Puts the player on the block at the origin, still.
 fn stand_at_origin(game: &mut Game) {
     let feet = DVec3::new(0.5, 64.0, 0.5);
-    game.body = Body::new(feet);
-    game.prev_feet = feet;
+    game.player.body = Body::new(feet);
+    game.player.prev_feet = feet;
 }
 
 fn count(game: &Game, id: ItemId) -> u32 {
     (0..36)
-        .filter_map(|i| game.inventory.slot(i))
+        .filter_map(|i| game.player.inventory.slot(i))
         .filter(|stack| stack.id == id)
         .map(|stack| stack.count as u32)
         .sum()
@@ -54,15 +54,15 @@ fn count(game: &Game, id: ItemId) -> u32 {
 
 /// Selects a hotbar slot holding `id`, moving it into the hotbar first.
 fn hold(game: &mut Game, id: ItemId) {
-    let slot = game.inventory.find(id).expect("the item to hold");
+    let slot = game.player.inventory.find(id).expect("the item to hold");
     if slot >= 9 {
-        let stack = game.inventory.slot(slot).cloned();
-        let swapped = game.inventory.slot(0).cloned();
-        game.inventory.set(0, stack);
-        game.inventory.set(slot, swapped);
-        game.inventory.selected = 0;
+        let stack = game.player.inventory.slot(slot).cloned();
+        let swapped = game.player.inventory.slot(0).cloned();
+        game.player.inventory.set(0, stack);
+        game.player.inventory.set(slot, swapped);
+        game.player.inventory.selected = 0;
     } else {
-        game.inventory.selected = slot;
+        game.player.inventory.selected = slot;
     }
 }
 
@@ -72,18 +72,18 @@ fn mine(game: &mut Game, block: BlockId, tool: Option<ItemId>) {
     game.chunks
         .set_blocks(&[(UNDERFOOT, BlockState::of(block))]);
     stand_at_origin(game);
-    game.camera.pitch = -std::f32::consts::FRAC_PI_2;
+    game.player.camera.pitch = -std::f32::consts::FRAC_PI_2;
     match tool {
         Some(tool) => hold(game, tool),
         // An empty hand: a free hotbar slot.
         None => {
-            game.inventory.selected = (0..9)
-                .find(|&i| game.inventory.slot(i).is_none())
+            game.player.inventory.selected = (0..9)
+                .find(|&i| game.player.inventory.slot(i).is_none())
                 .expect("a free hotbar slot")
         }
     }
     game.advance(0.0);
-    game.breaking = true;
+    game.player.breaking = true;
     for _ in 0..2000 {
         game.tick();
         if game.chunks.world().block(0, 63, 0) == Some(BlockState::AIR) {
@@ -96,7 +96,7 @@ fn mine(game: &mut Game, block: BlockId, tool: Option<ItemId>) {
         "mined {}",
         block.name()
     );
-    game.breaking = false;
+    game.player.breaking = false;
     for _ in 0..40 {
         game.tick();
     }
@@ -106,13 +106,13 @@ fn mine(game: &mut Game, block: BlockId, tool: Option<ItemId>) {
 /// shift-clicks the result.
 fn craft(game: &mut Game, cells: &[(usize, ItemId)]) {
     for &(cell, id) in cells {
-        let from = game.inventory.find(id).expect("an ingredient");
+        let from = game.player.inventory.find(id).expect("an ingredient");
         game.click_slot(SlotRef::Inventory(from), Click::Left);
         game.click_slot(SlotRef::Grid(cell), Click::Right);
-        if game.cursor.is_some() {
+        if game.player.cursor.is_some() {
             game.click_slot(SlotRef::Inventory(from), Click::Left);
         }
-        assert_eq!(game.cursor, None);
+        assert_eq!(game.player.cursor, None);
     }
     assert!(game.crafting_result().is_some(), "a recipe for {cells:?}");
     game.click_slot(SlotRef::Result, Click::Shift);
@@ -125,11 +125,16 @@ fn place_ahead(game: &mut Game, id: ItemId, yaw: f32) -> IVec3 {
         .set_blocks(&[(UNDERFOOT, BlockState::of(blocks::GRASS_BLOCK))]);
     stand_at_origin(game);
     hold(game, id);
-    game.camera.yaw = yaw;
-    game.camera.pitch = -0.7;
+    game.player.camera.yaw = yaw;
+    game.player.camera.pitch = -0.7;
     game.advance(0.0);
-    let at = game.target.expect("ground ahead").adjacent().unwrap();
-    game.place_clicked = true;
+    let at = game
+        .player
+        .target
+        .expect("ground ahead")
+        .adjacent()
+        .unwrap();
+    game.player.place_clicked = true;
     game.tick();
     assert_eq!(
         game.chunks.world().block(at.x, at.y, at.z).map(|b| b.id()),
@@ -144,13 +149,13 @@ fn use_block(game: &mut Game, at: IVec3) {
     for _ in 0..crate::player::interaction::PLACE_REPEAT_TICKS {
         game.tick();
     }
-    let eye = game.body.position() + DVec3::Y * game.body.eye_height();
+    let eye = game.player.body.position() + DVec3::Y * game.player.body.eye_height();
     let to = at.as_dvec3() + DVec3::splat(0.5) - eye;
-    game.camera.yaw = to.x.atan2(-to.z) as f32;
-    game.camera.pitch = (to.y / to.x.hypot(to.z)).atan() as f32;
+    game.player.camera.yaw = to.x.atan2(-to.z) as f32;
+    game.player.camera.pitch = (to.y / to.x.hypot(to.z)).atan() as f32;
     game.advance(0.0);
-    assert_eq!(game.target.map(|hit| hit.block), Some(at));
-    game.place_clicked = true;
+    assert_eq!(game.player.target.map(|hit| hit.block), Some(at));
+    game.player.place_clicked = true;
     game.tick();
 }
 
@@ -179,7 +184,7 @@ fn wood_to_stone_to_iron_to_diamond() {
     // A crafting table for the pickaxe.
     let table = place_ahead(&mut game, TABLE, 0.0);
     use_block(&mut game, table);
-    assert!(game.container.is_some(), "the table opened");
+    assert!(game.player.container.is_some(), "the table opened");
     craft(
         &mut game,
         &[
@@ -223,10 +228,10 @@ fn wood_to_stone_to_iron_to_diamond() {
     assert_eq!((count(&game, COAL), count(&game, IRON_ORE)), (1, 3));
     let furnace_at = place_ahead(&mut game, FURNACE, std::f32::consts::FRAC_PI_2);
     use_block(&mut game, furnace_at);
-    let ore = game.inventory.find(IRON_ORE).unwrap();
+    let ore = game.player.inventory.find(IRON_ORE).unwrap();
     game.click_slot(SlotRef::Inventory(ore), Click::Left);
     game.click_slot(SlotRef::Block(furnace::INPUT), Click::Left);
-    let coal = game.inventory.find(COAL).unwrap();
+    let coal = game.player.inventory.find(COAL).unwrap();
     game.click_slot(SlotRef::Inventory(coal), Click::Left);
     game.click_slot(SlotRef::Block(furnace::FUEL), Click::Left);
     game.close_container();
