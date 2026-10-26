@@ -68,8 +68,11 @@ impl Game {
         result
     }
 
-    /// The world after this tick as `self.player` sees it.
-    pub fn snapshot(&self, ack: u32) -> Snapshot {
+    /// The world after this tick as `self.player` sees it: mobs, items and
+    /// orbs within `range` blocks (across), and everything else.
+    pub fn snapshot(&self, ack: u32, range: f64) -> Snapshot {
+        let feet = self.player.body.position();
+        let near = |at: DVec3| (at.x - feet.x).abs().max((at.z - feet.z).abs()) <= range;
         Snapshot {
             ack,
             time: self.time,
@@ -77,9 +80,24 @@ impl Game {
             rules: self.rules.clone(),
             player: self.player.clone(),
             entities: Entities {
-                mobs: self.mobs.clone(),
-                items: self.entities.clone(),
-                orbs: self.orbs.clone(),
+                mobs: self
+                    .mobs
+                    .iter()
+                    .filter(|m| near(m.feet()))
+                    .cloned()
+                    .collect(),
+                items: self
+                    .entities
+                    .iter()
+                    .filter(|i| near(i.center()))
+                    .cloned()
+                    .collect(),
+                orbs: self
+                    .orbs
+                    .iter()
+                    .filter(|o| near(o.center()))
+                    .cloned()
+                    .collect(),
                 particles: self.particles.clone(),
                 effects: self.effects.clone(),
                 arrows: self.arrows.clone(),

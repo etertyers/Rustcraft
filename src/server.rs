@@ -186,7 +186,11 @@ impl Server {
     fn publish(&mut self, heard: Vec<Cue>) {
         for index in 0..self.remotes.len() {
             let ack = self.remotes[index].ack;
-            let snapshot = self.game.with_player(index, |game| game.snapshot(ack));
+            // What's in the chunks the client has.
+            let range = f64::from((self.remotes[index].view_distance + 1) * 16);
+            let snapshot = self
+                .game
+                .with_player(index, |game| game.snapshot(ack, range));
             let feet = self.feet(index);
             let remote = &mut self.remotes[index];
             remote.conn.send(ServerMsg::Snapshot(Box::new(snapshot)));
