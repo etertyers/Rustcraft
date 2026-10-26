@@ -51,9 +51,9 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_crystal_beams, add_dragon_fireballs, add_effects,
-            add_eyes, add_falling_blocks, add_fireballs, add_gateway_beams, add_orbs,
-            add_particles, add_primed_tnt, item_mesh,
+            EffectUvs, Shadow, add_cart_blocks, add_crystal_beams, add_dragon_fireballs,
+            add_effects, add_eyes, add_falling_blocks, add_fireballs, add_gateway_beams, add_orbs,
+            add_particles, add_primed_tnt, add_shadows, item_mesh,
         },
         held::HeldCache,
         icons::ItemIcons,
@@ -312,6 +312,7 @@ impl App {
         // The bench measures how fast frames can go.
         renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
+        renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
         crate::ui::gui::set_gui_scale(self.options.gui_scale);
         self.debug_ui = Some(DebugUi::new(
             &window,
@@ -932,6 +933,7 @@ impl App {
     fn options_changed(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_vsync(self.options.vsync);
+            renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
         }
         crate::ui::gui::set_gui_scale(self.options.gui_scale);
         self.apply_fullscreen();
@@ -1348,6 +1350,47 @@ impl App {
                     game.tick_alpha() as f32,
                     |mob| mob.eye().distance_squared(eye) < MOB_DRAW_DISTANCE * MOB_DRAW_DISTANCE,
                     light_at,
+                );
+            }
+            if self.options.entity_shadows
+                && let Some(models) = &self.models
+            {
+                let alpha = game.tick_alpha();
+                let eye = game.camera.position.as_dvec3();
+                let mut shadows: Vec<Shadow> = game
+                    .mobs
+                    .iter()
+                    .filter(|mob| mob.eye().distance_squared(eye) < 256.0)
+                    .map(|mob| Shadow {
+                        feet: mob.pose(alpha as f32).0,
+                        radius: 0.05 + 0.75 * mob.size().0,
+                        strength: 1.0,
+                    })
+                    .chain(game.entities.iter().map(|item| Shadow {
+                        feet: item.center_between_ticks(alpha) - DVec3::Y * 0.125,
+                        radius: 0.15,
+                        strength: 0.75,
+                    }))
+                    .collect();
+                if game.view_mode() != crate::game::view::ViewMode::First {
+                    shadows.push(Shadow {
+                        feet: game.player_body().0.as_dvec3(),
+                        radius: 0.5,
+                        strength: 1.0,
+                    });
+                }
+                let world = chunks.world();
+                add_shadows(
+                    &mut mesh,
+                    &shadows,
+                    self.effect_uvs.shadow,
+                    eye,
+                    |cell| {
+                        world
+                            .block(cell.x, cell.y, cell.z)
+                            .is_some_and(|b| !b.is_air() && models.get(b).opaque_cube)
+                    },
+                    |cell| chunks.light_at(cell.x, cell.y, cell.z).unwrap_or((15, 0)),
                 );
             }
             renderer.set_entities(&mesh);

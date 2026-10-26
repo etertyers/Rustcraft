@@ -415,6 +415,20 @@ impl Mesh {
         self.quad_uvs(corners, uvs, colors, lights);
     }
 
+    /// `quad` with a texture coordinate per corner, drawn in the blended
+    /// pass.
+    pub fn translucent_quad(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uvs: [[f32; 2]; 4],
+        colors: [[f32; 3]; 4],
+        lights: [[f32; 2]; 4],
+    ) {
+        let was = std::mem::replace(&mut self.adding_translucent, true);
+        self.quad_uvs(corners, uvs, colors, lights);
+        self.adding_translucent = was;
+    }
+
     /// `quad` with a texture coordinate per corner.
     fn quad_uvs(
         &mut self,

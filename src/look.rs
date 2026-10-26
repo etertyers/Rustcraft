@@ -218,6 +218,7 @@ impl Look {
         );
         textures.extend((0..crack::STAGES).map(crack::texture));
         textures.insert(entities::CRIT_TEXTURE.to_owned());
+        textures.insert(entities::SHADOW_TEXTURE.to_owned());
         textures.extend((0..SWEEP_FRAMES).map(entities::sweep_texture));
         textures.extend((0..entities::ORB_ICONS).map(entities::orb_texture));
         textures.extend(entities::END_TEXTURES.map(str::to_owned));
@@ -240,6 +241,7 @@ impl Look {
             .collect();
         let effect_uvs = EffectUvs {
             crit: atlas.uv_or_missing(entities::CRIT_TEXTURE),
+            shadow: atlas.uv_or_missing(entities::SHADOW_TEXTURE),
             sweep: std::array::from_fn(|i| atlas.uv_or_missing(&entities::sweep_texture(i))),
             orb: std::array::from_fn(|i| atlas.uv_or_missing(&entities::orb_texture(i))),
             dragon_fireball: atlas.uv_or_missing(entities::DRAGON_FIREBALL_TEXTURE),

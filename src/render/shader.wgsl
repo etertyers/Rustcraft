@@ -132,12 +132,19 @@ fn fs_crack(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(shade, 1.0);
 }
 
+// Entities' shadows have 128 added to their sky light; their color's red
+// is how dark they are (render::entities::SHADOW_FLAG).
+const SHADOW_FLAG: f32 = 128.0;
+
 // Translucent faces (water, ice, glass): the texture's own alpha, blended.
 @fragment
 fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
     if texel.a < 0.01 {
         discard;
+    }
+    if in.light.x >= SHADOW_FLAG * 0.5 {
+        return vec4<f32>(texel.rgb, texel.a * in.color.r);
     }
     let color = linear_to_srgb(texel.rgb) * in.color * lightmap(in.light);
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));

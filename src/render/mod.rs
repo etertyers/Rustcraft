@@ -157,6 +157,8 @@ pub struct Renderer {
     drew_offscreen: bool,
     /// Where to save the next frame as a PNG (for `--shot`).
     capture: Option<std::path::PathBuf>,
+    /// The Clouds option isn't off.
+    clouds: bool,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -354,6 +356,7 @@ impl Renderer {
             offscreen_fallback: false,
             offscreen: None,
             capture: None,
+            clouds: true,
             drew_offscreen: false,
             device,
             queue,
@@ -595,6 +598,11 @@ impl Renderer {
         self.crack = None;
         self.mobs.clear();
         self.outline.set_target(None);
+    }
+
+    /// The Clouds option: off, or drawn (Fast and Fancy are both flat).
+    pub fn set_clouds(&mut self, clouds: bool) {
+        self.clouds = clouds;
     }
 
     /// Waits for the display's refresh (vsync) or not.
@@ -899,11 +907,16 @@ impl Renderer {
             }
             // Clouds and water both blend: draw whichever is farther first.
             let above_clouds = camera.position.y > environment.cloud_height;
-            if above_clouds && environment.sky {
+            if above_clouds && environment.sky && self.clouds {
                 self.draw_clouds(&mut pass);
             }
             pass.set_pipeline(&self.translucent_pipeline);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            // Entities' shadows, under the water drawn next.
+            if let Some(entities) = &self.entities {
+                let translucent = entities.opaque..entities.opaque + entities.translucent;
+                draw_range(&mut pass, entities, translucent);
+            }
             let mut bound = self.atlas_generation;
             for (_, chunk) in visible.iter().rev() {
                 if chunk.atlas != bound {
@@ -916,7 +929,7 @@ impl Renderer {
                     chunk.opaque..chunk.opaque + chunk.translucent,
                 );
             }
-            if !above_clouds && environment.sky {
+            if !above_clouds && environment.sky && self.clouds {
                 self.draw_clouds(&mut pass);
             }
             if outline > 0 {

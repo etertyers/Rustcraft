@@ -473,6 +473,8 @@ pub fn add_particles(
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EffectUvs {
     pub crit: [f32; 4],
+    /// The round shadow under entities.
+    pub shadow: [f32; 4],
     pub sweep: [[f32; 4]; SWEEP_FRAMES],
     /// The experience orb's 11 pictures, small to big.
     pub orb: [[f32; 4]; ORB_ICONS],
@@ -480,6 +482,89 @@ pub struct EffectUvs {
     pub dragon_fireball: [f32; 4],
     pub crystal_beam: [f32; 4],
     pub gateway_beam: [f32; 4],
+}
+
+/// Vanilla's shadow picture.
+pub const SHADOW_TEXTURE: &str = "misc/shadow";
+/// Added to a shadow's sky light so `fs_translucent` draws it as a shadow,
+/// with its color's red as how dark (`SHADOW_FLAG` in shader.wgsl).
+pub const SHADOW_FLAG: f32 = 128.0;
+
+/// An entity's shadow: where its feet are, how wide and how dark.
+#[derive(Debug, Clone, Copy)]
+pub struct Shadow {
+    pub feet: DVec3,
+    pub radius: f64,
+    pub strength: f32,
+}
+
+/// Adds shadows on the tops of the full blocks under each entity (modern
+/// `EntityRenderDispatcher.renderShadow`): darker the closer the ground and
+/// the brighter the spot, fading out 16 blocks from the camera. `full`
+/// says whether a block is a full cube, and `light_at` gives a cell's
+/// (sky, block) light.
+pub fn add_shadows(
+    mesh: &mut Mesh,
+    shadows: &[Shadow],
+    uv: [f32; 4],
+    eye: DVec3,
+    full: impl Fn(IVec3) -> bool,
+    light_at: impl Fn(IVec3) -> (u8, u8),
+) {
+    let [u0, v0, u1, v1] = uv;
+    for shadow in shadows {
+        let weight = (1.0 - shadow.feet.distance_squared(eye) / 256.0) as f32 * shadow.strength;
+        if weight <= 0.0 {
+            continue;
+        }
+        let r = shadow.radius.min(32.0);
+        let DVec3 { x, y, z } = shadow.feet;
+        for by in (y - r).floor() as i32..=y.floor() as i32 {
+            for bz in (z - r).floor() as i32..=(z + r).floor() as i32 {
+                for bx in (x - r).floor() as i32..=(x + r).floor() as i32 {
+                    let cell = IVec3::new(bx, by, bz);
+                    if !full(cell - IVec3::Y) {
+                        continue;
+                    }
+                    let (sky, block) = light_at(cell);
+                    let level = f32::from(sky.max(block)) / 15.0;
+                    if level <= 3.0 / 15.0 {
+                        continue;
+                    }
+                    let brightness = level / (4.0 - 3.0 * level);
+                    let height = (1.0 - (y - f64::from(by)) / 2.0) as f32;
+                    let dark = (weight * height * 0.5 * brightness).min(1.0);
+                    if dark <= 0.0 {
+                        continue;
+                    }
+                    // The part of the cell the shadow's square covers, so the
+                    // picture never runs off its tile in the atlas.
+                    let (x0, x1) = (f64::from(bx).max(x - r), f64::from(bx + 1).min(x + r));
+                    let (z0, z1) = (f64::from(bz).max(z - r), f64::from(bz + 1).min(z + r));
+                    if x0 >= x1 || z0 >= z1 {
+                        continue;
+                    }
+                    let u = |px: f64| u0 + (u1 - u0) * ((px - (x - r)) / (2.0 * r)) as f32;
+                    let v = |pz: f64| v0 + (v1 - v0) * ((pz - (z - r)) / (2.0 * r)) as f32;
+                    let top = by as f32 + 0.005;
+                    let corners = [
+                        [x0 as f32, top, z1 as f32],
+                        [x1 as f32, top, z1 as f32],
+                        [x1 as f32, top, z0 as f32],
+                        [x0 as f32, top, z0 as f32],
+                    ];
+                    let uvs = [
+                        [u(x0), v(z1)],
+                        [u(x1), v(z1)],
+                        [u(x1), v(z0)],
+                        [u(x0), v(z0)],
+                    ];
+                    let light = [SHADOW_FLAG + f32::from(sky), f32::from(block)];
+                    mesh.translucent_quad(corners, uvs, [[dark; 3]; 4], [light; 4]);
+                }
+            }
+        }
+    }
 }
 
 /// The End's pictures that are drawn from the atlas.
@@ -646,6 +731,77 @@ fn add_sprite(mesh: &mut Mesh, origin: Vec3, yaw: f32, face: IconFace, light: [f
 mod tests {
     use super::*;
     use crate::world::blocks;
+
+    #[test]
+    fn shadows_lie_on_full_blocks_fading_with_height_and_distance() {
+        let uv = [0.25, 0.5, 0.5, 0.75];
+        let floor = |cell: IVec3| cell.y == 63;
+        let lit = |_: IVec3| (15, 0);
+        let shadow = |feet: DVec3| Shadow {
+            feet,
+            radius: 0.5,
+            strength: 1.0,
+        };
+        let mut mesh = Mesh::default();
+        add_shadows(
+            &mut mesh,
+            &[shadow(DVec3::new(0.5, 64.0, 0.5))],
+            uv,
+            DVec3::new(0.5, 66.0, 3.0),
+            floor,
+            lit,
+        );
+        assert_eq!(mesh.translucent.len(), 6, "one quad on the block under it");
+        assert!(mesh.indices.is_empty());
+        let v = &mesh.vertices[0];
+        assert!(v.light[0] >= SHADOW_FLAG && (v.position[1] - 64.0).abs() < 0.01);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|v| { (0.25..=0.5).contains(&v.uv[0]) && (0.5..=0.75).contains(&v.uv[1]) })
+        );
+        let near = v.color[0];
+        // Straddling four blocks, it's cut into four pieces of the picture.
+        let mut mesh = Mesh::default();
+        add_shadows(
+            &mut mesh,
+            &[shadow(DVec3::new(0.0, 64.0, 0.0))],
+            uv,
+            DVec3::new(0.0, 66.0, 3.0),
+            floor,
+            lit,
+        );
+        assert_eq!(mesh.translucent.len(), 4 * 6);
+        // Higher up it's fainter; 16 blocks away or over air it's gone.
+        let mut mesh = Mesh::default();
+        add_shadows(
+            &mut mesh,
+            &[shadow(DVec3::new(0.5, 64.4, 0.5))],
+            uv,
+            DVec3::new(0.5, 66.0, 3.0),
+            floor,
+            lit,
+        );
+        assert!(mesh.vertices[0].color[0] < near);
+        let mut mesh = Mesh::default();
+        add_shadows(
+            &mut mesh,
+            &[shadow(DVec3::new(0.5, 64.0, 20.5))],
+            uv,
+            DVec3::new(0.5, 66.0, 3.0),
+            floor,
+            lit,
+        );
+        add_shadows(
+            &mut mesh,
+            &[shadow(DVec3::new(0.5, 64.0, 0.5))],
+            uv,
+            DVec3::ZERO,
+            |_| false,
+            lit,
+        );
+        assert!(mesh.vertices.is_empty());
+    }
 
     #[test]
     fn particles_face_the_camera_even_looking_up_or_down() {
