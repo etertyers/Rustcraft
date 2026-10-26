@@ -111,6 +111,8 @@ pub enum WorldKind {
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
 /// `isInRangeToRenderDist` for a mob about a block across).
 const MOB_DRAW_DISTANCE: f64 = 64.0;
+/// Name tags show for players this near (vanilla's 64 blocks).
+const NAME_TAG_DISTANCE: f32 = 64.0;
 /// How long joining a LAN world waits for the host to answer.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
@@ -189,6 +191,12 @@ pub struct App {
     /// link to it; `game` is the client's copy of the world.
     server: Option<Server>,
     link: Option<Client>,
+    /// This player's skin as a PNG, sent to the server on joining.
+    skin_png: Vec<u8>,
+    /// Other players' skins by name, with slim arms or not, in the order of
+    /// their texture slots.
+    guest_skins: Vec<(String, bool)>,
+    guest_skin_images: Vec<image::RgbaImage>,
     /// `--name`, `--join` and `--lan`.
     name_override: Option<String>,
     join: Option<String>,
@@ -230,6 +238,9 @@ impl App {
             hide_gui: false,
             server: None,
             link: None,
+            skin_png: Vec::new(),
+            guest_skins: Vec::new(),
+            guest_skin_images: Vec::new(),
             name_override: None,
             join: None,
             lan_at_start: None,
@@ -419,6 +430,10 @@ impl App {
         server.connect(Box::new(server_end));
         let name = self.player_name();
         let mut link = Client::join(Box::new(client_end), &name, self.player_settings());
+        link.send(crate::net::protocol::ClientMsg::Skin {
+            png: self.skin_png.clone(),
+            slim: self.skin_slim,
+        });
         let mut game = Game::new_client(
             items,
             models,
@@ -453,7 +468,11 @@ impl App {
         let stream = std::net::TcpStream::connect_timeout(&target, JOIN_TIMEOUT)?;
         let conn = crate::net::transport::Tcp::new(stream)?;
         let name = self.player_name();
-        let link = Client::join(Box::new(conn), &name, self.player_settings());
+        let mut link = Client::join(Box::new(conn), &name, self.player_settings());
+        link.send(crate::net::protocol::ClientMsg::Skin {
+            png: self.skin_png.clone(),
+            slim: self.skin_slim,
+        });
         let mut game = Game::new_client(
             items,
             models,
@@ -978,6 +997,37 @@ impl App {
         self.apply_grab();
     }
 
+    /// Makes textures of the skins other players sent.
+    fn take_guest_skins(&mut self) {
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
+        if link.skins.is_empty() {
+            return;
+        }
+        for (name, png, slim) in std::mem::take(&mut link.skins) {
+            match image::load_from_memory(&png) {
+                Ok(image) => {
+                    let image = crate::render::player::prepare_skin(image.into_rgba8());
+                    match self.guest_skins.iter().position(|(n, _)| *n == name) {
+                        Some(i) => {
+                            self.guest_skins[i].1 = slim;
+                            self.guest_skin_images[i] = image;
+                        }
+                        None => {
+                            self.guest_skins.push((name, slim));
+                            self.guest_skin_images.push(image);
+                        }
+                    }
+                }
+                Err(err) => warn!("{name}'s skin: {err}"),
+            }
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_guest_skins(&self.guest_skin_images);
+        }
+    }
+
     /// The server sent this player away or went away: back to the title,
     /// saying why.
     fn leave_world(&mut self, reason: String) {
@@ -1026,6 +1076,14 @@ impl App {
             .map(|id| SlotView::of(&ItemStack::new(id, 1), &look.icons, items))
             .to_vec();
         }
+        let mut png = Vec::new();
+        if let Err(err) = look
+            .skin()
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        {
+            warn!("can't encode the skin: {err}");
+        }
+        self.skin_png = png;
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
         self.crack_uvs = look.crack_uvs;
@@ -1330,6 +1388,7 @@ impl App {
         self.last_frame = now;
         self.animate_textures();
         self.update_audio(dt);
+        self.take_guest_skins();
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }
@@ -1555,6 +1614,42 @@ impl App {
                 _ => PlayerMeshes::default(),
             };
             mesh.append(&player.items);
+            // Everyone else in sight, each in their own skin (or the
+            // default one until theirs arrives).
+            let mut guests: Vec<(Option<usize>, Mesh)> = Vec::new();
+            let mut guest_armor = Mesh::default();
+            let mut guest_elytra = Mesh::default();
+            if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
+                let alpha = game.tick_alpha();
+                for view in &game.remote_players {
+                    let skin = self.guest_skins.iter().position(|(n, _)| *n == view.name);
+                    let fig = Figure {
+                        icons,
+                        item_models,
+                        atlas: atlas.image(),
+                        slim: skin.is_some_and(|i| self.guest_skins[i].1),
+                    };
+                    let feet = view.prev_feet.lerp(view.feet, alpha);
+                    let light = light_at(feet + DVec3::Y);
+                    let mut m = PlayerMeshes::default();
+                    figure::add_body(
+                        &mut m,
+                        &view.wearer,
+                        &mut self.held,
+                        &fig,
+                        &view.pose,
+                        feet.as_vec3(),
+                        view.yaw,
+                        light,
+                    );
+                    mesh.append(&m.items);
+                    guest_armor.append(&m.armor);
+                    guest_elytra.append(&m.elytra);
+                    if !view.invisible {
+                        guests.push((skin, m.body));
+                    }
+                }
+            }
             if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
                 let fig = Figure {
                     icons,
@@ -1717,8 +1812,19 @@ impl App {
             }
             meshes.push((mob_kinds + 2, dragon));
             meshes.push((mob_kinds + 3, crystals));
-            meshes.push((mob_kinds + 4, player.elytra.clone()));
-            meshes.push((mob_kinds + crate::look::EXTRA_ARMOR, player.armor.clone()));
+            let mut elytra = player.elytra.clone();
+            elytra.append(&guest_elytra);
+            meshes.push((mob_kinds + 4, elytra));
+            let mut armor = player.armor.clone();
+            armor.append(&guest_armor);
+            meshes.push((mob_kinds + crate::look::EXTRA_ARMOR, armor));
+            for (skin, body) in guests {
+                let slot = match skin {
+                    Some(i) => renderer.guest_skin_slot(i),
+                    None => mob_kinds + crate::look::EXTRA_SKIN,
+                };
+                meshes.push((slot, body));
+            }
             // Invisible players aren't drawn, but their armor is (modern).
             let invisible = game
                 .player
@@ -1748,8 +1854,31 @@ impl App {
             time: game.time(),
             dimension: game.dimension(),
         };
+        // Other players' names, where their heads are on screen.
+        let view_proj = game.view_camera().view_proj(renderer.aspect());
+        let alpha = game.tick_alpha();
+        let eye = game.player.camera.position.as_dvec3();
+        let name_tags = game
+            .remote_players
+            .iter()
+            .filter(|view| !view.invisible)
+            .filter_map(|view| {
+                let head = view.prev_feet.lerp(view.feet, alpha) + DVec3::Y * 2.3;
+                let distance = head.distance(eye) as f32;
+                if distance > NAME_TAG_DISTANCE {
+                    return None;
+                }
+                let clip = view_proj * head.as_vec3().extend(1.0);
+                (clip.w > 0.0).then(|| crate::ui::NameTag {
+                    name: view.name.clone(),
+                    at: egui::pos2((clip.x / clip.w + 1.0) / 2.0, (1.0 - clip.y / clip.w) / 2.0),
+                    distance,
+                })
+            })
+            .collect();
         let hud = Hud {
             hidden: self.hide_gui,
+            name_tags,
             crosshair: self.stack.grabbed(),
             attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)

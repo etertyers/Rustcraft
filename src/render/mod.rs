@@ -173,6 +173,8 @@ pub struct Renderer {
     crack: Option<ChunkBuffers>,
     /// One texture per mob kind.
     mob_bind_groups: Vec<wgpu::BindGroup>,
+    /// Other players' skins, drawn by slots after the mob textures.
+    guest_skins: Vec<wgpu::BindGroup>,
     /// This frame's mob meshes, by kind.
     mobs: Vec<(usize, ChunkBuffers)>,
     sky_pipeline: wgpu::RenderPipeline,
@@ -370,6 +372,7 @@ impl Renderer {
             crack_pipeline,
             crack: None,
             mob_bind_groups,
+            guest_skins: Vec::new(),
             mobs: Vec::new(),
             sky_pipeline,
             sun_bind_group,
@@ -413,6 +416,20 @@ impl Renderer {
             .iter()
             .map(|image| create_texture_bind_group(device, queue, layout, "mob", image))
             .collect();
+    }
+
+    /// Other players' skins, in the order of their slots.
+    pub fn set_guest_skins(&mut self, skins: &[RgbaImage]) {
+        let (device, queue, layout) = (&self.device, &self.queue, &self.texture_layout);
+        self.guest_skins = skins
+            .iter()
+            .map(|image| create_texture_bind_group(device, queue, layout, "skin", image))
+            .collect();
+    }
+
+    /// The mesh slot drawn with guest skin `index`.
+    pub fn guest_skin_slot(&self, index: usize) -> usize {
+        self.mob_bind_groups.len() + index
     }
 
     /// The atlas bind group for buffers made against generation `atlas`.
@@ -898,7 +915,15 @@ impl Renderer {
             if !self.mobs.is_empty() {
                 pass.set_pipeline(&self.mob_pipeline);
                 for (kind, mesh) in &self.mobs {
-                    pass.set_bind_group(1, &self.mob_bind_groups[*kind], &[]);
+                    // Past the mob textures come other players' skins.
+                    let group = match self.mob_bind_groups.get(*kind) {
+                        Some(group) => group,
+                        None => match self.guest_skins.get(*kind - self.mob_bind_groups.len()) {
+                            Some(group) => group,
+                            None => continue,
+                        },
+                    };
+                    pass.set_bind_group(1, group, &[]);
                     draw_range(&mut pass, mesh, 0..mesh.opaque);
                 }
                 pass.set_bind_group(1, &self.atlas_bind_group, &[]);

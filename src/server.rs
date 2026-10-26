@@ -52,6 +52,8 @@ struct Remote {
     view_distance: i32,
     /// The dimension its chunks are in.
     dimension: Dimension,
+    /// The player's skin (PNG) and arm width, once sent.
+    skin: Option<(Vec<u8>, bool)>,
 }
 
 pub struct Server {
@@ -184,13 +186,16 @@ impl Server {
 
     /// Sends each player their snapshot and the sounds they hear.
     fn publish(&mut self, heard: Vec<Cue>) {
+        let views: Vec<_> = (0..self.remotes.len())
+            .map(|index| self.game.with_player(index, |game| game.player_view()))
+            .collect();
         for index in 0..self.remotes.len() {
             let ack = self.remotes[index].ack;
             // What's in the chunks the client has.
             let range = f64::from((self.remotes[index].view_distance + 1) * 16);
             let snapshot = self
                 .game
-                .with_player(index, |game| game.snapshot(ack, range));
+                .with_player(index, |game| game.snapshot(ack, range, views.clone()));
             let feet = self.feet(index);
             let remote = &mut self.remotes[index];
             remote.conn.send(ServerMsg::Snapshot(Box::new(snapshot)));
@@ -294,7 +299,18 @@ impl Server {
             sent: Default::default(),
             view_distance: config::RENDER_DISTANCE,
             dimension,
+            skin: None,
         });
+        // The newcomer sees everyone's skins.
+        let index = self.remotes.len() - 1;
+        for other in 0..index {
+            if let Some((png, slim)) = self.remotes[other].skin.clone() {
+                let name = self.game.player_at(other).name.clone();
+                self.remotes[index]
+                    .conn
+                    .send(ServerMsg::Skin { name, png, slim });
+            }
+        }
     }
 
     /// Plays each client's messages for its player.
@@ -321,6 +337,19 @@ impl Server {
         let book = self.book.clone();
         match msg {
             ClientMsg::Login { .. } | ClientMsg::Disconnect => {}
+            ClientMsg::Skin { png, slim } => {
+                let name = self.game.player_at(index).name.clone();
+                for (other, remote) in self.remotes.iter_mut().enumerate() {
+                    if other != index {
+                        remote.conn.send(ServerMsg::Skin {
+                            name: name.clone(),
+                            png: png.clone(),
+                            slim,
+                        });
+                    }
+                }
+                self.remotes[index].skin = Some((png, slim));
+            }
             ClientMsg::Settings(settings) => {
                 self.remotes[index].view_distance = settings.view_distance;
                 self.game
@@ -678,6 +707,68 @@ mod tests {
             server.player_count() == 1
         });
         assert!(server.game.others.is_empty());
+    }
+
+    #[test]
+    fn players_see_each_other_and_each_others_skins() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        clients[0].0.send(ClientMsg::Skin {
+            png: vec![1, 2, 3],
+            slim: true,
+        });
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 2
+        });
+        server
+            .game
+            .with_player(1, |game| game.fly_to(DVec3::new(3.5, 64.0, 0.5)));
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients[0]
+                .1
+                .remote_players
+                .iter()
+                .any(|v| v.name == "Bob" && v.feet.x > 3.0)
+                && clients[1]
+                    .1
+                    .remote_players
+                    .iter()
+                    .any(|v| v.name == "Alice")
+                && !clients[1].0.skins.is_empty()
+        });
+        let bob = clients[0]
+            .1
+            .remote_players
+            .iter()
+            .find(|v| v.name == "Bob")
+            .unwrap();
+        assert!(
+            bob.feet.distance(DVec3::new(3.5, 64.0, 0.5)) < 0.01,
+            "{} {}",
+            bob.feet,
+            server.game.feet_of(1)
+        );
+        assert!(
+            clients[0]
+                .1
+                .remote_players
+                .iter()
+                .all(|v| v.name != "Alice"),
+            "not yourself"
+        );
+        assert_eq!(
+            clients[1].0.skins[0],
+            ("Alice".to_owned(), vec![1, 2, 3], true)
+        );
+        // Someone joining later gets the skins already sent.
+        let (server_end, client_end) = local_pair();
+        server.connect(Box::new(server_end));
+        let (items, models) = registries();
+        let carol = Client::join(Box::new(client_end), "Carol", settings());
+        clients.push((carol, Game::new_client(items, models, mob_registry(), 2, 1)));
+        run_until(&mut server, &mut clients, |_, clients| {
+            !clients[2].0.skins.is_empty()
+        });
+        assert_eq!(clients[2].0.skins[0].0, "Alice");
     }
 
     #[test]

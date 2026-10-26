@@ -71,6 +71,9 @@ pub struct DebugStats {
 pub struct Hud {
     /// Hide GUI (F1): no crosshair, hotbar, hearts or effects.
     pub hidden: bool,
+    /// Other players' names over their heads: where on screen (0–1 across
+    /// and down), and how far off (nearer drawn bigger).
+    pub name_tags: Vec<NameTag>,
     /// Shown while the cursor is grabbed for play.
     pub crosshair: bool,
     /// The swing's recharge under the crosshair.
@@ -101,6 +104,14 @@ pub struct Hud {
     pub toasts: Vec<ToastView>,
     /// The advancements screen, while it is open.
     pub advancements: Option<AdvView>,
+}
+
+/// A player's name over their head.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameTag {
+    pub name: String,
+    pub at: egui::Pos2,
+    pub distance: f32,
 }
 
 /// An advancement just made, as its toast shows it.
@@ -298,6 +309,9 @@ impl DebugUi {
             }
             if !hud.effects.is_empty() && !hud.hidden {
                 paint_effects(ui.painter(), full, &hud.effects, textures);
+            }
+            if !hud.hidden {
+                paint_name_tags(ui.painter(), full, &hud.name_tags);
             }
             if let Some(message) = &hud.message {
                 paint_message(ui.painter(), full, message);
@@ -917,6 +931,26 @@ fn show_sleep_screen(ctx: &egui::Context, asleep: f32) -> bool {
 }
 
 /// A notice above the hotbar, where 1.0.0's chat shows (bottom left).
+/// Names over players' heads, on a dark band, smaller further off.
+fn paint_name_tags(painter: &egui::Painter, full: egui::Rect, tags: &[NameTag]) {
+    let scale = gui::gui_scale(full);
+    for tag in tags {
+        let size = (8.0 * scale * (8.0 / tag.distance.max(8.0)))
+            .max(8.0)
+            .round();
+        let font = egui::FontId::proportional(size);
+        let galley = painter.layout_no_wrap(tag.name.clone(), font, Color32::WHITE);
+        let center = egui::pos2(
+            full.left() + tag.at.x * full.width(),
+            full.top() + tag.at.y * full.height(),
+        );
+        let at = center - galley.size() / 2.0;
+        let rect = egui::Rect::from_min_size(at, galley.size()).expand(size / 8.0);
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(64));
+        painter.galley(at, galley, Color32::WHITE);
+    }
+}
+
 fn paint_message(painter: &egui::Painter, full: egui::Rect, text: &str) {
     let scale = gui::gui_scale(full);
     let font = egui::FontId::proportional(8.0 * scale);

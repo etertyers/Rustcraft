@@ -53,6 +53,9 @@ pub enum ClientMsg {
     /// Where the player is while flying with the debug flight key (F4),
     /// which moves them between ticks.
     Fly { feet: glam::DVec3 },
+    /// The player's skin as a PNG, and whether its arms are slim (sent
+    /// once, on joining).
+    Skin { png: Vec<u8>, slim: bool },
     /// Leaving.
     Disconnect,
 }
@@ -102,6 +105,12 @@ pub enum ServerMsg {
     Snapshot(Box<Snapshot>),
     /// Sounds to play, already filtered to the ones the player hears.
     Sounds(Vec<crate::audio::Cue>),
+    /// Another player's skin (each once, as they join or this player does).
+    Skin {
+        name: String,
+        png: Vec<u8>,
+        slim: bool,
+    },
     /// The server is going away, or sent this player off.
     Disconnect(String),
 }
@@ -117,6 +126,22 @@ pub struct Snapshot {
     pub rules: GameRules,
     pub player: PlayerState,
     pub entities: Entities,
+    /// The other players in sight.
+    pub players: Vec<PlayerView>,
+}
+
+/// Another player as others see them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlayerView {
+    pub name: String,
+    /// Where they stood a tick ago and now, to draw them between.
+    pub prev_feet: glam::DVec3,
+    pub feet: glam::DVec3,
+    /// Which way their body faces.
+    pub yaw: f32,
+    pub pose: crate::render::player::PlayerPose,
+    pub wearer: crate::figure::Wearer,
+    pub invisible: bool,
 }
 
 /// Everything that moves in the player's dimension.

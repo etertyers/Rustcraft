@@ -70,7 +70,12 @@ impl Game {
 
     /// The world after this tick as `self.player` sees it: mobs, items and
     /// orbs within `range` blocks (across), and everything else.
-    pub fn snapshot(&self, ack: u32, range: f64) -> Snapshot {
+    pub fn snapshot(
+        &self,
+        ack: u32,
+        range: f64,
+        players: Vec<crate::net::protocol::PlayerView>,
+    ) -> Snapshot {
         let feet = self.player.body.position();
         let near = |at: DVec3| (at.x - feet.x).abs().max((at.z - feet.z).abs()) <= range;
         Snapshot {
@@ -79,6 +84,10 @@ impl Game {
             difficulty: self.difficulty,
             rules: self.rules.clone(),
             player: self.player.clone(),
+            players: players
+                .into_iter()
+                .filter(|view| view.name != self.player.name && near(view.feet))
+                .collect(),
             entities: Entities {
                 mobs: self
                     .mobs
@@ -166,6 +175,7 @@ impl Game {
         self.crystals = e.crystals;
         self.dragon_fireballs = e.dragon_fireballs;
         self.breath = e.breath;
+        self.remote_players = snapshot.players;
         (server_body, server_prev)
     }
 
@@ -215,6 +225,23 @@ impl Game {
         match index {
             0 => &self.player,
             i => &self.others[i - 1],
+        }
+    }
+
+    /// `self.player` as the other players see them.
+    pub fn player_view(&self) -> crate::net::protocol::PlayerView {
+        let p = &self.player;
+        crate::net::protocol::PlayerView {
+            name: p.name.clone(),
+            prev_feet: p.prev_feet,
+            feet: p.body.position(),
+            yaw: p.view.body_yaw(1.0),
+            pose: self.player_pose(),
+            wearer: self.wearer(),
+            invisible: p
+                .stats
+                .effects
+                .has(crate::player::effects::Effect::Invisibility),
         }
     }
 

@@ -341,6 +341,8 @@ pub struct Game {
     pub others: Vec<PlayerState>,
     /// The world itself, or a client's copy of it.
     role: sync::Role,
+    /// A client's view of the other players in sight.
+    pub remote_players: Vec<crate::net::protocol::PlayerView>,
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
@@ -446,6 +448,7 @@ impl Game {
             player: PlayerState::new(feet, yaw, pitch),
             others: Vec::new(),
             role: sync::Role::Server,
+            remote_players: Vec::new(),
             spawn,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),

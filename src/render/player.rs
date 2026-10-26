@@ -122,7 +122,7 @@ impl Limb {
 }
 
 /// What a hand is doing with the item in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ArmPose {
     /// Nothing held.
     #[default]
@@ -138,7 +138,7 @@ pub enum ArmPose {
 }
 
 /// Everything the pose depends on.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct PlayerPose {
     /// Walking: distance walked (in vanilla's units) and how fast.
     pub limb_swing: f32,
