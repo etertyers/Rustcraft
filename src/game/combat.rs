@@ -282,7 +282,12 @@ impl Game {
                 let at = self.mobs[index].feet() + DVec3::Y * (target.max.y - target.min.y) * 0.5;
                 let rng = &mut self.rng;
                 let mut random = || rng.next_f64() as f32;
-                self.effects.extend(Effect::crit(at, &mut random));
+                let crits = Effect::crit(at, &mut random);
+                for crit in crits {
+                    if self.shows_particle() {
+                        self.effects.push(crit);
+                    }
+                }
             }
         }
         if self.mode.is_vulnerable() {
@@ -327,8 +332,10 @@ impl Game {
         let in_front = self.body.position()
             + DVec3::new(yaw.sin(), 0.0, -yaw.cos()) * 2.0
             + DVec3::Y * self.body.aabb().max.y * 0.5;
-        self.effects
-            .extend(Effect::sweep(in_front, self.camera.yaw));
+        if self.shows_particle() {
+            self.effects
+                .extend(Effect::sweep(in_front, self.camera.yaw));
+        }
     }
 
     /// Keeps the shield in `hand` raised while right-click is held with it,

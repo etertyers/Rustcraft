@@ -257,6 +257,8 @@ pub struct Game {
     /// toggled instead of held.
     invert_y: bool,
     auto_jump: bool,
+    /// The Particles option.
+    particle_level: crate::options::Particles,
     toggle_sneak: bool,
     toggle_sprint: bool,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
@@ -405,6 +407,7 @@ impl Game {
             sensitivity: 1.0,
             invert_y: false,
             auto_jump: false,
+            particle_level: crate::options::Particles::All,
             toggle_sneak: false,
             toggle_sprint: false,
             tick_time: 0.0,
@@ -703,6 +706,7 @@ impl Game {
         self.view.bobbing = options.view_bobbing;
         self.sensitivity = options.sensitivity;
         self.invert_y = options.invert_y;
+        self.particle_level = options.particles;
         self.auto_jump = options.auto_jump;
         self.toggle_sneak = options.toggle_sneak;
         self.toggle_sprint = options.toggle_sprint;
@@ -1171,6 +1175,20 @@ pub(crate) mod tests {
             game.chunks.update(center);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn the_particles_option_shows_all_two_in_three_or_none() {
+        let mut game = flat_game(GameMode::Survival);
+        let shown = |game: &mut Game, level| {
+            game.particle_level = level;
+            (0..300).filter(|_| game.shows_particle()).count()
+        };
+        use crate::options::Particles;
+        assert_eq!(shown(&mut game, Particles::All), 300);
+        assert_eq!(shown(&mut game, Particles::Minimal), 0);
+        let some = shown(&mut game, Particles::Decreased);
+        assert!((170..230).contains(&some), "{some}");
     }
 
     #[test]
