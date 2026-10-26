@@ -792,3 +792,31 @@ fn a_dragon_killed_far_away_flies_to_the_portal_and_the_portal_and_egg_come_afte
     assert!(block(&game, origin + IVec3::X).is(blocks::END_PORTAL));
     assert!(block(&game, origin + IVec3::new(0, 4, 0)).is(blocks::DRAGON_EGG));
 }
+
+#[test]
+fn the_dragon_goes_for_the_nearest_player_it_may_hurt() {
+    let mut game = end_game(GameMode::Survival);
+    let mut guest = crate::game::PlayerState::new(DVec3::new(0.5, 70.0, 0.5), 0.0, 0.0);
+    guest.mode = GameMode::Survival;
+    guest.dimension = Dimension::End;
+    game.others.push(guest);
+    let dragon = game.dragon.as_ref().expect("the fight began").position;
+    let near = |game: &Game| {
+        let (host, guest) = (game.feet_of(0), game.feet_of(1));
+        if host.distance(dragon) < guest.distance(dragon) {
+            host
+        } else {
+            guest
+        }
+    };
+    assert_eq!(game.dragon_senses().player, Some(near(&game)));
+    // Whoever is nearer turns creative: the other one is the target.
+    let nearer_is_host = game.feet_of(0).distance(dragon) < game.feet_of(1).distance(dragon);
+    if nearer_is_host {
+        game.player.mode = GameMode::Creative;
+        assert_eq!(game.dragon_senses().player, Some(game.feet_of(1)));
+    } else {
+        game.others[0].mode = GameMode::Creative;
+        assert_eq!(game.dragon_senses().player, Some(game.feet_of(0)));
+    }
+}

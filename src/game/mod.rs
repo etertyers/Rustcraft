@@ -143,6 +143,9 @@ pub const ENDER_CHEST_SLOTS: usize = 27;
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// They've seen the poem and credits (each player does, the first time
+    /// they leave the End).
+    pub seen_credits: bool,
     /// The dimension the player is in, and the one a portal is taking
     /// them to at the end of the tick.
     pub dimension: crate::world::dimension::Dimension,
@@ -273,6 +276,7 @@ impl PlayerState {
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
+            seen_credits: false,
             dimension: crate::world::dimension::Dimension::Overworld,
             travel: None,
             heard: Vec::new(),
@@ -556,6 +560,7 @@ impl Game {
         game.take_player_file(&PlayerFile {
             player: player.clone(),
             dimension: level.dimension,
+            seen_credits: level.end.credits_seen,
             ender_chest: Vec::new(),
             advancements: level.advancements.clone(),
             recipe_book: level.recipe_book.clone(),
@@ -608,6 +613,7 @@ impl Game {
                 bed: p.bed.map(|bed| bed.to_array()),
             },
             dimension: p.dimension,
+            seen_credits: p.seen_credits,
             ender_chest: p.ender_chest.clone(),
             advancements: p.progress.clone(),
             recipe_book: p.recipe_book.clone(),
@@ -632,6 +638,7 @@ impl Game {
         p.body.flying = data.flying && p.body.may_fly;
         p.ender_chest = file.ender_chest.clone();
         p.dimension = file.dimension;
+        p.seen_credits = file.seen_credits;
         p.ender_chest.resize(ENDER_CHEST_SLOTS, None);
         p.progress = file.advancements.clone();
         p.recipe_book = file.recipe_book.clone();

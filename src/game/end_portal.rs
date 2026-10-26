@@ -192,7 +192,8 @@ impl Game {
     /// Through the exit portal: the poem and credits the first time, then
     /// home.
     pub(super) fn leave_end(&mut self) {
-        if !self.end.credits_seen {
+        if !self.player.seen_credits {
+            self.player.seen_credits = true;
             self.end.credits_seen = true;
             self.player.credits = Some(0);
             return;

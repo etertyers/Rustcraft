@@ -202,6 +202,9 @@ pub struct PlayerFile {
     /// The dimension they're in.
     #[serde(default)]
     pub dimension: Dimension,
+    /// They've seen the poem and credits.
+    #[serde(default)]
+    pub seen_credits: bool,
     #[serde(default)]
     pub ender_chest: Vec<Option<crate::inventory::stack::ItemStack>>,
     #[serde(default)]

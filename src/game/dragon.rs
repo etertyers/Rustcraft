@@ -108,10 +108,20 @@ impl Game {
     /// What the dragon senses: the player, the crystals, the fountain.
     pub(super) fn dragon_senses(&self) -> Senses {
         let podium = end::PODIUM.as_dvec3() + DVec3::new(0.5, 1.0, 0.5);
+        let at = self
+            .dragon
+            .as_ref()
+            .map_or(podium, |dragon| dragon.position);
         Senses {
-            // Creative players are never its target.
-            player: (!self.player.stats.is_dead() && self.player.mode.is_vulnerable())
-                .then(|| self.player.body.position()),
+            // The nearest player it may hurt (creative players are never
+            // its target).
+            player: self
+                .players_here()
+                .into_iter()
+                .map(|i| self.player_at(i))
+                .filter(|p| !p.stats.is_dead() && p.mode.is_vulnerable())
+                .map(|p| p.body.position())
+                .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at))),
             crystals: self.crystals.len(),
             podium,
             exit: self.exit_point(),
@@ -277,10 +287,13 @@ impl Game {
             .map(|(_, bb)| Aabb::new(bb.min - WING_GROW, bb.max + WING_GROW))
             .collect();
         let sitting = dragon.phase.is_sitting();
-        if !self.player.stats.is_dead() {
-            let body = self.player.body.aabb();
-            if strikers.iter().any(|bb| bb.intersects(&body)) && self.player.mode.is_vulnerable() {
-                self.hurt_player(Strike {
+        self.for_each_player(|game| {
+            if game.player.stats.is_dead() {
+                return;
+            }
+            let body = game.player.body.aabb();
+            if strikers.iter().any(|bb| bb.intersects(&body)) && game.player.mode.is_vulnerable() {
+                game.hurt_player(Strike {
                     amount: RAM_DAMAGE,
                     source: DamageSource::Mob,
                     from: Some(from),
@@ -290,14 +303,14 @@ impl Game {
             }
             // Creative players are neither pushed nor hurt.
             if !sitting
-                && self.player.mode.is_vulnerable()
+                && game.player.mode.is_vulnerable()
                 && wings.iter().any(|bb| bb.intersects(&body))
             {
-                let away = self.player.body.position() - from;
+                let away = game.player.body.position() - from;
                 let flat = DVec3::new(away.x, 0.0, away.z).normalize_or_zero();
-                self.player.body.velocity += flat * WING_PUSH + DVec3::Y * 0.3;
+                game.player.body.velocity += flat * WING_PUSH + DVec3::Y * 0.3;
             }
-        }
+        });
         for mob in &mut self.mobs {
             if mob.is_dead() {
                 continue;
@@ -316,25 +329,33 @@ impl Game {
 
     /// The perched dragon bites at `at`.
     fn dragon_bites(&mut self, at: DVec3) {
-        if self.player.stats.is_dead() || !self.player.mode.is_vulnerable() {
-            return;
-        }
-        let feet = self.player.body.position();
-        if feet.distance(at) <= dragon::BITE_REACH {
-            self.hurt_player(Strike {
-                amount: BITE_DAMAGE,
-                source: DamageSource::Mob,
-                from: Some(at),
-                ranged: false,
-                axe: false,
-            });
-        }
+        self.for_each_player(|game| {
+            if game.player.stats.is_dead() || !game.player.mode.is_vulnerable() {
+                return;
+            }
+            if game.player.body.position().distance(at) <= dragon::BITE_REACH {
+                game.hurt_player(Strike {
+                    amount: BITE_DAMAGE,
+                    source: DamageSource::Mob,
+                    from: Some(at),
+                    ranged: false,
+                    axe: false,
+                });
+            }
+        });
     }
 
     /// One tick of the dragon's fireballs: those that hit make a cloud.
     pub(super) fn tick_dragon_fireballs(&mut self) {
         let mut balls = std::mem::take(&mut self.dragon_fireballs);
-        let player = (!self.player.stats.is_dead()).then(|| self.player.body.aabb());
+        // The nearest living player to each ball can be hit by it.
+        let players: Vec<Aabb> = self
+            .players_here()
+            .into_iter()
+            .map(|i| self.player_at(i))
+            .filter(|p| !p.stats.is_dead())
+            .map(|p| p.body.aabb())
+            .collect();
         let mut bursts = Vec::new();
         balls.retain_mut(|ball| {
             let world = self.chunks.world();
@@ -349,7 +370,15 @@ impl Game {
                 let hit = crate::player::raycast::raycast(from, dir, reach, solid)?;
                 Aabb::block(hit.block.x, hit.block.y, hit.block.z).ray_hit(from, dir, reach)
             };
-            match ball.tick(block_hit, &self.mobs, player.as_ref()) {
+            let at = ball.position;
+            let player = players.iter().min_by(|a, b| {
+                let (da, db) = (
+                    (a.min + a.max).distance(at * 2.0),
+                    (b.min + b.max).distance(at * 2.0),
+                );
+                da.total_cmp(&db)
+            });
+            match ball.tick(block_hit, &self.mobs, player) {
                 Some(at) => {
                     bursts.push(at);
                     false
@@ -402,12 +431,16 @@ impl Game {
             if !cloud.pulses() {
                 continue;
             }
-            if !self.player.stats.is_dead()
-                && self.player.mode.is_vulnerable()
-                && cloud.holds(&self.player.body.aabb())
-            {
-                self.player.stats.damage(breath::HARM, DamageSource::Magic);
-            }
+            let held = |game: &Game| {
+                !game.player.stats.is_dead()
+                    && game.player.mode.is_vulnerable()
+                    && cloud.holds(&game.player.body.aabb())
+            };
+            self.for_each_player(|game| {
+                if held(game) {
+                    game.player.stats.damage(breath::HARM, DamageSource::Magic);
+                }
+            });
             for mob in &mut self.mobs {
                 if !mob.is_dead() && cloud.holds(&mob.body.aabb()) {
                     mob.hurt(breath::HARM, None, DamageSource::Magic);
