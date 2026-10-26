@@ -18,7 +18,7 @@ use crate::{
 
 /// Bumped whenever a message changes, so mismatched games refuse each
 /// other instead of misreading.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// What a client tells the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +56,10 @@ pub enum ClientMsg {
     /// The player's skin as a PNG, and whether its arms are slim (sent
     /// once, on joining).
     Skin { png: Vec<u8>, slim: bool },
+    /// A chat message, or a command if it starts with `/` (M38).
+    Chat(String),
+    /// Tab in chat: what can finish this command line (without its `/`).
+    Complete(String),
     /// Leaving.
     Disconnect,
 }
@@ -114,6 +118,11 @@ pub enum ServerMsg {
         png: Vec<u8>,
         slim: bool,
     },
+    /// A line for the chat, with `§` codes; `command` when it answers this
+    /// player's own command (shown even with chat set to Commands Only).
+    Chat { text: String, command: bool },
+    /// The answer to a `Complete`: what the last word could be.
+    Completions(Vec<String>),
     /// The server is going away, or sent this player off.
     Disconnect(String),
 }
@@ -125,6 +134,7 @@ pub struct Snapshot {
     /// The last `Input` played before this tick ended (0 before any).
     pub ack: u32,
     pub time: u64,
+    pub day_offset: i64,
     pub difficulty: Difficulty,
     pub rules: GameRules,
     pub player: PlayerState,

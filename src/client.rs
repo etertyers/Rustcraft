@@ -40,6 +40,10 @@ pub struct Client {
     pub skins: Vec<(String, Vec<u8>, bool)>,
     /// Everyone playing, for the Tab list.
     pub players: Vec<String>,
+    /// Chat lines (and whether each answers a command of ours) and Tab's
+    /// completions, waiting for the chat screen to take them.
+    pub chat: Vec<(String, bool)>,
+    pub completions: Option<Vec<String>>,
 }
 
 impl Client {
@@ -58,6 +62,8 @@ impl Client {
             welcomed: false,
             gone: None,
             skins: Vec::new(),
+            chat: Vec::new(),
+            completions: None,
             players: Vec::new(),
         }
     }
@@ -70,6 +76,8 @@ impl Client {
 
     /// Moves the player for the ticks due, sending each tick's input.
     pub fn advance(&mut self, game: &mut Game, dt: f32) {
+        // Chat comes from the server; predicting doesn't add to it.
+        game.chat_out.clear();
         #[cfg(debug_assertions)]
         if game.player.is_flying() {
             let feet = game.fly(dt);
@@ -127,6 +135,8 @@ impl Client {
                 ServerMsg::Sounds(cues) => cues.into_iter().for_each(audio::requeue),
                 ServerMsg::Skin { name, png, slim } => self.skins.push((name, png, slim)),
                 ServerMsg::Players(names) => self.players = names,
+                ServerMsg::Chat { text, command } => self.chat.push((text, command)),
+                ServerMsg::Completions(options) => self.completions = Some(options),
             }
         }
         if !self.conn.is_open() && self.gone.is_none() {

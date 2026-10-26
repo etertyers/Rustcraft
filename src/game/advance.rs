@@ -73,12 +73,20 @@ impl Game {
                     },
                 );
                 log::info!("advancement: {}", registry.defs[index].title);
+                let def = &registry.defs[index];
+                let (made, color) = match def.frame {
+                    crate::advancements::Frame::Task => ("has made the advancement", "§a"),
+                    crate::advancements::Frame::Goal => ("has reached the goal", "§a"),
+                    crate::advancements::Frame::Challenge => ("has completed the challenge", "§5"),
+                };
+                let line = format!("{} {made} {color}[{}]", self.player.name, def.title);
+                self.chat_out.push(line);
             }
         }
     }
 
     /// What the dimension is called in the data: `the_nether`.
-    fn dimension_slug(dimension: Dimension) -> String {
+    pub(super) fn dimension_slug(dimension: Dimension) -> String {
         crate::world::block::strip_namespace(dimension.name()).to_owned()
     }
 

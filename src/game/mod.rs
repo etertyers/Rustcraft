@@ -9,6 +9,7 @@ mod benches;
 mod boats;
 mod capture;
 mod combat;
+pub mod commands;
 mod containers;
 mod dimensions;
 mod dragon;
@@ -132,6 +133,8 @@ pub enum ShotScreen {
     Creative(usize),
     /// Options → Controls → Key Binds over the paused game.
     KeyBinds,
+    /// Chat open with this typed (M38).
+    Chat(&'static str),
 }
 
 /// Slots in an ender chest (a single chest's).
@@ -143,6 +146,10 @@ pub const ENDER_CHEST_SLOTS: usize = 27;
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// Where `/spawnpoint` put their respawn (a bed slept in takes over).
+    pub spawn_point: Option<glam::IVec3>,
+    /// Their death has been told in chat (until they respawn).
+    pub death_told: bool,
     /// They've seen the poem and credits (each player does, the first time
     /// they leave the End).
     pub seen_credits: bool,
@@ -277,6 +284,8 @@ impl PlayerState {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
             seen_credits: false,
+            spawn_point: None,
+            death_told: false,
             dimension: crate::world::dimension::Dimension::Overworld,
             travel: None,
             heard: Vec::new(),
@@ -364,6 +373,14 @@ pub struct Game {
     /// The world's game rules.
     pub rules: crate::level::GameRules,
     pub difficulty: crate::level::Difficulty,
+    /// Commands are allowed in this world (chosen when it was made).
+    pub cheats: bool,
+    /// The time of day less the tick count (`/time`, sleeping and
+    /// `doDaylightCycle` move it).
+    pub day_offset: i64,
+    /// Lines for everyone's chat: deaths and advancements (a server sends
+    /// them on).
+    pub chat_out: Vec<String>,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     /// Experience orbs lying around.
@@ -476,6 +493,9 @@ impl Game {
             spawn,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),
+            cheats: false,
+            day_offset: 0,
+            chat_out: Vec::new(),
             entities: Vec::new(),
             orbs: Vec::new(),
             particles: Vec::new(),
@@ -561,12 +581,15 @@ impl Game {
             player: player.clone(),
             dimension: level.dimension,
             seen_credits: level.end.credits_seen,
+            spawn_point: None,
             ender_chest: Vec::new(),
             advancements: level.advancements.clone(),
             recipe_book: level.recipe_book.clone(),
         });
         game.rules = level.rules.clone();
         game.difficulty = level.difficulty;
+        game.cheats = level.cheats;
+        game.day_offset = level.day_offset;
         game.load_boats(&level.boats);
         game.populated = level
             .populated
@@ -614,6 +637,7 @@ impl Game {
             },
             dimension: p.dimension,
             seen_credits: p.seen_credits,
+            spawn_point: p.spawn_point.map(|at| at.to_array()),
             ender_chest: p.ender_chest.clone(),
             advancements: p.progress.clone(),
             recipe_book: p.recipe_book.clone(),
@@ -639,6 +663,7 @@ impl Game {
         p.ender_chest = file.ender_chest.clone();
         p.dimension = file.dimension;
         p.seen_credits = file.seen_credits;
+        p.spawn_point = file.spawn_point.map(glam::IVec3::from_array);
         p.ender_chest.resize(ENDER_CHEST_SLOTS, None);
         p.progress = file.advancements.clone();
         p.recipe_book = file.recipe_book.clone();
@@ -746,6 +771,8 @@ impl Game {
         saved.level.recipe_book = recipe_book;
         saved.level.rules = self.rules.clone();
         saved.level.difficulty = self.difficulty;
+        saved.level.cheats = self.cheats;
+        saved.level.day_offset = self.day_offset;
         saved.level.boats = boats;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
@@ -793,10 +820,10 @@ impl Game {
             // A dev tool for checking the day cycle: skip an hour ahead.
             #[cfg(debug_assertions)]
             Action::SkipHour if pressed => {
-                self.time += 1000;
+                self.day_offset += 1000;
                 info!(
                     "time skipped to {}",
-                    crate::world::daytime::clock(self.time)
+                    crate::world::daytime::clock(self.day_time())
                 );
             }
             #[cfg(debug_assertions)]
@@ -1029,6 +1056,10 @@ impl Game {
             return;
         }
         self.time += 1;
+        // With `doDaylightCycle` off the time of day holds still.
+        if !self.rules.do_daylight_cycle {
+            self.day_offset -= 1;
+        }
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
             && let Err(err) = self.save()
@@ -1182,6 +1213,13 @@ impl Game {
         self.tick_advancements();
         self.tick_sounds();
         self.on_death();
+        if self.player.stats.is_dead() && !self.player.death_told {
+            self.player.death_told = true;
+            let source = self.player.stats.last_source.unwrap_or(DamageSource::Mob);
+            let attacker = self.player.stats.last_attacker.as_deref();
+            let line = format!("{} {}", self.player.name, source.death_message_by(attacker));
+            self.chat_out.push(line);
+        }
     }
 
     fn move_player(&mut self) {
@@ -1293,6 +1331,7 @@ impl Game {
                 && self.standing_on(crate::world::blocks::MAGMA_BLOCK),
         };
         self.player.stats.difficulty = self.difficulty;
+        self.player.stats.natural_regeneration = self.rules.natural_regeneration;
         self.player.stats.tick(&around, vulnerable);
         if vulnerable {
             self.player.stats.tick_food();
@@ -1354,6 +1393,7 @@ impl Game {
     /// Back beside the bed last slept in, or the world spawn, with full
     /// health and food (1.0.0's respawn).
     pub fn respawn(&mut self) {
+        self.player.death_told = false;
         // Beds and the world spawn are in the Overworld.
         let away = self.dimension != crate::world::dimension::Dimension::Overworld;
         if away {

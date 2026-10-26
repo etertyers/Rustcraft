@@ -142,7 +142,7 @@ impl Game {
                 self.teleport_mob(&mut mobs[index], tp);
                 crate::audio::play("entity.enderman.teleport", mobs[index].feet());
             }
-            if let Some(action) = intent.block {
+            if let Some(action) = intent.block.filter(|_| self.rules.mob_griefing) {
                 self.enderman_block(&mut mobs[index], action);
             }
             if let Some(power) = intent.explode {
@@ -166,7 +166,10 @@ impl Game {
             ranged: false,
             axe: false,
         };
-        match self.hurt_player(strike) {
+        let who = display_name(&self.mob_defs.get(mob.kind).name);
+        let outcome = self.hurt_player(strike);
+        self.player.stats.last_attacker = Some(who);
+        match outcome {
             Outcome::Hurt { fresh: true } => {
                 knock_back(&mut self.player.body, mob.feet());
                 // A wither skeleton's blow withers (modern: 10 s).
@@ -390,4 +393,18 @@ impl Game {
             }
         }
     }
+}
+
+/// A mob's name as players read it: `cave_spider` is "Cave Spider".
+pub fn display_name(name: &str) -> String {
+    name.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

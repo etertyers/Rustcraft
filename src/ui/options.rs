@@ -35,6 +35,7 @@ pub enum Page {
     Controls,
     Mouse,
     KeyBinds,
+    Chat,
     Accessibility,
 }
 
@@ -58,6 +59,7 @@ impl Page {
             Page::Controls => "Controls",
             Page::Mouse => "Mouse Settings",
             Page::KeyBinds => "Key Binds",
+            Page::Chat => "Chat Settings",
             Page::Accessibility => "Accessibility Settings",
         }
     }
@@ -184,6 +186,10 @@ impl OptionsScreen {
                 self.key_binds(ui, &mut options.keys);
                 None
             }
+            Page::Chat => {
+                self.chat(ui, options);
+                None
+            }
             Page::Accessibility => {
                 self.accessibility(ui, options);
                 None
@@ -256,18 +262,15 @@ impl OptionsScreen {
             ("Music & Sounds...", Some(Page::Sounds)),
             ("Video Settings...", Some(Page::Video)),
             ("Controls...", Some(Page::Controls)),
-            ("Chat Settings...", None),
+            ("Chat Settings...", Some(Page::Chat)),
             ("Resource Packs...", None),
             ("Accessibility Settings...", Some(Page::Accessibility)),
         ];
         pairs(ui, "options-pages", |ui, cell| {
             for (label, page) in pages {
                 cell(ui);
-                let chat = label.starts_with("Chat");
-                let response = ui.add_enabled(!chat, Button::new(label).min_size(HALF.into()));
-                if chat {
-                    response.on_disabled_hover_text("Chat arrives with commands");
-                } else if self.clicked(&response) {
+                let response = ui.add(Button::new(label).min_size(HALF.into()));
+                if self.clicked(&response) {
                     match page {
                         Some(page) => self.page = page,
                         None => action = Some(OptionsAction::ResourcePacks),
@@ -461,6 +464,38 @@ impl OptionsScreen {
             );
             cell(ui);
             self.toggle(ui, "Invert Mouse", &mut options.invert_y);
+        });
+    }
+
+    /// Vanilla's Chat Settings: who chat shows, and how it looks.
+    fn chat(&mut self, ui: &mut Ui, options: &mut Options) {
+        let chat = &mut options.chat;
+        pairs(ui, "options-chat", |ui, cell| {
+            cell(ui);
+            let text = format!("Chat: {}", chat.visibility.name());
+            if self.clicked(&ui.add_sized(HALF, Button::new(text))) {
+                chat.visibility = chat.visibility.next();
+            }
+            cell(ui);
+            range_slider(ui, HALF, &mut chat.opacity, 0.1..=1.0, 0.01, |v| {
+                format!("Chat Text Opacity: {}", percent(v))
+            });
+            cell(ui);
+            range_slider(ui, HALF, &mut chat.background, 0.0..=1.0, 0.01, |v| {
+                format!("Text Background Opacity: {}", percent(v))
+            });
+            cell(ui);
+            range_slider(ui, HALF, &mut chat.scale, 0.5..=1.0, 0.01, |v| {
+                format!("Chat Text Size: {}", percent(v))
+            });
+            cell(ui);
+            range_slider(ui, HALF, &mut chat.width, 40.0..=320.0, 1.0, |v| {
+                format!("Width: {}px", v.round())
+            });
+            cell(ui);
+            range_slider(ui, HALF, &mut chat.spacing, 0.0..=1.0, 0.01, |v| {
+                format!("Line Spacing: {}", percent(v))
+            });
         });
     }
 

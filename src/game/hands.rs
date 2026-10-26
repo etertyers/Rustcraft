@@ -772,7 +772,7 @@ impl Game {
                     }
                 }
                 Some(ArrowEvent::HitPlayer { damage }) => {
-                    hits.push((damage, from, arrow.slows, victim));
+                    hits.push((damage, from, arrow.slows, victim, arrow.shooter.clone()));
                 }
                 None => {}
             }
@@ -780,9 +780,10 @@ impl Game {
         for (target, damage) in end_hits {
             self.arrow_strikes_end(target, damage);
         }
-        for (damage, from, slows, victim) in hits {
+        for (damage, from, slows, victim, shooter) in hits {
             self.with_player(victim, |game| {
-                game.arrow_strikes_player(damage, from, slows)
+                game.arrow_strikes_player(damage, from, slows);
+                game.player.stats.last_attacker = shooter;
             });
         }
         arrows.retain(|arrow| !arrow.expired());

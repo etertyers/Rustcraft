@@ -170,6 +170,8 @@ pub struct Options {
     pub keys: Bindings,
     /// The name other players see on LAN (M37).
     pub player_name: String,
+    /// Chat Settings (M38).
+    pub chat: crate::ui::chat::ChatSettings,
     /// Walking into a one-block step jumps it (vanilla's Auto-Jump, off by
     /// default).
     pub auto_jump: bool,
@@ -217,6 +219,7 @@ impl Default for Options {
             resource_packs: Vec::new(),
             keys: Bindings::default(),
             player_name: DEFAULT_NAME.to_owned(),
+            chat: Default::default(),
             auto_jump: false,
             toggle_sneak: false,
             toggle_sprint: false,
@@ -298,6 +301,7 @@ impl Options {
             brightness: self.brightness.clamp(0.0, 1.0),
             resource_packs: self.resource_packs,
             keys: self.keys,
+            chat: self.chat.clamped(),
             player_name: if valid_name(&self.player_name) {
                 self.player_name
             } else {

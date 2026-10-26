@@ -84,6 +84,8 @@ pub enum DamageSource {
     FlyIntoWall,
     /// Another player's blow (M37).
     Player,
+    /// `/kill` (M38).
+    Kill,
 }
 
 impl DamageSource {
@@ -97,6 +99,16 @@ impl DamageSource {
                 | DamageSource::Explosion
                 | DamageSource::Fireball
         )
+    }
+
+    /// The death message for this source when `attacker` did it (vanilla's
+    /// "was slain by Zombie"), or 1.0.0's plain one.
+    pub fn death_message_by(self, attacker: Option<&str>) -> String {
+        match (self, attacker) {
+            (DamageSource::Mob | DamageSource::Player, Some(who)) => format!("was slain by {who}"),
+            (DamageSource::Arrow, Some(who)) => format!("was shot by {who}"),
+            _ => self.death_message().to_owned(),
+        }
     }
 
     /// 1.0.0's death messages.
@@ -118,6 +130,7 @@ impl DamageSource {
             DamageSource::Wither => "withered away",
             DamageSource::FlyIntoWall => "experienced kinetic energy",
             DamageSource::Player => "was slain by another player",
+            DamageSource::Kill => "was killed",
         }
     }
 
@@ -133,7 +146,8 @@ impl DamageSource {
             | DamageSource::HotFloor
             | DamageSource::Fireball
             | DamageSource::Anvil => DAMAGE_EXHAUSTION,
-            DamageSource::Fall
+            DamageSource::Kill
+            | DamageSource::Fall
             | DamageSource::Drowning
             | DamageSource::Fire
             | DamageSource::Magic
@@ -181,9 +195,12 @@ pub struct Stats {
     /// Ticks left of the hurt cooldown, and the hit that started it.
     hurt_cooldown: u32,
     last_damage: f32,
-    /// What last hurt the player.
+    /// What last hurt the player, and who if a mob or player did (for
+    /// the death message).
     #[serde(skip)]
     pub last_source: Option<DamageSource>,
+    #[serde(skip)]
+    pub last_attacker: Option<String>,
     /// Ticks since the player last slept (phantoms come after three days).
     #[serde(default)]
     pub awake: u32,
@@ -200,6 +217,10 @@ pub struct Stats {
     /// The world's difficulty, set by the game each tick.
     #[serde(skip)]
     pub difficulty: crate::level::Difficulty,
+    /// The `naturalRegeneration` rule, set by the game each tick: a full
+    /// food bar heals.
+    #[serde(skip, default = "yes")]
+    pub natural_regeneration: bool,
     /// Extra health from Absorption, used up before health (M26).
     #[serde(default)]
     pub absorption: f32,
@@ -227,11 +248,13 @@ impl Default for Stats {
             hurt_cooldown: 0,
             last_damage: 0.0,
             last_source: None,
+            last_attacker: None,
             awake: 0,
             experience: Default::default(),
             enchant_seed: 0,
             effects: Effects::default(),
             difficulty: Difficulty::default(),
+            natural_regeneration: true,
             absorption: 0.0,
             armor: 0.0,
             toughness: 0.0,
@@ -339,6 +362,12 @@ impl Stats {
         };
         self.last_damage = amount;
         self.last_source = Some(source);
+        if !matches!(
+            source,
+            DamageSource::Mob | DamageSource::Player | DamageSource::Arrow
+        ) {
+            self.last_attacker = None;
+        }
         self.add_exhaustion(source.exhaustion());
         fresh
     }
@@ -467,6 +496,9 @@ impl Stats {
     /// On peaceful, a point of health every second and a point of food
     /// every half second (vanilla `Player.aiStep`).
     pub fn tick_peaceful(&mut self, time: u64) {
+        if !self.natural_regeneration {
+            return;
+        }
         if time.is_multiple_of(20) && self.health < MAX_HEALTH {
             self.heal(1.0);
         }
@@ -491,7 +523,7 @@ impl Stats {
                 self.food = (self.food - 1).max(0);
             }
         }
-        let hurt = self.health < MAX_HEALTH;
+        let hurt = self.health < MAX_HEALTH && self.natural_regeneration;
         if hurt && self.food >= MAX_FOOD && self.saturation > 0.0 {
             self.food_timer += 1;
             if self.food_timer >= SATURATED_HEAL_TICKS {
@@ -525,6 +557,10 @@ impl Stats {
             self.food_timer = 0;
         }
     }
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[cfg(test)]

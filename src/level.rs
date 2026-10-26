@@ -82,6 +82,13 @@ pub struct Level {
     /// Set in the Options screen (added in M35; `/difficulty` in M38).
     #[serde(default)]
     pub difficulty: Difficulty,
+    /// Cheats (commands) allowed, chosen when the world was made (M38).
+    #[serde(default)]
+    pub cheats: bool,
+    /// How far the time of day is from the game's tick count (`/time`,
+    /// sleeping and `doDaylightCycle` move it; M38).
+    #[serde(default)]
+    pub day_offset: i64,
 }
 
 /// Vanilla's difficulties: how hard mobs hit and how far hunger goes.
@@ -129,14 +136,98 @@ impl Difficulty {
     }
 }
 
-/// Vanilla's game rules, as far as the game has them.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Vanilla's game rules, as far as the game has them (`/gamerule`, M38).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameRules {
-    /// The player keeps their items and experience on death (vanilla's
-    /// `keepInventory`, off by default).
+    /// Players keep their items and experience on death (off by default).
     #[serde(rename = "keepInventory")]
     pub keep_inventory: bool,
+    /// The sun and moon move.
+    #[serde(rename = "doDaylightCycle")]
+    pub do_daylight_cycle: bool,
+    /// Mobs spawn by themselves (spawners still work).
+    #[serde(rename = "doMobSpawning")]
+    pub do_mob_spawning: bool,
+    /// Creepers and fireballs break blocks; endermen move them.
+    #[serde(rename = "mobGriefing")]
+    pub mob_griefing: bool,
+    /// Fire spreads and burns out.
+    #[serde(rename = "doFireTick")]
+    pub do_fire_tick: bool,
+    /// Random block ticks a section gets each tick (crops, leaves, fire).
+    #[serde(rename = "randomTickSpeed")]
+    pub random_tick_speed: u32,
+    /// A full food bar heals.
+    #[serde(rename = "naturalRegeneration")]
+    pub natural_regeneration: bool,
+}
+
+impl Default for GameRules {
+    fn default() -> Self {
+        Self {
+            keep_inventory: false,
+            do_daylight_cycle: true,
+            do_mob_spawning: true,
+            mob_griefing: true,
+            do_fire_tick: true,
+            random_tick_speed: 3,
+            natural_regeneration: true,
+        }
+    }
+}
+
+impl GameRules {
+    /// The rules by vanilla's names, for `/gamerule`.
+    pub const NAMES: [&'static str; 7] = [
+        "keepInventory",
+        "doDaylightCycle",
+        "doMobSpawning",
+        "mobGriefing",
+        "doFireTick",
+        "randomTickSpeed",
+        "naturalRegeneration",
+    ];
+
+    /// A rule's value as `/gamerule` shows it.
+    pub fn get(&self, name: &str) -> Option<String> {
+        Some(match name {
+            "keepInventory" => self.keep_inventory.to_string(),
+            "doDaylightCycle" => self.do_daylight_cycle.to_string(),
+            "doMobSpawning" => self.do_mob_spawning.to_string(),
+            "mobGriefing" => self.mob_griefing.to_string(),
+            "doFireTick" => self.do_fire_tick.to_string(),
+            "randomTickSpeed" => self.random_tick_speed.to_string(),
+            "naturalRegeneration" => self.natural_regeneration.to_string(),
+            _ => return None,
+        })
+    }
+
+    /// Sets a rule from `/gamerule`'s text; the error says what's wrong.
+    pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
+        let flag = || match value {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(format!(
+                "Invalid boolean, expected 'true' or 'false' but found '{value}'"
+            )),
+        };
+        match name {
+            "keepInventory" => self.keep_inventory = flag()?,
+            "doDaylightCycle" => self.do_daylight_cycle = flag()?,
+            "doMobSpawning" => self.do_mob_spawning = flag()?,
+            "mobGriefing" => self.mob_griefing = flag()?,
+            "doFireTick" => self.do_fire_tick = flag()?,
+            "naturalRegeneration" => self.natural_regeneration = flag()?,
+            "randomTickSpeed" => {
+                self.random_tick_speed = value
+                    .parse()
+                    .map_err(|_| format!("Invalid integer '{value}'"))?;
+            }
+            _ => return Err(format!("Unknown game rule: {name}")),
+        }
+        Ok(())
+    }
 }
 
 /// The End as the world remembers it (added in M27).
@@ -205,6 +296,10 @@ pub struct PlayerFile {
     /// They've seen the poem and credits.
     #[serde(default)]
     pub seen_credits: bool,
+    /// Where `/spawnpoint` put their respawn, if it did (a bed slept in
+    /// since takes over).
+    #[serde(default)]
+    pub spawn_point: Option<[i32; 3]>,
     #[serde(default)]
     pub ender_chest: Vec<Option<crate::inventory::stack::ItemStack>>,
     #[serde(default)]
@@ -243,6 +338,8 @@ impl Level {
             rules: GameRules::default(),
             boats: Vec::new(),
             difficulty: Difficulty::default(),
+            cheats: false,
+            day_offset: 0,
         }
     }
 }

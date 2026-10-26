@@ -23,9 +23,6 @@ use crate::config::CHUNK_SIZE;
 const MAX_AGE: u8 = 15;
 /// Normal difficulty, which makes fire spread a little faster.
 const DIFFICULTY: i32 = 2;
-/// Random ticks per 16-block section each game tick (modern
-/// `randomTickSpeed`).
-const RANDOM_TICKS: u32 = 3;
 const NEIGHBORS: [IVec3; 6] = [
     IVec3::NEG_X,
     IVec3::X,
@@ -136,6 +133,7 @@ impl Fires {
         blocks: &BlockRegistry,
         time: u64,
         near: &[ChunkPos],
+        random_ticks: u32,
         random: &mut dyn FnMut(u32) -> u32,
     ) -> Vec<(IVec3, BlockState)> {
         let changed = std::mem::take(&mut self.changed);
@@ -166,7 +164,7 @@ impl Fires {
             step.update(at);
         }
         for &pos in near {
-            step.random_ticks(pos);
+            step.random_ticks(pos, random_ticks);
         }
         let Step { edits, order, .. } = step;
         order.into_iter().map(|at| (at, edits[&at])).collect()
@@ -346,14 +344,15 @@ impl Step<'_> {
 
     /// Random ticks in one chunk: a few random cells per section, and the
     /// lava among them may start fires.
-    fn random_ticks(&mut self, pos: ChunkPos) {
+    /// `count` is the `randomTickSpeed` rule (3).
+    fn random_ticks(&mut self, pos: ChunkPos, count: u32) {
         let world = self.world;
         let Some(chunk) = world.get(pos) else {
             return;
         };
         let (min_x, min_z) = pos.min_block();
         for section in (0..SECTION_COUNT).filter(|&s| !chunk.section_is_empty(s)) {
-            for _ in 0..RANDOM_TICKS {
+            for _ in 0..count {
                 let x = (self.random)(CHUNK_SIZE as u32) as i32;
                 let y = crate::world::chunk::section_bottom(section)
                     + (self.random)(SECTION_SIZE as u32) as i32;
@@ -473,9 +472,9 @@ mod tests {
                     *seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
                     (*seed >> 16) % n
                 };
-                let edits = self
-                    .fires
-                    .tick(&self.world, self.blocks, self.time, near, &mut random);
+                let edits =
+                    self.fires
+                        .tick(&self.world, self.blocks, self.time, near, 3, &mut random);
                 for (at, block) in edits {
                     self.set(at, block);
                 }

@@ -1203,3 +1203,22 @@ fn a_zombie_goes_for_the_nearest_player_it_may_attack() {
     assert!(game.others[0].stats.health < 20.0, "the guest was hit");
     assert_eq!(game.player.stats.health, 20.0, "the host wasn't");
 }
+
+#[test]
+fn a_death_is_told_with_who_did_it() {
+    let mut game = night_game(GameMode::Survival);
+    game.player.name = "Kenzo".to_owned();
+    game.player.stats.health = 1.0;
+    spawn(&mut game, "zombie", 2.5, 0.5);
+    for _ in 0..200 {
+        game.tick();
+        if game.player.stats.is_dead() {
+            break;
+        }
+    }
+    game.tick();
+    assert_eq!(game.chat_out, ["Kenzo was slain by Zombie"]);
+    game.tick();
+    assert_eq!(game.chat_out.len(), 1, "told once");
+    assert_eq!(super::mob_acts::display_name("cave_spider"), "Cave Spider");
+}

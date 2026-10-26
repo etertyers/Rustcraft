@@ -147,7 +147,8 @@ src/
   net/lan.rs, lantest.rs   # Open to LAN's listener and announcements, the Multiplayer screen's finder; --lan-test's bots
   server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
-  ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
+  ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat)
+  ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
@@ -583,7 +584,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Test with two or more instances of the `.app` on the same Mac (`--world`, `--name <player>` and `--join <ip:port>` flags), and a headless `--lan-test <n>` that connects n bot clients that walk, mine and place for 60 s and reports server tick time and bandwidth. Server ticks must stay under 50 ms with 8 bots.
 - **Done when:** a second Mac on the same Wi-Fi finds the world in the Multiplayer list and joins, and two players can build, fight mobs, trade, travel to the Nether together and kill the dragon. One screenshot: two players side by side.
 
-### - [ ] M38 — Chat and commands
+### - [x] M38 — Chat and commands
 - **Chat:** T opens chat, / opens it with a slash. Messages show as `<name> message`, up to 256 characters, the last 100 lines kept, recent lines fade after 10 s when chat is closed, scroll with the mouse wheel when open, ↑/↓ for your sent history. System lines for deaths (vanilla death messages, e.g. "Kenzo was slain by Zombie"), advancements, join/leave and command output. Chat Settings: visibility, opacity, text size, width, line spacing. Uses the M31 font.
 - **Allow Cheats:** a world option at creation (default off) and in Open to LAN. Without cheats, only harmless commands run: `/help`, `/list`, `/msg` (`/tell`, `/w`), `/me`, `/seed` (host only).
 - **Cheat commands (vanilla syntax, with Tab completion and red error messages):** `/gamemode`, `/give`, `/clear`, `/tp` (`/teleport`), `/time`, `/weather` (if weather exists), `/kill`, `/effect`, `/enchant` (uses the M31 rules), `/xp` (`/experience`), `/summon`, `/setblock`, `/fill`, `/gamerule` (at least `keepInventory`, `doDaylightCycle`, `doMobSpawning`, `mobGriefing`, `doFireTick`, `randomTickSpeed`, `naturalRegeneration`), `/spawnpoint`, `/setworldspawn`, `/locate` (structures and biomes), `/difficulty`, `/kick` (host only). Targets support `@p`, `@a`, `@s`, `@e[type=...]` and player names. Commands run on the server and mods can register more (M39).
