@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::effects::{Active, Effect, Effects};
+use crate::level::Difficulty;
 
 pub const MAX_HEALTH: f32 = 20.0;
 pub const MAX_FOOD: i32 = 20;
@@ -26,8 +27,10 @@ const SATURATED_HEAL_TICKS: u32 = 10;
 const SATURATED_HEAL_MAX: f32 = 6.0;
 /// Food needed to heal over time.
 const HEALING_FOOD: i32 = 18;
-/// Starving stops at this much health on normal difficulty.
+/// Starving stops at this much health on normal difficulty, and at five
+/// hearts on easy; hard starves to death.
 const STARVING_FLOOR: f32 = 1.0;
+const STARVING_FLOOR_EASY: f32 = 10.0;
 /// After a hit, the player can't be hurt again for 10 ticks, except by a
 /// bigger hit, which only deals the difference (1.0.0's `heartsLife`).
 const HURT_COOLDOWN: u32 = 20;
@@ -82,6 +85,18 @@ pub enum DamageSource {
 }
 
 impl DamageSource {
+    /// Mobs' hits, their arrows and fireballs and blasts, which the
+    /// difficulty scales (vanilla's `scalesWithDifficulty`).
+    pub fn scales_with_difficulty(self) -> bool {
+        matches!(
+            self,
+            DamageSource::Mob
+                | DamageSource::Arrow
+                | DamageSource::Explosion
+                | DamageSource::Fireball
+        )
+    }
+
     /// 1.0.0's death messages.
     pub fn death_message(self) -> &'static str {
         match self {
@@ -178,6 +193,9 @@ pub struct Stats {
     /// Status effects (added in M26).
     #[serde(default)]
     pub effects: Effects,
+    /// The world's difficulty, set by the game each tick.
+    #[serde(skip)]
+    pub difficulty: crate::level::Difficulty,
     /// Extra health from Absorption, used up before health (M26).
     #[serde(default)]
     pub absorption: f32,
@@ -209,6 +227,7 @@ impl Default for Stats {
             experience: Default::default(),
             enchant_seed: 0,
             effects: Effects::default(),
+            difficulty: Difficulty::default(),
             absorption: 0.0,
             armor: 0.0,
             toughness: 0.0,
@@ -261,6 +280,11 @@ impl Stats {
     /// fresh hit (which knocks back and flashes), false if it was absorbed
     /// or only topped up the last one.
     pub fn damage(&mut self, amount: f32, source: DamageSource) -> bool {
+        let amount = if source.scales_with_difficulty() {
+            self.difficulty.scale_damage(amount)
+        } else {
+            amount
+        };
         if self.is_dead() || amount <= 0.0 {
             return false;
         }
@@ -313,6 +337,12 @@ impl Stats {
         self.last_source = Some(source);
         self.add_exhaustion(source.exhaustion());
         fresh
+    }
+
+    /// Ticks left of the hurt shake after a fresh hit, 10 down to 0
+    /// (vanilla's `hurtTime`).
+    pub fn hurt_ticks(&self) -> u32 {
+        self.hurt_cooldown.saturating_sub(HURT_COOLDOWN / 2)
     }
 
     /// One tick of falling, drowning and burning. `vulnerable` is false in
@@ -430,7 +460,22 @@ impl Stats {
         }
     }
 
-    /// A tick of hunger: modern `FoodData.tick` on normal difficulty.
+    /// On peaceful, a point of health every second and a point of food
+    /// every half second (vanilla `Player.aiStep`).
+    pub fn tick_peaceful(&mut self, time: u64) {
+        if time.is_multiple_of(20) && self.health < MAX_HEALTH {
+            self.heal(1.0);
+        }
+        if time.is_multiple_of(20) && self.saturation < MAX_FOOD as f32 {
+            self.saturation = (self.saturation + 1.0).min(self.food as f32);
+        }
+        if time.is_multiple_of(10) && self.food < MAX_FOOD {
+            self.food += 1;
+        }
+    }
+
+    /// A tick of hunger: modern `FoodData.tick`, with the difficulty's
+    /// starving floor.
     /// A full bar with saturation heals fast and burns the saturation; 18+
     /// food heals a point every 4 seconds; an empty bar starves.
     pub fn tick_food(&mut self) {
@@ -461,7 +506,13 @@ impl Stats {
         } else if self.food <= 0 {
             self.food_timer += 1;
             if self.food_timer >= FOOD_TIMER_TICKS {
-                if self.health > STARVING_FLOOR {
+                let floor = match self.difficulty {
+                    Difficulty::Peaceful => MAX_HEALTH,
+                    Difficulty::Easy => STARVING_FLOOR_EASY,
+                    Difficulty::Normal => STARVING_FLOOR,
+                    Difficulty::Hard => 0.0,
+                };
+                if self.health > floor {
                     self.damage(1.0, DamageSource::Starving);
                 }
                 self.food_timer = 0;
@@ -475,6 +526,58 @@ impl Stats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_difficulty_scales_mob_hits_and_sets_how_far_starving_goes() {
+        let hit = |difficulty, amount, source| {
+            let mut stats = Stats {
+                difficulty,
+                ..Stats::default()
+            };
+            stats.damage(amount, source);
+            MAX_HEALTH - stats.health
+        };
+        assert_eq!(hit(Difficulty::Peaceful, 6.0, DamageSource::Mob), 0.0);
+        assert_eq!(hit(Difficulty::Easy, 6.0, DamageSource::Mob), 4.0);
+        assert_eq!(hit(Difficulty::Easy, 1.0, DamageSource::Arrow), 1.0);
+        assert_eq!(hit(Difficulty::Normal, 6.0, DamageSource::Mob), 6.0);
+        assert_eq!(hit(Difficulty::Hard, 6.0, DamageSource::Explosion), 9.0);
+        // Falling doesn't care.
+        assert_eq!(hit(Difficulty::Hard, 6.0, DamageSource::Fall), 6.0);
+        for (difficulty, floor) in [
+            (Difficulty::Easy, 10.0),
+            (Difficulty::Normal, 1.0),
+            (Difficulty::Hard, 0.0),
+        ] {
+            let mut stats = Stats {
+                food: 0,
+                saturation: 0.0,
+                difficulty,
+                ..Stats::default()
+            };
+            for _ in 0..80 * 25 {
+                stats.hurt_cooldown = 0;
+                stats.tick_food();
+            }
+            assert_eq!(stats.health, floor, "{difficulty:?}");
+        }
+    }
+
+    #[test]
+    fn peaceful_brings_back_health_and_food() {
+        let mut stats = Stats {
+            health: 10.0,
+            food: 4,
+            saturation: 0.0,
+            ..Stats::default()
+        };
+        for time in 1..=40 {
+            stats.tick_peaceful(time);
+        }
+        assert_eq!(stats.health, 12.0);
+        assert_eq!(stats.food, 8);
+        assert!(stats.saturation > 0.0 && stats.saturation <= stats.food as f32);
+    }
 
     const GROUND: Surroundings = Surroundings {
         on_ground: true,

@@ -7,6 +7,7 @@ pub mod app;
 pub mod assets;
 pub mod audio;
 pub mod bench;
+pub mod bindings;
 pub mod cli;
 pub mod config;
 pub mod credits;

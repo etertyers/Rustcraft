@@ -31,6 +31,9 @@ pub struct MoveInput {
     pub look_y: f64,
     /// Eating, drinking or drawing a bow slows the player to a fifth.
     pub using_item: bool,
+    /// The Auto-Jump option: walking into a block a jump would clear
+    /// jumps on the next tick.
+    pub auto_jump: bool,
 }
 
 impl MoveInput {
@@ -43,6 +46,7 @@ impl MoveInput {
         sprint: false,
         look_y: 0.0,
         using_item: false,
+        auto_jump: false,
     };
 }
 
@@ -57,6 +61,10 @@ pub enum Pose {
     Swimming,
 }
 
+/// How high a jump lifts the feet (1.25 blocks from a 0.42 jump), and how
+/// far ahead Auto-Jump looks for room once up there.
+const AUTO_JUMP_HEIGHT: f64 = 1.25;
+const AUTO_JUMP_REACH: f64 = 0.3;
 /// A second forward press within this many ticks starts sprinting.
 const SPRINT_DOUBLE_TAP_TICKS: u8 = 7;
 /// Acceleration at full input in water or lava (modern `moveRelative`
@@ -164,6 +172,8 @@ pub struct Body {
     sprint_tap_timer: u8,
     was_jumping: bool,
     fly_tap_timer: u8,
+    /// Auto-Jump found a ledge to jump on the next tick.
+    auto_jump_next: bool,
     /// Height of the hitbox and of the eyes when standing.
     height: f64,
     eye: f64,
@@ -204,6 +214,7 @@ impl Body {
             sprint_tap_timer: 0,
             was_jumping: false,
             fly_tap_timer: 0,
+            auto_jump_next: false,
             speed_factor: 1.0,
             jump_bonus: 0.0,
             slow_falling: false,
@@ -315,6 +326,12 @@ impl Body {
         } else {
             self.update_flight(input.jump);
         }
+        // Auto-Jump's jump moves the body but never counts as a tap
+        // towards flying.
+        let input = &MoveInput {
+            jump: input.jump || std::mem::take(&mut self.auto_jump_next),
+            ..*input
+        };
         self.sneaking = input.sneak && !self.flying;
         if self.fall_flying && (self.flying || self.on_ground || self.liquid.is_some()) {
             self.fall_flying = false;
@@ -459,7 +476,19 @@ impl Body {
             }
         }
         let vertical = self.velocity.y;
+        let (wanted, grounded) = (self.velocity, self.on_ground);
         self.move_by(self.velocity, world);
+        if input.auto_jump
+            && grounded
+            && self.collided_horizontally
+            && input.forward > 0.0
+            && !self.sneaking
+            && !self.flying
+            && !self.on_climbable
+            && self.liquid.is_none()
+        {
+            self.auto_jump_next = self.jump_would_clear(wanted, world);
+        }
         if self.on_ground && !self.flying {
             self.land(vertical, world);
         }
@@ -692,6 +721,24 @@ impl Body {
         }
         let (x, y, z) = self.cell_below();
         world.slipperiness(x, y, z) as f64 * AIR_FRICTION
+    }
+
+    /// Whether a jump would carry the body over what stopped it going
+    /// along `wanted`: room to rise a jump's height, and then room ahead.
+    fn jump_would_clear(&self, wanted: DVec3, world: &impl Collider) -> bool {
+        let flat = DVec3::new(wanted.x, 0.0, wanted.z).normalize_or_zero();
+        if flat == DVec3::ZERO {
+            return false;
+        }
+        let mut boxes = Vec::new();
+        let up = DVec3::Y * AUTO_JUMP_HEIGHT;
+        let (rose, raised) = sweep(self.bb, up, world, &mut boxes);
+        if rose.y < up.y {
+            return false;
+        }
+        let ahead = flat * AUTO_JUMP_REACH;
+        let (moved, _) = sweep(raised, ahead, world, &mut boxes);
+        moved.x.hypot(moved.z) >= AUTO_JUMP_REACH - 1e-6
     }
 
     /// Moves by `wanted`, stopping at solid blocks and stepping up ledges.
@@ -1095,6 +1142,45 @@ mod tests {
         }
         assert_eq!(body.position().y, 64.0);
         assert!(body.position().z > -2.0 + 0.29);
+    }
+
+    #[test]
+    fn auto_jump_hops_onto_a_block_but_not_a_wall() {
+        let walk = MoveInput {
+            auto_jump: true,
+            ..FORWARD
+        };
+        let mut world = TestWorld::floor(Kind::Full);
+        for x in -2..3 {
+            for z in -20..-1 {
+                world.set(x, 64, z, Kind::Full);
+            }
+        }
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..40 {
+            body.tick(&walk, 0.0, &world);
+        }
+        assert_eq!(body.position().y, 65.0, "climbed onto the block");
+        assert!(body.position().z < -1.0, "{}", body.position());
+        // Two blocks high is a wall.
+        for x in -2..3 {
+            world.set(x, 65, -2, Kind::Full);
+        }
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..40 {
+            body.tick(&walk, 0.0, &world);
+            assert!(body.position().y < 64.5, "never jumped");
+        }
+        // Off, walking into one block doesn't jump either.
+        let mut world = TestWorld::floor(Kind::Full);
+        for x in -2..3 {
+            world.set(x, 64, -2, Kind::Full);
+        }
+        let mut body = standing_at(0.5, 0.5);
+        for _ in 0..40 {
+            body.tick(&FORWARD, 0.0, &world);
+        }
+        assert_eq!(body.position().y, 64.0);
     }
 
     #[test]

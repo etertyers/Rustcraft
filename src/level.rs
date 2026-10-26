@@ -77,6 +77,54 @@ pub struct Level {
     /// Boats, in every dimension (added in M32).
     #[serde(default)]
     pub boats: Vec<crate::entity::boat::SavedBoat>,
+    /// Set in the Options screen (added in M35; `/difficulty` in M38).
+    #[serde(default)]
+    pub difficulty: Difficulty,
+}
+
+/// Vanilla's difficulties: how hard mobs hit and how far hunger goes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Difficulty {
+    /// No monsters; health and food come back by themselves.
+    Peaceful,
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+}
+
+impl Difficulty {
+    pub const ALL: [Difficulty; 4] = [
+        Difficulty::Peaceful,
+        Difficulty::Easy,
+        Difficulty::Normal,
+        Difficulty::Hard,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Difficulty::Peaceful => "Peaceful",
+            Difficulty::Easy => "Easy",
+            Difficulty::Normal => "Normal",
+            Difficulty::Hard => "Hard",
+        }
+    }
+
+    /// The Options screen's button goes round them in order.
+    pub fn next(self) -> Difficulty {
+        Difficulty::ALL[(self as usize + 1) % Difficulty::ALL.len()]
+    }
+
+    /// A mob's or a blast's hit on a player (vanilla `Player.hurt` for
+    /// damage that `scalesWithDifficulty`).
+    pub fn scale_damage(self, amount: f32) -> f32 {
+        match self {
+            Difficulty::Peaceful => 0.0,
+            Difficulty::Easy => (amount / 2.0 + 1.0).min(amount),
+            Difficulty::Normal => amount,
+            Difficulty::Hard => amount * 1.5,
+        }
+    }
 }
 
 /// Vanilla's game rules, as far as the game has them.
@@ -172,6 +220,7 @@ impl Level {
             recipe_book: Default::default(),
             rules: GameRules::default(),
             boats: Vec::new(),
+            difficulty: Difficulty::default(),
         }
     }
 }

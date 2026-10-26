@@ -45,14 +45,26 @@ impl FaceTexture {
     }
 }
 
+/// Faces a block hides besides those against full opaque cubes (one field,
+/// so a block's model stays small enough to mesh quickly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cull {
+    Nothing,
+    /// Faces between two blocks of the same kind (glass, ice).
+    Same,
+    /// Leaves: between two leaves with Fast graphics, which draws them
+    /// solid.
+    Leaves,
+}
+
 /// Everything the mesher needs to know about one block state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockModel {
     pub shape: Shape,
     /// Hides any face touching it.
     pub opaque_cube: bool,
-    /// Hides faces between two blocks of the same kind.
-    pub cull_same: bool,
+    /// Which neighbors' faces it hides beyond full opaque cubes.
+    pub cull: Cull,
     /// Light lost passing through it, 0–15.
     pub opacity: u8,
     /// Light it gives off, 0–15.
@@ -271,7 +283,13 @@ fn build_model(
     BlockModel {
         shape: def.shape,
         opaque_cube: def.is_opaque_cube_state(state),
-        cull_same: def.cull_same,
+        cull: if state.kind() == crate::world::blocks::OAK_LEAVES {
+            Cull::Leaves
+        } else if def.cull_same {
+            Cull::Same
+        } else {
+            Cull::Nothing
+        },
         opacity: def.light_opacity_for(state),
         emission: def.light_for(state),
         translucent: def.layer == RenderLayer::Translucent,
@@ -290,6 +308,12 @@ pub struct ChunkArea {
     chunks: [[Option<Arc<Chunk>>; 3]; 3],
     /// Biome blend radius in columns (0 is off).
     pub blend: i32,
+    /// Smooth Lighting: light and shade blend across each face; off, a
+    /// face has the light of the block in front of it.
+    pub smooth: bool,
+    /// Fast graphics: leaves are drawn solid, hiding the faces between
+    /// them.
+    pub fast_leaves: bool,
 }
 
 impl ChunkArea {
@@ -305,6 +329,8 @@ impl ChunkArea {
         Self {
             chunks,
             blend: config::BIOME_BLEND,
+            smooth: true,
+            fast_leaves: false,
         }
     }
 
@@ -404,6 +430,20 @@ impl Mesh {
         self.quad_uvs(corners, uvs, colors, lights);
     }
 
+    /// `quad` with a texture coordinate per corner, drawn in the blended
+    /// pass.
+    pub fn translucent_quad(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uvs: [[f32; 2]; 4],
+        colors: [[f32; 3]; 4],
+        lights: [[f32; 2]; 4],
+    ) {
+        let was = std::mem::replace(&mut self.adding_translucent, true);
+        self.quad_uvs(corners, uvs, colors, lights);
+        self.adding_translucent = was;
+    }
+
     /// `quad` with a texture coordinate per corner.
     fn quad_uvs(
         &mut self,
@@ -454,6 +494,19 @@ impl Mesh {
     }
 }
 
+/// Added to a vertex's block light to have the shader draw its face solid
+/// (`SOLID_FLAG` in shader.wgsl): Fast graphics' leaves.
+pub const SOLID_FLAG: f32 = 32.0;
+
+/// Flags the vertices from `first` on for the shader to draw without
+/// cutting out see-through pixels: Fast graphics' leaves.
+#[cold]
+fn solid_faces(mesh: &mut Mesh, first: usize) {
+    for vertex in &mut mesh.vertices[first..] {
+        vertex.light[1] += SOLID_FLAG;
+    }
+}
+
 /// 1.0.0's ambient occlusion value for a block next to a vertex.
 fn occlusion(opaque: bool) -> f32 {
     if opaque { 0.2 } else { 1.0 }
@@ -488,6 +541,9 @@ fn smooth_face(
     };
     let light_at = |p: [i32; 3]| light.get(p[0], p[1], p[2]);
     let front_light = light_at(front);
+    if !area.smooth {
+        return [(1.0, [front_light.0 as f32, front_light.1 as f32]); 4];
+    }
     face_corners(face).map(|corner| {
         let step = |p: [i32; 3], axis: usize| {
             let mut p = p;
@@ -839,7 +895,7 @@ fn mesh_liquid(
         let visible = if face == Face::Top {
             !same_above && neighbor.is_some()
         } else {
-            face_visible(models, block, model, neighbor)
+            face_visible(models, block, model, neighbor, area.fast_leaves)
         };
         if !visible {
             continue;
@@ -934,6 +990,7 @@ fn face_visible(
     block: BlockState,
     model: &BlockModel,
     neighbor: Option<BlockState>,
+    fast_leaves: bool,
 ) -> bool {
     // Unloaded chunks and the world floor hide faces; the face is rebuilt
     // when the neighbor chunk arrives.
@@ -951,7 +1008,12 @@ fn face_visible(
     if model.fluid.is_some() && other.fluid == model.fluid {
         return false;
     }
-    !(model.cull_same && neighbor.id() == block.id())
+    match model.cull {
+        Cull::Nothing => true,
+        Cull::Same => neighbor.id() != block.id(),
+        // Solid leaves hide each other.
+        Cull::Leaves => !(fast_leaves && other.cull == Cull::Leaves),
+    }
 }
 
 /// Where a face's corner `p` (block-relative) falls on its texture, 0–1
@@ -1009,7 +1071,7 @@ fn mesh_box(
         };
         if on_edge {
             let neighbor = area.get(x + normal[0], y + normal[1], z + normal[2]);
-            if !face_visible(models, block, model, neighbor) {
+            if !face_visible(models, block, model, neighbor, area.fast_leaves) {
                 continue;
             }
         }
@@ -1077,7 +1139,7 @@ fn mesh_cactus(
         let normal = face.normal();
         if face == Face::Top || face == Face::Bottom {
             let neighbor = area.get(x + normal[0], y + normal[1], z + normal[2]);
-            if !face_visible(models, block, model, neighbor) {
+            if !face_visible(models, block, model, neighbor, area.fast_leaves) {
                 continue;
             }
         }
@@ -1262,7 +1324,15 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 let [dx, dy, dz] = face.normal();
                                 let neighbor = area.get(x as i32 + dx, y + dy, z as i32 + dz);
                                 let inset = matches!(face, Face::Top | Face::Bottom);
-                                if !inset && !face_visible(models, block, model, neighbor) {
+                                if !inset
+                                    && !face_visible(
+                                        models,
+                                        block,
+                                        model,
+                                        neighbor,
+                                        area.fast_leaves,
+                                    )
+                                {
                                     continue;
                                 }
                                 let color = side_color.map(|c| c * face.shade());
@@ -1322,6 +1392,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                         }
                         Shape::Cube => {
                             let cell = [x as i32, y, z as i32];
+                            let first = mesh.vertices.len();
                             mesh_box(
                                 &mut mesh,
                                 models,
@@ -1335,6 +1406,9 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                                 &model.faces,
                                 Cuboid::FULL,
                             );
+                            if model.cull == Cull::Leaves && area.fast_leaves {
+                                solid_faces(&mut mesh, first);
+                            }
                         }
                         Shape::Cactus => {
                             let cell = [x as i32, y, z as i32];
@@ -1408,6 +1482,15 @@ mod tests {
     /// Meshes chunk (0, 0) after placing `blocks`; `neighbors` adds stone-free
     /// empty chunks around it (or none, to leave them unloaded).
     fn mesh_with(blocks: &[(i32, i32, i32, BlockState)], neighbors: bool) -> Mesh {
+        mesh_set(blocks, neighbors, |_| {})
+    }
+
+    /// Like `mesh_with`, with the area's settings changed by `set`.
+    fn mesh_set(
+        blocks: &[(i32, i32, i32, BlockState)],
+        neighbors: bool,
+        set: impl FnOnce(&mut ChunkArea),
+    ) -> Mesh {
         let mut chunks: std::collections::HashMap<ChunkPos, Chunk> = Default::default();
         for dz in -1..=1 {
             for dx in -1..=1 {
@@ -1431,7 +1514,8 @@ mod tests {
         let mut chunks: std::collections::HashMap<_, _> =
             chunks.into_iter().map(|(p, c)| (p, Arc::new(c))).collect();
         let center = chunks.remove(&ChunkPos::new(0, 0)).unwrap();
-        let area = ChunkArea::new(center, |pos| chunks.get(&pos).cloned());
+        let mut area = ChunkArea::new(center, |pos| chunks.get(&pos).cloned());
+        set(&mut area);
         let models = models();
         mesh_chunk(&models, &area, &light_chunk(&models, &area))
     }
@@ -1667,6 +1751,43 @@ mod tests {
             quads(&mesh_with(&[(5, 64, 5, LEAVES), (6, 64, 5, LEAVES)], true)),
             12
         );
+    }
+
+    #[test]
+    fn fast_graphics_draws_leaves_solid_hiding_the_faces_between_them() {
+        let pair = [(5, 64, 5, LEAVES), (6, 64, 5, LEAVES)];
+        let mesh = mesh_set(&pair, true, |area| area.fast_leaves = true);
+        assert_eq!(quads(&mesh), 10);
+        assert!(mesh.vertices.iter().all(|v| v.light[1] >= SOLID_FLAG));
+        // Leaves still don't hide the faces of what's next to them.
+        let mesh = mesh_set(&[(5, 64, 5, LEAVES), (6, 64, 5, STONE)], true, |area| {
+            area.fast_leaves = true
+        });
+        assert_eq!(quads(&mesh), 11);
+    }
+
+    #[test]
+    fn without_smooth_lighting_a_face_has_one_light_and_no_shadowed_corners() {
+        // A block in a corner: its top's corners are shaded by the walls.
+        let blocks = [(5, 64, 5, STONE), (4, 65, 5, STONE), (5, 65, 4, STONE)];
+        // The quad whose four corners are all on the block's top.
+        let top = |mesh: &Mesh| -> Vec<[f32; 3]> {
+            let on_top = |v: &Vertex| {
+                let [x, y, z] = v.position;
+                y == 65.0 && (5.0..=6.0).contains(&x) && (5.0..=6.0).contains(&z)
+            };
+            mesh.vertices
+                .chunks(4)
+                .find(|quad| quad.iter().all(on_top))
+                .expect("the top face")
+                .iter()
+                .map(|v| v.color)
+                .collect()
+        };
+        let smooth = top(&mesh_with(&blocks, true));
+        assert!(smooth.iter().any(|c| c != &smooth[0]), "corners differ");
+        let flat = top(&mesh_set(&blocks, true, |area| area.smooth = false));
+        assert!(flat.iter().all(|c| c == &flat[0]), "{flat:?}");
     }
 
     #[test]

@@ -25,6 +25,7 @@ use crate::{
     assets,
     audio::{Audio, Listener},
     bench::{self, Bench, FrameTimes},
+    bindings::{Action, Input},
     config,
     entity::mobs::MobRegistry,
     figure::{self, Figure, PlayerMeshes},
@@ -50,9 +51,9 @@ use crate::{
         camera::Camera,
         crack,
         entities::{
-            EffectUvs, add_cart_blocks, add_crystal_beams, add_dragon_fireballs, add_effects,
-            add_eyes, add_falling_blocks, add_fireballs, add_gateway_beams, add_orbs,
-            add_particles, add_primed_tnt, item_mesh,
+            EffectUvs, Shadow, add_cart_blocks, add_crystal_beams, add_dragon_fireballs,
+            add_effects, add_eyes, add_falling_blocks, add_fireballs, add_gateway_beams, add_orbs,
+            add_particles, add_primed_tnt, add_shadows, item_mesh,
         },
         held::HeldCache,
         icons::ItemIcons,
@@ -178,6 +179,8 @@ pub struct App {
     bench: Option<Bench>,
     /// `--shot`: the scene being captured.
     shot: Option<ShotRun>,
+    /// Hide GUI (F1) is on.
+    hide_gui: bool,
 }
 
 /// How far `--shot` has got with its scene.
@@ -212,6 +215,7 @@ impl App {
             audio: None,
             res: None,
             pause: None,
+            hide_gui: false,
             crack_uvs: Vec::new(),
             effect_uvs: EffectUvs::default(),
             atlas: None,
@@ -308,6 +312,9 @@ impl App {
         // The bench measures how fast frames can go.
         renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
+        renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
+        crate::ui::gui::set_gui_scale(self.options.gui_scale);
+        crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
         self.debug_ui = Some(DebugUi::new(
             &window,
             look.atlas.image(),
@@ -331,6 +338,7 @@ impl App {
         self.renderer = Some(renderer);
         window.request_redraw();
         self.window = Some(window);
+        self.apply_fullscreen();
         Ok(())
     }
 
@@ -509,13 +517,20 @@ impl App {
     /// window; otherwise it reaches the player only while the camera has
     /// the mouse.
     fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        if let Some(screen) = options_screen(&mut self.pause, &mut self.menu) {
+            if pressed && screen.waiting().is_some() {
+                screen.bind(&mut self.options.keys, Some(Input::Mouse(button)));
+                return self.options_changed();
+            }
+            if !pressed {
+                screen.mouse_released();
+            }
+        }
         if pressed && button == MouseButton::Left && self.playing() && self.stack.click_in() {
             return self.apply_grab();
         }
-        if self.stack.reaches_game()
-            && let Some(game) = self.game.as_mut()
-        {
-            game.on_mouse_button(button, pressed);
+        if self.stack.reaches_game() {
+            self.on_input(Input::Mouse(button), pressed, false);
         }
     }
 
@@ -544,6 +559,24 @@ impl App {
         let Some(staged) = self.game.as_ref().and_then(Game::shot_ui) else {
             return;
         };
+        if staged.screen == ShotScreen::KeyBinds {
+            // A conflict (Sneak on W, in red) and Jump waiting for a key.
+            if self.pause.is_none() {
+                use crate::ui::options::{OptionsScreen, Page};
+                let mut screen = OptionsScreen::new(Page::KeyBinds);
+                screen.wait_for(Action::Jump);
+                self.options
+                    .keys
+                    .set(Action::Sneak, Some(Input::Key(KeyCode::KeyW)));
+                self.pause = Some(PauseMenu {
+                    options: Some(screen),
+                    packs: None,
+                });
+                self.stack.push(Layer::Pause);
+                self.apply_grab();
+            }
+            return;
+        }
         if self.screen.is_none() {
             if let ShotScreen::Creative(tab) = staged.screen {
                 self.creative_tab = CreativeTab::Items(tab);
@@ -573,9 +606,16 @@ impl App {
         }
     }
 
-    /// A text box on the open screen has the keyboard: the anvil's name
-    /// box, or the creative inventory's search box on its Search tab.
+    /// A text box has the keyboard: the anvil's name box, the creative
+    /// inventory's search box on its Search tab, or a menu's text box.
     fn types_into_a_box(&self) -> bool {
+        if self
+            .debug_ui
+            .as_ref()
+            .is_some_and(|ui| ui.context().text_edit_focused())
+        {
+            return true;
+        }
         let book_search = matches!(self.screen, Some(Screen::Inventory | Screen::Crafting))
             && self.game.as_ref().is_some_and(|g| g.recipe_book.open)
             && self
@@ -633,52 +673,78 @@ impl App {
             return;
         };
         let pressed = event.state == ElementState::Pressed;
+        self.on_input(Input::Key(key), pressed, event.repeat);
+    }
+
+    /// A key press or release, or a mouse button's while the camera has
+    /// the mouse. Escape is always the menu key, as in vanilla; everything
+    /// else goes through the key bindings.
+    fn on_input(&mut self, input: Input, pressed: bool, repeat: bool) {
+        let actions: Vec<Action> = self.options.keys.actions(input).collect();
+        let is = |action| actions.contains(&action);
+        let escape = input == Input::Key(KeyCode::Escape);
+        let press = pressed && !repeat;
+        // The Key Binds screen is waiting for a key: this is it, or Escape
+        // to unbind.
+        if press
+            && let Some(screen) = options_screen(&mut self.pause, &mut self.menu)
+            && screen.waiting().is_some()
+        {
+            screen.bind(&mut self.options.keys, (!escape).then_some(input));
+            return self.options_changed();
+        }
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
         let rolling = self
             .game
             .as_ref()
             .is_some_and(|g| g.credits_ticks().is_some());
-        if self.advancements.is_some()
-            && pressed
-            && !event.repeat
-            && matches!(key, KeyCode::Escape | KeyCode::KeyL)
+        if escape
+            && press
+            && let Some(menu) = self.menu.as_mut()
         {
+            menu.back();
+        } else if self.advancements.is_some() && press && (escape || is(Action::Advancements)) {
             self.close_advancements();
         } else if self.advancements.is_some() {
             // Nothing else works while it is open.
-        } else if key == KeyCode::KeyL
-            && pressed
-            && !event.repeat
+        } else if is(Action::Advancements)
+            && press
             && self.playing()
             && self.stack.is_empty()
             && !rolling
         {
             self.open_advancements();
-        } else if key == KeyCode::Escape && pressed && !event.repeat && rolling {
+        } else if escape && press && rolling {
             // Skipping the poem and credits goes home.
             if let Some(game) = self.game.as_mut() {
                 game.finish_credits();
             }
         } else if rolling {
             // Nothing else works while they roll.
-        } else if key == KeyCode::Escape && pressed && sleeping {
+        } else if escape && pressed && sleeping {
             if let Some(game) = self.game.as_mut() {
                 game.wake();
             }
-        } else if key == KeyCode::Escape && pressed && self.screen.is_some() {
+        } else if escape && pressed && self.screen.is_some() {
             self.close_screen();
-        } else if key == KeyCode::Escape && pressed && !event.repeat && self.pause.is_some() {
+        } else if escape && press && self.pause.is_some() {
             if self.pause.as_mut().and_then(PauseMenu::back) == Some(PauseAction::Resume) {
                 self.resume();
             }
-        } else if key == KeyCode::Escape && pressed && !event.repeat && self.game.is_some() {
+        } else if escape && press && self.game.is_some() {
             self.pause_game();
-        } else if self.types_into_a_box() && key != KeyCode::F3 {
+        } else if self.types_into_a_box() && !is(Action::DebugOverlay) {
             // The anvil's name box or the creative search box has the
             // keyboard (E and the digits are letters).
-        } else if key == KeyCode::KeyE
-            && pressed
-            && !event.repeat
+        } else if is(Action::Screenshot) && press {
+            self.take_screenshot();
+        } else if is(Action::Fullscreen) && press {
+            self.options.fullscreen = !self.options.fullscreen;
+            self.options_changed();
+        } else if is(Action::HideGui) && press && self.game.is_some() {
+            self.hide_gui = !self.hide_gui;
+        } else if is(Action::Inventory)
+            && press
             && self.game.is_some()
             && self.pause.is_none()
             && !sleeping
@@ -688,12 +754,17 @@ impl App {
             } else {
                 self.open_screen();
             }
-        } else if key == KeyCode::F3 && pressed && !event.repeat {
+        } else if is(Action::DebugOverlay) && press {
             if let Some(debug_ui) = self.debug_ui.as_mut() {
                 debug_ui.toggle();
             }
-        } else if let Some(game) = self.game.as_mut() {
-            game.on_key(key, pressed, event.repeat, self.stack.reaches_game());
+        } else if self.pause.is_none()
+            && let Some(game) = self.game.as_mut()
+        {
+            let grabbed = self.stack.reaches_game();
+            for action in actions {
+                game.on_action(action, pressed, repeat, grabbed);
+            }
         }
     }
 
@@ -790,8 +861,8 @@ impl App {
                 Some("music.menu"),
             ),
         };
-        audio.update(res, &listener, self.options.volume);
-        audio.update_music(res, music, dt, self.options.volume);
+        audio.update(res, &listener, self.options.volume, &self.options.volumes);
+        audio.update_music(res, music, dt, self.options.volumes.music);
     }
 
     /// Rebuilds the look with the selected resource packs and swaps it in
@@ -834,16 +905,67 @@ impl App {
         }
     }
 
+    /// F2: saves the next frame in `screenshots/` beside the saves, named
+    /// for when it was taken like vanilla's (in UTC).
+    fn take_screenshot(&mut self) {
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let name = format!("{}.png", screenshot_stamp(std::time::SystemTime::now()));
+        let dir = level::saves_dir().with_file_name("screenshots");
+        renderer.capture_next_frame(dir.join(&name));
+        info!("saving screenshot {name}");
+        if let Some(game) = self.game.as_mut() {
+            game.message = Some((
+                format!("Saved screenshot as {name}"),
+                SCREENSHOT_MESSAGE_TICKS,
+            ));
+        }
+    }
+
+    /// Fullscreen (F11 or Video Settings), borderless on the window's
+    /// screen. `--bench` and `--shot` keep their window.
+    fn apply_fullscreen(&self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let wanted = self.options.fullscreen && self.bench.is_none() && self.shot.is_none();
+        if wanted != window.fullscreen().is_some() {
+            window.set_fullscreen(wanted.then_some(winit::window::Fullscreen::Borderless(None)));
+        }
+    }
+
+    /// When Max Framerate lets the next frame start, if it holds frames
+    /// back (never for `--bench` and `--shot`).
+    fn next_frame_at(&self) -> Option<Instant> {
+        let limit = self.options.max_framerate;
+        if limit >= crate::options::UNLIMITED_FRAMERATE
+            || self.bench.is_some()
+            || self.shot.is_some()
+        {
+            return None;
+        }
+        Some(self.last_frame + Duration::from_secs_f64(1.0 / f64::from(limit)))
+    }
+
     /// Applies settings changed on the Options screen and saves them.
     fn options_changed(&mut self) {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_vsync(self.options.vsync);
+            renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
         }
+        crate::ui::gui::set_gui_scale(self.options.gui_scale);
+        crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
+        self.apply_fullscreen();
         if self.options.resource_packs != self.applied_packs {
             self.apply_resource_packs();
         }
         if let Some(game) = self.game.as_mut() {
             game.apply_options(&self.options);
+        }
+        // `--bench` and `--shot` runs leave the player's settings alone.
+        if self.bench.is_some() || self.shot.is_some() {
+            return;
         }
         let path = Options::path();
         if let Err(err) = self.options.save(&path) {
@@ -1254,8 +1376,53 @@ impl App {
                     light_at,
                 );
             }
+            if self.options.entity_shadows
+                && let Some(models) = &self.models
+            {
+                let alpha = game.tick_alpha();
+                let eye = game.camera.position.as_dvec3();
+                let mut shadows: Vec<Shadow> = game
+                    .mobs
+                    .iter()
+                    .filter(|mob| mob.eye().distance_squared(eye) < 256.0)
+                    .map(|mob| Shadow {
+                        feet: mob.pose(alpha as f32).0,
+                        radius: 0.05 + 0.75 * mob.size().0,
+                        strength: 1.0,
+                    })
+                    .chain(game.entities.iter().map(|item| Shadow {
+                        feet: item.center_between_ticks(alpha) - DVec3::Y * 0.125,
+                        radius: 0.15,
+                        strength: 0.75,
+                    }))
+                    .collect();
+                if game.view_mode() != crate::game::view::ViewMode::First {
+                    shadows.push(Shadow {
+                        feet: game.player_body().0.as_dvec3(),
+                        radius: 0.5,
+                        strength: 1.0,
+                    });
+                }
+                let world = chunks.world();
+                add_shadows(
+                    &mut mesh,
+                    &shadows,
+                    self.effect_uvs.shadow,
+                    eye,
+                    |cell| {
+                        world
+                            .block(cell.x, cell.y, cell.z)
+                            .is_some_and(|b| !b.is_air() && models.get(b).opaque_cube)
+                    },
+                    |cell| chunks.light_at(cell.x, cell.y, cell.z).unwrap_or((15, 0)),
+                );
+            }
             renderer.set_entities(&mesh);
-            renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
+            if self.hide_gui {
+                renderer.set_hand(None, None);
+            } else {
+                renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
+            }
             let alpha = game.tick_alpha() as f32;
             let mut meshes: Vec<(usize, Mesh)> = Vec::new();
             let eye = game.camera.position.as_dvec3();
@@ -1384,6 +1551,7 @@ impl App {
             dimension: game.dimension(),
         };
         let hud = Hud {
+            hidden: self.hide_gui,
             crosshair: self.stack.grabbed(),
             attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
@@ -1529,10 +1697,16 @@ impl App {
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();
-        let pause = self.pause.as_mut().map(|menu| (menu, &mut self.options));
+        let mut difficulty = game.difficulty;
+        let pause = self
+            .pause
+            .as_mut()
+            .map(|menu| (menu, &mut self.options, &mut difficulty));
         let (ui, actions) = debug_ui.frame(window, &game.camera, &stats, &hud, screen, pause);
+        game.difficulty = difficulty;
         let mut environment = game.environment();
         environment.brightness = self.options.brightness;
+        environment.glint = crate::ui::glint::glint_scale().into();
         let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {
             run.captured = true;
@@ -1704,6 +1878,9 @@ impl ApplicationHandler for App {
             // new_events requests the redraw when the wait ends.
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + SKIPPED_FRAME_RETRY));
+        } else if let Some(at) = self.next_frame_at().filter(|&at| Instant::now() < at) {
+            // new_events requests the redraw when the wait ends.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
         } else if let Some(window) = &self.window {
             event_loop.set_control_flow(ControlFlow::Wait);
             window.request_redraw();
@@ -1722,6 +1899,44 @@ impl ApplicationHandler for App {
         // Joins the chunk workers.
         self.game = None;
         self.window = None;
+    }
+}
+
+/// How long "Saved screenshot as ..." shows.
+const SCREENSHOT_MESSAGE_TICKS: u32 = 60;
+
+/// Vanilla's screenshot name for a moment, `2026-10-25_16.25.42`.
+fn screenshot_stamp(at: std::time::SystemTime) -> String {
+    let secs = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}_{:02}.{:02}.{:02}",
+        rest / 3600,
+        rest / 60 % 60,
+        rest % 60
+    )
+}
+
+/// The Options screen open in the pause menu or on the title screen.
+fn options_screen<'a>(
+    pause: &'a mut Option<PauseMenu>,
+    menu: &'a mut Option<Menu>,
+) -> Option<&'a mut crate::ui::options::OptionsScreen> {
+    match pause {
+        Some(pause) => pause.options.as_mut(),
+        None => menu.as_mut()?.options_screen(),
     }
 }
 
@@ -2011,6 +2226,82 @@ mod tests {
         app.on_scroll(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
             0.0, -90.0,
         )));
+    }
+
+    #[test]
+    fn screenshots_are_named_for_when_they_were_taken() {
+        let at = std::time::UNIX_EPOCH + Duration::from_secs(1_793_028_342);
+        assert_eq!(screenshot_stamp(at), "2026-10-26_15.25.42");
+        assert_eq!(
+            screenshot_stamp(std::time::UNIX_EPOCH),
+            "1970-01-01_00.00.00"
+        );
+    }
+
+    #[test]
+    fn keys_do_what_they_are_bound_to() {
+        use winit::keyboard::KeyCode;
+        let mut app = app_in_a_world();
+        app.options
+            .keys
+            .set(Action::Forward, Some(Input::Key(KeyCode::KeyI)));
+        app.options
+            .keys
+            .set(Action::Hotbar5, Some(Input::Mouse(MouseButton::Back)));
+        app.on_input(Input::Key(KeyCode::KeyW), true, false);
+        assert!(
+            !app.game.as_ref().unwrap().keys.forward,
+            "W does nothing now"
+        );
+        app.on_input(Input::Key(KeyCode::KeyI), true, false);
+        assert!(app.game.as_ref().unwrap().keys.forward, "I walks forward");
+        app.on_mouse_button(MouseButton::Back, true);
+        assert_eq!(app.game.as_ref().unwrap().inventory.selected, 4);
+        // An unbound action does nothing.
+        app.options.keys.set(Action::Inventory, None);
+        app.on_input(Input::Key(KeyCode::KeyE), true, false);
+        assert!(app.screen.is_none());
+        app.options.keys.reset_all();
+        app.on_input(Input::Key(KeyCode::KeyE), true, false);
+        assert!(app.screen.is_some(), "E opens the inventory again");
+    }
+
+    #[test]
+    fn the_key_binds_screen_takes_the_next_key_or_button_and_escape_unbinds() {
+        use crate::ui::options::{OptionsScreen, Page};
+        use winit::keyboard::KeyCode;
+        let mut app = app_in_a_world();
+        app.pause_game();
+        let pause = app.pause.as_mut().expect("paused");
+        pause.options = Some(OptionsScreen::new(Page::KeyBinds));
+        let screen = || OptionsScreen::new(Page::KeyBinds);
+        let waiting = |app: &mut App, action| {
+            app.pause.as_mut().unwrap().options = Some({
+                let mut s = screen();
+                s.wait_for(action);
+                s
+            });
+        };
+        waiting(&mut app, Action::Jump);
+        app.on_input(Input::Key(KeyCode::KeyG), true, false);
+        assert_eq!(
+            app.options.keys.get(Action::Jump),
+            Some(Input::Key(KeyCode::KeyG))
+        );
+        assert!(
+            app.pause.is_some(),
+            "the key didn't reach the game or menus"
+        );
+        waiting(&mut app, Action::Attack);
+        app.on_mouse_button(MouseButton::Forward, true);
+        assert_eq!(
+            app.options.keys.get(Action::Attack),
+            Some(Input::Mouse(MouseButton::Forward))
+        );
+        waiting(&mut app, Action::Drop);
+        app.on_input(Input::Key(KeyCode::Escape), true, false);
+        assert_eq!(app.options.keys.get(Action::Drop), None);
+        assert!(app.pause.is_some(), "Escape only unbound the key");
     }
 
     #[test]

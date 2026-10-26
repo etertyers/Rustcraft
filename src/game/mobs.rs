@@ -469,6 +469,10 @@ impl Game {
                 }
                 return false;
             }
+            // Peaceful sends every monster away at once.
+            if def.ai.is_monster() && self.difficulty == crate::level::Difficulty::Peaceful {
+                return false;
+            }
             if def.ai.is_monster() && !mob.ridden {
                 if distance > DESPAWN_FAR {
                     return false;
@@ -762,7 +766,9 @@ impl Game {
 
     /// One tick of natural spawning: each category whose turn it is.
     pub(super) fn spawn_cycle(&mut self) {
-        self.spawn_category(&spawning::MONSTER);
+        if self.difficulty != crate::level::Difficulty::Peaceful {
+            self.spawn_category(&spawning::MONSTER);
+        }
         self.spawn_category(&spawning::CREATURE);
     }
 

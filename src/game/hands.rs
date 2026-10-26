@@ -1042,6 +1042,17 @@ impl Game {
         log::info!("dev kit given");
     }
 
+    /// Whether the Particles option lets a particle the world adds show:
+    /// all of them, two in three (Decreased) or none (Minimal). Blocks'
+    /// breaking and mining particles always show, as in vanilla.
+    pub(super) fn shows_particle(&mut self) -> bool {
+        match self.particle_level {
+            crate::options::Particles::All => true,
+            crate::options::Particles::Decreased => self.rng.below(3) != 0,
+            crate::options::Particles::Minimal => false,
+        }
+    }
+
     /// Adds particles, dropping the oldest past 1.0.0's limit.
     pub(super) fn add_particles(&mut self, particles: impl IntoIterator<Item = Particle>) {
         self.particles.extend(particles);

@@ -36,6 +36,106 @@ pub struct Cue {
     pub pitch: f32,
 }
 
+/// Music & Sounds' categories (vanilla's `SoundSource`), each with its
+/// slider under Master Volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    Master,
+    Music,
+    Records,
+    Weather,
+    Blocks,
+    Hostile,
+    Neutral,
+    Players,
+    Ambient,
+    Voice,
+}
+
+/// Mobs whose sounds are Hostile Creatures'; every other mob's are
+/// Friendly Creatures'.
+const HOSTILE: &[&str] = &[
+    "blaze",
+    "bogged",
+    "breeze",
+    "cave_spider",
+    "creaking",
+    "creeper",
+    "drowned",
+    "elder_guardian",
+    "ender_dragon",
+    "enderman",
+    "endermite",
+    "evoker",
+    "ghast",
+    "guardian",
+    "hoglin",
+    "husk",
+    "illusioner",
+    "magma_cube",
+    "phantom",
+    "piglin",
+    "piglin_brute",
+    "pillager",
+    "ravager",
+    "shulker",
+    "shulker_bullet",
+    "silverfish",
+    "skeleton",
+    "slime",
+    "spider",
+    "stray",
+    "vex",
+    "vindicator",
+    "warden",
+    "witch",
+    "wither",
+    "wither_skeleton",
+    "zoglin",
+    "zombie",
+    "zombie_villager",
+    "zombified_piglin",
+];
+
+/// The category an event's sound plays in, from its name the way vanilla's
+/// code files them: blocks, mobs by temper, the player's own and items',
+/// music, records and note blocks, weather and the surroundings.
+pub fn category(event: &str) -> Category {
+    let mut parts = event.split('.');
+    match (parts.next(), parts.next()) {
+        (Some("music"), _) => Category::Music,
+        (Some("music_disc"), _) | (Some("block"), Some("note_block")) => Category::Records,
+        (Some("weather"), _) => Category::Weather,
+        (Some("ambient"), _) => Category::Ambient,
+        (Some("block"), _) => Category::Blocks,
+        (Some("item"), _) => Category::Players,
+        (Some("entity"), Some("player" | "item" | "experience_orb")) => Category::Players,
+        (Some("entity"), Some("generic" | "tnt")) => Category::Blocks,
+        (Some("entity"), Some(mob)) if HOSTILE.contains(&mob) => Category::Hostile,
+        (Some("entity"), _) => Category::Neutral,
+        _ => Category::Master,
+    }
+}
+
+impl crate::options::Volumes {
+    /// The slider for `category` (Master's is applied to everything
+    /// separately).
+    pub fn of(&self, category: Category) -> f32 {
+        match category {
+            Category::Master => 1.0,
+            Category::Music => self.music,
+            Category::Records => self.records,
+            Category::Weather => self.weather,
+            Category::Blocks => self.blocks,
+            Category::Hostile => self.hostile,
+            Category::Neutral => self.neutral,
+            Category::Players => self.players,
+            Category::Ambient => self.ambient,
+            Category::Voice => self.voice,
+        }
+    }
+}
+
 /// Cues waiting for the next `Audio::update`; no more than this are kept.
 const MAX_QUEUED: usize = 256;
 
@@ -167,7 +267,12 @@ pub struct Audio {
     /// Decoded sound effects by file name (`None` if the file is missing).
     cache: HashMap<String, Option<StaticSoundData>>,
     random: Random,
-    music: Option<(String, StreamingSoundHandle<kira::sound::FromFileError>)>,
+    /// The track playing, its event and its own volume.
+    music: Option<(
+        String,
+        StreamingSoundHandle<kira::sound::FromFileError>,
+        f32,
+    )>,
     /// Seconds until the next track may start.
     music_wait: f32,
     /// Files already reported missing.
@@ -209,8 +314,15 @@ impl Audio {
         &self.table
     }
 
-    /// Plays the queued cues for a listener. `master` is the volume setting.
-    pub fn update(&mut self, res: &Resources, listener: &Listener, master: f32) {
+    /// Plays the queued cues for a listener. `master` is the Master Volume
+    /// setting and `volumes` the categories' sliders.
+    pub fn update(
+        &mut self,
+        res: &Resources,
+        listener: &Listener,
+        master: f32,
+        volumes: &crate::options::Volumes,
+    ) {
         let cues = drain();
         if let Some(manager) = &mut self.manager {
             manager
@@ -223,7 +335,8 @@ impl Audio {
         // The queue is bounded, but a burst (an explosion) doesn't need all of it.
         for cue in cues.iter().rev().take(24) {
             let r = self.random.next();
-            let Some(playback) = plan(&self.table, cue, listener, r, 1.0) else {
+            let volume = volumes.of(category(&cue.event));
+            let Some(playback) = plan(&self.table, cue, listener, r, volume) else {
                 continue;
             };
             self.play(res, playback);
@@ -270,15 +383,17 @@ impl Audio {
     /// Keeps the music going: `request` says which event's tracks fit
     /// where the player is (or `None` for silence); a track plays through,
     /// then there is a pause, and a new place fades the old track out.
-    pub fn update_music(&mut self, res: &Resources, request: Option<&str>, dt: f32, master: f32) {
+    /// `volume` is the Music slider (Master is on the main track).
+    pub fn update_music(&mut self, res: &Resources, request: Option<&str>, dt: f32, volume: f32) {
         if self.manager.is_none() {
             return;
         }
         let playing = self
             .music
             .as_ref()
-            .is_some_and(|(_, handle)| handle.state() == PlaybackState::Playing);
-        if let Some((event, handle)) = &mut self.music {
+            .is_some_and(|(_, handle, _)| handle.state() == PlaybackState::Playing);
+        if let Some((event, handle, own)) = &mut self.music {
+            handle.set_volume(decibels(*own * volume * 0.7), Tween::default());
             let changed = request != Some(event.as_str());
             if changed && playing {
                 handle.stop(Tween {
@@ -308,7 +423,7 @@ impl Audio {
             return;
         };
         let data = match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
-            Ok(data) => data.volume(decibels(entry.volume * master * 0.7)),
+            Ok(data) => data.volume(decibels(entry.volume * volume * 0.7)),
             Err(err) => {
                 warn!("can't stream {}: {err}", entry.name);
                 self.music_wait = 30.0;
@@ -317,7 +432,7 @@ impl Audio {
         };
         if let Some(manager) = &mut self.manager {
             match manager.play(data) {
-                Ok(handle) => self.music = Some((event.to_owned(), handle)),
+                Ok(handle) => self.music = Some((event.to_owned(), handle, entry.volume)),
                 Err(err) => debug!("can't play {}: {err}", entry.name),
             }
         }
@@ -387,6 +502,27 @@ pub fn report(res: &Resources) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn events_fall_in_vanillas_sound_categories() {
+        assert_eq!(category("block.stone.break"), Category::Blocks);
+        assert_eq!(category("block.note_block.harp"), Category::Records);
+        assert_eq!(category("music.game"), Category::Music);
+        assert_eq!(category("entity.zombie.ambient"), Category::Hostile);
+        assert_eq!(category("entity.pig.ambient"), Category::Neutral);
+        assert_eq!(category("entity.player.hurt"), Category::Players);
+        assert_eq!(category("entity.item.pickup"), Category::Players);
+        assert_eq!(category("item.armor.equip_iron"), Category::Players);
+        assert_eq!(category("entity.generic.explode"), Category::Blocks);
+        assert_eq!(category("ambient.cave"), Category::Ambient);
+        assert_eq!(category("ui.button.click"), Category::Master);
+        let volumes = crate::options::Volumes {
+            hostile: 0.25,
+            ..Default::default()
+        };
+        assert_eq!(volumes.of(category("entity.creeper.primed")), 0.25);
+        assert_eq!(volumes.of(Category::Master), 1.0);
+    }
 
     const JSON: &str = r#"{"block.stone.break": {"sounds": [{"name": "dig/stone1", "volume": 0.5, "pitch": 0.8}]}}"#;
 

@@ -12,8 +12,8 @@ use super::ClickSound;
 use egui::{Align, Button, Color32, Frame, Layout, RichText};
 
 use super::{
+    options::{OptionsAction, OptionsScreen},
     packs::PackScreen,
-    pause::{OptionsAction, options_page},
 };
 use crate::{
     level::{self, WorldDir},
@@ -35,7 +35,7 @@ pub enum MenuAction {
 
 enum Screen {
     Title,
-    Options,
+    Options(OptionsScreen),
     /// Resource Packs, and the screen to go back to.
     ResourcePacks(PackScreen, Box<Screen>),
     SelectWorld,
@@ -90,11 +90,15 @@ impl Menu {
                 ui.vertical_centered(|ui| {
                     action = match &mut self.screen {
                         Screen::Title => self.title(ui, options),
-                        Screen::Options => {
-                            match options_page(ui, options) {
+                        Screen::Options(screen) => {
+                            match screen.show(ui, options, None) {
                                 Some(OptionsAction::Done) => self.screen = Screen::Title,
                                 Some(OptionsAction::ResourcePacks) => {
-                                    self.open_packs(options, Screen::Options)
+                                    let page = screen.page;
+                                    self.open_packs(
+                                        options,
+                                        Screen::Options(OptionsScreen::new(page)),
+                                    )
                                 }
                                 None => {}
                             }
@@ -123,6 +127,31 @@ impl Menu {
             self.error = None;
         }
         action
+    }
+
+    /// The Options screen, while it's open.
+    pub fn options_screen(&mut self) -> Option<&mut OptionsScreen> {
+        match &mut self.screen {
+            Screen::Options(screen) => Some(screen),
+            _ => None,
+        }
+    }
+
+    /// Escape: back a page of Options, or out of Resource Packs or a
+    /// world screen to the one before.
+    pub fn back(&mut self) {
+        self.screen = match std::mem::replace(&mut self.screen, Screen::Title) {
+            Screen::Options(mut screen) => {
+                if screen.back() {
+                    Screen::Title
+                } else {
+                    Screen::Options(screen)
+                }
+            }
+            Screen::ResourcePacks(_, back) => *back,
+            Screen::CreateWorld => Screen::SelectWorld,
+            Screen::Title | Screen::SelectWorld => Screen::Title,
+        };
     }
 
     fn open_packs(&mut self, options: &Options, back: Screen) {
@@ -154,7 +183,7 @@ impl Menu {
             .add_sized(BUTTON, Button::new("Options..."))
             .clicked_with_sound()
         {
-            self.screen = Screen::Options;
+            self.screen = Screen::Options(OptionsScreen::default());
         }
         ui.add_space(8.0);
         if ui

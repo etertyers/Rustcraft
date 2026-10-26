@@ -1149,3 +1149,24 @@ fn a_tame_horse_wears_armor_and_some_new_horses_have_markings() {
     }
     assert!(seen.iter().all(|&s| s), "{seen:?}");
 }
+
+#[test]
+fn peaceful_sends_monsters_away_and_spawns_none() {
+    let mut game = night_game(GameMode::Survival);
+    let zombie = spawn(&mut game, "zombie", 4.5, 4.5);
+    let pig = spawn(&mut game, "pig", -4.5, 4.5);
+    game.difficulty = crate::level::Difficulty::Peaceful;
+    game.run_ticks(2);
+    assert!(!alive(&game, zombie), "the zombie is gone");
+    assert!(alive(&game, pig), "animals stay");
+    for _ in 0..400 {
+        game.spawn_cycle();
+        game.time += 1;
+    }
+    assert!(
+        !game
+            .mobs
+            .iter()
+            .any(|m| game.mob_defs.get(m.kind).ai.is_monster())
+    );
+}

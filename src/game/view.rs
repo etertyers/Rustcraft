@@ -7,8 +7,8 @@
 
 use std::f32::consts::{PI, TAU};
 
+use crate::bindings::Action;
 use glam::{DVec3, IVec3, Vec3};
-use winit::keyboard::KeyCode;
 
 use super::Game;
 use crate::{
@@ -26,6 +26,8 @@ pub const SWING_TICKS: i32 = 6;
 pub const THIRD_PERSON_DISTANCE: f64 = 4.0;
 /// Third-person clipping probes the eye's corners this far out.
 const CLIP_MARGIN: f64 = 0.1;
+/// How long the view shakes after a hit (vanilla's `hurtDuration`).
+const HURT_TICKS: u32 = 10;
 /// Ticks of drawing a bow at which it's fully drawn.
 const BOW_FULL_DRAW: f32 = 20.0;
 /// Ticks of eating before the food is eaten.
@@ -416,7 +418,7 @@ impl Game {
 
     /// Holds sneak for a moment (for `--shot` scenes).
     pub fn sneak_for_shot(&mut self) {
-        self.keys.set_key(KeyCode::ShiftLeft, true);
+        self.keys.set_key(Action::Sneak, true);
         self.run_ticks(3);
     }
 
@@ -452,13 +454,27 @@ impl Game {
         self.body.swimming
     }
 
+    /// The view's roll just after a hit (vanilla `bobHurt`), scaled by
+    /// Damage Tilt: up to 14° over half a second.
+    pub fn hurt_tilt(&self, alpha: f32) -> f32 {
+        let ticks = self.stats.hurt_ticks();
+        if ticks == 0 || self.stats.is_dead() {
+            return 0.0;
+        }
+        let f = ((ticks as f32 - alpha) / HURT_TICKS as f32).max(0.0);
+        -((f.powi(4) * PI).sin() * 14.0 * self.damage_tilt).to_radians()
+    }
+
     /// The camera drawing the frame: the player's eyes, or pulled back
     /// (or around in front) for F5, shaking with each step.
     pub fn view_camera(&self) -> Camera {
         let alpha = self.tick_alpha() as f32;
         let mut camera = self.camera;
         camera.bob = self.view.view_bob(alpha);
-        camera.fov = (camera.fov * self.view.fov_modifier(alpha)).clamp(1.0, 170.0);
+        camera.bob.roll += self.hurt_tilt(alpha);
+        // FOV Effects scales how far sprinting, flying and potions move it.
+        let modifier = 1.0 + (self.view.fov_modifier(alpha) - 1.0) * self.fov_effects;
+        camera.fov = (camera.fov * modifier).clamp(1.0, 170.0);
         let flip = match self.view.mode {
             ViewMode::First => return camera,
             ViewMode::ThirdBack => false,
@@ -541,6 +557,12 @@ impl Game {
             }
         };
         let (main, off) = (arm(Hand::Main), arm(Hand::Off));
+        // A left-handed player holds the main hand's item on the left.
+        let (right, left) = if self.left_handed {
+            (off, main)
+        } else {
+            (main, off)
+        };
         PlayerPose {
             limb_swing,
             limb_amount,
@@ -556,10 +578,10 @@ impl Game {
                 0.0
             },
             attack: view.attack_anim(alpha),
-            swing_left: false,
+            swing_left: self.left_handed,
             riding: self.is_riding(),
-            right: main,
-            left: if drawing { ArmPose::Bow } else { off },
+            right: if drawing { ArmPose::Bow } else { right },
+            left: if drawing { ArmPose::Bow } else { left },
             use_time: eating.map_or(0.0, |t| t + alpha),
         }
     }
@@ -933,6 +955,53 @@ mod tests {
     }
 
     #[test]
+    fn damage_tilts_the_view_and_fov_effects_scale_the_zoom() {
+        use crate::{
+            game::tests::flat_game,
+            player::{mode::GameMode, stats::DamageSource},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        assert_eq!(game.hurt_tilt(0.0), 0.0);
+        game.stats.damage(2.0, DamageSource::Mob);
+        game.run_ticks(2);
+        let tilt = game.hurt_tilt(0.0);
+        assert!(tilt < -1f32.to_radians(), "tilted {tilt}");
+        game.damage_tilt = 0.0;
+        assert_eq!(game.hurt_tilt(0.0), 0.0);
+        game.run_ticks(12);
+        game.damage_tilt = 1.0;
+        assert_eq!(game.hurt_tilt(0.0), 0.0, "over after half a second");
+
+        game.view.fov = 1.15;
+        game.view.prev_fov = 1.15;
+        let fov = |game: &Game| game.view_camera().fov;
+        let base = game.camera.fov;
+        assert!((fov(&game) - base * 1.15).abs() < 1e-3);
+        game.fov_effects = 0.0;
+        assert!((fov(&game) - base).abs() < 1e-3);
+        game.fov_effects = 0.5;
+        assert!((fov(&game) - base * 1.075).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_left_handed_player_holds_and_swings_on_the_left() {
+        use crate::{
+            game::tests::flat_game,
+            inventory::{items, stack::ItemStack},
+            player::mode::GameMode,
+        };
+        let mut game = flat_game(GameMode::Survival);
+        game.inventory
+            .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
+        let pose = game.player_pose();
+        assert_eq!((pose.right, pose.left), (ArmPose::Item, ArmPose::Empty));
+        game.left_handed = true;
+        let pose = game.player_pose();
+        assert_eq!((pose.right, pose.left), (ArmPose::Empty, ArmPose::Item));
+        assert!(pose.swing_left);
+    }
+
+    #[test]
     fn the_pose_follows_what_the_player_does() {
         use crate::{game::tests::flat_game, player::mode::GameMode};
         let mut game = flat_game(GameMode::Survival);
@@ -971,8 +1040,8 @@ mod tests {
         assert!(!game.view().is_swinging());
         // A click that hits nothing still swings.
         game.camera.pitch = 0.5;
-        game.on_mouse_button(winit::event::MouseButton::Left, true);
-        game.on_mouse_button(winit::event::MouseButton::Left, false);
+        game.on_action(Action::Attack, true, false, true);
+        game.on_action(Action::Attack, false, false, true);
         game.run_ticks(1);
         assert!(game.view().is_swinging());
         game.run_ticks(8);
@@ -989,8 +1058,8 @@ mod tests {
             )),
         );
         game.inventory.selected = 0;
-        game.on_mouse_button(winit::event::MouseButton::Right, true);
-        game.on_mouse_button(winit::event::MouseButton::Right, false);
+        game.on_action(Action::Use, true, false, true);
+        game.on_action(Action::Use, false, false, true);
         game.run_ticks(1);
         assert!(game.view().is_swinging());
     }
@@ -1062,15 +1131,15 @@ mod tests {
         let mut game = flat_game(GameMode::Survival);
         game.camera.pitch = 0.0;
         let base = game.view_camera().fov;
-        game.on_key(KeyCode::KeyW, true, false, true);
-        game.on_key(KeyCode::ControlLeft, true, false, true);
+        game.on_action(Action::Forward, true, false, true);
+        game.on_action(Action::Sprint, true, false, true);
         game.run_ticks(15);
         game.advance(0.0);
         assert!(game.body.sprinting);
         let fov = game.view_camera().fov;
         assert!((fov / base - 1.15).abs() < 0.02, "{base} -> {fov}");
-        game.on_key(KeyCode::KeyW, false, false, true);
-        game.on_key(KeyCode::ControlLeft, false, false, true);
+        game.on_action(Action::Forward, false, false, true);
+        game.on_action(Action::Sprint, false, false, true);
         game.run_ticks(20);
         game.advance(0.0);
         assert!((game.view_camera().fov / base - 1.0).abs() < 0.01);
@@ -1078,7 +1147,7 @@ mod tests {
         // Sneaking: the hitbox and eyes drop, the camera follows.
         let standing_eye = game.camera.position.y - game.body.position().y as f32;
         assert!((standing_eye - 1.62).abs() < 0.01, "{standing_eye}");
-        game.on_key(KeyCode::ShiftLeft, true, false, true);
+        game.on_action(Action::Sneak, true, false, true);
         game.run_ticks(10);
         game.advance(0.0);
         let sneaking_eye = game.camera.position.y - game.body.position().y as f32;

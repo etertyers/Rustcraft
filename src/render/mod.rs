@@ -84,6 +84,8 @@ pub struct Environment {
     pub sky: bool,
     /// The Brightness option, 0 (Moody) to 1 (Bright).
     pub brightness: f32,
+    /// Glint Speed and Glint Strength as multiples of vanilla's defaults.
+    pub glint: [f32; 2],
     /// The dimension's ambient light, lifting the dark (modern
     /// `DimensionType.ambientLight`: 0.1 in the Nether).
     pub ambient: f32,
@@ -157,6 +159,8 @@ pub struct Renderer {
     drew_offscreen: bool,
     /// Where to save the next frame as a PNG (for `--shot`).
     capture: Option<std::path::PathBuf>,
+    /// The Clouds option isn't off.
+    clouds: bool,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -354,6 +358,7 @@ impl Renderer {
             offscreen_fallback: false,
             offscreen: None,
             capture: None,
+            clouds: true,
             drew_offscreen: false,
             device,
             queue,
@@ -595,6 +600,11 @@ impl Renderer {
         self.crack = None;
         self.mobs.clear();
         self.outline.set_target(None);
+    }
+
+    /// The Clouds option: off, or drawn (Fast and Fancy are both flat).
+    pub fn set_clouds(&mut self, clouds: bool) {
+        self.clouds = clouds;
     }
 
     /// Waits for the display's refresh (vsync) or not.
@@ -899,11 +909,16 @@ impl Renderer {
             }
             // Clouds and water both blend: draw whichever is farther first.
             let above_clouds = camera.position.y > environment.cloud_height;
-            if above_clouds && environment.sky {
+            if above_clouds && environment.sky && self.clouds {
                 self.draw_clouds(&mut pass);
             }
             pass.set_pipeline(&self.translucent_pipeline);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            // Entities' shadows, under the water drawn next.
+            if let Some(entities) = &self.entities {
+                let translucent = entities.opaque..entities.opaque + entities.translucent;
+                draw_range(&mut pass, entities, translucent);
+            }
             let mut bound = self.atlas_generation;
             for (_, chunk) in visible.iter().rev() {
                 if chunk.atlas != bound {
@@ -916,7 +931,7 @@ impl Renderer {
                     chunk.opaque..chunk.opaque + chunk.translucent,
                 );
             }
-            if !above_clouds && environment.sky {
+            if !above_clouds && environment.sky && self.clouds {
                 self.draw_clouds(&mut pass);
             }
             if outline > 0 {
@@ -1061,7 +1076,7 @@ fn globals(
             if env.sky { 0.0 } else { 1.0 },
             env.ambient,
         ],
-        lighting: [env.brightness, 0.0, 0.0, 0.0],
+        lighting: [env.brightness, env.glint[0], env.glint[1], 0.0],
     }
 }
 

@@ -446,9 +446,14 @@ pub fn model_matrix(frame: &Mat4, feet: Vec3) -> Mat4 {
         * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
 }
 
+/// Which limbs' outer layers (hat, jacket, sleeves, pants) are worn, by
+/// `Limb` order: Skin Customization.
+pub type OuterLayers = [bool; 6];
+pub const ALL_LAYERS: OuterLayers = [true; 6];
+
 /// Adds the player's model at `feet`, facing `yaw`, lit by (sky, block)
-/// `light` and multiplied by `tint`. `hat`, `jacket` and the other outer
-/// layers are always drawn.
+/// `light` and multiplied by `tint`, with the outer layers `layers` says.
+#[allow(clippy::too_many_arguments)]
 pub fn add_player(
     mesh: &mut Mesh,
     pose: &PlayerPose,
@@ -457,6 +462,7 @@ pub fn add_player(
     yaw: f32,
     tint: [f32; 3],
     light: (u8, u8),
+    layers: OuterLayers,
 ) {
     let rig = rig(pose, slim);
     let frame = body_frame(pose, yaw);
@@ -469,7 +475,9 @@ pub fn add_player(
             limb_pose.rot.y,
             limb_pose.rot.x,
         ));
-        for (b, grow) in limb.boxes(slim) {
+        let [base, outer] = limb.boxes(slim);
+        let worn = layers[limb.index()].then_some(outer);
+        for (b, grow) in std::iter::once(base).chain(worn) {
             add_box(
                 mesh,
                 SKIN_SIZE,
@@ -732,7 +740,16 @@ mod tests {
 
     fn model(pose: &PlayerPose, yaw: f32) -> Mesh {
         let mut mesh = Mesh::default();
-        add_player(&mut mesh, pose, false, Vec3::ZERO, yaw, [1.0; 3], (15, 0));
+        add_player(
+            &mut mesh,
+            pose,
+            false,
+            Vec3::ZERO,
+            yaw,
+            [1.0; 3],
+            (15, 0),
+            ALL_LAYERS,
+        );
         mesh
     }
 
@@ -755,6 +772,29 @@ mod tests {
     }
 
     #[test]
+    fn skin_customization_leaves_off_the_outer_layers_turned_off() {
+        let quads = |layers| {
+            let mut m = Mesh::default();
+            add_player(
+                &mut m,
+                &standing(),
+                false,
+                Vec3::ZERO,
+                0.0,
+                [1.0; 3],
+                (15, 0),
+                layers,
+            );
+            m.indices.len() / 6
+        };
+        let all = quads(ALL_LAYERS);
+        let mut no_hat = ALL_LAYERS;
+        no_hat[Limb::Head.index()] = false;
+        assert_eq!(quads(no_hat), all - 6, "the hat's box is gone");
+        assert_eq!(quads([false; 6]), all / 2, "just the base layer");
+    }
+
+    #[test]
     fn slim_arms_are_a_pixel_narrower() {
         let wide = {
             let mut m = Mesh::default();
@@ -766,6 +806,7 @@ mod tests {
                 0.0,
                 [1.0; 3],
                 (15, 0),
+                ALL_LAYERS,
             );
             bounds(&m)
         };
@@ -779,6 +820,7 @@ mod tests {
                 0.0,
                 [1.0; 3],
                 (15, 0),
+                ALL_LAYERS,
             );
             bounds(&m)
         };
@@ -1123,7 +1165,16 @@ mod tests {
             glint: false,
         };
         let mut body = Mesh::default();
-        add_player(&mut body, &pose, false, Vec3::ZERO, 0.0, [1.0; 3], (15, 0));
+        add_player(
+            &mut body,
+            &pose,
+            false,
+            Vec3::ZERO,
+            0.0,
+            [1.0; 3],
+            (15, 0),
+            ALL_LAYERS,
+        );
         let mut armor = Mesh::default();
         let worn = [
             piece(ArmorSlot::Head, 6),

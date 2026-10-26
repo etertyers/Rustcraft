@@ -405,6 +405,8 @@ mod tests {
     }
 
     fn track(game: &mut Game, z: i32, from: i32, to: i32, id: crate::world::block::BlockId) {
+        crate::game::tests::wait_for_chunk(game, from, z);
+        crate::game::tests::wait_for_chunk(game, to, z);
         let cells: Vec<_> = (from..=to)
             .map(|x| (IVec3::new(x, Y, z), ew_rail(id)))
             .collect();

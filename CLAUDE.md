@@ -143,6 +143,7 @@ src/
   inventory/{creative,book}.rs, assets/data/creative_tabs.ron   # creative tabs' contents, search and click rules; the recipe book's recipes, categories and placing
   entity/boat.rs, game/boats.rs, render/{boat,lightmap}.rs, world/plants.rs   # boats and rafts (floating, rowing, seats), placing/riding/breaking them, their models; the lightmap formula (tested copy of the shader's); where sugar cane may stand
   world/worldgen/caves.rs   # modern caves: cheese, spaghetti and noodle noise caves, worm tunnels and ravines, aquifers and deep lava
+  bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
@@ -554,7 +555,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 
 #### Checkpoint F — Options and multiplayer
 
-### - [ ] M35 — Options menu and key bindings
+### - [x] M35 — Options menu and key bindings
 - Vanilla-style Options screen from the main and pause menus: FOV, Difficulty, Skin Customization, Music & Sounds (per category volume sliders), Video Settings (render distance, graphics, smooth lighting, max framerate, vsync, view bobbing, GUI scale, Brightness, clouds, particles, entity shadows), Controls, Chat Settings (M38), Resource Packs, Accessibility, and **player name** (needed for LAN; default "Player").
 - **Controls → Key Binds:** every action listed by category (Movement, Gameplay, Inventory, Multiplayer, Miscellaneous, and a Mods category filled by M39), click to rebind to any key or mouse button, Esc to unbind, "Reset" per key and "Reset Keys" for all, conflicting keys shown in red. Vanilla defaults (WASD, Space, Left Shift sneak, Left Ctrl sprint, E inventory, Q drop, F swap hands, T chat, / command, Tab player list, F1 hide GUI, F2 screenshot, F3 debug, F5 perspective, F11 fullscreen, L advancements, 1–9 hotbar). Remove every hard-coded key check; all input goes through the bindings. Mouse sensitivity and invert Y in Mouse Settings.
 - **Auto-Jump** toggle in Controls (vanilla option, default off): when on, walking into a 1-block step jumps automatically.

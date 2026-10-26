@@ -20,7 +20,8 @@ struct Globals {
     // x: moon phase 0–7; y: cloud height; z: 1 where there's no sky (the
     // Nether); w: the dimension's ambient light.
     extra: vec4<f32>,
-    // x: the Brightness option, 0 (Moody) to 1 (Bright).
+    // x: the Brightness option, 0 (Moody) to 1 (Bright); y and z: Glint
+    // Speed and Glint Strength as multiples of vanilla's defaults.
     lighting: vec4<f32>,
 };
 

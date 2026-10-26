@@ -55,12 +55,10 @@ pub use containers::{Bench, BenchKind, Container};
 use anyhow::Result;
 use glam::DVec3;
 use log::{error, info};
-use winit::{
-    event::{MouseButton, MouseScrollDelta},
-    keyboard::KeyCode,
-};
+use winit::event::MouseScrollDelta;
 
 use crate::{
+    bindings::Action,
     config,
     entity::{arrow::Arrow, item::ItemEntity, mob::Mob, mobs::MobRegistry, particle::Particle},
     inventory::{
@@ -131,6 +129,8 @@ pub enum ShotScreen {
     Inventory,
     /// The creative inventory on the table's `n`th tab.
     Creative(usize),
+    /// Options → Controls → Key Binds over the paused game.
+    KeyBinds,
 }
 
 pub struct Game {
@@ -148,7 +148,7 @@ pub struct Game {
     /// How far the camera still trails below the feet after a step up (≤ 0).
     step_lag: f64,
     spawn: DVec3,
-    keys: MoveKeys,
+    pub(crate) keys: MoveKeys,
     /// The block under the crosshair this frame.
     pub target: Option<Hit>,
     /// Mouse buttons held for breaking and placing.
@@ -172,6 +172,7 @@ pub struct Game {
     bed: Option<glam::IVec3>,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
+    pub difficulty: crate::level::Difficulty,
     /// A notice on screen and the ticks it has left (1.0.0's chat lines).
     pub message: Option<(String, u32)>,
     /// The capture tool's two corners (creative).
@@ -254,6 +255,20 @@ pub struct Game {
     scroll_pixels: f64,
     /// Mouse look speed, 1 for the default.
     sensitivity: f32,
+    /// The Controls options: Invert Mouse, Auto-Jump, and Sneak and Sprint
+    /// toggled instead of held.
+    invert_y: bool,
+    auto_jump: bool,
+    /// The Particles option.
+    particle_level: crate::options::Particles,
+    /// FOV Effects and Damage Tilt, 0–1.
+    pub(crate) fov_effects: f32,
+    pub(crate) damage_tilt: f32,
+    /// Skin Customization: the outer layers worn, and Main Hand: Left.
+    skin_layers: crate::render::player::OuterLayers,
+    pub(crate) left_handed: bool,
+    toggle_sneak: bool,
+    toggle_sprint: bool,
     /// Game time not yet simulated, in seconds (less than one tick after a frame).
     tick_time: f32,
     /// Free flight, a dev tool toggled with F4 in debug builds.
@@ -352,6 +367,7 @@ impl Game {
             sleep: None,
             bed: None,
             rules: crate::level::GameRules::default(),
+            difficulty: crate::level::Difficulty::default(),
             message: None,
             capture: [None, None],
             entities: Vec::new(),
@@ -397,6 +413,15 @@ impl Game {
             rng: Rng::new(level_random_seed()),
             scroll_pixels: 0.0,
             sensitivity: 1.0,
+            invert_y: false,
+            auto_jump: false,
+            particle_level: crate::options::Particles::All,
+            fov_effects: 1.0,
+            damage_tilt: 1.0,
+            skin_layers: crate::render::player::ALL_LAYERS,
+            left_handed: false,
+            toggle_sneak: false,
+            toggle_sprint: false,
             tick_time: 0.0,
             #[cfg(debug_assertions)]
             flying: false,
@@ -464,6 +489,7 @@ impl Game {
         game.stats = player.stats.clone();
         game.bed = player.bed.map(glam::IVec3::from_array);
         game.rules = level.rules.clone();
+        game.difficulty = level.difficulty;
         game.load_boats(&level.boats);
         game.inventory.repair(&game.items);
         game.body.may_fly = game.mode.can_fly();
@@ -573,6 +599,7 @@ impl Game {
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
         saved.level.rules = self.rules.clone();
+        saved.level.difficulty = self.difficulty;
         saved.level.boats = boats;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
@@ -608,50 +635,75 @@ impl Game {
         (self.tick_time / TICK) as f64
     }
 
-    /// Number keys, Q to throw, the F4 dev flight toggle and, while the
-    /// cursor is grabbed, movement keys.
-    pub fn on_key(&mut self, key: KeyCode, pressed: bool, repeat: bool, grabbed: bool) {
-        #[cfg(debug_assertions)]
-        if key == KeyCode::F6 && pressed && !repeat {
-            self.give_dev_kit();
-            return;
-        }
-        // A dev tool for checking the day cycle: skip an hour ahead.
-        #[cfg(debug_assertions)]
-        if key == KeyCode::F7 && pressed {
-            self.time += 1000;
-            info!(
-                "time skipped to {}",
-                crate::world::daytime::clock(self.time)
-            );
-            return;
-        }
-        if key == KeyCode::F5 && pressed && !repeat {
-            self.cycle_view();
-        } else if key == KeyCode::F8 && pressed && !repeat {
-            self.mark_corner(0);
-        } else if key == KeyCode::F9 && pressed && !repeat {
-            self.mark_corner(1);
-        } else if key == KeyCode::F10 && pressed && !repeat {
-            self.save_capture();
-        } else if key == KeyCode::F4 && pressed && !repeat {
+    /// A bound key or button: the hotbar slots, throwing, swapping hands,
+    /// the F5 view, the capture tool, the debug keys and, while the cursor
+    /// is grabbed, movement, attacking, using and picking blocks. A held
+    /// attack or use acts on the next tick, then every few ticks.
+    pub fn on_action(&mut self, action: Action, pressed: bool, repeat: bool, grabbed: bool) {
+        let press = pressed && !repeat;
+        match action {
             #[cfg(debug_assertions)]
-            {
+            Action::DevKit if press => self.give_dev_kit(),
+            // A dev tool for checking the day cycle: skip an hour ahead.
+            #[cfg(debug_assertions)]
+            Action::SkipHour if pressed => {
+                self.time += 1000;
+                info!(
+                    "time skipped to {}",
+                    crate::world::daytime::clock(self.time)
+                );
+            }
+            #[cfg(debug_assertions)]
+            Action::DevFlight if press => {
                 self.flying = !self.flying;
                 self.body.velocity = DVec3::ZERO;
                 info!("flying {}", if self.flying { "on" } else { "off" });
             }
-        } else if let Some(slot) = hotbar_slot(key)
-            && pressed
-        {
-            self.inventory.selected = slot;
-        } else if key == KeyCode::KeyQ && pressed && grabbed {
-            self.throw_selected();
-        } else if key == KeyCode::KeyF && pressed && !repeat && grabbed {
-            self.swap_hands();
-        } else if grabbed {
-            self.keys.set_key(key, pressed);
+            Action::Perspective if press => self.cycle_view(),
+            Action::CaptureCorner1 if press => self.mark_corner(0),
+            Action::CaptureCorner2 if press => self.mark_corner(1),
+            Action::CaptureSave if press => self.save_capture(),
+            _ if pressed && action.hotbar_slot().is_some() => {
+                self.inventory.selected = action.hotbar_slot().unwrap_or(0);
+            }
+            Action::Drop if pressed && grabbed => self.throw_selected(),
+            Action::SwapHands if press && grabbed => self.swap_hands(),
+            Action::Attack if grabbed || !pressed => {
+                self.breaking = pressed;
+                self.break_clicked |= pressed;
+                self.break_cooldown = 0;
+            }
+            Action::Use if grabbed || !pressed => {
+                self.placing = pressed;
+                self.place_clicked |= pressed;
+                self.place_cooldown = 0;
+            }
+            Action::PickBlock if press && grabbed => self.pick_block(),
+            Action::Sneak if grabbed && self.toggle_sneak => {
+                if press {
+                    self.keys.sneak = !self.keys.sneak;
+                }
+            }
+            Action::Sprint if grabbed && self.toggle_sprint => {
+                if press {
+                    self.keys.sprint = !self.keys.sprint;
+                }
+            }
+            _ if grabbed => {
+                self.keys.set_key(action, pressed);
+            }
+            _ => {}
         }
+    }
+
+    /// The skin's outer layers the player wears.
+    pub fn skin_layers(&self) -> crate::render::player::OuterLayers {
+        self.skin_layers
+    }
+
+    /// Main Hand: Left: the main hand is drawn on the left.
+    pub fn left_handed(&self) -> bool {
+        self.left_handed
     }
 
     /// Forgets held keys and buttons, e.g. when the cursor is released.
@@ -668,32 +720,36 @@ impl Game {
     pub fn apply_options(&mut self, options: &Options) {
         self.chunks.set_radius(options.render_distance);
         self.chunks.set_blend(options.biome_blend);
+        self.chunks.set_look(
+            options.smooth_lighting,
+            options.graphics == crate::options::Graphics::Fast,
+        );
         self.camera.fov = options.fov;
         self.view.bobbing = options.view_bobbing;
         self.sensitivity = options.sensitivity;
+        self.invert_y = options.invert_y;
+        self.particle_level = options.particles;
+        self.fov_effects = options.fov_effects;
+        self.damage_tilt = options.damage_tilt;
+        let skin = options.skin;
+        self.skin_layers = [
+            skin.hat,
+            skin.jacket,
+            skin.right_sleeve,
+            skin.left_sleeve,
+            skin.right_pants,
+            skin.left_pants,
+        ];
+        self.left_handed = options.main_hand == crate::options::MainHand::Left;
+        self.auto_jump = options.auto_jump;
+        self.toggle_sneak = options.toggle_sneak;
+        self.toggle_sprint = options.toggle_sprint;
     }
 
     pub fn look(&mut self, dx: f64, dy: f64) {
         let s = config::MOUSE_SENSITIVITY * self.sensitivity;
+        let dy = if self.invert_y { -dy } else { dy };
         self.camera.rotate(dx as f32 * s, -dy as f32 * s);
-    }
-
-    /// A held button acts on the next tick, then every few ticks.
-    pub fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
-        match button {
-            MouseButton::Left => {
-                self.breaking = pressed;
-                self.break_clicked |= pressed;
-                self.break_cooldown = 0;
-            }
-            MouseButton::Right => {
-                self.placing = pressed;
-                self.place_clicked |= pressed;
-                self.place_cooldown = 0;
-            }
-            MouseButton::Middle if pressed => self.pick_block(),
-            _ => {}
-        }
     }
 
     /// Scrolling down moves right along the hotbar, like Minecraft.
@@ -899,6 +955,7 @@ impl Game {
         let input = MoveInput {
             look_y: self.camera.pitch.sin() as f64,
             using_item: self.using_item(),
+            auto_jump: self.auto_jump,
             ..self.keys.move_input()
         };
         effects_move(&mut self.body, &self.stats.effects);
@@ -982,9 +1039,13 @@ impl Game {
                 && !self.body.sneaking
                 && self.standing_on(crate::world::blocks::MAGMA_BLOCK),
         };
+        self.stats.difficulty = self.difficulty;
         self.stats.tick(&around, vulnerable);
         if vulnerable {
             self.stats.tick_food();
+            if self.difficulty == crate::level::Difficulty::Peaceful {
+                self.stats.tick_peaceful(self.time);
+            }
         }
         self.body.can_sprint = !vulnerable || self.stats.can_sprint();
     }
@@ -1081,8 +1142,15 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
 }
 
 /// A seed for drop and throw randomness, from the clock.
+/// The game's random numbers start from the clock, except in tests,
+/// which start from the same seed every run so they pass or fail the same
+/// way each time.
 fn level_random_seed() -> u64 {
-    crate::level::random_seed()
+    if cfg!(test) {
+        0x5eed_2026
+    } else {
+        crate::level::random_seed()
+    }
 }
 
 /// One chunk worker per core, leaving one core for the main thread.
@@ -1092,22 +1160,6 @@ pub fn chunk_workers() -> usize {
         .max(1);
     info!("{workers} chunk worker threads");
     workers
-}
-
-/// Number keys 1–9 pick a hotbar slot.
-fn hotbar_slot(key: KeyCode) -> Option<usize> {
-    const KEYS: [KeyCode; 9] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ];
-    KEYS.iter().position(|&k| k == key)
 }
 
 #[cfg(test)]
@@ -1157,6 +1209,52 @@ pub(crate) mod tests {
             game.chunks.update(center);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn the_particles_option_shows_all_two_in_three_or_none() {
+        let mut game = flat_game(GameMode::Survival);
+        let shown = |game: &mut Game, level| {
+            game.particle_level = level;
+            (0..300).filter(|_| game.shows_particle()).count()
+        };
+        use crate::options::Particles;
+        assert_eq!(shown(&mut game, Particles::All), 300);
+        assert_eq!(shown(&mut game, Particles::Minimal), 0);
+        let some = shown(&mut game, Particles::Decreased);
+        assert!((170..230).contains(&some), "{some}");
+    }
+
+    #[test]
+    fn controls_options_invert_the_mouse_and_toggle_sneak_and_sprint() {
+        let mut game = flat_game(GameMode::Survival);
+        game.camera.pitch = 0.0;
+        let pitch = game.camera.pitch;
+        game.look(0.0, 50.0);
+        let down = game.camera.pitch - pitch;
+        game.apply_options(&Options {
+            invert_y: true,
+            toggle_sneak: true,
+            toggle_sprint: true,
+            ..Options::default()
+        });
+        game.camera.pitch = 0.0;
+        game.look(0.0, 50.0);
+        assert!(
+            down != 0.0 && (game.camera.pitch + down).abs() < 1e-6,
+            "inverted"
+        );
+        game.on_action(Action::Sneak, true, false, true);
+        game.on_action(Action::Sneak, false, false, true);
+        assert!(game.keys.sneak, "still sneaking after letting go");
+        game.on_action(Action::Sneak, true, false, true);
+        assert!(!game.keys.sneak, "a second press stops");
+        game.on_action(Action::Sprint, true, false, true);
+        game.on_action(Action::Sprint, true, true, true);
+        assert!(
+            game.keys.sprint,
+            "a held key's repeats don't toggle it back"
+        );
     }
 
     #[test]
@@ -1372,20 +1470,20 @@ pub(crate) mod tests {
         assert_eq!(door(&game, 65), Some(upper));
         // Walking north stops against the door's slab on the cell's south side.
         game.camera.pitch = 0.0;
-        game.keys.set_key(KeyCode::KeyW, true);
+        game.keys.set_key(Action::Forward, true);
         for _ in 0..40 {
             game.tick();
         }
         let front = game.body.position().z;
         assert!((front - (-1.0 + 0.3)).abs() < 0.01, "stopped at {front}");
         // Right-clicking the upper half opens both.
-        game.keys.set_key(KeyCode::KeyW, false);
+        game.keys.set_key(Action::Forward, false);
         game.advance(0.0);
         game.place_clicked = true;
         game.tick();
         assert_eq!(door(&game, 64), Some(lower.with_bool(Prop::Open, true)));
         assert_eq!(door(&game, 65), Some(upper.with_bool(Prop::Open, true)));
-        game.keys.set_key(KeyCode::KeyW, true);
+        game.keys.set_key(Action::Forward, true);
         for _ in 0..40 {
             game.tick();
         }
@@ -1400,7 +1498,7 @@ pub(crate) mod tests {
             .collect();
         game.chunks.set_blocks(&slabs);
         game.camera.pitch = 0.0;
-        game.keys.set_key(KeyCode::KeyW, true);
+        game.keys.set_key(Action::Forward, true);
         for _ in 0..30 {
             game.tick();
         }
@@ -1425,7 +1523,7 @@ pub(crate) mod tests {
             game.body = crate::player::physics::Body::new(glam::DVec3::new(0.5, 63.9375, 2.5));
             game.body.on_ground = true;
             game.camera.pitch = 0.0;
-            game.keys.set_key(KeyCode::KeyW, true);
+            game.keys.set_key(Action::Forward, true);
             let mut jumped = false;
             for _ in 0..60 {
                 game.tick();
@@ -1484,7 +1582,7 @@ pub(crate) mod tests {
     #[test]
     fn bread_is_eaten_only_when_nothing_is_there_to_use_and_hunger_is_below_20() {
         let mut game = eater(items::BREAD, 10);
-        game.keys.set_key(KeyCode::KeyW, false);
+        game.keys.set_key(Action::Forward, false);
         game.place_clicked = true;
         game.tick();
         assert!(
@@ -1524,7 +1622,7 @@ pub(crate) mod tests {
             (IVec3::new(0, 65, -6), wall_torch),
         ]);
         game.camera.pitch = 0.0;
-        game.keys.set_key(KeyCode::KeyW, true);
+        game.keys.set_key(Action::Forward, true);
         for _ in 0..40 {
             game.tick();
         }
@@ -1539,8 +1637,8 @@ pub(crate) mod tests {
             .collect();
         game.chunks.set_blocks(&fences);
         game.camera.pitch = 0.0;
-        game.keys.set_key(KeyCode::KeyW, true);
-        game.keys.set_key(KeyCode::Space, true);
+        game.keys.set_key(Action::Forward, true);
+        game.keys.set_key(Action::Jump, true);
         for _ in 0..60 {
             game.tick();
         }
@@ -1562,11 +1660,11 @@ pub(crate) mod tests {
         game.camera.pitch = 0.0;
         game.advance(0.0);
         // One press, held for a second and a half.
-        game.on_mouse_button(MouseButton::Right, true);
+        game.on_action(Action::Use, true, false, true);
         for _ in 0..30 {
             game.tick();
         }
-        game.on_mouse_button(MouseButton::Right, false);
+        game.on_action(Action::Use, false, false, true);
         let door = game.chunks.world().block(0, 64, -2);
         assert_eq!(door, Some(lower.with_bool(Prop::Open, true)), "opened once");
         // Open, it lies along the west side of its cell: looking straight
@@ -1578,9 +1676,9 @@ pub(crate) mod tests {
             game.target.map(|hit| hit.block),
             Some(IVec3::new(0, 65, -2))
         );
-        game.on_mouse_button(MouseButton::Right, true);
+        game.on_action(Action::Use, true, false, true);
         game.tick();
-        game.on_mouse_button(MouseButton::Right, false);
+        game.on_action(Action::Use, false, false, true);
         assert_eq!(game.chunks.world().block(0, 64, -2), Some(lower));
     }
 
@@ -1788,6 +1886,18 @@ pub(crate) mod tests {
     }
 
     /// A flat world 5×5 chunks around the origin with light computed.
+    /// Waits for the chunk holding block column (x, z) to load, for tests
+    /// that build outside the nearest chunks.
+    pub(crate) fn wait_for_chunk(game: &mut Game, x: i32, z: i32) {
+        let pos = ChunkPos::of_block(x, z);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while game.chunks.world().get(pos).is_none() {
+            assert!(Instant::now() < deadline, "chunk {pos:?} never loaded");
+            game.chunks.update(ChunkPos::new(0, 0));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     pub(crate) fn lit_flat_game(mode: GameMode) -> Game {
         let (items, models) = registries();
         let chunks = ChunkManager::new(crate::world::manager::ChunkSource::Flat, models, 2, 4);

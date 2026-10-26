@@ -1,6 +1,6 @@
 //! Held movement keys.
 
-use winit::keyboard::KeyCode;
+use crate::bindings::Action;
 
 use super::physics::MoveInput;
 
@@ -17,16 +17,17 @@ pub struct MoveKeys {
 }
 
 impl MoveKeys {
-    /// Records a key press or release. Returns false if the key isn't a movement key.
-    pub fn set_key(&mut self, key: KeyCode, pressed: bool) -> bool {
-        let slot = match key {
-            KeyCode::KeyW => &mut self.forward,
-            KeyCode::KeyS => &mut self.back,
-            KeyCode::KeyA => &mut self.left,
-            KeyCode::KeyD => &mut self.right,
-            KeyCode::Space => &mut self.jump,
-            KeyCode::ShiftLeft | KeyCode::ShiftRight => &mut self.sneak,
-            KeyCode::ControlLeft => &mut self.sprint,
+    /// Records a movement key's press or release. Returns false if the
+    /// action isn't a movement.
+    pub fn set_key(&mut self, action: Action, pressed: bool) -> bool {
+        let slot = match action {
+            Action::Forward => &mut self.forward,
+            Action::Back => &mut self.back,
+            Action::Left => &mut self.left,
+            Action::Right => &mut self.right,
+            Action::Jump => &mut self.jump,
+            Action::Sneak => &mut self.sneak,
+            Action::Sprint => &mut self.sprint,
             _ => return false,
         };
         *slot = pressed;
@@ -62,15 +63,15 @@ mod tests {
     #[test]
     fn opposite_keys_cancel() {
         let mut keys = MoveKeys::default();
-        keys.set_key(KeyCode::KeyW, true);
-        keys.set_key(KeyCode::KeyS, true);
-        keys.set_key(KeyCode::KeyA, true);
+        keys.set_key(Action::Forward, true);
+        keys.set_key(Action::Back, true);
+        keys.set_key(Action::Left, true);
         let input = keys.move_input();
         assert_eq!((input.forward, input.strafe), (0.0, -1.0));
     }
 
     #[test]
     fn non_movement_keys_are_ignored() {
-        assert!(!MoveKeys::default().set_key(KeyCode::KeyQ, true));
+        assert!(!MoveKeys::default().set_key(Action::Drop, true));
     }
 }

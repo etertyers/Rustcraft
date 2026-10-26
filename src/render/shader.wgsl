@@ -70,30 +70,39 @@ fn lightmap(light: vec2<f32>) -> vec3<f32> {
 
 // Enchanted items have 64 added to their sky light (see GLINT_FLAG).
 const GLINT_FLAG: f32 = 64.0;
+// Faces drawn without cutout have 32 added to their block light
+// (mesh::SOLID_FLAG).
+const SOLID_FLAG: f32 = 32.0;
 
 // The glint pattern at a point of an enchanted item: stripes scrolling
 // diagonally at 10°, tinted purple. Tiled across the item's world position
 // (a block is 16 repeats).
 fn glint(world: vec3<f32>) -> vec3<f32> {
-    let seconds = globals.camera.w / 20.0;
+    let seconds = globals.camera.w / 20.0 * globals.lighting.y;
     let p = vec2<f32>(world.x + world.z, world.y * 1.4) * 8.0;
     let c = 0.98480775;
     let s = 0.17364818;
     let rotated = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
     let scroll = vec2<f32>(seconds / 3.0, seconds / 4.873);
     let texel = textureSample(glint_texture, glint_sampler, rotated + scroll);
-    return texel.rgb * vec3<f32>(0.5, 0.25, 0.8);
+    return texel.rgb * vec3<f32>(0.5, 0.25, 0.8) * globals.lighting.z;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    var light = in.light;
+    // Fast graphics' leaves are drawn solid (see SOLID_FLAG).
+    var solid = false;
+    if light.y >= SOLID_FLAG * 0.5 {
+        light.y -= SOLID_FLAG;
+        solid = true;
+    }
     // Cutout transparency (leaves, plants); water, ice and glass use
     // fs_translucent.
-    if texel.a < 0.5 {
+    if texel.a < 0.5 && !solid {
         discard;
     }
-    var light = in.light;
     var shine = vec3<f32>(0.0);
     if light.x >= GLINT_FLAG * 0.5 {
         light.x -= GLINT_FLAG;
@@ -123,12 +132,19 @@ fn fs_crack(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(shade, 1.0);
 }
 
+// Entities' shadows have 128 added to their sky light; their color's red
+// is how dark they are (render::entities::SHADOW_FLAG).
+const SHADOW_FLAG: f32 = 128.0;
+
 // Translucent faces (water, ice, glass): the texture's own alpha, blended.
 @fragment
 fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
     if texel.a < 0.01 {
         discard;
+    }
+    if in.light.x >= SHADOW_FLAG * 0.5 {
+        return vec4<f32>(texel.rgb, texel.a * in.color.r);
     }
     let color = linear_to_srgb(texel.rgb) * in.color * lightmap(in.light);
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));

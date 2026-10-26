@@ -2,6 +2,7 @@
 /saves
 .DS_Store
 /options.ron
+/screenshots
 /resourcepacks
 /.claude/settings.local.json
 /assets/vanilla/
