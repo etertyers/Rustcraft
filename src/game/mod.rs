@@ -129,6 +129,8 @@ pub enum ShotScreen {
     Inventory,
     /// The creative inventory on the table's `n`th tab.
     Creative(usize),
+    /// Options → Controls → Key Binds over the paused game.
+    KeyBinds,
 }
 
 pub struct Game {

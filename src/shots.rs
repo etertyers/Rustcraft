@@ -503,6 +503,16 @@ pub static SHOTS: &[Shot] = &[
         stage: torches_in_cave,
     },
     Shot {
+        name: "m35-key-binds",
+        about: "Options, Controls, Key Binds over the paused game: every action by category, Sneak moved onto W so both show red, and Jump waiting for a new key",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.0, -0.2)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: key_binds,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -876,6 +886,13 @@ fn inventory_with_book(game: &mut Game) {
 }
 
 /// The inventory with armor worn and a renamed sword hovered.
+fn key_binds(game: &mut Game) {
+    game.stage_ui(crate::game::ShotUi {
+        screen: crate::game::ShotScreen::KeyBinds,
+        hover: None,
+    });
+}
+
 fn inventory_with_armor(game: &mut Game) {
     use crate::{
         game::{ShotScreen, ShotUi},

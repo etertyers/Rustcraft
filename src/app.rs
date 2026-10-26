@@ -559,6 +559,24 @@ impl App {
         let Some(staged) = self.game.as_ref().and_then(Game::shot_ui) else {
             return;
         };
+        if staged.screen == ShotScreen::KeyBinds {
+            // A conflict (Sneak on W, in red) and Jump waiting for a key.
+            if self.pause.is_none() {
+                use crate::ui::options::{OptionsScreen, Page};
+                let mut screen = OptionsScreen::new(Page::KeyBinds);
+                screen.wait_for(Action::Jump);
+                self.options
+                    .keys
+                    .set(Action::Sneak, Some(Input::Key(KeyCode::KeyW)));
+                self.pause = Some(PauseMenu {
+                    options: Some(screen),
+                    packs: None,
+                });
+                self.stack.push(Layer::Pause);
+                self.apply_grab();
+            }
+            return;
+        }
         if self.screen.is_none() {
             if let ShotScreen::Creative(tab) = staged.screen {
                 self.creative_tab = CreativeTab::Items(tab);
@@ -944,6 +962,10 @@ impl App {
         }
         if let Some(game) = self.game.as_mut() {
             game.apply_options(&self.options);
+        }
+        // `--bench` and `--shot` runs leave the player's settings alone.
+        if self.bench.is_some() || self.shot.is_some() {
+            return;
         }
         let path = Options::path();
         if let Err(err) = self.options.save(&path) {
