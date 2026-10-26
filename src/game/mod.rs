@@ -136,6 +136,8 @@ pub enum ShotScreen {
 /// Everything about one player: where they are and how they move, what
 /// they hold and carry, their health and screens, and their settings.
 pub struct PlayerState {
+    /// The name other players see (Options → Player Name).
+    pub name: String,
     /// Look direction comes from the mouse; position follows `body` each frame.
     pub camera: Camera,
     /// How the player looks to the camera: swinging, bobbing, F5.
@@ -243,11 +245,87 @@ pub struct PlayerState {
     levitation_from: Option<f64>,
 }
 
+impl PlayerState {
+    /// A player standing at `feet`, looking along `yaw` and `pitch`, with
+    /// nothing in their inventory.
+    pub fn new(feet: DVec3, yaw: f32, pitch: f32) -> Self {
+        let body = Body::new(feet);
+        let eye = feet + DVec3::Y * body.eye_height();
+        Self {
+            name: crate::options::DEFAULT_NAME.to_owned(),
+            camera: Camera::new(eye.as_vec3(), yaw, pitch),
+            view: view::ViewState::new(yaw, pitch, None),
+            body,
+            sounds: Default::default(),
+            prev_feet: feet,
+            step_lag: 0.0,
+            keys: MoveKeys::default(),
+            target: None,
+            breaking: false,
+            placing: false,
+            break_clicked: false,
+            place_clicked: false,
+            break_cooldown: 0,
+            place_cooldown: 0,
+            inventory: Inventory::default(),
+            stats: Stats::default(),
+            cursor: None,
+            container: None,
+            sleep: None,
+            bed: None,
+            message: None,
+            capture: [None, None],
+            water_vision: 0,
+            attack_ticker: 100,
+            last_main_item: None,
+            shield_cooldown: 0,
+            use_hand: Default::default(),
+            drawing_hand: Default::default(),
+            shield_hand: None,
+            shield_ticks: 0,
+            drawing: None,
+            mounted: None,
+            mining: None,
+            eating: None,
+            boat: None,
+            riding: None,
+            scroll_pixels: 0.0,
+            sensitivity: 1.0,
+            invert_y: false,
+            auto_jump: false,
+            particle_level: crate::options::Particles::All,
+            fov_effects: 1.0,
+            damage_tilt: 1.0,
+            skin_layers: crate::render::player::ALL_LAYERS,
+            left_handed: false,
+            toggle_sneak: false,
+            toggle_sprint: false,
+            #[cfg(debug_assertions)]
+            flying: false,
+            mode: GameMode::default(),
+            arriving: None,
+            portal: Default::default(),
+            credits: None,
+            glide_ticks: 0,
+            rocket: 0,
+            jump_was: false,
+            gateway_cooldown: 0,
+            progress: Default::default(),
+            recipe_book: Default::default(),
+            toasts: Vec::new(),
+            levitation_from: None,
+        }
+    }
+}
+
 pub struct Game {
     pub chunks: ChunkManager,
     items: Items,
-    /// The player whose turn it is: the only one in single player.
+    /// The player whose turn it is: the only one in single player, and
+    /// the host's except while `for_each_player` runs.
     pub player: PlayerState,
+    /// Everyone else in the world (LAN players).
+    pub others: Vec<PlayerState>,
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
@@ -347,74 +425,11 @@ impl Game {
         yaw: f32,
         pitch: f32,
     ) -> Self {
-        let body = Body::new(feet);
-        let eye = feet + DVec3::Y * body.eye_height();
         Self {
             chunks,
             items,
-            player: PlayerState {
-                camera: Camera::new(eye.as_vec3(), yaw, pitch),
-                view: view::ViewState::new(yaw, pitch, None),
-                body,
-                sounds: Default::default(),
-                prev_feet: feet,
-                step_lag: 0.0,
-                keys: MoveKeys::default(),
-                target: None,
-                breaking: false,
-                placing: false,
-                break_clicked: false,
-                place_clicked: false,
-                break_cooldown: 0,
-                place_cooldown: 0,
-                inventory: Inventory::default(),
-                stats: Stats::default(),
-                cursor: None,
-                container: None,
-                sleep: None,
-                bed: None,
-                message: None,
-                capture: [None, None],
-                water_vision: 0,
-                attack_ticker: 100,
-                last_main_item: None,
-                shield_cooldown: 0,
-                use_hand: Default::default(),
-                drawing_hand: Default::default(),
-                shield_hand: None,
-                shield_ticks: 0,
-                drawing: None,
-                mounted: None,
-                mining: None,
-                eating: None,
-                boat: None,
-                riding: None,
-                scroll_pixels: 0.0,
-                sensitivity: 1.0,
-                invert_y: false,
-                auto_jump: false,
-                particle_level: crate::options::Particles::All,
-                fov_effects: 1.0,
-                damage_tilt: 1.0,
-                skin_layers: crate::render::player::ALL_LAYERS,
-                left_handed: false,
-                toggle_sneak: false,
-                toggle_sprint: false,
-                #[cfg(debug_assertions)]
-                flying: false,
-                mode: GameMode::default(),
-                arriving: None,
-                portal: Default::default(),
-                credits: None,
-                glide_ticks: 0,
-                rocket: 0,
-                jump_was: false,
-                gateway_cooldown: 0,
-                progress: Default::default(),
-                recipe_book: Default::default(),
-                toasts: Vec::new(),
-                levitation_from: None,
-            },
+            player: PlayerState::new(feet, yaw, pitch),
+            others: Vec::new(),
             spawn,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),
@@ -862,18 +877,51 @@ impl Game {
         self.player.target = self.find_target(eye);
     }
 
-    /// One game tick: player physics, then breaking and placing.
+    /// One game tick: each player's turn, then the world, then what each
+    /// player made of it. The world waits while every player is arriving
+    /// in a dimension or watching the credits.
     fn tick(&mut self) {
+        let mut waiting = true;
+        self.for_each_player(|game| waiting &= !game.tick_player());
+        if waiting {
+            return;
+        }
+        self.tick_world();
+        self.for_each_player(Game::tick_player_after);
+        self.time += 1;
+        self.ticks_since_save += 1;
+        if self.ticks_since_save >= config::AUTOSAVE_TICKS
+            && let Err(err) = self.save()
+        {
+            error!("autosave failed: {err:#}");
+        }
+    }
+
+    /// Runs `turn` for each player in turn, the host first, with that
+    /// player in `self.player`.
+    pub(crate) fn for_each_player(&mut self, mut turn: impl FnMut(&mut Game)) {
+        turn(self);
+        for i in 0..self.others.len() {
+            std::mem::swap(&mut self.player, &mut self.others[i]);
+            turn(self);
+            std::mem::swap(&mut self.player, &mut self.others[i]);
+        }
+    }
+
+    /// A player's part of the tick: moving, riding or sleeping, health,
+    /// using their hands, portals, the view and the attack recharge.
+    /// Returns false while they wait for chunks or the credits roll.
+    fn tick_player(&mut self) -> bool {
         self.player.prev_feet = self.player.body.position();
         // Nothing happens until the chunks around an arriving player load.
         self.tick_arrival();
         if self.is_arriving() {
-            return;
+            return false;
         }
         // The poem and credits stop the world while they roll.
         if self.player.credits.is_some() {
             self.tick_credits();
-            return;
+            return false;
         }
         if !self.player.stats.is_dead() {
             if self.is_sleeping() {
@@ -923,6 +971,12 @@ impl Game {
             }
         }
         self.tick_combat();
+        true
+    }
+
+    /// The world's part of the tick: things in flight, mobs, blocks and
+    /// machines.
+    fn tick_world(&mut self) {
         self.effects.iter_mut().for_each(|effect| effect.tick());
         self.effects.retain(|effect| !effect.expired());
         self.tick_items();
@@ -933,7 +987,6 @@ impl Game {
         self.tick_bullets();
         self.tick_eyes();
         self.tick_end();
-        self.tick_advancements();
         self.swirl_effects();
         self.tick_mobs();
         self.tick_spawners();
@@ -948,15 +1001,14 @@ impl Game {
         self.post_process();
         self.tick_furnaces();
         self.tick_brewing();
+    }
+
+    /// After the world's tick: advancements, the player's sounds and what
+    /// dying drops.
+    fn tick_player_after(&mut self) {
+        self.tick_advancements();
         self.tick_sounds();
         self.on_death();
-        self.time += 1;
-        self.ticks_since_save += 1;
-        if self.ticks_since_save >= config::AUTOSAVE_TICKS
-            && let Err(err) = self.save()
-        {
-            error!("autosave failed: {err:#}");
-        }
     }
 
     fn move_player(&mut self) {
@@ -1239,6 +1291,29 @@ pub(crate) mod tests {
             game.chunks.update(center);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn every_player_gets_a_turn_each_tick_and_keeps_their_own_state() {
+        let mut game = flat_game(GameMode::Survival);
+        let mut guest = PlayerState::new(DVec3::new(4.5, 70.0, 4.5), 0.0, 0.0);
+        guest.name = "Guest".to_owned();
+        game.others.push(guest);
+        game.run_ticks(40);
+        let guest = &game.others[0];
+        assert_eq!(guest.name, "Guest");
+        assert_eq!(
+            guest.body.position().y,
+            64.0,
+            "the guest fell to the ground"
+        );
+        assert!(guest.body.position().x > 4.0, "and stayed where they were");
+        assert_eq!(
+            game.player.name,
+            crate::options::DEFAULT_NAME,
+            "the host is back"
+        );
+        assert_eq!(game.player.body.position().x, 0.5);
     }
 
     #[test]
