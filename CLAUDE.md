@@ -563,7 +563,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Options save to `options.ron` beside `saves/` and load at startup; unknown keys are ignored so older files still load.
 - **Done when:** every key can be rebound and the game obeys the new binding, conflicts show red, auto-jump works when toggled, and options survive a restart. One screenshot: the Key Binds screen.
 
-### - [ ] M36 — Client/server split
+### - [x] M36 — Client/server split
 - Split the game into a **server** (world, chunks, ticks, mobs, redstone, fluids, dimensions, inventories, saving) and a **client** (rendering, input, UI, sound, prediction), like vanilla's integrated server. Single player runs an in-process server with one client, so there is one code path. Do this as a series of small refactor commits; the game must stay playable at every commit.
 - **Protocol:** versioned message types (`serde` + `bincode` + `lz4_flex` for chunk data) over a transport trait with two implementations: in-process channels (single player) and TCP (LAN, M37). Messages for login, chunk data and block changes, entity spawn/move/remove, player movement, inventory and container updates, sounds and particles, time and weather, dimension change, and disconnect.
 - **Client-side prediction** for the local player's movement and block breaking/placing, corrected by the server, so single player feels exactly like before. 20 ticks/second on the server; entity positions interpolated on the client.
