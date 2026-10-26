@@ -28,6 +28,13 @@ const MAX_QUEUED_INPUTS: usize = 4;
 
 pub type ServerConnection = Box<dyn Connection<ServerMsg, ClientMsg>>;
 
+/// A world open to LAN.
+struct Lan {
+    listener: crate::net::lan::Listener,
+    guest_mode: crate::player::mode::GameMode,
+    cheats: bool,
+}
+
 /// A connection that hasn't logged in yet.
 struct Pending {
     conn: ServerConnection,
@@ -55,6 +62,9 @@ pub struct Server {
     pending: Vec<Pending>,
     /// Every recipe in the book's order, for placing one from the book.
     book: Arc<Vec<BookRecipe>>,
+    /// Open to LAN: the port listened on, and the guests' game mode and
+    /// whether they may cheat (M38's commands).
+    lan: Option<Lan>,
     /// A client changed something on a screen since the last snapshot, so
     /// one goes out even without a tick (the held stack follows the mouse
     /// at once).
@@ -74,7 +84,38 @@ impl Server {
             pending: Vec::new(),
             book,
             changed: false,
+            lan: None,
         }
+    }
+
+    /// Opens the world to LAN on `port` (0 for any free one); guests play
+    /// in `guest_mode`. Returns the port.
+    pub fn open_to_lan(
+        &mut self,
+        port: u16,
+        guest_mode: crate::player::mode::GameMode,
+        cheats: bool,
+    ) -> std::io::Result<u16> {
+        let world = self.game.world_name().unwrap_or_else(|| "World".to_owned());
+        let motd = format!("{} - {world}", self.game.player.name);
+        let listener = crate::net::lan::Listener::open(port, motd)?;
+        let port = listener.port;
+        self.lan = Some(Lan {
+            listener,
+            guest_mode,
+            cheats,
+        });
+        Ok(port)
+    }
+
+    /// The port the world is open to LAN on, if it is.
+    pub fn lan_port(&self) -> Option<u16> {
+        self.lan.as_ref().map(|lan| lan.listener.port)
+    }
+
+    /// Whether guests may use cheat commands (Open to LAN's Allow Cheats).
+    pub fn cheats(&self) -> bool {
+        self.lan.as_ref().is_some_and(|lan| lan.cheats)
     }
 
     /// A new connection; it joins when its login arrives.
@@ -157,6 +198,16 @@ impl Server {
     /// Takes in logins: a player with a free name joins, the first as the
     /// host (the world's own player), the rest as guests.
     fn accept(&mut self) {
+        if let Some(lan) = &self.lan {
+            for stream in lan.listener.arrivals() {
+                match crate::net::transport::Tcp::new(stream) {
+                    Ok(conn) => self.pending.push(Pending {
+                        conn: Box::new(conn),
+                    }),
+                    Err(err) => warn!("a LAN connection failed: {err}"),
+                }
+            }
+        }
         let mut still = Vec::new();
         for mut pending in std::mem::take(&mut self.pending) {
             let Some(msg) = pending.conn.try_recv() else {
@@ -208,7 +259,10 @@ impl Server {
             let spawn = self.game.spawn_point();
             let mut player = PlayerState::new(spawn, 0.0, 0.0);
             player.name = name.clone();
-            player.mode = self.game.player.mode;
+            player.mode = self
+                .lan
+                .as_ref()
+                .map_or(self.game.player.mode, |lan| lan.guest_mode);
             self.game.others.push(player);
         }
         self.game.with_player(index, Game::restore_player);
@@ -577,6 +631,43 @@ mod tests {
         }
         let eye = game.player.camera.position.as_dvec3();
         assert!(eye.distance(DVec3::new(-300.5, 81.62, 41.5)) < 0.5, "{eye}");
+    }
+
+    #[test]
+    fn a_guest_joins_over_tcp_and_plays_in_the_lan_game_mode() {
+        let (mut server, mut clients) = world_with(&["Alice"]);
+        let port = server
+            .open_to_lan(0, GameMode::Survival, false)
+            .expect("open to LAN");
+        assert_eq!(server.lan_port(), Some(port));
+        let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let conn = crate::net::transport::Tcp::new(stream).unwrap();
+        let (items, models) = registries();
+        let guest = Client::join(Box::new(conn), "Bob", settings());
+        clients.push((guest, Game::new_client(items, models, mob_registry(), 2, 1)));
+        run_until(&mut server, &mut clients, |server, clients| {
+            let (bob, game) = &clients[1];
+            server.player_count() == 2
+                && bob.welcomed
+                && block_at(game, IVec3::new(0, 63, 0)).is_some_and(|b| b.is(blocks::GRASS_BLOCK))
+                && game.player.name == "Bob"
+        });
+        assert_eq!(
+            server.game.others[0].mode,
+            GameMode::Survival,
+            "the LAN mode"
+        );
+        assert_eq!(
+            server.game.player.mode,
+            GameMode::Creative,
+            "the host keeps theirs"
+        );
+        // Leaving takes Bob out of the world.
+        clients.pop();
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 1
+        });
+        assert!(server.game.others.is_empty());
     }
 
     #[test]

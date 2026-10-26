@@ -195,6 +195,11 @@ impl Game {
         }
     }
 
+    /// The saved world's name, if it's saved.
+    pub fn world_name(&self) -> Option<String> {
+        self.saved.as_ref().map(|saved| saved.level.name.clone())
+    }
+
     /// Where new players start.
     pub fn spawn_point(&self) -> DVec3 {
         self.spawn
