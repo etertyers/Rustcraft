@@ -150,6 +150,10 @@ impl Game {
             }
         };
         chunks.set_blend(blend);
+        // A server's chunks stay a server's in every dimension.
+        if self.chunks.serves() && !chunks.serves() {
+            chunks.serve();
+        }
         let mut old = std::mem::replace(&mut self.chunks, chunks);
         old.unload_all();
         left.chunks = Some(old);
@@ -255,6 +259,16 @@ mod tests {
         player::mode::GameMode,
         world::blocks,
     };
+
+    #[test]
+    fn a_servers_chunks_serve_in_the_dimension_it_goes_to() {
+        let mut game = crate::game::tests::flat_game(GameMode::Survival);
+        game.chunks.serve();
+        game.change_dimension(Dimension::Nether, DVec3::new(0.5, 70.0, 0.5));
+        assert!(game.chunks.serves());
+        game.change_dimension(Dimension::Overworld, DVec3::new(0.5, 70.0, 0.5));
+        assert!(game.chunks.serves(), "and in the one it comes back to");
+    }
 
     #[test]
     fn water_poured_in_the_nether_boils_away_but_lava_doesnt() {

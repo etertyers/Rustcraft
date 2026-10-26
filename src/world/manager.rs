@@ -706,6 +706,11 @@ impl ChunkManager {
         self.edits = Some(Vec::new());
     }
 
+    /// Whether this is a server's (`serve`).
+    pub fn serves(&self) -> bool {
+        self.edits.is_some()
+    }
+
     /// A server's edits since the last call, and the chunks whose block
     /// entities changed.
     pub fn take_edits(&mut self) -> (Vec<(IVec3, BlockState, bool)>, Vec<ChunkPos>) {
