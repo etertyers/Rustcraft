@@ -26,6 +26,8 @@ pub const SWING_TICKS: i32 = 6;
 pub const THIRD_PERSON_DISTANCE: f64 = 4.0;
 /// Third-person clipping probes the eye's corners this far out.
 const CLIP_MARGIN: f64 = 0.1;
+/// How long the view shakes after a hit (vanilla's `hurtDuration`).
+const HURT_TICKS: u32 = 10;
 /// Ticks of drawing a bow at which it's fully drawn.
 const BOW_FULL_DRAW: f32 = 20.0;
 /// Ticks of eating before the food is eaten.
@@ -452,13 +454,27 @@ impl Game {
         self.body.swimming
     }
 
+    /// The view's roll just after a hit (vanilla `bobHurt`), scaled by
+    /// Damage Tilt: up to 14° over half a second.
+    pub fn hurt_tilt(&self, alpha: f32) -> f32 {
+        let ticks = self.stats.hurt_ticks();
+        if ticks == 0 || self.stats.is_dead() {
+            return 0.0;
+        }
+        let f = ((ticks as f32 - alpha) / HURT_TICKS as f32).max(0.0);
+        -((f.powi(4) * PI).sin() * 14.0 * self.damage_tilt).to_radians()
+    }
+
     /// The camera drawing the frame: the player's eyes, or pulled back
     /// (or around in front) for F5, shaking with each step.
     pub fn view_camera(&self) -> Camera {
         let alpha = self.tick_alpha() as f32;
         let mut camera = self.camera;
         camera.bob = self.view.view_bob(alpha);
-        camera.fov = (camera.fov * self.view.fov_modifier(alpha)).clamp(1.0, 170.0);
+        camera.bob.roll += self.hurt_tilt(alpha);
+        // FOV Effects scales how far sprinting, flying and potions move it.
+        let modifier = 1.0 + (self.view.fov_modifier(alpha) - 1.0) * self.fov_effects;
+        camera.fov = (camera.fov * modifier).clamp(1.0, 170.0);
         let flip = match self.view.mode {
             ViewMode::First => return camera,
             ViewMode::ThirdBack => false,
@@ -936,6 +952,35 @@ mod tests {
         game.set_view_mode(ViewMode::ThirdFront);
         let front = (game.view_camera().position - eye).length();
         assert!(front > 0.1, "{front}");
+    }
+
+    #[test]
+    fn damage_tilts_the_view_and_fov_effects_scale_the_zoom() {
+        use crate::{
+            game::tests::flat_game,
+            player::{mode::GameMode, stats::DamageSource},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        assert_eq!(game.hurt_tilt(0.0), 0.0);
+        game.stats.damage(2.0, DamageSource::Mob);
+        game.run_ticks(2);
+        let tilt = game.hurt_tilt(0.0);
+        assert!(tilt < -1f32.to_radians(), "tilted {tilt}");
+        game.damage_tilt = 0.0;
+        assert_eq!(game.hurt_tilt(0.0), 0.0);
+        game.run_ticks(12);
+        game.damage_tilt = 1.0;
+        assert_eq!(game.hurt_tilt(0.0), 0.0, "over after half a second");
+
+        game.view.fov = 1.15;
+        game.view.prev_fov = 1.15;
+        let fov = |game: &Game| game.view_camera().fov;
+        let base = game.camera.fov;
+        assert!((fov(&game) - base * 1.15).abs() < 1e-3);
+        game.fov_effects = 0.0;
+        assert!((fov(&game) - base).abs() < 1e-3);
+        game.fov_effects = 0.5;
+        assert!((fov(&game) - base * 1.075).abs() < 1e-3);
     }
 
     #[test]

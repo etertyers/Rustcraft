@@ -197,6 +197,7 @@ pub fn environment(
         sky: true,
         ambient: 0.0,
         brightness: DEFAULT_BRIGHTNESS,
+        glint: [1.0, 1.0],
     }
 }
 
@@ -232,6 +233,7 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
         sky: false,
         ambient: NETHER_AMBIENT,
         brightness: DEFAULT_BRIGHTNESS,
+        glint: [1.0, 1.0],
     }
 }
 
@@ -261,6 +263,7 @@ pub fn end(time: u64, partial: f32, view: f32, eye: Option<Fluid>) -> Environmen
         sky: false,
         ambient: END_AMBIENT,
         brightness: DEFAULT_BRIGHTNESS,
+        glint: [1.0, 1.0],
     }
 }
 

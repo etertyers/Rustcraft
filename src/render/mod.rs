@@ -84,6 +84,8 @@ pub struct Environment {
     pub sky: bool,
     /// The Brightness option, 0 (Moody) to 1 (Bright).
     pub brightness: f32,
+    /// Glint Speed and Glint Strength as multiples of vanilla's defaults.
+    pub glint: [f32; 2],
     /// The dimension's ambient light, lifting the dark (modern
     /// `DimensionType.ambientLight`: 0.1 in the Nether).
     pub ambient: f32,
@@ -1074,7 +1076,7 @@ fn globals(
             if env.sky { 0.0 } else { 1.0 },
             env.ambient,
         ],
-        lighting: [env.brightness, 0.0, 0.0, 0.0],
+        lighting: [env.brightness, env.glint[0], env.glint[1], 0.0],
     }
 }
 

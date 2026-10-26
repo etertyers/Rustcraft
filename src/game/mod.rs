@@ -259,6 +259,9 @@ pub struct Game {
     auto_jump: bool,
     /// The Particles option.
     particle_level: crate::options::Particles,
+    /// FOV Effects and Damage Tilt, 0–1.
+    pub(crate) fov_effects: f32,
+    pub(crate) damage_tilt: f32,
     /// Skin Customization: the outer layers worn, and Main Hand: Left.
     skin_layers: crate::render::player::OuterLayers,
     pub(crate) left_handed: bool,
@@ -411,6 +414,8 @@ impl Game {
             invert_y: false,
             auto_jump: false,
             particle_level: crate::options::Particles::All,
+            fov_effects: 1.0,
+            damage_tilt: 1.0,
             skin_layers: crate::render::player::ALL_LAYERS,
             left_handed: false,
             toggle_sneak: false,
@@ -722,6 +727,8 @@ impl Game {
         self.sensitivity = options.sensitivity;
         self.invert_y = options.invert_y;
         self.particle_level = options.particles;
+        self.fov_effects = options.fov_effects;
+        self.damage_tilt = options.damage_tilt;
         let skin = options.skin;
         self.skin_layers = [
             skin.hat,

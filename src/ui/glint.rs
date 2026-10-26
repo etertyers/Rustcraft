@@ -14,6 +14,43 @@ use crate::render::icons::ItemIcon;
 /// The pattern is tinted by this much of each color (the game's
 /// `color(0.5, 0.25, 0.8)`).
 const TINT: [f32; 3] = [0.5, 0.25, 0.8];
+
+/// The Glint Speed and Glint Strength options, as multiples of vanilla's
+/// defaults (0.5 and 0.75), stored as `f32` bits.
+static SPEED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+static STRENGTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+/// Sets the glint's speed and strength from the options (0–1 each).
+pub fn set_glint(speed: f32, strength: f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (speed, strength) = scale_of(speed, strength);
+    SPEED.store(speed.to_bits(), Relaxed);
+    STRENGTH.store(strength.to_bits(), Relaxed);
+}
+
+/// The options' values as multiples of vanilla's defaults.
+fn scale_of(speed: f32, strength: f32) -> (f32, f32) {
+    (speed / 0.5, strength / 0.75)
+}
+
+/// The speed and strength multiples.
+pub fn glint_scale() -> (f32, f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        f32::from_bits(SPEED.load(Relaxed)),
+        f32::from_bits(STRENGTH.load(Relaxed)),
+    )
+}
+
+/// The pattern's color, brighter or fainter with Glint Strength.
+fn tint() -> [f32; 3] {
+    TINT.map(|c| c * glint_scale().1)
+}
+
+/// Seconds the pattern has scrolled for, faster or slower with Glint Speed.
+fn scroll_time(painter: &Painter) -> f64 {
+    painter.ctx().input(|input| input.time) * f64::from(glint_scale().0)
+}
 /// The pattern runs at 10° and repeats 8 times across an icon.
 const ROTATION_DEGREES: f32 = 10.0;
 const REPEATS: f32 = 8.0;
@@ -74,7 +111,8 @@ pub fn sample(pattern: &RgbaImage, uv: [f32; 2]) -> [f32; 3] {
     let x = (uv[0].rem_euclid(1.0) * w as f32) as u32 % w;
     let y = (uv[1].rem_euclid(1.0) * h as f32) as u32 % h;
     let texel = pattern.get_pixel(x, y);
-    std::array::from_fn(|i| f32::from(texel[i]) / 255.0 * TINT[i])
+    let tint = tint();
+    std::array::from_fn(|i| f32::from(texel[i]) / 255.0 * tint[i])
 }
 
 /// An icon's overlay: the pattern wherever `tile` is opaque, as additive
@@ -124,7 +162,7 @@ pub fn paint_mesh(painter: &Painter, mut mesh: Mesh) {
         else {
             return;
         };
-        let seconds = painter.ctx().input(|input| input.time);
+        let seconds = scroll_time(painter);
         let side = rect.width().max(rect.height()).max(1.0);
         for v in &mut mesh.vertices {
             let p = [(v.pos.x - rect.min.x) / side, (v.pos.y - rect.min.y) / side];
@@ -143,7 +181,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: &ItemIcon) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        let seconds = painter.ctx().input(|input| input.time);
+        let seconds = scroll_time(painter);
         let frame = (seconds * FRAMES_PER_SECOND) as u64;
         if frame != state.frame {
             state.frame = frame;
@@ -192,12 +230,8 @@ pub fn paint(painter: &Painter, rect: Rect, icon: &ItemIcon) {
                 let low_left = Pos2::new(c.x - w, c.y + h / 2.0);
                 let low_right = Pos2::new(c.x + w, c.y + h / 2.0);
                 let mut mesh = Mesh::with_texture(state.texture.id());
-                let tint = Color32::from_rgba_premultiplied(
-                    (TINT[0] * 255.0) as u8,
-                    (TINT[1] * 255.0) as u8,
-                    (TINT[2] * 255.0) as u8,
-                    255,
-                );
+                let [r, g, b] = tint().map(|c| (c.min(1.0) * 255.0) as u8);
+                let tint = Color32::from_rgba_premultiplied(r, g, b, 255);
                 let size = rect.size();
                 for corners in [
                     [left, top, right, c],
@@ -282,6 +316,13 @@ mod tests {
         let _ = v0;
         // Sampling wraps.
         assert_eq!(sample(&pattern, [0.1, 0.1]), sample(&pattern, [5.1, -3.9]));
+    }
+
+    #[test]
+    fn glint_options_scale_from_vanillas_defaults() {
+        assert_eq!(scale_of(0.5, 0.75), (1.0, 1.0));
+        assert_eq!(scale_of(1.0, 0.0), (2.0, 0.0));
+        assert_eq!(glint_scale(), (1.0, 1.0), "tests leave the defaults");
     }
 
     #[test]

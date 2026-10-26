@@ -339,6 +339,12 @@ impl Stats {
         fresh
     }
 
+    /// Ticks left of the hurt shake after a fresh hit, 10 down to 0
+    /// (vanilla's `hurtTime`).
+    pub fn hurt_ticks(&self) -> u32 {
+        self.hurt_cooldown.saturating_sub(HURT_COOLDOWN / 2)
+    }
+
     /// One tick of falling, drowning and burning. `vulnerable` is false in
     /// creative: nothing hurts. Mobs use this too; hunger is `tick_food`.
     pub fn tick(&mut self, around: &Surroundings, vulnerable: bool) {

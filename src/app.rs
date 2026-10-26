@@ -314,6 +314,7 @@ impl App {
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
         renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
         crate::ui::gui::set_gui_scale(self.options.gui_scale);
+        crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
         self.debug_ui = Some(DebugUi::new(
             &window,
             look.atlas.image(),
@@ -936,6 +937,7 @@ impl App {
             renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
         }
         crate::ui::gui::set_gui_scale(self.options.gui_scale);
+        crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
         self.apply_fullscreen();
         if self.options.resource_packs != self.applied_packs {
             self.apply_resource_packs();
@@ -1682,6 +1684,7 @@ impl App {
         game.difficulty = difficulty;
         let mut environment = game.environment();
         environment.brightness = self.options.brightness;
+        environment.glint = crate::ui::glint::glint_scale().into();
         let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {
             run.captured = true;

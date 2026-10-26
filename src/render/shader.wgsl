@@ -78,14 +78,14 @@ const SOLID_FLAG: f32 = 32.0;
 // diagonally at 10°, tinted purple. Tiled across the item's world position
 // (a block is 16 repeats).
 fn glint(world: vec3<f32>) -> vec3<f32> {
-    let seconds = globals.camera.w / 20.0;
+    let seconds = globals.camera.w / 20.0 * globals.lighting.y;
     let p = vec2<f32>(world.x + world.z, world.y * 1.4) * 8.0;
     let c = 0.98480775;
     let s = 0.17364818;
     let rotated = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
     let scroll = vec2<f32>(seconds / 3.0, seconds / 4.873);
     let texel = textureSample(glint_texture, glint_sampler, rotated + scroll);
-    return texel.rgb * vec3<f32>(0.5, 0.25, 0.8);
+    return texel.rgb * vec3<f32>(0.5, 0.25, 0.8) * globals.lighting.z;
 }
 
 @fragment
