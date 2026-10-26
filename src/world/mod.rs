@@ -114,7 +114,7 @@ impl World {
 }
 
 /// A block face, named by the direction it faces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Face {
     Top,
     Bottom,

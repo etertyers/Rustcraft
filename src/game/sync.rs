@@ -60,26 +60,61 @@ impl Game {
     /// `others` in order).
     pub fn with_player<T>(&mut self, index: usize, f: impl FnOnce(&mut Game) -> T) -> T {
         if index == 0 {
-            return f(self);
+            return self.hearing(f);
         }
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
-        let result = f(self);
+        self.swapped += 1;
+        let result = self.hearing(f);
+        self.swapped -= 1;
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
         result
     }
 
-    /// The world after this tick as `self.player` sees it.
-    pub fn snapshot(&self, ack: u32) -> Snapshot {
+    /// Keeps each player's own sounds apart for them (a server's game).
+    pub fn keep_sounds(&mut self) {
+        self.keeps_sounds = true;
+    }
+
+    /// The world after this tick as `self.player` sees it: mobs, items and
+    /// orbs within `range` blocks (across), and everything else.
+    pub fn snapshot(
+        &self,
+        ack: u32,
+        range: f64,
+        players: Vec<crate::net::protocol::PlayerView>,
+    ) -> Snapshot {
+        let feet = self.player.body.position();
+        let near = |at: DVec3| (at.x - feet.x).abs().max((at.z - feet.z).abs()) <= range;
+        let in_the_end = self.dimension == crate::world::dimension::Dimension::End;
         Snapshot {
             ack,
             time: self.time,
             difficulty: self.difficulty,
             rules: self.rules.clone(),
             player: self.player.clone(),
+            players: players
+                .into_iter()
+                .filter(|view| view.name != self.player.name && near(view.feet))
+                .collect(),
             entities: Entities {
-                mobs: self.mobs.clone(),
-                items: self.entities.clone(),
-                orbs: self.orbs.clone(),
+                mobs: self
+                    .mobs
+                    .iter()
+                    .filter(|m| near(m.feet()))
+                    .cloned()
+                    .collect(),
+                items: self
+                    .entities
+                    .iter()
+                    .filter(|i| near(i.center()))
+                    .cloned()
+                    .collect(),
+                orbs: self
+                    .orbs
+                    .iter()
+                    .filter(|o| near(o.center()))
+                    .cloned()
+                    .collect(),
                 particles: self.particles.clone(),
                 effects: self.effects.clone(),
                 arrows: self.arrows.clone(),
@@ -91,8 +126,13 @@ impl Game {
                 boats: self.boats.clone(),
                 primed: self.primed.clone(),
                 eyes: self.eyes.clone(),
-                dragon: self.dragon.clone(),
-                crystals: self.crystals.clone(),
+                // The fight is only in the End.
+                dragon: self.dragon.clone().filter(|_| in_the_end),
+                crystals: if in_the_end {
+                    self.crystals.clone()
+                } else {
+                    Vec::new()
+                },
                 dragon_fireballs: self.dragon_fireballs.clone(),
                 breath: self.breath.clone(),
             },
@@ -148,6 +188,7 @@ impl Game {
         self.crystals = e.crystals;
         self.dragon_fireballs = e.dragon_fireballs;
         self.breath = e.breath;
+        self.remote_players = snapshot.players;
         (server_body, server_prev)
     }
 
@@ -187,12 +228,52 @@ impl Game {
         }
     }
 
+    /// The index of the player with id `id` (`PlayerState::id`).
+    pub fn player_with_id(&self, id: u64) -> Option<usize> {
+        (0..self.player_count()).find(|&i| self.player_at(i).id() == id)
+    }
+
+    /// How many players there are, the host included.
+    pub fn player_count(&self) -> usize {
+        1 + self.others.len()
+    }
+
+    /// Player `index` (0 is the host, then `others`).
+    pub fn player_at(&self, index: usize) -> &super::PlayerState {
+        match index {
+            0 => &self.player,
+            i => &self.others[i - 1],
+        }
+    }
+
+    /// `self.player` as the other players see them.
+    pub fn player_view(&self) -> crate::net::protocol::PlayerView {
+        let p = &self.player;
+        crate::net::protocol::PlayerView {
+            name: p.name.clone(),
+            prev_feet: p.prev_feet,
+            feet: p.body.position(),
+            yaw: p.view.body_yaw(1.0),
+            pose: self.player_pose(),
+            wearer: self.wearer(),
+            invisible: p
+                .stats
+                .effects
+                .has(crate::player::effects::Effect::Invisibility),
+        }
+    }
+
     /// Where player `index` stands (0 is the host, then `others`).
     pub fn feet_of(&self, index: usize) -> DVec3 {
         match index {
             0 => self.player.body.position(),
             i => self.others[i - 1].body.position(),
         }
+    }
+
+    /// The saved world's name, if it's saved.
+    pub fn world_name(&self) -> Option<String> {
+        self.saved.as_ref().map(|saved| saved.level.name.clone())
     }
 
     /// Where new players start.
@@ -301,6 +382,15 @@ impl Game {
 }
 
 impl super::PlayerState {
+    /// A number for the player that stays the same while their name does
+    /// (for what they ride).
+    pub fn id(&self) -> u64 {
+        // FNV-1a.
+        self.name.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
+        })
+    }
+
     /// The player's body as physics moves it.
     pub fn body_state(&self) -> &Body {
         &self.body

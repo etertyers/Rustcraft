@@ -19,7 +19,7 @@ const HALF: f64 = 0.125;
 /// Ticks before it can hit the one who threw it.
 const OWNER_GRACE: u32 = 5;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ThrownPotion {
     pub stack: ItemStack,
     pub position: DVec3,

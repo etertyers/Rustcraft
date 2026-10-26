@@ -28,7 +28,7 @@ pub const BURST_POWER: f32 = 1.0;
 /// Ticks one flies before burning out.
 const LIFETIME: u32 = 600;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Fireball {
     pub position: DVec3,
     prev_position: DVec3,

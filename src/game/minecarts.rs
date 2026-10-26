@@ -249,10 +249,16 @@ impl Game {
         if self.carts.is_empty() {
             return;
         }
+        // Each ridden cart is pushed by the player in it.
+        let mut pushes = std::collections::HashMap::new();
+        for index in self.players_here() {
+            if let Some(cart) = self.player_at(index).riding {
+                pushes.insert(cart, self.with_player(index, |game| game.rider_push()));
+            }
+        }
         let mut carts = std::mem::take(&mut self.carts);
-        let push = self.rider_push();
         let mut blasts = Vec::new();
-        let mut ejected = None;
+        let mut ejected = Vec::new();
         for (index, cart) in carts.iter_mut().enumerate() {
             let world = self.chunks.world();
             let collider = WorldCollider {
@@ -269,10 +275,7 @@ impl Game {
                     CartKind::Tnt => cart.ignite(),
                     CartKind::Rideable if cart.rider => {
                         cart.rider = false;
-                        if self.player.riding == Some(index) {
-                            self.player.riding = None;
-                            ejected = Some(index);
-                        }
+                        ejected.push(index);
                     }
                     CartKind::Hopper => cart.enabled = false,
                     _ => {}
@@ -280,7 +283,10 @@ impl Game {
             } else if cart.kind == CartKind::Hopper {
                 cart.enabled = true;
             }
-            let rider_push = if cart.rider { push } else { DVec3::ZERO };
+            let rider_push = match pushes.get(&index) {
+                Some(&push) if cart.rider => push,
+                _ => DVec3::ZERO,
+            };
             if let Some(CartEvent::Explode(power)) = cart.tick(world, &collider, rider_push) {
                 blasts.push((index, cart.position + DVec3::Y * 0.35, power));
             }
@@ -302,19 +308,24 @@ impl Game {
             }
         }
         self.carts = carts;
-        if let Some(index) = ejected {
+        for index in ejected {
             let cart = self.carts[index].clone();
-            self.dismount(&cart);
+            self.for_each_player(|game| {
+                if game.player.riding == Some(index) {
+                    game.player.riding = None;
+                    game.dismount(&cart);
+                }
+            });
         }
         // Blow up the TNT carts that went off, last first so indices hold.
         for (index, center, power) in blasts.into_iter().rev() {
             if index < self.carts.len() {
                 self.carts.remove(index);
-                match self.player.riding {
-                    Some(r) if r == index => self.player.riding = None,
-                    Some(r) if r > index => self.player.riding = Some(r - 1),
+                self.for_each_player(|game| match game.player.riding {
+                    Some(r) if r == index => game.player.riding = None,
+                    Some(r) if r > index => game.player.riding = Some(r - 1),
                     _ => {}
-                }
+                });
             }
             self.explode(center, power);
         }

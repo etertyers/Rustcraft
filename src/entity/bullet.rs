@@ -15,7 +15,7 @@ const LIFE: u32 = 200;
 pub const DAMAGE: f32 = 4.0;
 pub const LEVITATION_TICKS: u32 = 200;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ShulkerBullet {
     pub position: DVec3,
     prev_position: DVec3,

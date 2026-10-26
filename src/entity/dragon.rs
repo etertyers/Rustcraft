@@ -159,7 +159,7 @@ pub struct SavedDragon {
     pub phase: Phase,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EnderDragon {
     pub position: DVec3,
     pub prev_position: DVec3,

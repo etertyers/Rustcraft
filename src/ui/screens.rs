@@ -52,7 +52,7 @@ pub enum Screen {
 }
 
 /// What the player did on a screen this frame.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ScreenAction {
     Click(SlotRef, Click),
     /// Dragged the held stack across these slots with the button down:

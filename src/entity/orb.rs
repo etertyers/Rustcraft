@@ -24,7 +24,7 @@ const ATTRACT_RANGE: f64 = 8.0;
 /// Orbs this close with the same picture merge into one.
 const MERGE_RANGE: f64 = 0.5;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct XpOrb {
     pub value: u32,
     bb: Aabb,

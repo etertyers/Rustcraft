@@ -45,6 +45,15 @@ fn main() -> Result<()> {
         rustcraft::world::worldgen::flower_stats::print_stats(seed, 400);
         return Ok(());
     }
+    if let Some(i) = args.iter().position(|arg| arg == "--lan-test") {
+        let bots = args
+            .get(i + 1)
+            .map_or(Ok(8), |n| n.parse())
+            .context("--lan-test needs a number of bots")?;
+        let report = rustcraft::lantest::run(bots)?;
+        println!("{report}");
+        return Ok(());
+    }
     if args.iter().any(|arg| arg == "--structure-test") {
         let seed = args
             .iter()
@@ -80,7 +89,8 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let mut app = app::App::new(cli.world)
         .with_bench(cli.bench)
-        .with_view(cli.view);
+        .with_view(cli.view)
+        .with_lan(cli.name, cli.join, cli.lan);
     // `--pack <file or folder>` (repeatable): play or shoot with these
     // resource packs instead of the chosen ones, leaving options.ron be.
     let packs: Vec<String> = args

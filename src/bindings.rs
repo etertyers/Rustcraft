@@ -53,7 +53,7 @@ impl Category {
 macro_rules! actions {
     ($($action:ident, $id:literal, $name:literal, $category:ident, $default:expr;)*) => {
         /// Something a key or mouse button does.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
         pub enum Action {
             $($action,)*
         }

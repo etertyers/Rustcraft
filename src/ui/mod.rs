@@ -71,6 +71,11 @@ pub struct DebugStats {
 pub struct Hud {
     /// Hide GUI (F1): no crosshair, hotbar, hearts or effects.
     pub hidden: bool,
+    /// Other players' names over their heads: where on screen (0–1 across
+    /// and down), and how far off (nearer drawn bigger).
+    pub name_tags: Vec<NameTag>,
+    /// Everyone playing, while List Players (Tab) is held.
+    pub player_list: Option<Vec<String>>,
     /// Shown while the cursor is grabbed for play.
     pub crosshair: bool,
     /// The swing's recharge under the crosshair.
@@ -101,6 +106,14 @@ pub struct Hud {
     pub toasts: Vec<ToastView>,
     /// The advancements screen, while it is open.
     pub advancements: Option<AdvView>,
+}
+
+/// A player's name over their head.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameTag {
+    pub name: String,
+    pub at: egui::Pos2,
+    pub distance: f32,
 }
 
 /// An advancement just made, as its toast shows it.
@@ -298,6 +311,12 @@ impl DebugUi {
             }
             if !hud.effects.is_empty() && !hud.hidden {
                 paint_effects(ui.painter(), full, &hud.effects, textures);
+            }
+            if !hud.hidden {
+                paint_name_tags(ui.painter(), full, &hud.name_tags);
+            }
+            if let Some(names) = &hud.player_list {
+                paint_player_list(ui.painter(), full, names);
             }
             if let Some(message) = &hud.message {
                 paint_message(ui.painter(), full, message);
@@ -917,6 +936,58 @@ fn show_sleep_screen(ctx: &egui::Context, asleep: f32) -> bool {
 }
 
 /// A notice above the hotbar, where 1.0.0's chat shows (bottom left).
+/// The Tab list: everyone playing, in a column at the top middle, on a
+/// dark panel (vanilla's `PlayerTabOverlay`, one column).
+fn paint_player_list(painter: &egui::Painter, full: egui::Rect, names: &[String]) {
+    let scale = gui::gui_scale(full);
+    let font = egui::FontId::proportional(8.0 * scale);
+    let galleys: Vec<_> = names
+        .iter()
+        .map(|name| painter.layout_no_wrap(name.clone(), font.clone(), Color32::WHITE))
+        .collect();
+    let width = galleys
+        .iter()
+        .map(|g| g.size().x)
+        .fold(80.0 * scale, f32::max);
+    let row = 9.0 * scale;
+    let top = full.top() + 10.0 * scale;
+    let left = full.center().x - width / 2.0;
+    let panel = egui::Rect::from_min_size(
+        egui::pos2(left - scale, top - scale),
+        egui::vec2(width + 2.0 * scale, row * names.len() as f32 + 2.0 * scale),
+    );
+    painter.rect_filled(panel, 0.0, Color32::from_black_alpha(128));
+    for (i, galley) in galleys.into_iter().enumerate() {
+        let y = top + row * i as f32;
+        painter.rect_filled(
+            egui::Rect::from_min_size(egui::pos2(left, y), egui::vec2(width, 8.0 * scale)),
+            0.0,
+            Color32::from_white_alpha(32),
+        );
+        painter.galley(egui::pos2(left, y), galley, Color32::WHITE);
+    }
+}
+
+/// Names over players' heads, on a dark band, smaller further off.
+fn paint_name_tags(painter: &egui::Painter, full: egui::Rect, tags: &[NameTag]) {
+    let scale = gui::gui_scale(full);
+    for tag in tags {
+        let size = (8.0 * scale * (8.0 / tag.distance.max(8.0)))
+            .max(8.0)
+            .round();
+        let font = egui::FontId::proportional(size);
+        let galley = painter.layout_no_wrap(tag.name.clone(), font, Color32::WHITE);
+        let center = egui::pos2(
+            full.left() + tag.at.x * full.width(),
+            full.top() + tag.at.y * full.height(),
+        );
+        let at = center - galley.size() / 2.0;
+        let rect = egui::Rect::from_min_size(at, galley.size()).expand(size / 8.0);
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(64));
+        painter.galley(at, galley, Color32::WHITE);
+    }
+}
+
 fn paint_message(painter: &egui::Painter, full: egui::Rect, text: &str) {
     let scale = gui::gui_scale(full);
     let font = egui::FontId::proportional(8.0 * scale);

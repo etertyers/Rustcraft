@@ -144,7 +144,17 @@ pub fn build(
         ViewMode::ThirdBack | ViewMode::ThirdFront => {
             let pose = game.player_pose();
             let (feet, yaw) = game.player_body();
-            add_body(&mut meshes, game, held, fig, &pose, feet, yaw, body_light);
+            let wearer = game.wearer();
+            add_body(
+                &mut meshes,
+                &wearer,
+                held,
+                fig,
+                &pose,
+                feet,
+                yaw,
+                body_light,
+            );
         }
     }
     meshes
@@ -156,7 +166,7 @@ pub fn build(
 #[allow(clippy::too_many_arguments)]
 pub fn add_body(
     meshes: &mut PlayerMeshes,
-    game: &Game,
+    wearer: &Wearer,
     held: &mut HeldCache,
     fig: &Figure,
     pose: &crate::render::player::PlayerPose,
@@ -165,13 +175,12 @@ pub fn add_body(
     light: (u8, u8),
 ) {
     let icons = fig.icons;
-    let pull = game.bow_ticks();
+    let pull = wearer.bow_ticks;
     // The icon a stack shows: a bow in the main hand looks drawn while it is.
     let icon = |stack: &ItemStack, hand: Hand| match (pull, hand) {
         (Some(ticks), Hand::Main) => icons.icon_drawn(stack, ticks),
         _ => icons.icon(stack),
     };
-    let blocking = game.is_blocking();
     add_player(
         &mut meshes.body,
         pose,
@@ -180,17 +189,15 @@ pub fn add_body(
         yaw,
         [1.0; 3],
         light,
-        game.skin_layers(),
+        wearer.layers,
     );
-    if game
-        .player
-        .inventory
-        .slot(crate::inventory::player::ARMOR_CHEST)
+    if wearer.armor[1]
+        .as_ref()
         .is_some_and(|s| s.id == items::ELYTRA)
     {
         crate::render::player::add_elytra(&mut meshes.elytra, pose, feet, yaw, light);
     }
-    let worn = worn_armor(game);
+    let worn = worn_armor(&wearer.armor);
     let rows = crate::look::ARMOR_MATERIALS.len() * 2;
     add_armor(
         &mut meshes.armor,
@@ -215,12 +222,12 @@ pub fn add_body(
     );
     let frame = model_matrix(&body_frame(pose, yaw), feet);
     let rig = rig(pose, fig.slim);
-    for hand in [Hand::Main, Hand::Off] {
-        let Some(stack) = game.player.inventory.hand_stack(hand).cloned() else {
+    for (hand, stack) in [(Hand::Main, &wearer.main), (Hand::Off, &wearer.off)] {
+        let Some(stack) = stack.clone() else {
             continue;
         };
-        let left = (hand == Hand::Off) != game.left_handed();
-        let up = blocking && game.shield_hand() == Some(hand);
+        let left = (hand == Hand::Off) != wearer.left_handed;
+        let up = wearer.shield_up == Some(hand);
         let geometry = held.get(&icon(&stack, hand), fig.atlas);
         let display = third_person_display(fig, &stack, left, up);
         let matrix = frame * hand_mount(&rig, !left, fig.slim) * display_matrix(&display, left);
@@ -232,18 +239,53 @@ pub fn add_body(
 /// Undyed leather armor's color (vanilla's `DyedItemColor.LEATHER_COLOR`).
 pub const LEATHER_COLOR: u32 = 0xA0_6540;
 
-/// The armor the player wears, as drawn: leather twice (tinted, then its
-/// untinted overlay), the elytra not at all (it has a model of its own).
-pub fn worn_armor(game: &Game) -> Vec<WornArmor> {
+/// What a player holds and wears and how they're drawn: what the figure
+/// is made from, for the local player and for others (sent in snapshots).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Wearer {
+    pub main: Option<ItemStack>,
+    pub off: Option<ItemStack>,
+    /// Head, chest, legs, feet.
+    pub armor: [Option<ItemStack>; 4],
+    pub layers: crate::render::player::OuterLayers,
+    pub left_handed: bool,
+    /// Ticks a bow in the main hand has been drawn.
+    pub bow_ticks: Option<f32>,
+    /// The hand holding up a shield.
+    pub shield_up: Option<Hand>,
+}
+
+impl Game {
+    /// What `self.player` holds and wears, for drawing them.
+    pub fn wearer(&self) -> Wearer {
+        use crate::inventory::player::{ARMOR_CHEST, ARMOR_FEET, ARMOR_HEAD, ARMOR_LEGS};
+        let inventory = &self.player.inventory;
+        Wearer {
+            main: inventory.hand_stack(Hand::Main).cloned(),
+            off: inventory.hand_stack(Hand::Off).cloned(),
+            armor: [ARMOR_HEAD, ARMOR_CHEST, ARMOR_LEGS, ARMOR_FEET]
+                .map(|slot| inventory.slot(slot).cloned()),
+            layers: self.skin_layers(),
+            left_handed: self.left_handed(),
+            bow_ticks: self.bow_ticks(),
+            shield_up: self.shield_hand().filter(|_| self.is_blocking()),
+        }
+    }
+}
+
+/// The armor in `armor` (head, chest, legs, feet) as drawn: leather twice
+/// (tinted, then its untinted overlay), the elytra not at all (it has a
+/// model of its own).
+pub fn worn_armor(armor: &[Option<ItemStack>; 4]) -> Vec<WornArmor> {
     use crate::inventory::armor::{ArmorSlot, armor_of};
     let mut worn = Vec::new();
-    for slot in [
-        ArmorSlot::Feet,
-        ArmorSlot::Legs,
-        ArmorSlot::Chest,
-        ArmorSlot::Head,
+    for (slot, piece) in [
+        (ArmorSlot::Feet, &armor[3]),
+        (ArmorSlot::Legs, &armor[2]),
+        (ArmorSlot::Chest, &armor[1]),
+        (ArmorSlot::Head, &armor[0]),
     ] {
-        let Some(stack) = game.player.inventory.slot(slot.index()) else {
+        let Some(stack) = piece else {
             continue;
         };
         let name = stack.id.name();
@@ -706,7 +748,7 @@ mod tests {
         game.player
             .inventory
             .set(ARMOR_CHEST, Some(ItemStack::new(items::ELYTRA, 1)));
-        let worn = worn_armor(&game);
+        let worn = worn_armor(&game.wearer().armor);
         assert_eq!(worn.len(), 3, "{worn:?}");
         let legs = worn.iter().find(|w| w.slot == ArmorSlot::Legs).unwrap();
         assert_eq!(Some(legs.row), crate::look::armor_row("iron", 1));

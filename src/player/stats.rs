@@ -82,6 +82,8 @@ pub enum DamageSource {
     Wither,
     /// Gliding into a wall on elytra (M28).
     FlyIntoWall,
+    /// Another player's blow (M37).
+    Player,
 }
 
 impl DamageSource {
@@ -115,6 +117,7 @@ impl DamageSource {
             DamageSource::Magic => "was killed by magic",
             DamageSource::Wither => "withered away",
             DamageSource::FlyIntoWall => "experienced kinetic energy",
+            DamageSource::Player => "was slain by another player",
         }
     }
 
@@ -124,6 +127,7 @@ impl DamageSource {
             DamageSource::Lava
             | DamageSource::InFire
             | DamageSource::Mob
+            | DamageSource::Player
             | DamageSource::Arrow
             | DamageSource::Explosion
             | DamageSource::HotFloor

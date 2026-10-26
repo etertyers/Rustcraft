@@ -15,7 +15,7 @@ use crate::config;
 const MAX_PITCH: f32 = FRAC_PI_2 - 0.001;
 
 /// The shake of walking, applied to the view (vanilla's `bobView`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ViewBob {
     /// Sideways and downward shift in blocks.
     pub sideways: f32,
@@ -42,7 +42,7 @@ impl ViewBob {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Camera {
     /// Eye position in world space.
     pub position: Vec3,

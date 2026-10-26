@@ -173,7 +173,7 @@ pub fn reset(ctx: &egui::Context) {
 }
 
 /// What the player did with the book this frame.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BookAction {
     Open(bool),
     Filter(bool),

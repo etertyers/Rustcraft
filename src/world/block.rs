@@ -711,7 +711,7 @@ pub struct Burns {
 }
 
 /// The liquid a block is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub enum Fluid {
     Water,
     Lava,

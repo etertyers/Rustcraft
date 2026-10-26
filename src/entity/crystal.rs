@@ -10,7 +10,7 @@ pub const BLAST_POWER: f32 = 6.0;
 /// Side of its box.
 const SIZE: f64 = 2.0;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EndCrystal {
     /// The middle of its bottom.
     pub position: DVec3,

@@ -168,8 +168,14 @@ impl Game {
 
     /// To the End's arrival platform, which is rebuilt each time.
     pub(super) fn enter_end(&mut self) {
+        self.change_dimension(Dimension::End, super::dimensions::Arrival::EndPlatform);
+    }
+
+    /// Arriving in the End: on the platform, facing the island, and the
+    /// fight begun if it hasn't.
+    pub(super) fn arrive_in_the_end(&mut self) {
         let feet = end::PLATFORM.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
-        self.change_dimension(Dimension::End, feet);
+        self.place_player(feet);
         let platform = end::platform();
         // The platform reaches into neighbor chunks; they must be there to
         // take it.
@@ -181,15 +187,13 @@ impl Game {
         self.player.camera.yaw = 0.0_f32.to_radians() - std::f32::consts::FRAC_PI_2;
         self.player.camera.pitch = 0.0;
         self.start_fight();
-        if let Err(err) = self.save() {
-            log::error!("saving after going to the End: {err}");
-        }
     }
 
     /// Through the exit portal: the poem and credits the first time, then
     /// home.
     pub(super) fn leave_end(&mut self) {
-        if !self.end.credits_seen {
+        if !self.player.seen_credits {
+            self.player.seen_credits = true;
             self.end.credits_seen = true;
             self.player.credits = Some(0);
             return;
@@ -200,13 +204,7 @@ impl Game {
     /// Back to the Overworld spawn or bed, the player's health and things
     /// as they were.
     pub(super) fn go_home(&mut self) {
-        let spawn = self.spawn;
-        self.change_dimension(Dimension::Overworld, spawn);
-        let feet = self.respawn_point();
-        self.place_player(feet);
-        if let Err(err) = self.save() {
-            log::error!("saving after leaving the End: {err}");
-        }
+        self.change_dimension(Dimension::Overworld, super::dimensions::Arrival::Home);
     }
 
     /// Starts the credits `ticks` in, for a `--shot` scene.

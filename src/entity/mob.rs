@@ -79,7 +79,7 @@ pub struct MobData {
 /// experience (modern `lastHurtByPlayerTime`).
 const PLAYER_HIT_TICKS: u32 = 100;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Mob {
     /// Tells it from the others for as long as the game runs (0 until the
     /// game adds it).
@@ -129,7 +129,7 @@ pub struct Mob {
 
 /// The health, death and stride of a mob as the sound code last saw them,
 /// to tell what happened since.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Heard {
     pub health: f32,
     pub dead: bool,

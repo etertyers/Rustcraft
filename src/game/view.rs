@@ -43,7 +43,7 @@ const EYE_EASE: f32 = 0.5;
 /// Swimming eases in and out by this much a tick.
 const SWIM_STEP: f32 = 0.09;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ViewMode {
     /// Through the player's eyes, with the hand.
     #[default]
@@ -88,7 +88,7 @@ pub struct TickInfo {
     pub eye_height: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ViewState {
     pub mode: ViewMode,
     pub bobbing: bool,

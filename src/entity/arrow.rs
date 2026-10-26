@@ -38,7 +38,7 @@ pub fn bow_power(ticks: u32) -> Option<f32> {
     (power >= MIN_POWER).then_some(power)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Arrow {
     pub position: DVec3,
     prev_position: DVec3,
@@ -52,7 +52,7 @@ pub struct Arrow {
     pub critical: bool,
     /// Whether it can be picked back up (not from creative).
     pub pickup: bool,
-    /// Shot by a mob: it hits the player instead of mobs.
+    /// Shot by a mob: it hits players and not mobs.
     pub hostile: bool,
     /// What the bow was enchanted with.
     pub power: u8,
@@ -60,6 +60,9 @@ pub struct Arrow {
     pub flame: bool,
     /// A stray's: slows the player it hits.
     pub slows: bool,
+    /// The player who loosed it, whom it never hits (others it does).
+    #[serde(default)]
+    pub shooter: Option<String>,
 }
 
 /// What a flying arrow did this tick.
@@ -73,7 +76,7 @@ pub enum ArrowEvent {
         punch: u8,
         flame: bool,
     },
-    /// A mob's arrow hit the player for this much.
+    /// The arrow hit a player for this much.
     HitPlayer { damage: f32 },
 }
 
@@ -118,6 +121,7 @@ impl Arrow {
             punch: 0,
             flame: false,
             slows: false,
+            shooter: None,
         }
     }
 
@@ -167,18 +171,8 @@ impl Arrow {
         self.heading = dir;
         let wall = block_hit(self.position, dir, speed);
         let reach = wall.unwrap_or(speed);
-        if self.hostile
-            && let Some(player) = player
-            && player
-                .grow(HIT_BORDER)
-                .ray_hit(self.position, dir, reach)
-                .is_some()
-        {
-            let damage = (speed * DAMAGE_PER_SPEED).ceil() as f32;
-            self.ticks_stuck = STUCK_LIFETIME;
-            self.stuck = true;
-            return Some(ArrowEvent::HitPlayer { damage });
-        }
+        let player_hit =
+            player.and_then(|player| player.grow(HIT_BORDER).ray_hit(self.position, dir, reach));
         let target = mobs
             .iter()
             .enumerate()
@@ -193,6 +187,19 @@ impl Arrow {
                 Some((i, t))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
+        // A player in the way first, unless a mob is nearer.
+        if let Some(t) = player_hit
+            && target.is_none_or(|(_, mob)| t <= mob)
+        {
+            let damage = if self.hostile {
+                (speed * DAMAGE_PER_SPEED).ceil() as f32
+            } else {
+                self.damage_at(speed, random)
+            };
+            self.ticks_stuck = STUCK_LIFETIME;
+            self.stuck = true;
+            return Some(ArrowEvent::HitPlayer { damage });
+        }
         if let Some((index, _)) = target {
             let damage = self.damage_at(speed, random);
             // 1.0.0 removes an arrow that hits; it doesn't stick in mobs.

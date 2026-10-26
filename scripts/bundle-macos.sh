@@ -71,6 +71,8 @@ cat >"$APP/Contents/Info.plist" <<EOF
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Rustcraft finds and joins worlds opened to LAN on your local network.</string>
 </dict>
 </plist>
 EOF

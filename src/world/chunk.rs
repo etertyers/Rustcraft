@@ -17,7 +17,9 @@ pub const SECTION_COUNT: usize = WORLD_HEIGHT / SECTION_SIZE;
 pub const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
 
 /// Chunk coordinates: block coordinates divided by 16, rounding down.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct ChunkPos {
     pub x: i32,
     pub z: i32,

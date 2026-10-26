@@ -87,7 +87,7 @@ pub fn matches(name: &str, query: &str) -> bool {
 }
 
 /// How the player clicked an item in a tab's grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Pick {
     Left,
     Right,

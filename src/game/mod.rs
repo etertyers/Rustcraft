@@ -139,10 +139,21 @@ pub const ENDER_CHEST_SLOTS: usize = 27;
 
 /// Everything about one player: where they are and how they move, what
 /// they hold and carry, their health and screens, and their settings.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,
+    /// They've seen the poem and credits (each player does, the first time
+    /// they leave the End).
+    pub seen_credits: bool,
+    /// The dimension the player is in, and the one a portal is taking
+    /// them to at the end of the tick.
+    pub dimension: crate::world::dimension::Dimension,
+    travel: Option<(crate::world::dimension::Dimension, dimensions::Arrival)>,
+    /// A server's record of the sounds only this player hears (their own,
+    /// with no place), made during their turns, for sending.
+    #[serde(skip)]
+    pub heard: Vec<crate::audio::Cue>,
     /// The ender chest's 27 slots, the same in every ender chest and
     /// different for each player.
     pub ender_chest: Vec<Option<ItemStack>>,
@@ -265,6 +276,10 @@ impl PlayerState {
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
+            seen_credits: false,
+            dimension: crate::world::dimension::Dimension::Overworld,
+            travel: None,
+            heard: Vec::new(),
             ender_chest: vec![None; ENDER_CHEST_SLOTS],
             camera: Camera::new(eye.as_vec3(), yaw, pitch),
             view: view::ViewState::new(yaw, pitch, None),
@@ -341,6 +356,10 @@ pub struct Game {
     pub others: Vec<PlayerState>,
     /// The world itself, or a client's copy of it.
     role: sync::Role,
+    /// Each player's own sounds are kept apart for them (a server's).
+    keeps_sounds: bool,
+    /// A client's view of the other players in sight.
+    pub remote_players: Vec<crate::net::protocol::PlayerView>,
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
@@ -404,6 +423,12 @@ pub struct Game {
     /// The dimension the player is in, and the others as they were left.
     dimension: crate::world::dimension::Dimension,
     away: FastMap<crate::world::dimension::Dimension, dimensions::Away>,
+    /// The live dimensions besides `dimension`, which has players in it too.
+    live: FastMap<crate::world::dimension::Dimension, dimensions::Realm>,
+    /// In the middle of a tick, or of another player's turn (portal
+    /// travel waits for the tick's end).
+    ticking: bool,
+    swapped: u32,
     /// Set on going to another dimension, until the app has seen it.
     dimension_changed: bool,
     /// Every Nether portal lit or built, by dimension: a block of its
@@ -446,6 +471,8 @@ impl Game {
             player: PlayerState::new(feet, yaw, pitch),
             others: Vec::new(),
             role: sync::Role::Server,
+            remote_players: Vec::new(),
+            keeps_sounds: false,
             spawn,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),
@@ -482,6 +509,9 @@ impl Game {
             ticks_since_save: 0,
             dimension: Default::default(),
             away: FastMap::default(),
+            live: FastMap::default(),
+            ticking: false,
+            swapped: 0,
             dimension_changed: false,
             portals: Vec::new(),
             eyes: Vec::new(),
@@ -529,6 +559,8 @@ impl Game {
         // file is read (`restore_player`).
         game.take_player_file(&PlayerFile {
             player: player.clone(),
+            dimension: level.dimension,
+            seen_credits: level.end.credits_seen,
             ender_chest: Vec::new(),
             advancements: level.advancements.clone(),
             recipe_book: level.recipe_book.clone(),
@@ -580,6 +612,8 @@ impl Game {
                 stats: p.stats.clone(),
                 bed: p.bed.map(|bed| bed.to_array()),
             },
+            dimension: p.dimension,
+            seen_credits: p.seen_credits,
             ender_chest: p.ender_chest.clone(),
             advancements: p.progress.clone(),
             recipe_book: p.recipe_book.clone(),
@@ -603,6 +637,8 @@ impl Game {
         p.body.may_fly = p.mode.can_fly();
         p.body.flying = data.flying && p.body.may_fly;
         p.ender_chest = file.ender_chest.clone();
+        p.dimension = file.dimension;
+        p.seen_credits = file.seen_credits;
         p.ender_chest.resize(ENDER_CHEST_SLOTS, None);
         p.progress = file.advancements.clone();
         p.recipe_book = file.recipe_book.clone();
@@ -684,8 +720,9 @@ impl Game {
         let chunks = self.chunks.save()?;
         // Every player's own file, then the host's state in the level too,
         // for older builds.
-        let mut files = Vec::new();
-        self.for_each_player(|game| files.push((game.player.name.clone(), game.player_file())));
+        let files: Vec<_> = (0..self.player_count())
+            .map(|i| self.with_player(i, |game| (game.player.name.clone(), game.player_file())))
+            .collect();
         let host = files[0].1.clone();
         let boats = self.saved_boats();
         let Some(saved) = self.saved.as_mut() else {
@@ -702,7 +739,7 @@ impl Game {
         saved.level.mobs.extend(away_mobs);
         saved.level.populated = populated;
         saved.level.away_populated = away_populated;
-        saved.level.dimension = self.dimension;
+        saved.level.dimension = host.dimension;
         saved.level.portals = self.portals.clone();
         saved.level.end = self.end.clone();
         saved.level.advancements = progress;
@@ -973,13 +1010,24 @@ impl Game {
     /// player made of it. The world waits while every player is arriving
     /// in a dimension or watching the credits.
     fn tick(&mut self) {
-        let mut waiting = true;
-        self.for_each_player(|game| waiting &= !game.tick_player());
-        if waiting {
+        self.ticking = true;
+        let mut ticked = false;
+        for dimension in self.dimensions_with_players() {
+            self.enter_realm(dimension);
+            let mut waiting = true;
+            self.for_each_player(|game| waiting &= !game.tick_player());
+            if waiting {
+                continue;
+            }
+            self.tick_world();
+            self.for_each_player(Game::tick_player_after);
+            ticked = true;
+        }
+        self.ticking = false;
+        self.finish_travels();
+        if !ticked {
             return;
         }
-        self.tick_world();
-        self.for_each_player(Game::tick_player_after);
         self.time += 1;
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
@@ -989,15 +1037,42 @@ impl Game {
         }
     }
 
-    /// Runs `turn` for each player in turn, the host first, with that
-    /// player in `self.player`.
+    /// Runs `turn` for each player in the dimension whose world is in the
+    /// game's fields, with that player in `self.player`.
     pub(crate) fn for_each_player(&mut self, mut turn: impl FnMut(&mut Game)) {
-        turn(self);
+        let here = self.dimension;
+        if self.player.dimension == here {
+            self.hearing(&mut turn);
+        }
         for i in 0..self.others.len() {
             std::mem::swap(&mut self.player, &mut self.others[i]);
-            turn(self);
+            self.swapped += 1;
+            if self.player.dimension == here {
+                self.hearing(&mut turn);
+            }
+            self.swapped -= 1;
             std::mem::swap(&mut self.player, &mut self.others[i]);
         }
+    }
+
+    /// Runs `turn` for `self.player`; on a server, the sounds it makes with
+    /// no place are theirs alone, kept in `self.player.heard`.
+    pub(crate) fn hearing<T>(&mut self, turn: impl FnOnce(&mut Game) -> T) -> T {
+        if !self.keeps_sounds {
+            return turn(self);
+        }
+        let earlier = crate::audio::drain();
+        let result = turn(self);
+        let made = crate::audio::drain();
+        earlier.into_iter().for_each(crate::audio::requeue);
+        for cue in made {
+            if cue.at.is_none() {
+                self.player.heard.push(cue);
+            } else {
+                crate::audio::requeue(cue);
+            }
+        }
+        result
     }
 
     /// A player's part of the tick: moving, riding or sleeping, health,
@@ -1282,8 +1357,10 @@ impl Game {
         // Beds and the world spawn are in the Overworld.
         let away = self.dimension != crate::world::dimension::Dimension::Overworld;
         if away {
-            let spawn = self.spawn;
-            self.change_dimension(crate::world::dimension::Dimension::Overworld, spawn);
+            self.change_dimension(
+                crate::world::dimension::Dimension::Overworld,
+                dimensions::Arrival::Home,
+            );
         }
         let feet = self.respawn_point();
         self.player.body = Body::new(feet);
@@ -1450,6 +1527,102 @@ pub(crate) mod tests {
             game.player.inventory.slot(0),
             Some(&ItemStack::new(items::DIAMOND, 2))
         );
+    }
+
+    #[test]
+    fn guests_pick_things_up_and_get_hurt_by_blasts_and_arrows_like_the_host() {
+        use crate::{
+            entity::arrow::Arrow,
+            inventory::{items, stack::ItemStack},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        let mut guest = PlayerState::new(DVec3::new(10.5, 64.0, 0.5), 0.0, 0.0);
+        guest.name = "Guest".to_owned();
+        guest.mode = GameMode::Survival;
+        game.others.push(guest);
+        game.run_ticks(2);
+        // An apple at the guest's feet is theirs.
+        game.entities.push(crate::entity::item::ItemEntity::new(
+            ItemStack::new(items::APPLE, 1),
+            DVec3::new(10.5, 64.2, 0.5),
+            DVec3::ZERO,
+            0.0,
+        ));
+        game.run_ticks(15);
+        assert!(game.entities.is_empty());
+        assert!(game.others[0].inventory.find(items::APPLE).is_some());
+        assert!(game.player.inventory.find(items::APPLE).is_none());
+        // The host's arrow hits the guest, never the host.
+        let mut random = || 0.5;
+        let mut arrow = Arrow::shoot(
+            DVec3::new(6.5, 65.5, 0.5),
+            DVec3::X,
+            1.0,
+            DVec3::ZERO,
+            false,
+            &mut random,
+        );
+        arrow.shooter = Some(crate::options::DEFAULT_NAME.to_owned());
+        game.arrows.push(arrow);
+        game.run_ticks(10);
+        let after_arrow = game.others[0].stats.health;
+        assert!(after_arrow < 20.0, "the arrow hit the guest");
+        assert_eq!(game.player.stats.health, 20.0);
+        // A blast by the guest hurts them too.
+        game.run_ticks(30);
+        game.explode(DVec3::new(11.5, 64.5, 2.5), 2.0);
+        assert!(
+            game.others[0].stats.health < after_arrow,
+            "the blast hurt the guest"
+        );
+    }
+
+    #[test]
+    fn on_a_server_each_players_own_sounds_are_theirs_alone() {
+        let mut game = flat_game(GameMode::Survival);
+        game.keep_sounds();
+        let mut guest = PlayerState::new(DVec3::new(4.5, 64.0, 0.5), 0.0, 0.0);
+        guest.mode = GameMode::Survival;
+        game.others.push(guest);
+        game.run_ticks(2);
+        crate::audio::drain();
+        // A swing at nothing is heard only by the swinger.
+        game.with_player(1, Game::swing_at_air);
+        let swing = |cues: &[crate::audio::Cue]| cues.iter().any(|c| c.event.contains("attack"));
+        assert!(swing(&game.others[0].heard), "{:?}", game.others[0].heard);
+        assert!(!swing(&game.player.heard));
+        assert!(!swing(&crate::audio::drain()), "not left for everyone");
+        // A hurt player's cry is placed, for everyone near to hear.
+        game.others[0].stats.damage(3.0, DamageSource::Magic);
+        game.run_ticks(1);
+        assert!(
+            crate::audio::drain()
+                .iter()
+                .any(|c| c.event == "entity.player.hurt")
+        );
+    }
+
+    #[test]
+    fn a_player_can_hit_another_unless_they_are_in_creative() {
+        let mut game = flat_game(GameMode::Survival);
+        game.player.camera.pitch = 0.0;
+        game.player.camera.yaw = 0.0;
+        let mut guest = PlayerState::new(DVec3::new(0.5, 64.0, -1.5), 0.0, 0.0);
+        guest.mode = GameMode::Survival;
+        game.others.push(guest);
+        game.run_ticks(20);
+        game.on_action(Action::Attack, true, false, true);
+        game.run_ticks(2);
+        game.on_action(Action::Attack, false, false, true);
+        let health = game.others[0].stats.health;
+        assert!(health < 20.0, "hit: {health}");
+        assert_eq!(game.others[0].stats.last_source, Some(DamageSource::Player));
+        // A creative player can't be hurt.
+        game.others[0].mode = GameMode::Creative;
+        game.run_ticks(20);
+        game.on_action(Action::Attack, true, false, true);
+        game.run_ticks(2);
+        assert_eq!(game.others[0].stats.health, health);
     }
 
     #[test]

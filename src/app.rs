@@ -111,6 +111,12 @@ pub enum WorldKind {
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
 /// `isInRangeToRenderDist` for a mob about a block across).
 const MOB_DRAW_DISTANCE: f64 = 64.0;
+/// How long "Local game hosted on port …" shows.
+const LAN_MESSAGE_TICKS: u32 = 100;
+/// Name tags show for players this near (vanilla's 64 blocks).
+const NAME_TAG_DISTANCE: f32 = 64.0;
+/// How long joining a LAN world waits for the host to answer.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
 
@@ -183,10 +189,22 @@ pub struct App {
     shot: Option<ShotRun>,
     /// Hide GUI (F1) is on.
     hide_gui: bool,
+    /// List Players (Tab) is held.
+    tab_held: bool,
     /// The world being played, served in this process, and this client's
     /// link to it; `game` is the client's copy of the world.
     server: Option<Server>,
     link: Option<Client>,
+    /// This player's skin as a PNG, sent to the server on joining.
+    skin_png: Vec<u8>,
+    /// Other players' skins by name, with slim arms or not, in the order of
+    /// their texture slots.
+    guest_skins: Vec<(String, bool)>,
+    guest_skin_images: Vec<image::RgbaImage>,
+    /// `--name`, `--join` and `--lan`.
+    name_override: Option<String>,
+    join: Option<String>,
+    lan_at_start: Option<u16>,
 }
 
 /// How far `--shot` has got with its scene.
@@ -222,8 +240,15 @@ impl App {
             res: None,
             pause: None,
             hide_gui: false,
+            tab_held: false,
             server: None,
             link: None,
+            skin_png: Vec::new(),
+            guest_skins: Vec::new(),
+            guest_skin_images: Vec::new(),
+            name_override: None,
+            join: None,
+            lan_at_start: None,
             crack_uvs: Vec::new(),
             effect_uvs: EffectUvs::default(),
             atlas: None,
@@ -280,6 +305,19 @@ impl App {
     }
 
     /// Starts worlds in the given view (`--view`).
+    /// `--name`, `--join` and `--lan`.
+    pub fn with_lan(
+        mut self,
+        name: Option<String>,
+        join: Option<String>,
+        lan: Option<u16>,
+    ) -> Self {
+        self.name_override = name;
+        self.join = join;
+        self.lan_at_start = lan;
+        self
+    }
+
     pub fn with_view(mut self, view: crate::game::view::ViewMode) -> Self {
         self.start_view = view;
         self
@@ -335,10 +373,27 @@ impl App {
         self.items = Some(items);
         self.mob_defs = Some(mob_defs);
         self.install_look(look);
+        if let Some(address) = self.join.clone() {
+            self.renderer = Some(renderer);
+            self.window = Some(window.clone());
+            if let Err(err) = self.join_world(&address) {
+                return Err(err.context(format!("joining {address}")));
+            }
+            self.stack.set_in_world(true, false);
+            window.request_redraw();
+            return Ok(());
+        }
         match self.world_kind.clone() {
             Some(kind) => {
                 let world = self.start_game(kind)?;
                 self.play(world);
+                if let (Some(port), Some(server)) = (self.lan_at_start, self.server.as_mut()) {
+                    let mode = server.game.player.mode;
+                    match server.open_to_lan(port, mode, false) {
+                        Ok(port) => println!("open to LAN on port {port}"),
+                        Err(err) => error!("can't open to LAN: {err}"),
+                    }
+                }
                 // A click puts the mouse in the window.
                 self.stack.set_in_world(true, false);
             }
@@ -378,8 +433,12 @@ impl App {
         let mut server = Server::new(world);
         let (server_end, client_end) = crate::net::transport::local_pair();
         server.connect(Box::new(server_end));
-        let name = self.options.player_name.clone();
+        let name = self.player_name();
         let mut link = Client::join(Box::new(client_end), &name, self.player_settings());
+        link.send(crate::net::protocol::ClientMsg::Skin {
+            png: self.skin_png.clone(),
+            slim: self.skin_slim,
+        });
         let mut game = Game::new_client(
             items,
             models,
@@ -396,6 +455,68 @@ impl App {
         self.server = Some(server);
         self.link = Some(link);
         self.game = Some(game);
+    }
+
+    /// Joins the world open to LAN at `address` (host:port): this window is
+    /// only a client, with no world of its own.
+    fn join_world(&mut self, address: &str) -> Result<()> {
+        use std::net::ToSocketAddrs;
+        let (items, models, mobs) = (
+            self.items.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+            self.mob_defs.clone().expect("loaded in init"),
+        );
+        let target = address
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no address for {address}"))?;
+        let stream = std::net::TcpStream::connect_timeout(&target, JOIN_TIMEOUT)?;
+        let conn = crate::net::transport::Tcp::new(stream)?;
+        let name = self.player_name();
+        let mut link = Client::join(Box::new(conn), &name, self.player_settings());
+        link.send(crate::net::protocol::ClientMsg::Skin {
+            png: self.skin_png.clone(),
+            slim: self.skin_slim,
+        });
+        let mut game = Game::new_client(
+            items,
+            models,
+            mobs,
+            self.options.render_distance,
+            chunk_workers(),
+        );
+        game.apply_options(&self.options);
+        game.set_view_mode(self.start_view);
+        info!("joining {target} as {name}");
+        self.server = None;
+        self.link = Some(link);
+        self.game = Some(game);
+        self.menu = None;
+        Ok(())
+    }
+
+    /// Opens the world being played to LAN (Open to LAN's Start LAN World),
+    /// saying so as vanilla does, and goes back to the game.
+    fn open_to_lan(&mut self, mode: GameMode, cheats: bool, port: u16) {
+        let Some(server) = self.server.as_mut() else {
+            return;
+        };
+        let text = match server.open_to_lan(port, mode, cheats) {
+            Ok(port) => format!("Local game hosted on port {port}"),
+            Err(err) => {
+                error!("can't open to LAN: {err}");
+                format!("Couldn't open to LAN: {err}")
+            }
+        };
+        server.game.player.message = Some((text, LAN_MESSAGE_TICKS));
+        self.resume();
+    }
+
+    /// This run's player name: `--name`, or Options' Player Name.
+    fn player_name(&self) -> String {
+        self.name_override
+            .clone()
+            .unwrap_or_else(|| self.options.player_name.clone())
     }
 
     /// The options the server plays this player by.
@@ -449,6 +570,10 @@ impl App {
         ) || action.hotbar_slot().is_some();
         if action == Action::Perspective {
             return game.on_action(action, pressed, repeat, grabbed);
+        }
+        if action == Action::PlayerList {
+            self.tab_held = pressed;
+            return;
         }
         if local {
             game.on_action(action, pressed, repeat, grabbed);
@@ -675,7 +800,7 @@ impl App {
                     .set(Action::Sneak, Some(Input::Key(KeyCode::KeyW)));
                 self.pause = Some(PauseMenu {
                     options: Some(screen),
-                    packs: None,
+                    ..PauseMenu::default()
                 });
                 self.stack.push(Layer::Pause);
                 self.apply_grab();
@@ -886,7 +1011,10 @@ impl App {
         // The bench keeps flying when the window loses focus, and a scene
         // being captured never pauses.
         if self.bench.is_none() && self.shot.is_none() && self.playing() && self.stack.is_empty() {
-            self.pause = Some(PauseMenu::default());
+            self.pause = Some(PauseMenu {
+                can_open_lan: self.server.as_ref().is_some_and(|s| s.lan_port().is_none()),
+                ..PauseMenu::default()
+            });
             self.stack.push(Layer::Pause);
             self.apply_grab();
         }
@@ -898,13 +1026,55 @@ impl App {
         self.apply_grab();
     }
 
+    /// Makes textures of the skins other players sent.
+    fn take_guest_skins(&mut self) {
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
+        if link.skins.is_empty() {
+            return;
+        }
+        for (name, png, slim) in std::mem::take(&mut link.skins) {
+            match image::load_from_memory(&png) {
+                Ok(image) => {
+                    let image = crate::render::player::prepare_skin(image.into_rgba8());
+                    match self.guest_skins.iter().position(|(n, _)| *n == name) {
+                        Some(i) => {
+                            self.guest_skins[i].1 = slim;
+                            self.guest_skin_images[i] = image;
+                        }
+                        None => {
+                            self.guest_skins.push((name, slim));
+                            self.guest_skin_images.push(image);
+                        }
+                    }
+                }
+                Err(err) => warn!("{name}'s skin: {err}"),
+            }
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_guest_skins(&self.guest_skin_images);
+        }
+    }
+
+    /// The server sent this player away or went away: back to the title,
+    /// saying why.
+    fn leave_world(&mut self, reason: String) {
+        warn!("left the world: {reason}");
+        self.quit_to_title();
+        if let Some(menu) = self.menu.as_mut() {
+            menu.error = Some(reason);
+        }
+    }
+
     /// Saves the world and goes back to the title screen.
     fn quit_to_title(&mut self) {
         self.tell_server(crate::net::protocol::ClientMsg::Disconnect);
-        if let Some(mut server) = self.server.take()
-            && let Err(err) = server.game.save()
-        {
-            error!("saving on quitting to the title failed: {err:#}");
+        if let Some(mut server) = self.server.take() {
+            server.shut_down();
+            if let Err(err) = server.game.save() {
+                error!("saving on quitting to the title failed: {err:#}");
+            }
         }
         self.link = None;
         self.game = None;
@@ -935,6 +1105,14 @@ impl App {
             .map(|id| SlotView::of(&ItemStack::new(id, 1), &look.icons, items))
             .to_vec();
         }
+        let mut png = Vec::new();
+        if let Err(err) = look
+            .skin()
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        {
+            warn!("can't encode the skin: {err}");
+        }
+        self.skin_png = png;
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
         self.crack_uvs = look.crack_uvs;
@@ -1189,6 +1367,9 @@ impl App {
             ScreenAction::AdvTab(tab) => return self.advancements = Some(*tab),
             ScreenAction::Pause(PauseAction::Resume) => return self.resume(),
             ScreenAction::Pause(PauseAction::SaveAndQuit) => return self.quit_to_title(),
+            ScreenAction::Pause(PauseAction::OpenToLan { mode, cheats, port }) => {
+                return self.open_to_lan(*mode, *cheats, port.unwrap_or(0));
+            }
             ScreenAction::Book(BookAction::Ghost(index)) => return self.book_ghost = Some(*index),
             ScreenAction::Book(BookAction::Open(_) | BookAction::Place { .. }) => {
                 self.book_ghost = None;
@@ -1211,6 +1392,18 @@ impl App {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
+            MenuAction::Join(address) => {
+                if let Err(err) = self.join_world(&address) {
+                    error!("joining {address}: {err:#}");
+                    if let Some(menu) = self.menu.as_mut() {
+                        menu.error = Some(format!("Couldn't connect to {address}: {err}"));
+                    }
+                } else {
+                    self.stack.set_in_world(true, true);
+                    self.apply_grab();
+                }
+                return;
+            }
             MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create { name, seed, mode } => {
                 Game::create(&level::saves_dir(), &name, seed, mode, items, models)
@@ -1239,6 +1432,7 @@ impl App {
         self.last_frame = now;
         self.animate_textures();
         self.update_audio(dt);
+        self.take_guest_skins();
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }
@@ -1275,7 +1469,9 @@ impl App {
         }
         // The pause menu stops the game; the camera still follows it. A
         // scene being captured stands still.
-        let frozen = self.pause.is_some() || self.shot.is_some();
+        // A world open to LAN keeps going for its guests.
+        let shared = self.server.as_ref().is_some_and(|s| s.lan_port().is_some());
+        let frozen = (self.pause.is_some() && !shared) || self.shot.is_some();
         let step = if frozen { 0.0 } else { dt };
         match (self.link.as_mut(), self.server.as_mut()) {
             (Some(link), Some(server)) => {
@@ -1283,7 +1479,15 @@ impl App {
                 server.advance(step);
                 link.receive(game);
             }
+            // A guest in someone else's world doesn't stop for its menu.
+            (Some(link), None) => {
+                link.advance(game, dt);
+                link.receive(game);
+            }
             _ => game.advance(step),
+        }
+        if let Some(reason) = self.link.as_ref().and_then(|link| link.gone.clone()) {
+            return self.leave_world(reason);
         }
         // Another dimension's chunks replace this one's.
         if game.take_dimension_change() {
@@ -1456,6 +1660,42 @@ impl App {
                 _ => PlayerMeshes::default(),
             };
             mesh.append(&player.items);
+            // Everyone else in sight, each in their own skin (or the
+            // default one until theirs arrives).
+            let mut guests: Vec<(Option<usize>, Mesh)> = Vec::new();
+            let mut guest_armor = Mesh::default();
+            let mut guest_elytra = Mesh::default();
+            if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
+                let alpha = game.tick_alpha();
+                for view in &game.remote_players {
+                    let skin = self.guest_skins.iter().position(|(n, _)| *n == view.name);
+                    let fig = Figure {
+                        icons,
+                        item_models,
+                        atlas: atlas.image(),
+                        slim: skin.is_some_and(|i| self.guest_skins[i].1),
+                    };
+                    let feet = view.prev_feet.lerp(view.feet, alpha);
+                    let light = light_at(feet + DVec3::Y);
+                    let mut m = PlayerMeshes::default();
+                    figure::add_body(
+                        &mut m,
+                        &view.wearer,
+                        &mut self.held,
+                        &fig,
+                        &view.pose,
+                        feet.as_vec3(),
+                        view.yaw,
+                        light,
+                    );
+                    mesh.append(&m.items);
+                    guest_armor.append(&m.armor);
+                    guest_elytra.append(&m.elytra);
+                    if !view.invisible {
+                        guests.push((skin, m.body));
+                    }
+                }
+            }
             if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
                 let fig = Figure {
                     icons,
@@ -1618,8 +1858,19 @@ impl App {
             }
             meshes.push((mob_kinds + 2, dragon));
             meshes.push((mob_kinds + 3, crystals));
-            meshes.push((mob_kinds + 4, player.elytra.clone()));
-            meshes.push((mob_kinds + crate::look::EXTRA_ARMOR, player.armor.clone()));
+            let mut elytra = player.elytra.clone();
+            elytra.append(&guest_elytra);
+            meshes.push((mob_kinds + 4, elytra));
+            let mut armor = player.armor.clone();
+            armor.append(&guest_armor);
+            meshes.push((mob_kinds + crate::look::EXTRA_ARMOR, armor));
+            for (skin, body) in guests {
+                let slot = match skin {
+                    Some(i) => renderer.guest_skin_slot(i),
+                    None => mob_kinds + crate::look::EXTRA_SKIN,
+                };
+                meshes.push((slot, body));
+            }
             // Invisible players aren't drawn, but their armor is (modern).
             let invisible = game
                 .player
@@ -1649,8 +1900,37 @@ impl App {
             time: game.time(),
             dimension: game.dimension(),
         };
+        // Other players' names, where their heads are on screen.
+        let view_proj = game.view_camera().view_proj(renderer.aspect());
+        let alpha = game.tick_alpha();
+        let eye = game.player.camera.position.as_dvec3();
+        let name_tags = game
+            .remote_players
+            .iter()
+            .filter(|view| !view.invisible)
+            .filter_map(|view| {
+                let head = view.prev_feet.lerp(view.feet, alpha) + DVec3::Y * 2.3;
+                let distance = head.distance(eye) as f32;
+                if distance > NAME_TAG_DISTANCE {
+                    return None;
+                }
+                let clip = view_proj * head.as_vec3().extend(1.0);
+                (clip.w > 0.0).then(|| crate::ui::NameTag {
+                    name: view.name.clone(),
+                    at: egui::pos2((clip.x / clip.w + 1.0) / 2.0, (1.0 - clip.y / clip.w) / 2.0),
+                    distance,
+                })
+            })
+            .collect();
+        let player_list = self
+            .link
+            .as_ref()
+            .filter(|_| self.tab_held && !self.hide_gui)
+            .map(|link| link.players.clone());
         let hud = Hud {
             hidden: self.hide_gui,
+            name_tags,
+            player_list,
             crosshair: self.stack.grabbed(),
             attack: self.stack.grabbed().then(|| game.attack_indicator()),
             hotbar: (0..HOTBAR_SLOTS)
@@ -2003,10 +2283,11 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(server) = self.server.as_mut()
-            && let Err(err) = server.game.save()
-        {
-            error!("saving on quit failed: {err:#}");
+        if let Some(server) = self.server.as_mut() {
+            server.shut_down();
+            if let Err(err) = server.game.save() {
+                error!("saving on quit failed: {err:#}");
+            }
         }
         // Drop the GPU surface before the window it points to.
         self.debug_ui = None;

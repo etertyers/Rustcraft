@@ -34,7 +34,7 @@ const LYING_EYE: f64 = 11.0 / 16.0;
 const BED_BLAST: f32 = 5.0;
 
 /// Lying in the bed whose head is at `head`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sleep {
     pub head: IVec3,
     pub ticks: u32,
@@ -120,13 +120,28 @@ impl Game {
         let Some(sleep) = self.player.sleep.as_mut() else {
             return;
         };
-        sleep.ticks += 1;
-        if sleep.ticks < SLEEP_TICKS {
+        sleep.ticks = (sleep.ticks + 1).min(SLEEP_TICKS);
+        // The night passes once everyone is fast asleep; until then, a
+        // player who is waits in bed.
+        let asleep = self.players_here().into_iter().all(|i| {
+            self.player_at(i)
+                .sleep
+                .is_some_and(|sleep| sleep.ticks >= SLEEP_TICKS)
+        });
+        if !asleep {
             return;
         }
-        let head = sleep.head;
         self.time = (self.time + DAY_TICKS) / DAY_TICKS * DAY_TICKS;
-        self.player.bed = Some(head);
+        self.for_each_player(Game::wake_in_the_morning);
+    }
+
+    /// The night passed: `self.player` gets up, and their bed is where
+    /// they'll respawn.
+    fn wake_in_the_morning(&mut self) {
+        let Some(sleep) = self.player.sleep else {
+            return;
+        };
+        self.player.bed = Some(sleep.head);
         self.note(crate::advancements::Event::Used("sleep".to_owned()));
         self.wake();
     }
@@ -252,9 +267,41 @@ mod tests {
     }
 
     #[test]
+    fn the_night_passes_only_when_every_player_is_asleep() {
+        let (mut game, head) = game_with_bed(18000);
+        // A second bed for the guest, a few blocks east.
+        let bed =
+            BlockState::of(blocks::RED_BED).with_face(Prop::Facing, crate::world::Face::North);
+        let guest_head = IVec3::new(4, 64, -2);
+        game.chunks.set_blocks(&[
+            (IVec3::new(4, 64, -1), bed),
+            (guest_head, bed.with(Prop::BedPart, bed_part::HEAD)),
+        ]);
+        game.others.push(crate::game::PlayerState::new(
+            DVec3::new(4.5, 64.0, 0.5),
+            0.0,
+            0.0,
+        ));
+        game.use_bed(head);
+        assert!(game.is_sleeping());
+        game.run_ticks(200);
+        assert!(game.is_sleeping(), "still waiting for the guest");
+        assert!(game.time() < 24000, "still night");
+        game.with_player(1, |guest| guest.use_bed(guest_head));
+        game.run_ticks(120);
+        assert!(game.time() >= 24000, "morning");
+        assert!(
+            !game.is_sleeping() && game.others[0].sleep.is_none(),
+            "both up"
+        );
+        assert_eq!(game.others[0].bed, Some(guest_head));
+    }
+
+    #[test]
     fn a_bed_in_the_nether_blows_up_and_sets_fires() {
         let (mut game, head) = game_with_bed(18000);
         game.dimension = crate::world::dimension::Dimension::Nether;
+        game.player.dimension = crate::world::dimension::Dimension::Nether;
         game.use_bed(head);
         assert!(!game.is_sleeping());
         let world = game.chunks.world();

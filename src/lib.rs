@@ -16,6 +16,7 @@ pub mod entity;
 pub mod figure;
 pub mod game;
 pub mod inventory;
+pub mod lantest;
 pub mod level;
 pub mod look;
 pub mod net;

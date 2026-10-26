@@ -264,9 +264,32 @@ impl Game {
     /// One tick of every mob: AI, movement, daylight, hits and shots, drops,
     /// despawning and stashing mobs whose chunk unloaded.
     pub(super) fn tick_mobs(&mut self) {
-        let player_feet = self.player.body.position();
-        let player_eye = player_feet + DVec3::Y * self.player.body.eye_height();
-        let attackable = self.player.mode.is_vulnerable() && !self.player.stats.is_dead();
+        // Every player as the mobs see them; each mob goes after the
+        // nearest it may attack (vanilla), and listens for the nearest.
+        let seen: Vec<Seen> = self
+            .players_here()
+            .into_iter()
+            .map(|index| {
+                let p = self.player_at(index);
+                let feet = p.body.position();
+                Seen {
+                    index,
+                    feet,
+                    eye: feet + DVec3::Y * p.body.eye_height(),
+                    aabb: p.body.aabb(),
+                    attackable: p.mode.is_vulnerable() && !p.stats.is_dead(),
+                    invisible: p
+                        .stats
+                        .effects
+                        .has(crate::player::effects::Effect::Invisibility),
+                    pumpkin: p
+                        .inventory
+                        .slot(crate::inventory::player::ARMOR_HEAD)
+                        .is_some_and(|s| s.id == crate::inventory::items::CARVED_PUMPKIN),
+                    look: p.camera.forward().as_dvec3(),
+                }
+            })
+            .collect();
         let daytime = daytime::is_daytime(self.celestial_angle());
         let ridden_input = self.ridden_input();
         let mut mobs = std::mem::take(&mut self.mobs);
@@ -289,7 +312,6 @@ impl Game {
                 }
             })
             .collect();
-        let look = self.player.camera.forward().as_dvec3();
         let threat = (self.threat_ticks > 0)
             .then(|| mobs.iter().position(|m| m.id == self.threat_id))
             .flatten();
@@ -303,6 +325,16 @@ impl Game {
                 self.steer_ridden(mob);
             }
             let eye = mob.eye();
+            let nearest = seen
+                .iter()
+                .min_by(|a, b| a.eye.distance(eye).total_cmp(&b.eye.distance(eye)))
+                .expect("there's always a player");
+            let prey = seen
+                .iter()
+                .filter(|p| p.attackable)
+                .min_by(|a, b| a.eye.distance(eye).total_cmp(&b.eye.distance(eye)))
+                .unwrap_or(nearest);
+            let (player_feet, player_eye, attackable) = (prey.feet, prey.eye, prey.attackable);
             // Only mobs that go after the player look for them, and only
             // when they're near enough to notice.
             let hunts = !matches!(
@@ -317,12 +349,7 @@ impl Game {
                     | Ai::Fox { .. }
             );
             // An invisible player is noticed only up close.
-            let sight = if self
-                .player
-                .stats
-                .effects
-                .has(crate::player::effects::Effect::Invisibility)
-            {
+            let sight = if prey.invisible {
                 INVISIBLE_SIGHT
             } else if matches!(def.ai, Ai::Enderman { .. }) {
                 ENDERMAN_SIGHT
@@ -334,20 +361,19 @@ impl Game {
             let near_player = eye.distance(player_eye) < sight;
             let visible = attackable && hunts && near_player && self.sees(eye, player_eye);
             // A carved pumpkin on the head hides the face from endermen.
-            let pumpkin = self
-                .player
-                .inventory
-                .slot(crate::inventory::player::ARMOR_HEAD)
-                .is_some_and(|s| s.id == crate::inventory::items::CARVED_PUMPKIN);
             let stares = matches!(def.ai, Ai::Enderman { .. }) && {
                 let to = eye - player_eye;
                 let d = to.length();
-                d < 64.0 && d > 0.0 && look.dot(to / d) > 1.0 - 0.025 / d && visible && !pumpkin
+                d < 64.0
+                    && d > 0.0
+                    && prey.look.dot(to / d) > 1.0 - 0.025 / d
+                    && visible
+                    && !prey.pumpkin
             };
-            let target = (attackable && hunts && near_player).then(|| Target {
+            let target = (attackable && hunts && near_player).then_some(Target {
                 feet: player_feet,
                 eye: player_eye,
-                aabb: self.player.body.aabb(),
+                aabb: prey.aabb,
                 visible,
                 stares,
             });
@@ -401,7 +427,7 @@ impl Game {
                 weight: &weight,
                 env,
                 others: &others,
-                owner: Some(player_feet),
+                owner: Some(nearest.feet),
                 threat,
                 errand: mob.data.villager.as_ref().and_then(|v| v.errand),
             };
@@ -429,7 +455,7 @@ impl Game {
             } else {
                 mob.tick(&intent.input, &collider, eyes);
             }
-            let near_ears = mob.feet().distance(player_feet) < 32.0;
+            let near_ears = mob.feet().distance(nearest.feet) < 32.0;
             let mut chance = || thinking.next_f64() as f32;
             super::sounds::mob_sounds(mob, &def.name, near_ears, &mut chance);
             if def.climbs && mob.body.collided_horizontally() && intent.input.forward > 0.0 {
@@ -448,19 +474,22 @@ impl Game {
             {
                 mob.hurt_by_world(1.0, DamageSource::Drowning);
             }
-            pending.push((index, intent));
+            pending.push((index, intent, prey.index));
             if mob.is_dead() && !mob.looted {
                 mob.looted = true;
                 self.on_mob_death(mob);
             }
         }
-        self.apply_intents(&mut mobs, pending, player_feet);
+        self.apply_intents(&mut mobs, pending);
         self.mobs_pick_up_weapons(&mut mobs);
         self.push_apart(&mut mobs);
         // Despawn far monsters; stash animals whose chunk unloaded.
         mobs.retain_mut(|mob| {
             let def = defs.get(mob.kind);
-            let distance = mob.feet().distance(player_feet);
+            let distance = seen
+                .iter()
+                .map(|p| mob.feet().distance(p.feet))
+                .fold(f64::INFINITY, f64::min);
             if mob.is_gone() {
                 return false;
             }
@@ -561,13 +590,18 @@ impl Game {
             let near = |bb: crate::player::collision::Aabb| {
                 crate::player::collision::Aabb::new(bb.min - reach, bb.max + reach)
             };
-            if !self.player.body.flying
-                && !mobs[i].ridden
-                && near(mobs[i].body.aabb()).intersects(&self.player.body.aabb())
-            {
-                let push = push_between(mobs[i].feet(), self.player.body.position());
-                mobs[i].body.velocity += push;
-                self.player.body.velocity -= push;
+            if !mobs[i].ridden {
+                let (bb, feet) = (near(mobs[i].body.aabb()), mobs[i].feet());
+                let mut pushed = DVec3::ZERO;
+                self.for_each_player(|game| {
+                    let body = &mut game.player.body;
+                    if !body.flying && bb.intersects(&body.aabb()) {
+                        let push = push_between(feet, body.position());
+                        pushed += push;
+                        body.velocity -= push;
+                    }
+                });
+                mobs[i].body.velocity += pushed;
             }
             for j in i + 1..mobs.len() {
                 if !mobs[j].is_dead() && near(mobs[i].body.aabb()).intersects(&mobs[j].body.aabb())
@@ -739,7 +773,7 @@ impl Game {
 
     /// Mobs that count toward a cap: not tamed or ridden (persistent), and
     /// in a chunk near the player.
-    fn counted_in(&self, category: &Category, center: ChunkPos) -> usize {
+    fn counted_in(&self, category: &Category, centers: &[ChunkPos]) -> usize {
         self.mobs
             .iter()
             .filter(|mob| !mob.is_dead() && !mob.data.tamed && !mob.ridden)
@@ -750,18 +784,48 @@ impl Game {
             .filter(|mob| {
                 let at =
                     ChunkPos::of_block(mob.feet().x.floor() as i32, mob.feet().z.floor() as i32);
-                (at.x - center.x).abs().max((at.z - center.z).abs()) <= SPAWN_CHUNK_RADIUS
+                centers.iter().any(|center| {
+                    (at.x - center.x).abs().max((at.z - center.z).abs()) <= SPAWN_CHUNK_RADIUS
+                })
             })
             .count()
     }
 
+    /// The chunk each player stands in.
+    pub fn player_chunks(&self) -> Vec<ChunkPos> {
+        let mut chunks: Vec<ChunkPos> = self
+            .players_here()
+            .into_iter()
+            .map(|i| {
+                let feet = self.feet_of(i);
+                ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)
+            })
+            .collect();
+        chunks.sort_by_key(|pos| (pos.x, pos.z));
+        chunks.dedup();
+        chunks
+    }
+
+    /// How far the nearest player is from `at`.
+    pub(super) fn nearest_player_distance(&self, at: DVec3) -> f64 {
+        self.players_here()
+            .into_iter()
+            .map(|i| self.feet_of(i).distance(at))
+            .fold(f64::INFINITY, f64::min)
+    }
+
     /// The chunks that take part in spawning: loaded, within the radius of
-    /// the player, in random order.
-    fn spawnable_chunks(&mut self, center: ChunkPos) -> Vec<ChunkPos> {
-        let mut chunks: Vec<ChunkPos> = (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS)
-            .flat_map(|dz| (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).map(move |dx| (dx, dz)))
-            .map(|(dx, dz)| center.offset(dx, dz))
-            .filter(|&pos| self.chunks.world().get(pos).is_some())
+    /// any player, each once, in random order.
+    fn spawnable_chunks(&mut self, centers: &[ChunkPos]) -> Vec<ChunkPos> {
+        let mut seen = crate::world::fast_hash::FastSet::default();
+        let mut chunks: Vec<ChunkPos> = centers
+            .iter()
+            .flat_map(|&center| {
+                (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).flat_map(move |dz| {
+                    (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).map(move |dx| center.offset(dx, dz))
+                })
+            })
+            .filter(|&pos| seen.insert(pos) && self.chunks.world().get(pos).is_some())
             .collect();
         for i in (1..chunks.len()).rev() {
             let j = self.rng.below(i as u32 + 1) as usize;
@@ -784,12 +848,12 @@ impl Game {
         if !self.time.is_multiple_of(category.every) {
             return;
         }
-        let player = self.player.body.position();
-        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
-        let chunks = self.spawnable_chunks(center);
-        // The cap grows with the chunks in range: 70 for a full 17 × 17.
+        let centers = self.player_chunks();
+        let chunks = self.spawnable_chunks(&centers);
+        // The cap grows with the chunks in range: 70 for a full 17 × 17
+        // around each player.
         let cap = category.cap * chunks.len() / spawning::CAP_CHUNKS;
-        let mut count = self.counted_in(category, center);
+        let mut count = self.counted_in(category, &centers);
         for pos in chunks {
             if count >= cap {
                 return;
@@ -885,7 +949,7 @@ impl Game {
 
     /// Far enough from the player and the world spawn, and not out of range.
     fn right_distance(&self, feet: DVec3) -> bool {
-        let player = feet.distance(self.player.body.position());
+        let player = self.nearest_player_distance(feet);
         (spawning::MIN_DISTANCE..=spawning::MAX_DISTANCE).contains(&player)
             && feet.distance(self.spawn) >= spawning::MIN_DISTANCE
     }
@@ -922,7 +986,7 @@ impl Game {
     pub(super) fn monster_count(&self) -> usize {
         let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
-        self.counted_in(&spawning::MONSTER, center)
+        self.counted_in(&spawning::MONSTER, &[center])
     }
 
     /// Only the monster category's cycle (for the tests).
@@ -1111,8 +1175,8 @@ impl Game {
         if count >= STRIDER_CAP {
             return;
         }
-        let player = self.player.body.position();
-        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        let centers = self.player_chunks();
+        let center = centers[self.rng.below(centers.len() as u32) as usize];
         let reach = SPAWN_CHUNK_RADIUS as u32 * 2 + 1;
         let pos = center.offset(
             self.rng.below(reach) as i32 - SPAWN_CHUNK_RADIUS,
@@ -1139,7 +1203,7 @@ impl Game {
             return;
         };
         let feet = DVec3::new(x as f64 + 0.5, (surface + 1) as f64, z as f64 + 0.5);
-        if feet.distance(player) < MIN_SPAWN_DISTANCE {
+        if self.nearest_player_distance(feet) < MIN_SPAWN_DISTANCE {
             return;
         }
         for i in 0..1 + self.rng.below(u32::from(group)) {
@@ -1156,8 +1220,8 @@ impl Game {
         if !self.time.is_multiple_of(20) {
             return;
         }
-        let player = self.player.body.position();
-        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        let centers = self.player_chunks();
+        let center = centers[self.rng.below(centers.len() as u32) as usize];
         let side = SPAWN_CHUNK_RADIUS * 2 + 1;
         let cap = WATER_MOBS_PER_256_CHUNKS * (side * side) as usize / 256;
         let count = |game: &Game| {
@@ -1210,7 +1274,7 @@ impl Game {
                     blocks: self.items.blocks,
                 };
                 let deep = (0..=min_depth as i32).all(|dy| terrain.water(cell + IVec3::Y * dy));
-                if !deep || cell.as_dvec3().distance(player) < 16.0 {
+                if !deep || self.nearest_player_distance(cell.as_dvec3()) < 16.0 {
                     continue;
                 }
                 for i in 0..group {
@@ -1277,4 +1341,18 @@ pub fn is_slime_chunk(seed: u64, chunk: ChunkPos) -> bool {
         seed as i64 + (x * x * 4_987_142) + (x * 5_947_611) + (z * z) * 4_392_871 + (z * 389_711);
     let mut rng = Rng::new((mixed ^ 987_234_911) as u64);
     rng.below(10) == 0
+}
+
+/// A player as the mobs see them this tick.
+struct Seen {
+    /// Which player (0 the host, then `others`).
+    index: usize,
+    feet: DVec3,
+    eye: DVec3,
+    aabb: crate::player::collision::Aabb,
+    attackable: bool,
+    invisible: bool,
+    /// A carved pumpkin on their head.
+    pumpkin: bool,
+    look: DVec3,
 }

@@ -35,6 +35,11 @@ pub struct Client {
     pub welcomed: bool,
     /// Why the server refused or sent the player away, once it has.
     pub gone: Option<String>,
+    /// Other players' skins that arrived (name, PNG, slim arms), for the
+    /// window to take.
+    pub skins: Vec<(String, Vec<u8>, bool)>,
+    /// Everyone playing, for the Tab list.
+    pub players: Vec<String>,
 }
 
 impl Client {
@@ -52,6 +57,8 @@ impl Client {
             seed: None,
             welcomed: false,
             gone: None,
+            skins: Vec::new(),
+            players: Vec::new(),
         }
     }
 
@@ -118,6 +125,8 @@ impl Client {
                     self.reconcile(game, ack, server, prev);
                 }
                 ServerMsg::Sounds(cues) => cues.into_iter().for_each(audio::requeue),
+                ServerMsg::Skin { name, png, slim } => self.skins.push((name, png, slim)),
+                ServerMsg::Players(names) => self.players = names,
             }
         }
         if !self.conn.is_open() && self.gone.is_none() {

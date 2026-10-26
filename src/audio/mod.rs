@@ -26,7 +26,7 @@ pub use table::SoundTable;
 use table::{Entry, SoundTable as Table};
 
 /// One sound asked for: an event, where and how loud.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Cue {
     pub event: Cow<'static, str>,
     /// Where it is; `None` plays it at the listener (the player's own

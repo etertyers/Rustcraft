@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     bindings::Action,
     game::PlayerState,
@@ -19,7 +21,7 @@ use crate::{
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// What a client tells the server.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// The first message: who is joining, and which protocol they speak.
     Login { version: u32, name: String },
@@ -51,12 +53,15 @@ pub enum ClientMsg {
     /// Where the player is while flying with the debug flight key (F4),
     /// which moves them between ticks.
     Fly { feet: glam::DVec3 },
+    /// The player's skin as a PNG, and whether its arms are slim (sent
+    /// once, on joining).
+    Skin { png: Vec<u8>, slim: bool },
     /// Leaving.
     Disconnect,
 }
 
 /// One tick of a player's movement input.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Input {
     pub seq: u32,
     pub keys: crate::player::input::MoveKeys,
@@ -65,7 +70,7 @@ pub struct Input {
 }
 
 /// The options that change how the server plays a player.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerSettings {
     /// Chunks sent around the player in each direction.
     pub view_distance: i32,
@@ -78,13 +83,14 @@ pub struct PlayerSettings {
 }
 
 /// What the server tells a client.
+#[derive(Serialize, Deserialize)]
 pub enum ServerMsg {
     /// Joined; the world's seed (for F3 and `/seed`).
     Welcome { seed: Option<u64> },
     /// Not joined, and why (a full world, a taken name, another version).
     Refused(String),
     /// A chunk to show, new or sent again (its block entities changed).
-    Chunk(Arc<Chunk>),
+    Chunk(#[serde(with = "chunk_bytes")] Arc<Chunk>),
     /// Blocks that changed in chunks the client has, remeshed at once when
     /// `urgent` (a player's own edits) or in the background (fluids, fire).
     Blocks {
@@ -99,12 +105,22 @@ pub enum ServerMsg {
     Snapshot(Box<Snapshot>),
     /// Sounds to play, already filtered to the ones the player hears.
     Sounds(Vec<crate::audio::Cue>),
+    /// Everyone playing, the host first (sent as players come and go, for
+    /// the Tab list).
+    Players(Vec<String>),
+    /// Another player's skin (each once, as they join or this player does).
+    Skin {
+        name: String,
+        png: Vec<u8>,
+        slim: bool,
+    },
     /// The server is going away, or sent this player off.
     Disconnect(String),
 }
 
 /// One tick of the world for one player: their own state and everything
 /// they can see move.
+#[derive(Serialize, Deserialize)]
 pub struct Snapshot {
     /// The last `Input` played before this tick ended (0 before any).
     pub ack: u32,
@@ -113,10 +129,26 @@ pub struct Snapshot {
     pub rules: GameRules,
     pub player: PlayerState,
     pub entities: Entities,
+    /// The other players in sight.
+    pub players: Vec<PlayerView>,
+}
+
+/// Another player as others see them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlayerView {
+    pub name: String,
+    /// Where they stood a tick ago and now, to draw them between.
+    pub prev_feet: glam::DVec3,
+    pub feet: glam::DVec3,
+    /// Which way their body faces.
+    pub yaw: f32,
+    pub pose: crate::render::player::PlayerPose,
+    pub wearer: crate::figure::Wearer,
+    pub invisible: bool,
 }
 
 /// Everything that moves in the player's dimension.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Entities {
     pub mobs: Vec<crate::entity::mob::Mob>,
     pub items: Vec<crate::entity::item::ItemEntity>,
@@ -136,4 +168,24 @@ pub struct Entities {
     pub crystals: Vec<crate::entity::crystal::EndCrystal>,
     pub dragon_fireballs: Vec<crate::entity::breath::DragonFireball>,
     pub breath: Vec<crate::entity::breath::BreathCloud>,
+}
+
+/// Chunks travel in their save format (their own compact encoding).
+mod chunk_bytes {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    use crate::world::{chunk::Chunk, save};
+
+    pub fn serialize<S: Serializer>(chunk: &Arc<Chunk>, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&save::encode_chunk(chunk))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Arc<Chunk>, D::Error> {
+        let bytes = Vec::<u8>::deserialize(deserializer)?;
+        save::decode_chunk(&bytes)
+            .map(Arc::new)
+            .map_err(|err| D::Error::custom(format!("{err}")))
+    }
 }

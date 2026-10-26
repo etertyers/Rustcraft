@@ -86,13 +86,8 @@ const HOLDABLE: [&str; 15] = [
 impl Game {
     /// Carries out what each mob decided this tick (`pending` is by index
     /// into `mobs`).
-    pub(super) fn apply_intents(
-        &mut self,
-        mobs: &mut [Mob],
-        pending: Vec<(usize, Intent)>,
-        player_feet: DVec3,
-    ) {
-        for (index, intent) in pending {
+    pub(super) fn apply_intents(&mut self, mobs: &mut [Mob], pending: Vec<(usize, Intent, usize)>) {
+        for (index, intent, victim) in pending {
             if mobs[index].is_dead() {
                 continue;
             }
@@ -114,12 +109,10 @@ impl Game {
             }
             if let Some(hit) = intent.hit {
                 match hit.victim {
-                    Victim::Player => self.mob_strikes_player(
-                        &mut mobs[index],
-                        hit.damage,
-                        player_feet,
-                        intent.toss,
-                    ),
+                    Victim::Player => self.with_player(victim, |game| {
+                        let feet = game.player.body.position();
+                        game.mob_strikes_player(&mut mobs[index], hit.damage, feet, intent.toss);
+                    }),
                     Victim::Mob(victim) => {
                         if victim < mobs.len() && victim != index {
                             mobs[victim].hurt(hit.damage, Some(feet), DamageSource::Mob);

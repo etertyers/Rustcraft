@@ -37,7 +37,7 @@ pub const HOPPER_COOLDOWN: u8 = 4;
 pub const CHEST_SLOTS: usize = 27;
 pub const HOPPER_SLOTS: usize = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CartKind {
     Rideable,
     Chest,
@@ -62,7 +62,7 @@ pub enum CartEvent {
     Explode(f32),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Minecart {
     pub kind: CartKind,
     /// The middle of the bottom of the box.

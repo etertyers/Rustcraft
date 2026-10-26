@@ -1,7 +1,8 @@
 //! The main menu, following 1.0.0's screens: the title screen
-//! (Singleplayer, Options, Resource Packs, Quit Game), Select World (each
-//! world's mode and when it was last played) and Create New World (name,
-//! seed, game mode).
+//! (Singleplayer, Multiplayer, Options, Resource Packs, Quit Game), Select
+//! World (each world's mode and when it was last played), Create New World
+//! (name, seed, game mode) and Multiplayer (worlds open to LAN found on the
+//! network, and Direct Connect).
 
 use std::{
     path::PathBuf,
@@ -31,6 +32,8 @@ pub enum MenuAction {
         seed: u64,
         mode: GameMode,
     },
+    /// Join the world open to LAN at this address (host:port).
+    Join(String),
 }
 
 enum Screen {
@@ -40,6 +43,16 @@ enum Screen {
     ResourcePacks(PackScreen, Box<Screen>),
     SelectWorld,
     CreateWorld,
+    Multiplayer(Multiplayer),
+}
+
+/// The Multiplayer screen: what the network announces, and an address.
+struct Multiplayer {
+    finder: Option<crate::net::lan::Finder>,
+    /// Why the network can't be listened to, if it can't.
+    deaf: Option<String>,
+    selected: Option<std::net::SocketAddr>,
+    address: String,
 }
 
 /// A world in the list, and its icon once it is a texture.
@@ -116,6 +129,7 @@ impl Menu {
                         }
                         Screen::SelectWorld => self.select_world(ui),
                         Screen::CreateWorld => self.create_world(ui),
+                        Screen::Multiplayer(_) => self.multiplayer(ui),
                     };
                     if let Some(error) = &self.error {
                         ui.add_space(12.0);
@@ -150,7 +164,7 @@ impl Menu {
             }
             Screen::ResourcePacks(_, back) => *back,
             Screen::CreateWorld => Screen::SelectWorld,
-            Screen::Title | Screen::SelectWorld => Screen::Title,
+            Screen::Title | Screen::SelectWorld | Screen::Multiplayer(_) => Screen::Title,
         };
     }
 
@@ -177,6 +191,22 @@ impl Menu {
             self.scan = Some(WorldScan::start(self.saves.clone()));
             self.selected = None;
             self.screen = Screen::SelectWorld;
+        }
+        ui.add_space(8.0);
+        if ui
+            .add_sized(BUTTON, Button::new("Multiplayer"))
+            .clicked_with_sound()
+        {
+            let (finder, deaf) = match crate::net::lan::Finder::start() {
+                Ok(finder) => (Some(finder), None),
+                Err(err) => (None, Some(format!("Can't look for LAN worlds: {err}"))),
+            };
+            self.screen = Screen::Multiplayer(Multiplayer {
+                finder,
+                deaf,
+                selected: None,
+                address: String::new(),
+            });
         }
         ui.add_space(8.0);
         if ui
@@ -335,6 +365,82 @@ impl Menu {
             seed: level::parse_seed(&self.seed, level::random_seed),
             mode: self.mode,
         })
+    }
+}
+
+impl Menu {
+    /// Multiplayer: the LAN worlds heard of lately (pick one and Join
+    /// Server), or Direct Connect to an address.
+    fn multiplayer(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
+        let Screen::Multiplayer(screen) = &mut self.screen else {
+            return None;
+        };
+        heading(ui, "Play Multiplayer");
+        let mut join = None;
+        let list_height = (ui.available_height() - 200.0).max(80.0);
+        egui::ScrollArea::vertical()
+            .max_height(list_height)
+            .max_width(420.0)
+            .show(ui, |ui| {
+                let found = screen
+                    .finder
+                    .as_mut()
+                    .map(|finder| finder.worlds().to_vec())
+                    .unwrap_or_default();
+                for world in &found {
+                    let text = format!("LAN World\n{}\n{}", world.motd, world.address);
+                    let chosen = screen.selected == Some(world.address);
+                    let response = ui.add_sized([400.0, 56.0], Button::selectable(chosen, text));
+                    if response.clicked_with_sound() {
+                        screen.selected = Some(world.address);
+                    }
+                    if response.double_clicked() {
+                        join = Some(world.address.to_string());
+                    }
+                }
+                match &screen.deaf {
+                    Some(why) => {
+                        ui.label(RichText::new(why).color(GRAY));
+                    }
+                    None if found.is_empty() => {
+                        ui.label(
+                            RichText::new("Scanning for games on your local network").color(GRAY),
+                        );
+                    }
+                    None => {}
+                }
+            });
+        ui.add_space(12.0);
+        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+            ui.set_max_width(BUTTON[0] * 1.5);
+            ui.label(RichText::new("Direct Connect (address:port)").color(GRAY));
+            ui.add(egui::TextEdit::singleline(&mut screen.address).desired_width(f32::INFINITY));
+        });
+        ui.add_space(12.0);
+        let target = screen
+            .selected
+            .map(|address| address.to_string())
+            .or_else(|| {
+                let typed = screen.address.trim();
+                (!typed.is_empty()).then(|| typed.to_owned())
+            });
+        if ui
+            .add_enabled(
+                target.is_some(),
+                Button::new("Join Server").min_size(BUTTON.into()),
+            )
+            .clicked_with_sound()
+        {
+            join = target;
+        }
+        ui.add_space(8.0);
+        if ui
+            .add_sized(BUTTON, Button::new("Cancel"))
+            .clicked_with_sound()
+        {
+            self.screen = Screen::Title;
+        }
+        join.map(MenuAction::Join)
     }
 }
 

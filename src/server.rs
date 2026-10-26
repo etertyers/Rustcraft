@@ -23,10 +23,19 @@ use crate::{
 pub const MAX_PLAYERS: usize = 8;
 /// Positioned sounds farther than this from a player aren't sent to them.
 const HEARING: f64 = 64.0;
+/// How long "… joined the game" shows.
+const ANNOUNCE_TICKS: u32 = 100;
 /// Inputs a client may get ahead by before the oldest are dropped.
 const MAX_QUEUED_INPUTS: usize = 4;
 
 pub type ServerConnection = Box<dyn Connection<ServerMsg, ClientMsg>>;
+
+/// A world open to LAN.
+struct Lan {
+    listener: crate::net::lan::Listener,
+    guest_mode: crate::player::mode::GameMode,
+    cheats: bool,
+}
 
 /// A connection that hasn't logged in yet.
 struct Pending {
@@ -45,6 +54,8 @@ struct Remote {
     view_distance: i32,
     /// The dimension its chunks are in.
     dimension: Dimension,
+    /// The player's skin (PNG) and arm width, once sent.
+    skin: Option<(Vec<u8>, bool)>,
 }
 
 pub struct Server {
@@ -55,6 +66,9 @@ pub struct Server {
     pending: Vec<Pending>,
     /// Every recipe in the book's order, for placing one from the book.
     book: Arc<Vec<BookRecipe>>,
+    /// Open to LAN: the port listened on, and the guests' game mode and
+    /// whether they may cheat (M38's commands).
+    lan: Option<Lan>,
     /// A client changed something on a screen since the last snapshot, so
     /// one goes out even without a tick (the held stack follows the mouse
     /// at once).
@@ -64,6 +78,7 @@ pub struct Server {
 impl Server {
     pub fn new(mut game: Game) -> Self {
         game.chunks.serve();
+        game.keep_sounds();
         let book = Arc::new(crate::inventory::book::all(
             &game.items().recipes,
             game.items(),
@@ -74,7 +89,49 @@ impl Server {
             pending: Vec::new(),
             book,
             changed: false,
+            lan: None,
         }
+    }
+
+    /// Opens the world to LAN on `port` (0 for any free one); guests play
+    /// in `guest_mode`. Returns the port.
+    pub fn open_to_lan(
+        &mut self,
+        port: u16,
+        guest_mode: crate::player::mode::GameMode,
+        cheats: bool,
+    ) -> std::io::Result<u16> {
+        let world = self.game.world_name().unwrap_or_else(|| "World".to_owned());
+        let motd = format!("{} - {world}", self.game.player.name);
+        let listener = crate::net::lan::Listener::open(port, motd)?;
+        let port = listener.port;
+        self.lan = Some(Lan {
+            listener,
+            guest_mode,
+            cheats,
+        });
+        Ok(port)
+    }
+
+    /// Tells every guest the world is closing (the host saved and quit);
+    /// the caller saves the world, everyone in it included.
+    pub fn shut_down(&mut self) {
+        for remote in self.remotes.iter_mut().skip(1) {
+            remote.conn.send(ServerMsg::Disconnect(
+                "The host closed the world".to_owned(),
+            ));
+        }
+        self.lan = None;
+    }
+
+    /// The port the world is open to LAN on, if it is.
+    pub fn lan_port(&self) -> Option<u16> {
+        self.lan.as_ref().map(|lan| lan.listener.port)
+    }
+
+    /// Whether guests may use cheat commands (Open to LAN's Allow Cheats).
+    pub fn cheats(&self) -> bool {
+        self.lan.as_ref().is_some_and(|lan| lan.cheats)
     }
 
     /// A new connection; it joins when its login arrives.
@@ -92,9 +149,14 @@ impl Server {
     pub fn advance(&mut self, dt: f32) {
         self.accept();
         self.read_messages();
-        let center = self.host_center();
-        let changes = self.game.chunks.update(center);
-        self.game.on_chunks_loaded(&changes.loaded);
+        // Chunks load around every player, in each one's dimension.
+        for dimension in self.game.dimensions_with_players() {
+            self.game.enter_realm(dimension);
+            let centers = self.game.player_chunks();
+            let changes = self.game.chunks.update_around(&centers);
+            self.game.on_chunks_loaded(&changes.loaded);
+        }
+        self.home();
         let ticks = self.game.clock(dt);
         for _ in 0..ticks {
             self.tick();
@@ -132,31 +194,66 @@ impl Server {
 
     /// Sends each player their snapshot and the sounds they hear.
     fn publish(&mut self, heard: Vec<Cue>) {
+        let views: Vec<_> = (0..self.game.player_count())
+            .map(|index| {
+                let view = self.game.with_player(index, |game| game.player_view());
+                (self.game.player_at(index).dimension, view)
+            })
+            .collect();
         for index in 0..self.remotes.len() {
             let ack = self.remotes[index].ack;
-            let snapshot = self.game.with_player(index, |game| game.snapshot(ack));
+            // What's in the chunks the client has, in their dimension.
+            let dimension = self.game.player_at(index).dimension;
+            self.game.enter_realm(dimension);
+            let range = f64::from((self.remotes[index].view_distance + 1) * 16);
+            let here: Vec<_> = views
+                .iter()
+                .filter(|(d, _)| *d == dimension)
+                .map(|(_, view)| view.clone())
+                .collect();
+            let snapshot = self
+                .game
+                .with_player(index, |game| game.snapshot(ack, range, here));
             let feet = self.feet(index);
-            let remote = &mut self.remotes[index];
-            remote.conn.send(ServerMsg::Snapshot(Box::new(snapshot)));
+            self.remotes[index]
+                .conn
+                .send(ServerMsg::Snapshot(Box::new(snapshot)));
+            // Sounds near them, and their own.
+            let own = self
+                .game
+                .with_player(index, |game| std::mem::take(&mut game.player.heard));
             let sounds: Vec<Cue> = heard
                 .iter()
-                .filter(|cue| match cue.at {
-                    Some(at) => at.distance(feet) < HEARING,
-                    // The player's own sounds (the host's, until each
-                    // player's turn keeps its own).
-                    None => index == 0,
-                })
+                .filter(|cue| cue.at.is_some_and(|at| at.distance(feet) < HEARING))
                 .cloned()
+                .chain(own)
                 .collect();
             if !sounds.is_empty() {
-                remote.conn.send(ServerMsg::Sounds(sounds));
+                self.remotes[index].conn.send(ServerMsg::Sounds(sounds));
             }
         }
+        self.home();
+    }
+
+    /// Puts the host's dimension back in the game's fields.
+    fn home(&mut self) {
+        let dimension = self.game.player.dimension;
+        self.game.enter_realm(dimension);
     }
 
     /// Takes in logins: a player with a free name joins, the first as the
     /// host (the world's own player), the rest as guests.
     fn accept(&mut self) {
+        if let Some(lan) = &self.lan {
+            for stream in lan.listener.arrivals() {
+                match crate::net::transport::Tcp::new(stream) {
+                    Ok(conn) => self.pending.push(Pending {
+                        conn: Box::new(conn),
+                    }),
+                    Err(err) => warn!("a LAN connection failed: {err}"),
+                }
+            }
+        }
         let mut still = Vec::new();
         for mut pending in std::mem::take(&mut self.pending) {
             let Some(msg) = pending.conn.try_recv() else {
@@ -208,7 +305,10 @@ impl Server {
             let spawn = self.game.spawn_point();
             let mut player = PlayerState::new(spawn, 0.0, 0.0);
             player.name = name.clone();
-            player.mode = self.game.player.mode;
+            player.mode = self
+                .lan
+                .as_ref()
+                .map_or(self.game.player.mode, |lan| lan.guest_mode);
             self.game.others.push(player);
         }
         self.game.with_player(index, Game::restore_player);
@@ -225,7 +325,35 @@ impl Server {
             sent: Default::default(),
             view_distance: config::RENDER_DISTANCE,
             dimension,
+            skin: None,
         });
+        self.announce(format!("{name} joined the game"));
+        // The newcomer sees everyone's skins.
+        let index = self.remotes.len() - 1;
+        for other in 0..index {
+            if let Some((png, slim)) = self.remotes[other].skin.clone() {
+                let name = self.game.player_at(other).name.clone();
+                self.remotes[index]
+                    .conn
+                    .send(ServerMsg::Skin { name, png, slim });
+            }
+        }
+    }
+
+    /// Tells everyone `text` (until chat, over the hotbar) and who is
+    /// playing now.
+    fn announce(&mut self, text: String) {
+        for index in 0..self.game.player_count() {
+            self.game.with_player(index, |game| {
+                game.player.message = Some((text.clone(), ANNOUNCE_TICKS));
+            });
+        }
+        let names: Vec<String> = (0..self.game.player_count())
+            .map(|i| self.game.player_at(i).name.clone())
+            .collect();
+        for remote in &mut self.remotes {
+            remote.conn.send(ServerMsg::Players(names.clone()));
+        }
     }
 
     /// Plays each client's messages for its player.
@@ -246,12 +374,29 @@ impl Server {
         for index in gone.into_iter().rev() {
             self.leave(index);
         }
+        self.home();
     }
 
     fn handle(&mut self, index: usize, msg: ClientMsg) {
         let book = self.book.clone();
+        // What a player does happens in their dimension.
+        let dimension = self.game.player_at(index).dimension;
+        self.game.enter_realm(dimension);
         match msg {
             ClientMsg::Login { .. } | ClientMsg::Disconnect => {}
+            ClientMsg::Skin { png, slim } => {
+                let name = self.game.player_at(index).name.clone();
+                for (other, remote) in self.remotes.iter_mut().enumerate() {
+                    if other != index {
+                        remote.conn.send(ServerMsg::Skin {
+                            name: name.clone(),
+                            png: png.clone(),
+                            slim,
+                        });
+                    }
+                }
+                self.remotes[index].skin = Some((png, slim));
+            }
             ClientMsg::Settings(settings) => {
                 self.remotes[index].view_distance = settings.view_distance;
                 self.game
@@ -313,14 +458,28 @@ impl Server {
         }
         let player = self.game.others.remove(index - 1);
         info!("{} left", player.name);
+        self.announce(format!("{} left the game", player.name));
     }
 
     /// Sends every client the chunks around it it doesn't have, the edits
     /// in the ones it has, and takes away the ones out of its view.
     fn send_chunks(&mut self) {
+        let dimensions: Vec<Dimension> = self.game.live_dimensions();
+        for dimension in dimensions {
+            self.game.enter_realm(dimension);
+            self.send_chunks_here(dimension);
+        }
+        self.home();
+    }
+
+    /// `send_chunks` for the players in `dimension`, whose world is in the
+    /// game's fields.
+    fn send_chunks_here(&mut self, dimension: Dimension) {
         let (edits, rewritten) = self.game.chunks.take_edits();
-        let dimension = self.game.dimension();
         for index in 0..self.remotes.len() {
+            if self.game.player_at(index).dimension != dimension {
+                continue;
+            }
             let center = {
                 let feet = self.feet(index);
                 ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)
@@ -382,11 +541,6 @@ impl Server {
 
     fn feet(&self, index: usize) -> DVec3 {
         self.game.feet_of(index)
-    }
-
-    fn host_center(&self) -> ChunkPos {
-        let feet = self.feet(0);
-        ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)
     }
 }
 
@@ -577,6 +731,116 @@ mod tests {
         }
         let eye = game.player.camera.position.as_dvec3();
         assert!(eye.distance(DVec3::new(-300.5, 81.62, 41.5)) < 0.5, "{eye}");
+    }
+
+    #[test]
+    fn a_guest_joins_over_tcp_and_plays_in_the_lan_game_mode() {
+        let (mut server, mut clients) = world_with(&["Alice"]);
+        let port = server
+            .open_to_lan(0, GameMode::Survival, false)
+            .expect("open to LAN");
+        assert_eq!(server.lan_port(), Some(port));
+        let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let conn = crate::net::transport::Tcp::new(stream).unwrap();
+        let (items, models) = registries();
+        let guest = Client::join(Box::new(conn), "Bob", settings());
+        clients.push((guest, Game::new_client(items, models, mob_registry(), 2, 1)));
+        run_until(&mut server, &mut clients, |server, clients| {
+            let (bob, game) = &clients[1];
+            server.player_count() == 2
+                && bob.welcomed
+                && block_at(game, IVec3::new(0, 63, 0)).is_some_and(|b| b.is(blocks::GRASS_BLOCK))
+                && game.player.name == "Bob"
+        });
+        assert_eq!(
+            server.game.others[0].mode,
+            GameMode::Survival,
+            "the LAN mode"
+        );
+        assert_eq!(
+            server.game.player.mode,
+            GameMode::Creative,
+            "the host keeps theirs"
+        );
+        assert_eq!(clients[1].0.players, ["Alice", "Bob"], "the Tab list");
+        let said = |server: &Server| {
+            server
+                .game
+                .player
+                .message
+                .as_ref()
+                .map(|(text, _)| text.clone())
+        };
+        assert_eq!(said(&server).as_deref(), Some("Bob joined the game"));
+        // Leaving takes Bob out of the world.
+        clients.pop();
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 1
+        });
+        assert!(server.game.others.is_empty());
+        assert_eq!(said(&server).as_deref(), Some("Bob left the game"));
+    }
+
+    #[test]
+    fn players_see_each_other_and_each_others_skins() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        clients[0].0.send(ClientMsg::Skin {
+            png: vec![1, 2, 3],
+            slim: true,
+        });
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 2
+        });
+        server
+            .game
+            .with_player(1, |game| game.fly_to(DVec3::new(3.5, 64.0, 0.5)));
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients[0]
+                .1
+                .remote_players
+                .iter()
+                .any(|v| v.name == "Bob" && v.feet.x > 3.0)
+                && clients[1]
+                    .1
+                    .remote_players
+                    .iter()
+                    .any(|v| v.name == "Alice")
+                && !clients[1].0.skins.is_empty()
+        });
+        let bob = clients[0]
+            .1
+            .remote_players
+            .iter()
+            .find(|v| v.name == "Bob")
+            .unwrap();
+        assert!(
+            bob.feet.distance(DVec3::new(3.5, 64.0, 0.5)) < 0.01,
+            "{} {}",
+            bob.feet,
+            server.game.feet_of(1)
+        );
+        assert!(
+            clients[0]
+                .1
+                .remote_players
+                .iter()
+                .all(|v| v.name != "Alice"),
+            "not yourself"
+        );
+        assert_eq!(
+            clients[1].0.skins[0],
+            ("Alice".to_owned(), vec![1, 2, 3], true)
+        );
+        // Someone joining later gets the skins already sent.
+        let (server_end, client_end) = local_pair();
+        server.connect(Box::new(server_end));
+        let (items, models) = registries();
+        let carol = Client::join(Box::new(client_end), "Carol", settings());
+        clients.push((carol, Game::new_client(items, models, mob_registry(), 2, 1)));
+        run_until(&mut server, &mut clients, |_, clients| {
+            !clients[2].0.skins.is_empty()
+        });
+        assert_eq!(clients[2].0.skins[0].0, "Alice");
     }
 
     #[test]

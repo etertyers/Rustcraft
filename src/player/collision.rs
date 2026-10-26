@@ -10,13 +10,18 @@ use crate::world::{
     fluid, shape,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Aabb {
     pub min: DVec3,
     pub max: DVec3,
 }
 
 impl Aabb {
+    /// The box's middle.
+    pub fn center(&self) -> DVec3 {
+        (self.min + self.max) * 0.5
+    }
+
     pub const fn new(min: DVec3, max: DVec3) -> Self {
         Self { min, max }
     }
