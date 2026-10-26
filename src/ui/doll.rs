@@ -113,7 +113,7 @@ pub fn build(game: &Game, held: &mut HeldCache, fig: &Figure, angles: DollAngles
     let mut meshes = PlayerMeshes::default();
     figure::add_body(
         &mut meshes,
-        game,
+        &game.wearer(),
         held,
         fig,
         &pose,
