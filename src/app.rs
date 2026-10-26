@@ -792,6 +792,12 @@ impl App {
         let Some(staged) = world.and_then(Game::shot_ui) else {
             return;
         };
+        if let ShotScreen::Chat(typed) = staged.screen {
+            if !self.chat.is_open() {
+                self.open_chat(typed);
+            }
+            return;
+        }
         if staged.screen == ShotScreen::KeyBinds {
             // A conflict (Sneak on W, in red) and Jump waiting for a key.
             if self.pause.is_none() {

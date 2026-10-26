@@ -217,6 +217,8 @@ impl Server {
     pub fn advance(&mut self, dt: f32) {
         self.accept();
         self.read_messages();
+        // Lines from between ticks (a scene being set up) go out too.
+        self.send_game_chat();
         // Chunks load around every player, in each one's dimension.
         for dimension in self.game.dimensions_with_players() {
             self.game.enter_realm(dimension);

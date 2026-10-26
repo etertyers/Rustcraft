@@ -133,6 +133,8 @@ pub enum ShotScreen {
     Creative(usize),
     /// Options → Controls → Key Binds over the paused game.
     KeyBinds,
+    /// Chat open with this typed (M38).
+    Chat(&'static str),
 }
 
 /// Slots in an ender chest (a single chest's).

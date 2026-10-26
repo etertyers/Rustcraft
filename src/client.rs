@@ -76,6 +76,8 @@ impl Client {
 
     /// Moves the player for the ticks due, sending each tick's input.
     pub fn advance(&mut self, game: &mut Game, dt: f32) {
+        // Chat comes from the server; predicting doesn't add to it.
+        game.chat_out.clear();
         #[cfg(debug_assertions)]
         if game.player.is_flying() {
             let feet = game.fly(dt);

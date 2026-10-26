@@ -523,6 +523,16 @@ pub static SHOTS: &[Shot] = &[
         stage: two_players,
     },
     Shot {
+        name: "m38-chat",
+        about: "chat open over a plains world at noon: a join line, a few messages, a death, an advancement, command results and a red error, with a command half typed",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.6, -0.1)),
+        time: Some(6000),
+        mode: Some(GameMode::Survival),
+        overlay: false,
+        stage: chat,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -939,6 +949,42 @@ fn two_players(game: &mut Game) {
     game.others.push(alex);
     game.others.push(steve);
     game.run_ticks(3);
+}
+
+fn chat(game: &mut Game) {
+    use crate::game::{PlayerState, commands::Reply};
+    game.cheats = true;
+    game.player.name = "Kenzo".to_owned();
+    let mut alex = PlayerState::new(glam::DVec3::new(4.5, 64.0, 6.5), 3.6, 0.0);
+    alex.name = "Alex".to_owned();
+    game.others.push(alex);
+    game.chat_out.extend(
+        [
+            "§eAlex joined the game",
+            "<Alex> found a village to the east",
+            "<Kenzo> nice, I'll bring the emeralds",
+            "Alex was slain by Zombie",
+            "<Alex> ...it was night in there",
+            "Kenzo has made the advancement §a[Monster Hunter]",
+        ]
+        .map(str::to_owned),
+    );
+    for command in [
+        "time set noon",
+        "give Kenzo diamond_sword",
+        "fly",
+        "locate structure village",
+    ] {
+        for reply in game.run_command(0, command, true, true) {
+            if let Reply::Sender(text) | Reply::Everyone(text) = reply {
+                game.chat_out.push(text);
+            }
+        }
+    }
+    game.stage_ui(crate::game::ShotUi {
+        screen: crate::game::ShotScreen::Chat("/gamemode cr"),
+        hover: None,
+    });
 }
 
 fn key_binds(game: &mut Game) {
