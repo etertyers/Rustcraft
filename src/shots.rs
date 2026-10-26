@@ -513,6 +513,16 @@ pub static SHOTS: &[Shot] = &[
         stage: key_binds,
     },
     Shot {
+        name: "m37-two-players",
+        about: "two other players side by side in a flat world at noon, in armor and holding a sword and a bow, their names over their heads, as a LAN client sees them",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 4.5], 0.0, -0.05)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: two_players,
+    },
+    Shot {
         name: "m27-credits",
         about: "the poem scrolling up the black screen after the exit portal",
         world: Some(WorldKind::End { seed: 20111118 }),
@@ -892,6 +902,45 @@ fn inventory_with_book(game: &mut Game) {
 }
 
 /// The inventory with armor worn and a renamed sword hovered.
+fn two_players(game: &mut Game) {
+    use crate::{
+        game::PlayerState,
+        inventory::{
+            items,
+            player::{ARMOR_CHEST, ARMOR_FEET, ARMOR_HEAD, ARMOR_LEGS},
+            stack::ItemStack,
+        },
+    };
+    let dress = |player: &mut PlayerState, gear: [(usize, crate::inventory::item::ItemId); 3]| {
+        for (slot, id) in gear {
+            player.inventory.set(slot, Some(ItemStack::new(id, 1)));
+        }
+    };
+    let mut alex = PlayerState::new(glam::DVec3::new(-0.5, 64.0, 0.5), std::f32::consts::PI, 0.0);
+    alex.name = "Alex".to_owned();
+    dress(
+        &mut alex,
+        [
+            (0, items::DIAMOND_SWORD),
+            (ARMOR_CHEST, items::DIAMOND_CHESTPLATE),
+            (ARMOR_FEET, items::DIAMOND_BOOTS),
+        ],
+    );
+    let mut steve = PlayerState::new(glam::DVec3::new(1.5, 64.0, 0.5), std::f32::consts::PI, 0.0);
+    steve.name = "Steve".to_owned();
+    dress(
+        &mut steve,
+        [
+            (0, items::BOW),
+            (ARMOR_HEAD, items::IRON_HELMET),
+            (ARMOR_LEGS, items::IRON_LEGGINGS),
+        ],
+    );
+    game.others.push(alex);
+    game.others.push(steve);
+    game.run_ticks(3);
+}
+
 fn key_binds(game: &mut Game) {
     game.stage_ui(crate::game::ShotUi {
         screen: crate::game::ShotScreen::KeyBinds,

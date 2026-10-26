@@ -72,7 +72,8 @@ cargo run --release -- --world <name> [--creative] [--seed <n>]   # open that sa
 cargo run --release -- --help        # every flag (note the `--`: without it cargo rejects the flag itself)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end,
-#   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>], --help
+#   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>],
+#   --name <player>, --join <ip:port>, --lan [port], --lan-test <n>, --help
 cargo run --release -- --spawn-test --seed 12345   # one night in plains, prints monster and animal counts every 1,000 ticks
 cargo run --release -- --flower-test --seed 12345   # flowers per chunk by biome
 cargo run --release -- --structure-test [--seed <n>]   # 20 ruined portals, 20 geodes and 5 fortresses checked against M33's rules
@@ -143,6 +144,7 @@ src/
   inventory/{creative,book}.rs, assets/data/creative_tabs.ron   # creative tabs' contents, search and click rules; the recipe book's recipes, categories and placing
   entity/boat.rs, game/boats.rs, render/{boat,lightmap}.rs, world/plants.rs   # boats and rafts (floating, rowing, seats), placing/riding/breaking them, their models; the lightmap formula (tested copy of the shader's); where sugar cane may stand
   world/worldgen/caves.rs   # modern caves: cheese, spaghetti and noodle noise caves, worm tunnels and ravines, aquifers and deep lava
+  net/lan.rs, lantest.rs   # Open to LAN's listener and announcements, the Multiplayer screen's finder; --lan-test's bots
   server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
