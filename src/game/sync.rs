@@ -228,6 +228,11 @@ impl Game {
         }
     }
 
+    /// The index of the player with id `id` (`PlayerState::id`).
+    pub fn player_with_id(&self, id: u64) -> Option<usize> {
+        (0..self.player_count()).find(|&i| self.player_at(i).id() == id)
+    }
+
     /// How many players there are, the host included.
     pub fn player_count(&self) -> usize {
         1 + self.others.len()
@@ -377,6 +382,15 @@ impl Game {
 }
 
 impl super::PlayerState {
+    /// A number for the player that stays the same while their name does
+    /// (for what they ride).
+    pub fn id(&self) -> u64 {
+        // FNV-1a.
+        self.name.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
+        })
+    }
+
     /// The player's body as physics moves it.
     pub fn body_state(&self) -> &Body {
         &self.body

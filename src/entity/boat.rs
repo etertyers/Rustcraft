@@ -114,7 +114,8 @@ pub enum Status {
 /// Who sits in a seat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Passenger {
-    Player,
+    /// The player with this id (`PlayerState::id`).
+    Player(u64),
     Mob(u64),
 }
 

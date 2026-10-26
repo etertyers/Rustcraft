@@ -136,7 +136,8 @@ impl Game {
             return;
         }
         let id = boat.id;
-        self.boats[index].passengers.push(Passenger::Player);
+        let me = self.player.id();
+        self.boats[index].passengers.push(Passenger::Player(me));
         self.player.boat = Some(id);
         self.player.body.velocity = DVec3::ZERO;
     }
@@ -201,7 +202,7 @@ impl Game {
             let boat = self.boats[index].clone();
             self.boats[index]
                 .passengers
-                .retain(|p| *p != Passenger::Player);
+                .retain(|p| *p != Passenger::Player(self.player.id()));
             self.player.boat = None;
             self.step_out(&boat);
             return;
@@ -249,12 +250,16 @@ impl Game {
         if self.boats.is_empty() {
             return;
         }
-        let keys = &self.player.keys;
-        let rowing = Rowing {
-            forward: keys.forward,
-            back: keys.back,
-            left: keys.left,
-            right: keys.right,
+        // Each boat is rowed by the player in its front seat, with their
+        // keys.
+        let rowing_by = |game: &Game, id: u64| {
+            let keys = &game.player_at(game.player_with_id(id)?).keys;
+            Some(Rowing {
+                forward: keys.forward,
+                back: keys.back,
+                left: keys.left,
+                right: keys.right,
+            })
         };
         let mut ejected = Vec::new();
         for index in 0..self.boats.len() {
@@ -266,9 +271,12 @@ impl Game {
                 world,
                 blocks: self.items.blocks,
             };
+            let rowing = match self.boats[index].passengers.first() {
+                Some(&Passenger::Player(id)) => rowing_by(self, id),
+                _ => None,
+            };
             let boat = &mut self.boats[index];
-            let rower = boat.passengers.first() == Some(&Passenger::Player);
-            let sunk = boat.tick(world, &collider, rower.then_some(rowing));
+            let sunk = boat.tick(world, &collider, rowing);
             if sunk && !boat.passengers.is_empty() {
                 ejected.push(index);
             }
@@ -276,10 +284,12 @@ impl Game {
         for index in ejected {
             let boat = self.boats[index].clone();
             self.boats[index].passengers.clear();
-            if self.player.boat == Some(boat.id) {
-                self.player.boat = None;
-                self.step_out(&boat);
-            }
+            self.for_each_player(|game| {
+                if game.player.boat == Some(boat.id) {
+                    game.player.boat = None;
+                    game.step_out(&boat);
+                }
+            });
         }
         self.board_mobs();
         self.carry_passengers();
@@ -294,7 +304,7 @@ impl Game {
             .flat_map(|b| &b.passengers)
             .filter_map(|p| match p {
                 Passenger::Mob(id) => Some(*id),
-                Passenger::Player => None,
+                Passenger::Player(_) => None,
             })
             .collect();
         for index in 0..self.boats.len() {
@@ -321,24 +331,40 @@ impl Game {
     /// Sits every passenger in their seat, turns the rower's view with the
     /// boat, and lets go of mobs that died or wandered off.
     fn carry_passengers(&mut self) {
-        let player_boat = self.player.boat;
         for index in 0..self.boats.len() {
             let alive = |id: u64| self.mobs.iter().any(|m| m.id == id && !m.is_dead());
-            let boat = &mut self.boats[index];
-            boat.passengers.retain(|p| match p {
-                Passenger::Mob(id) => alive(*id),
-                Passenger::Player => player_boat == Some(boat.id),
-            });
+            let aboard = |id: u64| {
+                self.player_with_id(id)
+                    .is_some_and(|i| self.player_at(i).boat == Some(self.boats[index].id))
+            };
+            let keep: Vec<bool> = self.boats[index]
+                .passengers
+                .iter()
+                .map(|p| match *p {
+                    Passenger::Mob(id) => alive(id),
+                    Passenger::Player(id) => aboard(id),
+                })
+                .collect();
+            let mut keeps = keep.into_iter();
+            self.boats[index]
+                .passengers
+                .retain(|_| keeps.next().unwrap_or(false));
             let boat = self.boats[index].clone();
             for (seat, passenger) in boat.passengers.iter().enumerate() {
                 match *passenger {
-                    Passenger::Player => {
+                    Passenger::Player(id) => {
+                        let Some(rider) = self.player_with_id(id) else {
+                            continue;
+                        };
                         let feet = boat.seat(seat, false);
-                        self.player.body.set_position(feet);
-                        self.player.body.velocity = DVec3::ZERO;
-                        self.player.camera.yaw += boat.yaw - boat.prev_yaw;
-                        let off = wrap(self.player.camera.yaw - boat.yaw);
-                        self.player.camera.yaw = boat.yaw + off.clamp(-LOOK_LIMIT, LOOK_LIMIT);
+                        self.with_player(rider, |game| {
+                            let p = &mut game.player;
+                            p.body.set_position(feet);
+                            p.body.velocity = DVec3::ZERO;
+                            p.camera.yaw += boat.yaw - boat.prev_yaw;
+                            let off = wrap(p.camera.yaw - boat.yaw);
+                            p.camera.yaw = boat.yaw + off.clamp(-LOOK_LIMIT, LOOK_LIMIT);
+                        });
                     }
                     Passenger::Mob(id) => {
                         if let Some(mob) = self.mobs.iter_mut().find(|m| m.id == id) {
@@ -449,6 +475,40 @@ mod tests {
         assert!(
             game.player.body.position().distance(boat.position) > 0.9,
             "stepped out"
+        );
+    }
+
+    #[test]
+    fn a_guest_rows_their_own_boat_with_their_own_keys() {
+        let mut game = pool();
+        let index = put_boat(&mut game, "oak_boat");
+        let mut guest = crate::game::PlayerState::new(DVec3::new(2.5, 64.0, 2.5), 0.0, 0.0);
+        guest.name = "Guest".to_owned();
+        game.others.push(guest);
+        game.with_player(1, |guest| guest.use_boat(index));
+        assert_eq!(
+            game.boats[index].passengers.first(),
+            Some(&Passenger::Player(game.others[0].id()))
+        );
+        let start = game.boats[index].position;
+        // The host's keys move nothing (they walk off south); the guest's
+        // row.
+        game.fly_to(DVec3::new(0.5, 64.0, 8.5));
+        game.player.camera.yaw = std::f32::consts::PI;
+        game.player.keys.forward = true;
+        game.run_ticks(10);
+        game.player.keys.forward = false;
+        let moved = game.boats[index].position - start;
+        assert!(moved.x.hypot(moved.z) < 0.1, "only bobbing: {moved}");
+        game.others[0].keys.forward = true;
+        game.run_ticks(30);
+        assert!(game.boats[index].position.z < start.z - 3.0, "rowed north");
+        assert!(
+            game.others[0]
+                .body
+                .position()
+                .distance(game.boats[index].position)
+                < 1.0
         );
     }
 
