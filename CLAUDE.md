@@ -147,7 +147,8 @@ src/
   net/lan.rs, lantest.rs   # Open to LAN's listener and announcements, the Multiplayer screen's finder; --lan-test's bots
   server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
-  ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat later)
+  ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat)
+  ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
