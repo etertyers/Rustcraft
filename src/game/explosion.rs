@@ -127,20 +127,25 @@ impl Game {
         Some((damage, away / length * f64::from(impact)))
     }
 
+    /// Hurts and throws `self.player` if they're near a blast.
+    fn blast_player(&mut self, center: DVec3, power: f32) {
+        if self.player.stats.is_dead() {
+            return;
+        }
+        let bounds = self.player.body.aabb();
+        let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
+        if let Some((damage, push)) =
+            self.blast_on(center, power, self.player.body.position(), eye, &bounds)
+            && self.player.mode.is_vulnerable()
+        {
+            self.player.stats.damage(damage, DamageSource::Explosion);
+            self.player.body.velocity += push;
+        }
+    }
+
     /// Hurts and throws what is near a blast.
     fn blast_entities(&mut self, center: DVec3, power: f32) {
-        // The player.
-        if !self.player.stats.is_dead() {
-            let bounds = self.player.body.aabb();
-            let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
-            if let Some((damage, push)) =
-                self.blast_on(center, power, self.player.body.position(), eye, &bounds)
-                && self.player.mode.is_vulnerable()
-            {
-                self.player.stats.damage(damage, DamageSource::Explosion);
-                self.player.body.velocity += push;
-            }
-        }
+        self.for_each_player(|game| game.blast_player(center, power));
         // Mobs.
         for index in 0..self.mobs.len() {
             let mob = &self.mobs[index];

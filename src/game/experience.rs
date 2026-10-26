@@ -72,20 +72,37 @@ impl Game {
             world: self.chunks.world(),
             blocks: self.items.blocks,
         };
+        // Each orb drifts to the nearest living player.
+        let centers: Vec<DVec3> = (0..self.player_count())
+            .map(|i| self.player_at(i))
+            .filter(|p| !p.stats.is_dead())
+            .map(|p| p.body.position() + DVec3::Y * (p.body.eye_height() * 0.5))
+            .collect();
+        for orb in &mut self.orbs {
+            let at = orb.center();
+            let pull = centers
+                .iter()
+                .copied()
+                .min_by(|a, b| a.distance(at).total_cmp(&b.distance(at)));
+            orb.tick(&collider, pull);
+        }
+        self.for_each_player(Game::collect_orbs);
+        self.orbs.retain(|orb| !orb.expired());
+    }
+
+    /// `self.player` takes the orbs they touch.
+    fn collect_orbs(&mut self) {
+        if self.player.stats.is_dead() {
+            return;
+        }
         let body = self.player.body.aabb();
-        let alive = !self.player.stats.is_dead();
-        let pull = alive.then(|| {
-            self.player.body.position() + DVec3::Y * (self.player.body.eye_height() * 0.5)
-        });
         let mut collected = 0;
         for orb in &mut self.orbs {
-            orb.tick(&collider, pull);
-            if alive && orb.touches(&body) {
+            if orb.touches(&body) {
                 collected += orb.value;
                 orb.value = 0;
             }
         }
-        self.orbs.retain(|orb| !orb.expired());
         if collected > 0 {
             let pitch = 0.9 + self.rng.next_f64() as f32 * 0.6;
             crate::audio::play_here_with("entity.experience_orb.pickup", 0.1, pitch);

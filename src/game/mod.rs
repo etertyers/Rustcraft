@@ -1453,6 +1453,54 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn guests_pick_things_up_and_get_hurt_by_blasts_and_arrows_like_the_host() {
+        use crate::{
+            entity::arrow::Arrow,
+            inventory::{items, stack::ItemStack},
+        };
+        let mut game = flat_game(GameMode::Survival);
+        let mut guest = PlayerState::new(DVec3::new(10.5, 64.0, 0.5), 0.0, 0.0);
+        guest.name = "Guest".to_owned();
+        guest.mode = GameMode::Survival;
+        game.others.push(guest);
+        game.run_ticks(2);
+        // An apple at the guest's feet is theirs.
+        game.entities.push(crate::entity::item::ItemEntity::new(
+            ItemStack::new(items::APPLE, 1),
+            DVec3::new(10.5, 64.2, 0.5),
+            DVec3::ZERO,
+            0.0,
+        ));
+        game.run_ticks(15);
+        assert!(game.entities.is_empty());
+        assert!(game.others[0].inventory.find(items::APPLE).is_some());
+        assert!(game.player.inventory.find(items::APPLE).is_none());
+        // The host's arrow hits the guest, never the host.
+        let mut random = || 0.5;
+        let mut arrow = Arrow::shoot(
+            DVec3::new(6.5, 65.5, 0.5),
+            DVec3::X,
+            1.0,
+            DVec3::ZERO,
+            false,
+            &mut random,
+        );
+        arrow.shooter = Some(crate::options::DEFAULT_NAME.to_owned());
+        game.arrows.push(arrow);
+        game.run_ticks(10);
+        let after_arrow = game.others[0].stats.health;
+        assert!(after_arrow < 20.0, "the arrow hit the guest");
+        assert_eq!(game.player.stats.health, 20.0);
+        // A blast by the guest hurts them too.
+        game.run_ticks(30);
+        game.explode(DVec3::new(11.5, 64.5, 2.5), 2.0);
+        assert!(
+            game.others[0].stats.health < after_arrow,
+            "the blast hurt the guest"
+        );
+    }
+
+    #[test]
     fn every_player_gets_a_turn_each_tick_and_keeps_their_own_state() {
         let mut game = flat_game(GameMode::Survival);
         let mut guest = PlayerState::new(DVec3::new(4.5, 70.0, 4.5), 0.0, 0.0);

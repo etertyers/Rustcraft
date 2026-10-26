@@ -632,17 +632,17 @@ impl Game {
             1.0,
             1.0 / (random() as f32 * 0.4 + 1.2) + power * 0.5,
         );
-        self.arrows.push(
-            Arrow::shoot(
-                eye,
-                forward,
-                power,
-                carried,
-                pickup && !infinity,
-                &mut random,
-            )
-            .enchanted(draw, punch, flame),
-        );
+        let mut arrow = Arrow::shoot(
+            eye,
+            forward,
+            power,
+            carried,
+            pickup && !infinity,
+            &mut random,
+        )
+        .enchanted(draw, punch, flame);
+        arrow.shooter = Some(self.player.name.clone());
+        self.arrows.push(arrow);
         // Infinity shoots without using up a plain arrow.
         if pickup
             && !infinity
@@ -659,7 +659,15 @@ impl Game {
     /// Moves arrows: hits on mobs, sticking in blocks, picking them up.
     pub(super) fn tick_arrows(&mut self) {
         let mut arrows = std::mem::take(&mut self.arrows);
-        let player = self.player.body.aabb();
+        // Living players, each a target for any arrow they didn't loose.
+        let players: Vec<(usize, String, crate::player::collision::Aabb)> = (0..self
+            .player_count())
+            .filter(|&i| !self.player_at(i).stats.is_dead())
+            .map(|i| {
+                let p = self.player_at(i);
+                (i, p.name.clone(), p.body.aabb())
+            })
+            .collect();
         let mut hits = Vec::new();
         let mut end_hits = Vec::new();
         for arrow in &mut arrows {
@@ -696,7 +704,17 @@ impl Game {
                 end_hits.push((target, damage));
                 continue;
             }
-            let at_player = (arrow.hostile && !self.player.stats.is_dead()).then_some(&player);
+            let at = arrow.position;
+            let target = players
+                .iter()
+                .filter(|(_, name, _)| arrow.shooter.as_deref() != Some(name.as_str()))
+                .min_by(|a, b| {
+                    a.2.center()
+                        .distance(at)
+                        .total_cmp(&b.2.center().distance(at))
+                });
+            let at_player = target.map(|(_, _, aabb)| aabb);
+            let victim = target.map_or(0, |(index, ..)| *index);
             let was_stuck = arrow.stuck;
             let event = arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random);
             if !was_stuck && arrow.stuck {
@@ -732,46 +750,64 @@ impl Game {
                         self.rally(index);
                     }
                 }
-                Some(ArrowEvent::HitPlayer { damage }) => hits.push((damage, from, arrow.slows)),
+                Some(ArrowEvent::HitPlayer { damage }) => {
+                    hits.push((damage, from, arrow.slows, victim));
+                }
                 None => {}
             }
         }
         for (target, damage) in end_hits {
             self.arrow_strikes_end(target, damage);
         }
-        for (damage, from, slows) in hits {
-            if self.player.mode.is_vulnerable() {
-                let strike = super::combat::Strike {
-                    amount: damage,
-                    source: DamageSource::Arrow,
-                    from: Some(from),
-                    ranged: true,
-                    axe: false,
-                };
-                self.hurt_player(strike);
-                if slows {
-                    self.player
-                        .stats
-                        .effects
-                        .add(crate::player::effects::Active::new(
-                            crate::player::effects::Effect::Slowness,
-                            0,
-                            super::mob_acts::STRAY_SLOWNESS_TICKS,
-                        ));
-                }
-            }
+        for (damage, from, slows, victim) in hits {
+            self.with_player(victim, |game| {
+                game.arrow_strikes_player(damage, from, slows)
+            });
         }
+        arrows.retain(|arrow| !arrow.expired());
+        self.arrows = arrows;
+        self.for_each_player(Game::pick_up_arrows);
+    }
+
+    /// An arrow hits `self.player`.
+    fn arrow_strikes_player(&mut self, damage: f32, from: DVec3, slows: bool) {
+        if !self.player.mode.is_vulnerable() {
+            return;
+        }
+        let strike = super::combat::Strike {
+            amount: damage,
+            source: DamageSource::Arrow,
+            from: Some(from),
+            ranged: true,
+            axe: false,
+        };
+        self.hurt_player(strike);
+        if slows {
+            self.player
+                .stats
+                .effects
+                .add(crate::player::effects::Active::new(
+                    crate::player::effects::Effect::Slowness,
+                    0,
+                    super::mob_acts::STRAY_SLOWNESS_TICKS,
+                ));
+        }
+    }
+
+    /// `self.player` picks up the stuck arrows they touch.
+    fn pick_up_arrows(&mut self) {
+        if self.player.stats.is_dead() {
+            return;
+        }
+        let player = self.player.body.aabb();
+        let mut arrows = std::mem::take(&mut self.arrows);
         arrows.retain(|arrow| {
-            if arrow.can_pick_up(&player)
+            !(arrow.can_pick_up(&player)
                 && self
                     .player
                     .inventory
                     .add(ItemStack::new(items::ARROW, 1), &self.items)
-                    .is_none()
-            {
-                return false;
-            }
-            !arrow.expired()
+                    .is_none())
         });
         self.arrows = arrows;
     }
@@ -1121,16 +1157,25 @@ impl Game {
             world: self.chunks.world(),
             blocks: self.items.blocks,
         };
-        let player = self.player.body.aabb();
-        let alive = !self.player.stats.is_dead();
         for item in &mut self.entities {
             item.tick(&collider);
-            if alive && item.pick_up(&player, &mut self.player.inventory, &self.items) {
+        }
+        self.for_each_player(Game::pick_up_items);
+        self.entities.retain(|item| !item.expired());
+        self.tick_orbs();
+    }
+
+    /// `self.player` picks up the items they touch.
+    fn pick_up_items(&mut self) {
+        if self.player.stats.is_dead() {
+            return;
+        }
+        let player = self.player.body.aabb();
+        for item in &mut self.entities {
+            if item.pick_up(&player, &mut self.player.inventory, &self.items) {
                 let pitch = 1.4 + (item.center().x * 7.0).sin().abs() as f32 * 0.8;
                 crate::audio::play_at("entity.item.pickup", item.center(), 0.2, pitch);
             }
         }
-        self.entities.retain(|item| !item.expired());
-        self.tick_orbs();
     }
 }

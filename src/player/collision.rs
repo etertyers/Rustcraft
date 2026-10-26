@@ -17,6 +17,11 @@ pub struct Aabb {
 }
 
 impl Aabb {
+    /// The box's middle.
+    pub fn center(&self) -> DVec3 {
+        (self.min + self.max) * 0.5
+    }
+
     pub const fn new(min: DVec3, max: DVec3) -> Self {
         Self { min, max }
     }
