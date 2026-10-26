@@ -145,15 +145,18 @@ pub struct Chat {
     completed: Option<usize>,
     /// The key that opened chat types itself the same frame; skip it.
     skip_typed: bool,
+    /// Seconds on the UI clock at the last frame (new lines are stamped
+    /// with it).
+    now: f64,
 }
 
 impl Chat {
     /// A line arrives (a command's answer if `command`).
-    pub fn push(&mut self, text: String, command: bool, now: f64) {
+    pub fn push(&mut self, text: String, command: bool) {
         self.lines.push_back(Line {
             text,
             command,
-            at: now,
+            at: self.now,
         });
         while self.lines.len() > KEPT {
             self.lines.pop_front();
@@ -239,7 +242,8 @@ impl Chat {
         let mut action = None;
         let mut typing = Vec::new();
         for event in events {
-            if std::mem::take(&mut self.skip_typed) && matches!(event, Event::Text(_)) {
+            if self.skip_typed && matches!(event, Event::Text(_)) {
+                self.skip_typed = false;
                 continue;
             }
             // Vanilla doesn't let `§` into chat (it would be formatting).
@@ -280,6 +284,7 @@ impl Chat {
                 _ => typing.push(event.clone()),
             }
         }
+        self.skip_typed = false;
         if self.input.edit(&typing) {
             self.completions.clear();
             self.completed = None;
@@ -326,12 +331,9 @@ impl Chat {
 
     /// Draws the chat over the bottom left; while open, the box too.
     /// Returns what was asked for.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        settings: &ChatSettings,
-        now: f64,
-    ) -> Option<ChatAction> {
+    pub fn show(&mut self, ctx: &egui::Context, settings: &ChatSettings) -> Option<ChatAction> {
+        let now = ctx.input(|i| i.time);
+        self.now = now;
         let full = ctx.content_rect();
         let scale = gui::gui_scale(full);
         let size = (8.0 * scale * settings.scale).round().max(8.0);
@@ -442,7 +444,8 @@ mod tests {
     fn closed_chat_shows_the_last_ten_lines_fading_after_ten_seconds() {
         let mut chat = Chat::default();
         for i in 0..15 {
-            chat.push(format!("line {i}"), false, f64::from(i));
+            chat.now = f64::from(i);
+            chat.push(format!("line {i}"), false);
         }
         let settings = ChatSettings::default();
         let seen = chat.visible(14.0, &settings);
@@ -471,7 +474,7 @@ mod tests {
     fn a_hundred_lines_are_kept_and_commands_only_hides_the_rest() {
         let mut chat = Chat::default();
         for i in 0..120 {
-            chat.push(format!("{i}"), i % 2 == 0, 0.0);
+            chat.push(format!("{i}"), i % 2 == 0);
         }
         assert_eq!(chat.lines.len(), KEPT);
         assert_eq!(chat.lines.front().unwrap().text, "20");

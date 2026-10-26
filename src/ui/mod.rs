@@ -260,6 +260,7 @@ impl DebugUi {
     /// Builds this frame's UI: the crosshair (while playing), the hotbar,
     /// the F3 overlay and any open inventory screen, returning what was
     /// clicked on the screen.
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         window: &Window,
@@ -272,7 +273,12 @@ impl DebugUi {
             &mut Options,
             &mut crate::level::Difficulty,
         )>,
-    ) -> (UiPaint, Vec<screens::ScreenAction>) {
+        chat: Option<(&mut chat::Chat, &chat::ChatSettings)>,
+    ) -> (
+        UiPaint,
+        Vec<screens::ScreenAction>,
+        Option<chat::ChatAction>,
+    ) {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
         let text = debug_text(self.fps.fps(), camera, stats);
@@ -280,6 +286,8 @@ impl DebugUi {
         let mut actions = Vec::new();
         let mut screen = screen;
         let mut pause = pause;
+        let mut chat = chat;
+        let mut chat_action = None;
         let output = self.ctx.run_ui(input, |ui| {
             let full = ui.ctx().content_rect();
             if hud.crosshair && !hud.hidden {
@@ -315,6 +323,9 @@ impl DebugUi {
             }
             if !hud.hidden {
                 paint_name_tags(ui.painter(), full, &hud.name_tags);
+            }
+            if let Some((chat, settings)) = &mut chat {
+                chat_action = chat.show(ui.ctx(), settings);
             }
             if let Some(names) = &hud.player_list {
                 paint_player_list(ui.painter(), full, names);
@@ -357,7 +368,7 @@ impl DebugUi {
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
         // it would unhide the cursor while it's grabbed for mouse look.
-        (self.paint(output), actions)
+        (self.paint(output), actions, chat_action)
     }
 
     /// Builds this frame's main menu and returns what the player chose.

@@ -16,6 +16,8 @@ pub enum Layer {
     Bed,
     /// The death screen and its Respawn button.
     Death,
+    /// Typing in chat (M38).
+    Chat,
 }
 
 #[derive(Debug, Default)]

@@ -34,6 +34,8 @@ pub struct PauseMenu {
     /// Whether this world can be opened to LAN (the host's, not yet open),
     /// set by the caller.
     pub can_open_lan: bool,
+    /// The world allows cheats, so Open to LAN's Allow Cheats starts on.
+    pub world_cheats: bool,
 }
 
 /// Open to LAN's choices (vanilla's `ShareToLanScreen`).
@@ -133,7 +135,7 @@ impl PauseMenu {
                     if lan.clicked_with_sound() {
                         self.lan = Some(LanScreen {
                             mode: crate::player::mode::GameMode::Survival,
-                            cheats: false,
+                            cheats: self.world_cheats,
                             port: String::new(),
                         });
                     }

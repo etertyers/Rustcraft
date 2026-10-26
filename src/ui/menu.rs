@@ -31,6 +31,8 @@ pub enum MenuAction {
         name: String,
         seed: u64,
         mode: GameMode,
+        /// Commands allowed (M38).
+        cheats: bool,
     },
     /// Join the world open to LAN at this address (host:port).
     Join(String),
@@ -72,6 +74,7 @@ pub struct Menu {
     name: String,
     seed: String,
     mode: GameMode,
+    cheats: bool,
     /// Why the last world failed to open, shown until the next choice.
     pub error: Option<String>,
 }
@@ -91,6 +94,7 @@ impl Menu {
             name: String::new(),
             seed: String::new(),
             mode: GameMode::Survival,
+            cheats: false,
             error: None,
         }
     }
@@ -315,6 +319,7 @@ impl Menu {
                 self.name = "New World".to_owned();
                 self.seed.clear();
                 self.mode = GameMode::Survival;
+                self.cheats = false;
                 self.screen = Screen::CreateWorld;
             }
         });
@@ -349,6 +354,15 @@ impl Menu {
             self.mode = self.mode.next();
         }
         ui.label(RichText::new(mode_description(self.mode)).color(GRAY));
+        ui.add_space(12.0);
+        let cheats = format!("Allow Cheats: {}", if self.cheats { "ON" } else { "OFF" });
+        if ui
+            .add_sized(BUTTON, Button::new(cheats))
+            .clicked_with_sound()
+        {
+            self.cheats = !self.cheats;
+        }
+        ui.label(RichText::new("Commands like /gamemode, /experience").color(GRAY));
         ui.add_space(24.0);
         let create = ui
             .add_sized(BUTTON, Button::new("Create New World"))
@@ -364,6 +378,7 @@ impl Menu {
             name: self.name.trim().to_owned(),
             seed: level::parse_seed(&self.seed, level::random_seed),
             mode: self.mode,
+            cheats: self.cheats,
         })
     }
 }

@@ -191,6 +191,8 @@ pub struct App {
     hide_gui: bool,
     /// List Players (Tab) is held.
     tab_held: bool,
+    /// The chat lines and the box (M38).
+    chat: crate::ui::chat::Chat,
     /// The world being played, served in this process, and this client's
     /// link to it; `game` is the client's copy of the world.
     server: Option<Server>,
@@ -241,6 +243,7 @@ impl App {
             pause: None,
             hide_gui: false,
             tab_held: false,
+            chat: Default::default(),
             server: None,
             link: None,
             skin_png: Vec::new(),
@@ -959,6 +962,18 @@ impl App {
             }
         } else if rolling {
             // Nothing else works while they roll.
+        } else if self.chat.is_open() {
+            // The chat box has the keyboard; Escape closes it.
+            if escape && press {
+                self.close_chat();
+            }
+        } else if (is(Action::Chat) || is(Action::Command))
+            && press
+            && self.link.is_some()
+            && self.playing()
+            && self.stack.is_empty()
+        {
+            self.open_chat(if is(Action::Command) { "/" } else { "" });
         } else if escape && pressed && sleeping {
             self.on_screen_action(ScreenAction::LeaveBed);
         } else if escape && pressed && self.screen.is_some() {
@@ -1013,6 +1028,7 @@ impl App {
         if self.bench.is_none() && self.shot.is_none() && self.playing() && self.stack.is_empty() {
             self.pause = Some(PauseMenu {
                 can_open_lan: self.server.as_ref().is_some_and(|s| s.lan_port().is_none()),
+                world_cheats: self.server.as_ref().is_some_and(|s| s.game.cheats),
                 ..PauseMenu::default()
             });
             self.stack.push(Layer::Pause);
@@ -1024,6 +1040,46 @@ impl App {
         self.pause = None;
         self.stack.remove(Layer::Pause);
         self.apply_grab();
+    }
+
+    /// Puts what the server said in chat, and Tab's completions.
+    fn take_chat(&mut self) {
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
+        for (text, command) in std::mem::take(&mut link.chat) {
+            self.chat.push(text, command);
+        }
+        if let Some(options) = link.completions.take() {
+            self.chat.completions(options);
+        }
+    }
+
+    /// Opens chat with `start` typed ("/" for the command key).
+    fn open_chat(&mut self, start: &str) {
+        self.chat.open(start);
+        self.stack.push(Layer::Chat);
+        self.apply_grab();
+    }
+
+    fn close_chat(&mut self) {
+        self.chat.close();
+        self.stack.remove(Layer::Chat);
+        self.apply_grab();
+    }
+
+    /// What the chat box asked for this frame.
+    fn on_chat(&mut self, action: Option<crate::ui::chat::ChatAction>) {
+        use crate::{net::protocol::ClientMsg, ui::chat::ChatAction};
+        match action {
+            Some(ChatAction::Send(text)) => self.tell_server(ClientMsg::Chat(text)),
+            Some(ChatAction::Complete(line)) => self.tell_server(ClientMsg::Complete(line)),
+            None => {}
+        }
+        // Enter closed it.
+        if !self.chat.is_open() && self.stack.contains(Layer::Chat) {
+            self.close_chat();
+        }
     }
 
     /// Makes textures of the skins other players sent.
@@ -1405,9 +1461,17 @@ impl App {
                 return;
             }
             MenuAction::Open(dir) => Game::open(dir, items, models),
-            MenuAction::Create { name, seed, mode } => {
-                Game::create(&level::saves_dir(), &name, seed, mode, items, models)
-            }
+            MenuAction::Create {
+                name,
+                seed,
+                mode,
+                cheats,
+            } => Game::create(&level::saves_dir(), &name, seed, mode, items, models).map(
+                |mut game| {
+                    game.cheats = cheats;
+                    game
+                },
+            ),
         }
         .map(|game| game.with_mobs(mobs));
         match game {
@@ -1433,6 +1497,7 @@ impl App {
         self.animate_textures();
         self.update_audio(dt);
         self.take_guest_skins();
+        self.take_chat();
         if self.game.is_none() {
             return self.redraw_menu(event_loop, now);
         }
@@ -2085,13 +2150,22 @@ impl App {
         };
         let screen = self.screen.as_mut().map(|screen| (screen, &view));
         let options_before = self.options.clone();
+        let chat_settings = self.options.chat;
         let mut difficulty = game.difficulty;
         let pause = self
             .pause
             .as_mut()
             .map(|menu| (menu, &mut self.options, &mut difficulty));
-        let (ui, actions) =
-            debug_ui.frame(window, &game.player.camera, &stats, &hud, screen, pause);
+        let chat = (!self.hide_gui).then_some((&mut self.chat, &chat_settings));
+        let (ui, actions, chat_action) = debug_ui.frame(
+            window,
+            &game.player.camera,
+            &stats,
+            &hud,
+            screen,
+            pause,
+            chat,
+        );
         game.difficulty = difficulty;
         let mut environment = game.environment();
         environment.brightness = self.options.brightness;
@@ -2166,6 +2240,7 @@ impl App {
         for action in actions {
             self.on_screen_action(action);
         }
+        self.on_chat(chat_action);
     }
 
     /// The main menu over the sky.
@@ -2751,6 +2826,7 @@ mod tests {
             Layer::Pause,
             Layer::Bed,
             Layer::Death,
+            Layer::Chat,
         ] {
             let mut app = app_in_a_world();
             app.stack.push(layer);
