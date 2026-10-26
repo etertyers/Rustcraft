@@ -111,6 +111,8 @@ pub enum WorldKind {
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
 /// `isInRangeToRenderDist` for a mob about a block across).
 const MOB_DRAW_DISTANCE: f64 = 64.0;
+/// How long "Local game hosted on port …" shows.
+const LAN_MESSAGE_TICKS: u32 = 100;
 /// Name tags show for players this near (vanilla's 64 blocks).
 const NAME_TAG_DISTANCE: f32 = 64.0;
 /// How long joining a LAN world waits for the host to answer.
@@ -490,6 +492,23 @@ impl App {
         Ok(())
     }
 
+    /// Opens the world being played to LAN (Open to LAN's Start LAN World),
+    /// saying so as vanilla does, and goes back to the game.
+    fn open_to_lan(&mut self, mode: GameMode, cheats: bool, port: u16) {
+        let Some(server) = self.server.as_mut() else {
+            return;
+        };
+        let text = match server.open_to_lan(port, mode, cheats) {
+            Ok(port) => format!("Local game hosted on port {port}"),
+            Err(err) => {
+                error!("can't open to LAN: {err}");
+                format!("Couldn't open to LAN: {err}")
+            }
+        };
+        server.game.player.message = Some((text, LAN_MESSAGE_TICKS));
+        self.resume();
+    }
+
     /// This run's player name: `--name`, or Options' Player Name.
     fn player_name(&self) -> String {
         self.name_override
@@ -774,7 +793,7 @@ impl App {
                     .set(Action::Sneak, Some(Input::Key(KeyCode::KeyW)));
                 self.pause = Some(PauseMenu {
                     options: Some(screen),
-                    packs: None,
+                    ..PauseMenu::default()
                 });
                 self.stack.push(Layer::Pause);
                 self.apply_grab();
@@ -985,7 +1004,10 @@ impl App {
         // The bench keeps flying when the window loses focus, and a scene
         // being captured never pauses.
         if self.bench.is_none() && self.shot.is_none() && self.playing() && self.stack.is_empty() {
-            self.pause = Some(PauseMenu::default());
+            self.pause = Some(PauseMenu {
+                can_open_lan: self.server.as_ref().is_some_and(|s| s.lan_port().is_none()),
+                ..PauseMenu::default()
+            });
             self.stack.push(Layer::Pause);
             self.apply_grab();
         }
@@ -1338,6 +1360,9 @@ impl App {
             ScreenAction::AdvTab(tab) => return self.advancements = Some(*tab),
             ScreenAction::Pause(PauseAction::Resume) => return self.resume(),
             ScreenAction::Pause(PauseAction::SaveAndQuit) => return self.quit_to_title(),
+            ScreenAction::Pause(PauseAction::OpenToLan { mode, cheats, port }) => {
+                return self.open_to_lan(*mode, *cheats, port.unwrap_or(0));
+            }
             ScreenAction::Book(BookAction::Ghost(index)) => return self.book_ghost = Some(*index),
             ScreenAction::Book(BookAction::Open(_) | BookAction::Place { .. }) => {
                 self.book_ghost = None;
@@ -1425,7 +1450,9 @@ impl App {
         }
         // The pause menu stops the game; the camera still follows it. A
         // scene being captured stands still.
-        let frozen = self.pause.is_some() || self.shot.is_some();
+        // A world open to LAN keeps going for its guests.
+        let shared = self.server.as_ref().is_some_and(|s| s.lan_port().is_some());
+        let frozen = (self.pause.is_some() && !shared) || self.shot.is_some();
         let step = if frozen { 0.0 } else { dt };
         match (self.link.as_mut(), self.server.as_mut()) {
             (Some(link), Some(server)) => {
