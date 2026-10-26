@@ -44,6 +44,7 @@ mod sleep;
 mod sounds;
 pub mod spawn_test;
 mod spawners;
+pub mod sync;
 mod updates;
 pub mod view;
 mod villagers;
@@ -327,6 +328,8 @@ pub struct Game {
     pub player: PlayerState,
     /// Everyone else in the world (LAN players).
     pub others: Vec<PlayerState>,
+    /// The world itself, or a client's copy of it.
+    role: sync::Role,
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
@@ -431,6 +434,7 @@ impl Game {
             items,
             player: PlayerState::new(feet, yaw, pitch),
             others: Vec::new(),
+            role: sync::Role::Server,
             spawn,
             rules: crate::level::GameRules::default(),
             difficulty: crate::level::Difficulty::default(),
@@ -855,11 +859,27 @@ impl Game {
             self.player.body.set_position(feet);
             self.player.prev_feet = feet;
         }
-        self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
-        while self.tick_time >= TICK {
+        for _ in 0..self.clock(dt) {
             self.tick();
-            self.tick_time -= TICK;
         }
+        self.place_camera();
+    }
+
+    /// Adds `dt` seconds to the game's clock and returns how many ticks are
+    /// due (a few at most, so a stall doesn't run the world ahead).
+    pub fn clock(&mut self, dt: f32) -> u32 {
+        self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
+        let mut due = 0;
+        while self.tick_time >= TICK {
+            self.tick_time -= TICK;
+            due += 1;
+        }
+        due
+    }
+
+    /// Puts the camera at the player's eyes between the last two ticks and
+    /// finds what they aim at.
+    pub fn place_camera(&mut self) {
         let alpha = (self.tick_time / TICK) as f64;
         let feet = self
             .player
@@ -914,6 +934,12 @@ impl Game {
     /// Returns false while they wait for chunks or the credits roll.
     fn tick_player(&mut self) -> bool {
         self.player.prev_feet = self.player.body.position();
+        // What the player aims at, from where they stand this tick (a
+        // client's camera may be anywhere between ticks).
+        let eye = self
+            .lying_eye()
+            .unwrap_or(self.player.body.position() + DVec3::Y * self.player.body.eye_height());
+        self.player.target = self.find_target(eye);
         // Nothing happens until the chunks around an arriving player load.
         self.tick_arrival();
         if self.is_arriving() {

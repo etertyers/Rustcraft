@@ -26,8 +26,9 @@ pub enum ClientMsg {
     /// Settings the server plays the player by (sent on joining and when
     /// they change).
     Settings(PlayerSettings),
-    /// Where the player looks, sent every tick it changes.
-    Look { yaw: f32, pitch: f32 },
+    /// Each client tick: the movement keys held and where the player
+    /// looks, numbered so the server can say which it has played.
+    Input(Input),
     /// A bound key or button pressed or let go.
     Action {
         action: Action,
@@ -49,6 +50,15 @@ pub enum ClientMsg {
     ReleaseInput,
     /// Leaving.
     Disconnect,
+}
+
+/// One tick of a player's movement input.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Input {
+    pub seq: u32,
+    pub keys: crate::player::input::MoveKeys,
+    pub yaw: f32,
+    pub pitch: f32,
 }
 
 /// The options that change how the server plays a player.
@@ -88,6 +98,8 @@ pub enum ServerMsg {
 /// One tick of the world for one player: their own state and everything
 /// they can see move.
 pub struct Snapshot {
+    /// The last `Input` played before this tick ended (0 before any).
+    pub ack: u32,
     pub time: u64,
     pub difficulty: Difficulty,
     pub rules: GameRules,
