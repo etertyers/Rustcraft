@@ -135,6 +135,7 @@ pub enum ShotScreen {
 
 /// Everything about one player: where they are and how they move, what
 /// they hold and carry, their health and screens, and their settings.
+#[derive(Clone)]
 pub struct PlayerState {
     /// The name other players see (Options → Player Name).
     pub name: String,

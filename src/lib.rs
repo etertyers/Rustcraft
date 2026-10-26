@@ -17,6 +17,7 @@ pub mod game;
 pub mod inventory;
 pub mod level;
 pub mod look;
+pub mod net;
 pub mod options;
 pub mod pack;
 pub mod placeholders;
