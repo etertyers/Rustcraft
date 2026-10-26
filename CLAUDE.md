@@ -555,7 +555,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 
 #### Checkpoint F — Options and multiplayer
 
-### - [ ] M35 — Options menu and key bindings
+### - [x] M35 — Options menu and key bindings
 - Vanilla-style Options screen from the main and pause menus: FOV, Difficulty, Skin Customization, Music & Sounds (per category volume sliders), Video Settings (render distance, graphics, smooth lighting, max framerate, vsync, view bobbing, GUI scale, Brightness, clouds, particles, entity shadows), Controls, Chat Settings (M38), Resource Packs, Accessibility, and **player name** (needed for LAN; default "Player").
 - **Controls → Key Binds:** every action listed by category (Movement, Gameplay, Inventory, Multiplayer, Miscellaneous, and a Mods category filled by M39), click to rebind to any key or mouse button, Esc to unbind, "Reset" per key and "Reset Keys" for all, conflicting keys shown in red. Vanilla defaults (WASD, Space, Left Shift sneak, Left Ctrl sprint, E inventory, Q drop, F swap hands, T chat, / command, Tab player list, F1 hide GUI, F2 screenshot, F3 debug, F5 perspective, F11 fullscreen, L advancements, 1–9 hotbar). Remove every hard-coded key check; all input goes through the bindings. Mouse sensitivity and invert Y in Mouse Settings.
 - **Auto-Jump** toggle in Controls (vanilla option, default off): when on, walking into a 1-block step jumps automatically.
