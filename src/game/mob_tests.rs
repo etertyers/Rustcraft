@@ -1187,3 +1187,19 @@ fn peaceful_sends_monsters_away_and_spawns_none() {
             .any(|m| game.mob_defs.get(m.kind).ai.is_monster())
     );
 }
+
+#[test]
+fn a_zombie_goes_for_the_nearest_player_it_may_attack() {
+    let mut game = night_game(GameMode::Survival);
+    // The host is far off; a guest stands by the zombie.
+    game.player.body.set_position(DVec3::new(-20.5, 64.0, 0.5));
+    let mut guest = crate::game::PlayerState::new(DVec3::new(6.5, 64.0, 0.5), 0.0, 0.0);
+    guest.mode = GameMode::Survival;
+    game.others.push(guest);
+    spawn(&mut game, "zombie", 9.5, 0.5);
+    for _ in 0..100 {
+        game.tick();
+    }
+    assert!(game.others[0].stats.health < 20.0, "the guest was hit");
+    assert_eq!(game.player.stats.health, 20.0, "the host wasn't");
+}

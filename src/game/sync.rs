@@ -205,6 +205,19 @@ impl Game {
         }
     }
 
+    /// How many players there are, the host included.
+    pub fn player_count(&self) -> usize {
+        1 + self.others.len()
+    }
+
+    /// Player `index` (0 is the host, then `others`).
+    pub fn player_at(&self, index: usize) -> &super::PlayerState {
+        match index {
+            0 => &self.player,
+            i => &self.others[i - 1],
+        }
+    }
+
     /// Where player `index` stands (0 is the host, then `others`).
     pub fn feet_of(&self, index: usize) -> DVec3 {
         match index {
