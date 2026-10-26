@@ -1,5 +1,6 @@
 //! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
+pub mod chat;
 pub mod creative;
 pub mod doll;
 pub mod font;

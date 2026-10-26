@@ -7,6 +7,8 @@ use std::{collections::VecDeque, sync::Arc};
 use glam::DVec3;
 use log::{info, warn};
 
+use crate::game::commands::Reply;
+
 use crate::{
     audio::{self, Cue},
     config,
@@ -23,8 +25,6 @@ use crate::{
 pub const MAX_PLAYERS: usize = 8;
 /// Positioned sounds farther than this from a player aren't sent to them.
 const HEARING: f64 = 64.0;
-/// How long "… joined the game" shows.
-const ANNOUNCE_TICKS: u32 = 100;
 /// Inputs a client may get ahead by before the oldest are dropped.
 const MAX_QUEUED_INPUTS: usize = 4;
 
@@ -73,6 +73,8 @@ pub struct Server {
     /// one goes out even without a tick (the held stack follows the mouse
     /// at once).
     changed: bool,
+    /// Players `/kick` sent away, who leave after the messages are read.
+    kicked: Vec<usize>,
 }
 
 impl Server {
@@ -90,6 +92,7 @@ impl Server {
             book,
             changed: false,
             lan: None,
+            kicked: Vec::new(),
         }
     }
 
@@ -132,6 +135,71 @@ impl Server {
     /// Whether guests may use cheat commands (Open to LAN's Allow Cheats).
     pub fn cheats(&self) -> bool {
         self.lan.as_ref().is_some_and(|lan| lan.cheats)
+    }
+
+    /// Whether player `index` may cheat: the host in a world made with
+    /// Allow Cheats, and everyone once Open to LAN allows it.
+    fn may_cheat(&self, index: usize) -> bool {
+        self.cheats() || (index == 0 && self.game.cheats)
+    }
+
+    /// Sends a chat line to one player.
+    fn tell(&mut self, index: usize, text: String, command: bool) {
+        if let Some(remote) = self.remotes.get_mut(index) {
+            remote.conn.send(ServerMsg::Chat { text, command });
+        }
+    }
+
+    /// Sends a chat line to everyone.
+    fn broadcast(&mut self, text: String) {
+        info!("[chat] {text}");
+        for remote in &mut self.remotes {
+            remote.conn.send(ServerMsg::Chat {
+                text: text.clone(),
+                command: false,
+            });
+        }
+    }
+
+    /// A player's chat line: said to everyone, or run as a command.
+    fn chat(&mut self, index: usize, line: &str) {
+        // As vanilla, `§` isn't allowed in what players type.
+        let line: String = crate::ui::chat::strip_codes(line)
+            .chars()
+            .take(crate::ui::chat::MAX_MESSAGE)
+            .collect();
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        let Some(command) = line.strip_prefix('/') else {
+            let name = self.game.player_at(index).name.clone();
+            self.broadcast(format!("<{name}> {line}"));
+            return;
+        };
+        let cheats = self.may_cheat(index);
+        let replies = self.game.run_command(index, command, cheats, index == 0);
+        self.changed = true;
+        for reply in replies {
+            match reply {
+                Reply::Sender(text) => self.tell(index, text, true),
+                Reply::Player(to, text) => self.tell(to, text, false),
+                Reply::Everyone(text) => self.broadcast(text),
+                Reply::Kick(who, reason) => {
+                    if let Some(remote) = self.remotes.get_mut(who).filter(|_| who > 0) {
+                        remote.conn.send(ServerMsg::Disconnect(reason));
+                        self.kicked.push(who);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sends the game's own chat lines (deaths, advancements) to everyone.
+    fn send_game_chat(&mut self) {
+        for line in std::mem::take(&mut self.game.chat_out) {
+            self.broadcast(line);
+        }
     }
 
     /// A new connection; it joins when its login arrives.
@@ -184,6 +252,7 @@ impl Server {
         // also runs the host's client); only the tick's are the world's.
         let earlier = audio::drain();
         self.game.step();
+        self.send_game_chat();
         let heard = audio::drain();
         for cue in earlier {
             audio::requeue(cue);
@@ -340,14 +409,10 @@ impl Server {
         }
     }
 
-    /// Tells everyone `text` (until chat, over the hotbar) and who is
-    /// playing now.
+    /// Tells everyone in chat `text` (in yellow, as vanilla's join and
+    /// leave lines) and who is playing now.
     fn announce(&mut self, text: String) {
-        for index in 0..self.game.player_count() {
-            self.game.with_player(index, |game| {
-                game.player.message = Some((text.clone(), ANNOUNCE_TICKS));
-            });
-        }
+        self.broadcast(format!("§e{text}"));
         let names: Vec<String> = (0..self.game.player_count())
             .map(|i| self.game.player_at(i).name.clone())
             .collect();
@@ -371,6 +436,9 @@ impl Server {
                 gone.push(index);
             }
         }
+        gone.append(&mut self.kicked);
+        gone.sort_unstable();
+        gone.dedup();
         for index in gone.into_iter().rev() {
             self.leave(index);
         }
@@ -441,6 +509,14 @@ impl Server {
             ClientMsg::FinishCredits => self.game.with_player(index, Game::finish_credits),
             ClientMsg::ReleaseInput => self.game.with_player(index, Game::release_input),
             ClientMsg::Fly { feet } => self.game.with_player(index, |game| game.fly_to(feet)),
+            ClientMsg::Chat(line) => self.chat(index, &line),
+            ClientMsg::Complete(line) => {
+                let cheats = self.may_cheat(index);
+                let options = self.game.complete_command(&line, cheats, index == 0);
+                self.remotes[index]
+                    .conn
+                    .send(ServerMsg::Completions(options));
+            }
         }
     }
 
@@ -763,22 +839,15 @@ mod tests {
             "the host keeps theirs"
         );
         assert_eq!(clients[1].0.players, ["Alice", "Bob"], "the Tab list");
-        let said = |server: &Server| {
-            server
-                .game
-                .player
-                .message
-                .as_ref()
-                .map(|(text, _)| text.clone())
-        };
-        assert_eq!(said(&server).as_deref(), Some("Bob joined the game"));
+        run_until(&mut server, &mut clients, |_, c| {
+            heard(&c[0].0, "§eBob joined the game")
+        });
         // Leaving takes Bob out of the world.
         clients.pop();
-        run_until(&mut server, &mut clients, |server, _| {
-            server.player_count() == 1
+        run_until(&mut server, &mut clients, |server, c| {
+            server.player_count() == 1 && heard(&c[0].0, "§eBob left the game")
         });
         assert!(server.game.others.is_empty());
-        assert_eq!(said(&server).as_deref(), Some("Bob left the game"));
     }
 
     #[test]
@@ -863,5 +932,73 @@ mod tests {
         server.advance(0.0);
         assert!(matches!(client_end.try_recv(), Some(ServerMsg::Refused(_))));
         assert_eq!(server.player_count(), 1);
+    }
+
+    fn heard(client: &Client, text: &str) -> bool {
+        client.chat.iter().any(|(line, _)| line == text)
+    }
+
+    #[test]
+    fn two_players_chat_see_deaths_and_cheats_follow_the_world() {
+        let (mut server, mut clients) = world_with(&["Kenzo", "Alex"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        run_until(&mut server, &mut clients, |_, c| {
+            heard(&c[0].0, "§eAlex joined the game")
+        });
+        clients[1]
+            .0
+            .send(ClientMsg::Chat("hello §cthere".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter()
+                .all(|(client, _)| heard(client, "<Alex> hello there"))
+        });
+        // Cheats are off: a cheat command is refused, a harmless one runs.
+        clients[1]
+            .0
+            .send(ClientMsg::Chat("/give @s diamond".to_owned()));
+        clients[1].0.send(ClientMsg::Chat("/list".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            heard(
+                &c[1].0,
+                "There are 2 of a max of 8 players online: Kenzo, Alex",
+            )
+        });
+        assert!(heard(
+            &clients[1].0,
+            "§cYou do not have permission to use this command"
+        ));
+        assert!(
+            clients[1]
+                .0
+                .chat
+                .iter()
+                .all(|(line, command)| !line.contains("max of") || *command)
+        );
+        assert!(!heard(
+            &clients[0].0,
+            "There are 2 of a max of 8 players online: Kenzo, Alex"
+        ));
+        // A world made with Allow Cheats: the host may cheat (guests only
+        // once Open to LAN allows it).
+        server.game.cheats = true;
+        assert!(server.may_cheat(0) && !server.may_cheat(1));
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/gamemode survival Alex".to_owned()));
+        clients[0].0.send(ClientMsg::Chat("/kill Alex".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(client, _)| heard(client, "Alex was killed"))
+        });
+        // Tab asks the server.
+        clients[0].0.send(ClientMsg::Complete("gamer".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            c[0].0.completions.is_some()
+        });
+        assert_eq!(
+            clients[0].0.completions.as_deref(),
+            Some(&["gamerule".to_owned()][..])
+        );
     }
 }

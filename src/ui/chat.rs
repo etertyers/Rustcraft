@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use egui::{Color32, Event, Key, Pos2, Rect, vec2};
 
-use super::{font, gui};
+use super::{font, gui, text_field::TextField};
 
 /// Lines kept, and sent messages remembered.
 const KEPT: usize = 100;
@@ -22,6 +22,21 @@ const CLOSED_LINES: usize = 10;
 const OPEN_LINES: usize = 20;
 /// The longest message vanilla sends.
 pub const MAX_MESSAGE: usize = 256;
+
+/// `text` without `§` formatting codes: vanilla doesn't let players type
+/// them.
+pub fn strip_codes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '§' {
+            chars.next();
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
 
 /// Chat Settings (Options): who sees chat, and how it looks.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -118,7 +133,7 @@ pub struct Chat {
     lines: VecDeque<Line>,
     /// Typing, and what's in the box.
     open: bool,
-    input: String,
+    input: TextField,
     /// Sent messages, newest last, and the one ↑/↓ is on.
     sent: Vec<String>,
     recalled: Option<usize>,
@@ -128,14 +143,18 @@ pub struct Chat {
     /// put in.
     completions: Vec<String>,
     completed: Option<usize>,
-    /// Focus the box on the next frame.
-    focus: bool,
+    /// The key that opened chat types itself the same frame; skip it.
+    skip_typed: bool,
 }
 
 impl Chat {
     /// A line arrives (a command's answer if `command`).
     pub fn push(&mut self, text: String, command: bool, now: f64) {
-        self.lines.push_back(Line { text, command, at: now });
+        self.lines.push_back(Line {
+            text,
+            command,
+            at: now,
+        });
         while self.lines.len() > KEPT {
             self.lines.pop_front();
         }
@@ -148,18 +167,27 @@ impl Chat {
     /// Opens the box with `start` in it ("" for T, "/" for /).
     pub fn open(&mut self, start: &str) {
         self.open = true;
-        self.input = start.to_owned();
+        self.set_input(start.to_owned());
         self.recalled = None;
         self.scroll = 0;
         self.completions.clear();
         self.completed = None;
-        self.focus = true;
+        self.skip_typed = true;
     }
 
     pub fn close(&mut self) {
         self.open = false;
-        self.input.clear();
+        self.set_input(String::new());
         self.scroll = 0;
+    }
+
+    /// What's typed in the box.
+    pub fn input(&self) -> &str {
+        &self.input.text
+    }
+
+    fn set_input(&mut self, text: String) {
+        self.input = TextField::new(&text, MAX_MESSAGE);
     }
 
     /// The server's answer to a Tab: completions of the line.
@@ -174,11 +202,15 @@ impl Chat {
         if self.completions.is_empty() {
             return;
         }
-        let next = self.completed.map_or(0, |i| (i + 1) % self.completions.len());
+        let next = self
+            .completed
+            .map_or(0, |i| (i + 1) % self.completions.len());
         self.completed = Some(next);
-        let cut = self.input.rfind(' ').map_or(1.min(self.input.len()), |i| i + 1);
-        self.input.truncate(cut);
-        self.input.push_str(&self.completions[next]);
+        let mut text = self.input.text.clone();
+        let cut = text.rfind(' ').map_or(1.min(text.len()), |i| i + 1);
+        text.truncate(cut);
+        text.push_str(&self.completions[next]);
+        self.set_input(text);
     }
 
     /// ↑ (back) or ↓ (forward) through what was sent.
@@ -193,20 +225,28 @@ impl Chat {
             (Some(i), false) if i + 1 < self.sent.len() => i + 1,
             (Some(_), false) => {
                 self.recalled = None;
-                self.input.clear();
+                self.set_input(String::new());
                 return;
             }
         };
         self.recalled = Some(index);
-        self.input = self.sent[index].clone();
+        self.set_input(self.sent[index].clone());
     }
 
-    /// Takes the keys for the open box: Enter sends, Tab completes, ↑/↓
-    /// recall. The text itself goes through the text box.
-    fn keys(&mut self, ctx: &egui::Context) -> Option<ChatAction> {
-        let events = ctx.input(|i| i.events.clone());
+    /// Takes a frame's typing for the open box: Enter sends, Tab
+    /// completes, ↑/↓ recall, and the rest edits the text.
+    fn keys(&mut self, events: &[Event]) -> Option<ChatAction> {
         let mut action = None;
+        let mut typing = Vec::new();
         for event in events {
+            if std::mem::take(&mut self.skip_typed) && matches!(event, Event::Text(_)) {
+                continue;
+            }
+            // Vanilla doesn't let `§` into chat (it would be formatting).
+            if let Event::Text(typed) | Event::Paste(typed) = event {
+                typing.push(Event::Text(typed.replace('§', "")));
+                continue;
+            }
             let Event::Key {
                 key, pressed: true, ..
             } = event
@@ -215,7 +255,7 @@ impl Chat {
             };
             match key {
                 Key::Enter => {
-                    let text: String = self.input.trim().chars().take(MAX_MESSAGE).collect();
+                    let text: String = self.input.text.trim().chars().take(MAX_MESSAGE).collect();
                     if !text.is_empty() {
                         if self.sent.last() != Some(&text) {
                             self.sent.push(text.clone());
@@ -226,18 +266,23 @@ impl Chat {
                         action = Some(ChatAction::Send(text));
                     }
                     self.close();
+                    return action;
                 }
-                Key::Tab if self.input.starts_with('/') => {
+                Key::Tab => {
                     if self.completed.is_some() {
                         self.cycle_completion();
-                    } else {
-                        action = Some(ChatAction::Complete(self.input.clone()));
+                    } else if let Some(line) = self.input.text.strip_prefix('/') {
+                        action = Some(ChatAction::Complete(line.to_owned()));
                     }
                 }
                 Key::ArrowUp => self.recall(true),
                 Key::ArrowDown => self.recall(false),
-                _ => {}
+                _ => typing.push(event.clone()),
             }
+        }
+        if self.input.edit(&typing) {
+            self.completions.clear();
+            self.completed = None;
         }
         action
     }
@@ -251,10 +296,23 @@ impl Chat {
             Visibility::Hidden => false,
         };
         if self.open {
-            let page: Vec<&Line> = self.lines.iter().rev().filter(shown).skip(self.scroll).take(OPEN_LINES).collect();
+            let page: Vec<&Line> = self
+                .lines
+                .iter()
+                .rev()
+                .filter(shown)
+                .skip(self.scroll)
+                .take(OPEN_LINES)
+                .collect();
             page.into_iter().rev().map(|line| (line, 1.0)).collect()
         } else {
-            let recent: Vec<&Line> = self.lines.iter().rev().filter(shown).take(CLOSED_LINES).collect();
+            let recent: Vec<&Line> = self
+                .lines
+                .iter()
+                .rev()
+                .filter(shown)
+                .take(CLOSED_LINES)
+                .collect();
             recent
                 .into_iter()
                 .rev()
@@ -283,7 +341,8 @@ impl Chat {
         let bottom = full.bottom() - 40.0 * scale;
         let mut action = None;
         if self.open {
-            action = self.keys(ctx);
+            let events = ctx.input(|i| i.events.clone());
+            action = self.keys(&events);
             let scrolled = ctx.input(|i| i.smooth_scroll_delta.y);
             if scrolled > 0.0 {
                 self.scroll = (self.scroll + 1).min(self.lines.len().saturating_sub(1));
@@ -293,7 +352,7 @@ impl Chat {
         }
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("chat"),
+            egui::Id::unique("chat"),
         ));
         let lines = self.visible(now, settings);
         for (i, (line, fade)) in lines.iter().rev().enumerate() {
@@ -313,31 +372,63 @@ impl Chat {
             );
         }
         if self.open {
+            // Vanilla's box: a dark band along the bottom, the text in it
+            // and a blinking cursor (an underscore at the end).
             let box_rect = Rect::from_min_max(
                 Pos2::new(left - scale, full.bottom() - 14.0 * scale),
                 Pos2::new(full.right() - 2.0 * scale, full.bottom() - 2.0 * scale),
             );
-            egui::Area::new(egui::Id::new("chat-box"))
-                .fixed_pos(box_rect.min)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    painter.rect_filled(box_rect, 0.0, Color32::from_black_alpha(128));
-                    let edit = egui::TextEdit::singleline(&mut self.input)
-                        .char_limit(MAX_MESSAGE)
-                        .frame(false)
-                        .text_color(Color32::WHITE)
-                        .font(egui::FontId::proportional(size))
-                        .desired_width(box_rect.width());
-                    let response = ui.add(edit);
-                    if self.focus {
-                        response.request_focus();
-                        self.focus = false;
-                    }
-                    if response.changed() {
-                        self.completions.clear();
-                        self.completed = None;
-                    }
-                });
+            painter.rect_filled(box_rect, 0.0, Color32::from_black_alpha(128));
+            let at = Pos2::new(left + scale, box_rect.top() + 2.0 * scale);
+            let width = |text: &str| {
+                painter
+                    .layout_no_wrap(
+                        text.to_owned(),
+                        egui::FontId::proportional(8.0 * scale),
+                        Color32::WHITE,
+                    )
+                    .rect
+                    .width()
+            };
+            let chars: Vec<char> = self.input.text.chars().collect();
+            let cursor = self.input.cursor.min(chars.len());
+            // Show the end of a long line so the cursor stays in the box.
+            let room = box_rect.width() - 4.0 * scale;
+            let mut first = 0;
+            while first < cursor && width(&chars[first..cursor].iter().collect::<String>()) > room {
+                first += 1;
+            }
+            let shown: String = chars[first..].iter().collect();
+            let color = Color32::from_rgb(0xE0, 0xE0, 0xE0);
+            font::shadowed(
+                &painter,
+                at,
+                egui::Align2::LEFT_TOP,
+                &shown,
+                color,
+                8.0 * scale,
+            );
+            let blink = ((now * 20.0 / 6.0) as u64).is_multiple_of(2);
+            ctx.request_repaint();
+            if blink {
+                let x = at.x + width(&chars[first..cursor].iter().collect::<String>());
+                if cursor >= chars.len() {
+                    font::shadowed(
+                        &painter,
+                        Pos2::new(x, at.y),
+                        egui::Align2::LEFT_TOP,
+                        "_",
+                        color,
+                        8.0 * scale,
+                    );
+                } else {
+                    painter.rect_filled(
+                        Rect::from_min_size(Pos2::new(x, at.y - scale), vec2(scale, 10.0 * scale)),
+                        0.0,
+                        color,
+                    );
+                }
+            }
         }
         action
     }
@@ -370,7 +461,10 @@ mod tests {
         chat.open("");
         assert_eq!(chat.visible(1000.0, &settings).len(), 15);
         chat.scroll = 3;
-        assert_eq!(chat.visible(1000.0, &settings).last().unwrap().0.text, "line 11");
+        assert_eq!(
+            chat.visible(1000.0, &settings).last().unwrap().0.text,
+            "line 11"
+        );
     }
 
     #[test]
@@ -385,7 +479,11 @@ mod tests {
             visibility: Visibility::CommandsOnly,
             ..ChatSettings::default()
         };
-        assert!(chat.visible(1.0, &settings).iter().all(|(line, _)| line.command));
+        assert!(
+            chat.visible(1.0, &settings)
+                .iter()
+                .all(|(line, _)| line.command)
+        );
         let hidden = ChatSettings {
             visibility: Visibility::Hidden,
             ..ChatSettings::default()
@@ -395,26 +493,28 @@ mod tests {
 
     #[test]
     fn up_and_down_walk_through_what_was_sent_and_tab_cycles_completions() {
-        let mut chat = Chat::default();
-        chat.sent = vec!["hello".into(), "/time set day".into()];
+        let mut chat = Chat {
+            sent: vec!["hello".into(), "/time set day".into()],
+            ..Chat::default()
+        };
         chat.open("");
         chat.recall(true);
-        assert_eq!(chat.input, "/time set day");
+        assert_eq!(chat.input(), "/time set day");
         chat.recall(true);
-        assert_eq!(chat.input, "hello");
+        assert_eq!(chat.input(), "hello");
         chat.recall(false);
-        assert_eq!(chat.input, "/time set day");
+        assert_eq!(chat.input(), "/time set day");
         chat.recall(false);
-        assert_eq!(chat.input, "", "past the newest is an empty box");
+        assert_eq!(chat.input(), "", "past the newest is an empty box");
         chat.open("/gam");
         chat.completions(vec!["gamemode".into(), "gamerule".into()]);
-        assert_eq!(chat.input, "/gamemode");
+        assert_eq!(chat.input(), "/gamemode");
         chat.cycle_completion();
-        assert_eq!(chat.input, "/gamerule");
+        assert_eq!(chat.input(), "/gamerule");
         chat.cycle_completion();
-        assert_eq!(chat.input, "/gamemode");
+        assert_eq!(chat.input(), "/gamemode");
         chat.open("/give Kenzo dia");
         chat.completions(vec!["diamond".into(), "diamond_sword".into()]);
-        assert_eq!(chat.input, "/give Kenzo diamond");
+        assert_eq!(chat.input(), "/give Kenzo diamond");
     }
 }
