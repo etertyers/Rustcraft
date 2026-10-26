@@ -200,6 +200,10 @@ pub struct Stats {
     /// The world's difficulty, set by the game each tick.
     #[serde(skip)]
     pub difficulty: crate::level::Difficulty,
+    /// The `naturalRegeneration` rule, set by the game each tick: a full
+    /// food bar heals.
+    #[serde(skip, default = "yes")]
+    pub natural_regeneration: bool,
     /// Extra health from Absorption, used up before health (M26).
     #[serde(default)]
     pub absorption: f32,
@@ -232,6 +236,7 @@ impl Default for Stats {
             enchant_seed: 0,
             effects: Effects::default(),
             difficulty: Difficulty::default(),
+            natural_regeneration: true,
             absorption: 0.0,
             armor: 0.0,
             toughness: 0.0,
@@ -467,6 +472,9 @@ impl Stats {
     /// On peaceful, a point of health every second and a point of food
     /// every half second (vanilla `Player.aiStep`).
     pub fn tick_peaceful(&mut self, time: u64) {
+        if !self.natural_regeneration {
+            return;
+        }
         if time.is_multiple_of(20) && self.health < MAX_HEALTH {
             self.heal(1.0);
         }
@@ -491,7 +499,7 @@ impl Stats {
                 self.food = (self.food - 1).max(0);
             }
         }
-        let hurt = self.health < MAX_HEALTH;
+        let hurt = self.health < MAX_HEALTH && self.natural_regeneration;
         if hurt && self.food >= MAX_FOOD && self.saturation > 0.0 {
             self.food_timer += 1;
             if self.food_timer >= SATURATED_HEAL_TICKS {
@@ -525,6 +533,10 @@ impl Stats {
             self.food_timer = 0;
         }
     }
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[cfg(test)]

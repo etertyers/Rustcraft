@@ -100,13 +100,18 @@ impl Game {
         let view = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
         let mut environment = match self.dimension {
             Dimension::Nether => nether(
-                self.time,
+                self.day_time(),
                 self.tick_alpha() as f32,
                 biome,
                 view,
                 self.eye_in(),
             ),
-            Dimension::End => end(self.time, self.tick_alpha() as f32, view, self.eye_in()),
+            Dimension::End => end(
+                self.day_time(),
+                self.tick_alpha() as f32,
+                view,
+                self.eye_in(),
+            ),
             Dimension::Overworld => self.overworld_environment(biome, view),
         };
         if self.eye_in() == Some(Fluid::Water) {
@@ -139,7 +144,7 @@ impl Game {
 
     fn overworld_environment(&self, biome: Biome, view: f32) -> Environment {
         let mut environment = environment(
-            self.time,
+            self.day_time(),
             self.tick_alpha() as f32,
             biome,
             self.player.camera.forward(),

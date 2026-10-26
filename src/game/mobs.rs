@@ -169,7 +169,7 @@ impl Game {
     }
 
     pub(super) fn celestial_angle(&self) -> f32 {
-        daytime::celestial_angle(self.time, 0.0)
+        daytime::celestial_angle(self.day_time(), 0.0)
     }
 
     /// Whether nothing solid lies between `from` and `to`: slabs, stairs
@@ -522,10 +522,12 @@ impl Game {
         self.tick_animals();
         self.tick_nether_mobs();
         self.tick_villagers();
-        self.spawn_cycle();
-        self.spawn_water_mobs();
-        self.spawn_striders();
-        self.spawn_phantoms();
+        if self.rules.do_mob_spawning {
+            self.spawn_cycle();
+            self.spawn_water_mobs();
+            self.spawn_striders();
+            self.spawn_phantoms();
+        }
     }
 
     /// Phantoms come out of the night sky above a player who hasn't slept

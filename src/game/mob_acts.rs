@@ -142,7 +142,7 @@ impl Game {
                 self.teleport_mob(&mut mobs[index], tp);
                 crate::audio::play("entity.enderman.teleport", mobs[index].feet());
             }
-            if let Some(action) = intent.block {
+            if let Some(action) = intent.block.filter(|_| self.rules.mob_griefing) {
                 self.enderman_block(&mut mobs[index], action);
             }
             if let Some(power) = intent.explode {

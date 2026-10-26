@@ -89,6 +89,7 @@ impl Game {
         Snapshot {
             ack,
             time: self.time,
+            day_offset: self.day_offset,
             difficulty: self.difficulty,
             rules: self.rules.clone(),
             player: self.player.clone(),
@@ -167,6 +168,7 @@ impl Game {
         player.scroll_pixels = local.scroll_pixels;
         self.player = player;
         self.time = snapshot.time;
+        self.day_offset = snapshot.day_offset;
         self.difficulty = snapshot.difficulty;
         self.rules = snapshot.rules;
         let e = snapshot.entities;
@@ -274,6 +276,12 @@ impl Game {
     /// The saved world's name, if it's saved.
     pub fn world_name(&self) -> Option<String> {
         self.saved.as_ref().map(|saved| saved.level.name.clone())
+    }
+
+    /// The time of day in ticks (0 is sunrise, 6000 noon): the tick count
+    /// moved by `/time`, sleeping and `doDaylightCycle`.
+    pub fn day_time(&self) -> u64 {
+        (self.time as i64 + self.day_offset).max(0) as u64
     }
 
     /// Where new players start.

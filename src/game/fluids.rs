@@ -199,12 +199,23 @@ impl Game {
     /// One tick of fire, and random ticks for the lava in chunks within
     /// `RANDOM_TICK_CHUNKS` of the player.
     pub(super) fn tick_fires(&mut self) {
-        let feet = self.player.body.position().floor().as_ivec3();
-        let center = ChunkPos::of_block(feet.x, feet.z);
+        // `doFireTick` off: fire neither spreads nor burns out, and lava
+        // lights nothing.
+        if !self.rules.do_fire_tick {
+            return;
+        }
         let reach = RANDOM_TICK_CHUNKS;
-        let near: Vec<_> = (-reach..=reach)
-            .flat_map(|dz| (-reach..=reach).map(move |dx| center.offset(dx, dz)))
+        let mut near: Vec<ChunkPos> = self
+            .player_chunks()
+            .into_iter()
+            .flat_map(|center| {
+                (-reach..=reach)
+                    .flat_map(move |dz| (-reach..=reach).map(move |dx| center.offset(dx, dz)))
+            })
             .collect();
+        near.sort_by_key(|pos| (pos.x, pos.z));
+        near.dedup();
+        let random_ticks = self.rules.random_tick_speed;
         let rng = &mut self.rng;
         let mut random = |n: u32| rng.below(n);
         let edits = self.fires.tick(
@@ -212,6 +223,7 @@ impl Game {
             self.items.blocks,
             self.time,
             &near,
+            random_ticks,
             &mut random,
         );
         if !edits.is_empty() {

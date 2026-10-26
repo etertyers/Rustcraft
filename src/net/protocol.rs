@@ -125,6 +125,7 @@ pub struct Snapshot {
     /// The last `Input` played before this tick ended (0 before any).
     pub ack: u32,
     pub time: u64,
+    pub day_offset: i64,
     pub difficulty: Difficulty,
     pub rules: GameRules,
     pub player: PlayerState,

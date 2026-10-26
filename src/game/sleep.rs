@@ -84,7 +84,7 @@ impl Game {
         // (modern `ServerPlayer.startSleepInBed`).
         let newly_set = self.player.bed != Some(head);
         self.player.bed = Some(head);
-        let angle = daytime::celestial_angle(self.time, 0.0);
+        let angle = daytime::celestial_angle(self.day_time(), 0.0);
         if daytime::is_daytime(angle) {
             return self.say(if newly_set {
                 "Respawn point set"
@@ -131,7 +131,9 @@ impl Game {
         if !asleep {
             return;
         }
-        self.time = (self.time + DAY_TICKS) / DAY_TICKS * DAY_TICKS;
+        // The morning comes: the time of day moves on, the tick count not.
+        let day = self.day_time();
+        self.day_offset += ((day + DAY_TICKS) / DAY_TICKS * DAY_TICKS - day) as i64;
         self.for_each_player(Game::wake_in_the_morning);
     }
 
@@ -142,6 +144,7 @@ impl Game {
             return;
         };
         self.player.bed = Some(sleep.head);
+        self.player.spawn_point = None;
         self.note(crate::advancements::Event::Used("sleep".to_owned()));
         self.wake();
     }
@@ -184,6 +187,9 @@ impl Game {
     /// Where the player comes back after dying: beside their bed if it's
     /// still there, or else the world spawn.
     pub(super) fn respawn_point(&mut self) -> DVec3 {
+        if let Some(at) = self.player.spawn_point {
+            return at.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+        }
         let Some(head) = self.player.bed else {
             return self.spawn;
         };
@@ -286,10 +292,10 @@ mod tests {
         assert!(game.is_sleeping());
         game.run_ticks(200);
         assert!(game.is_sleeping(), "still waiting for the guest");
-        assert!(game.time() < 24000, "still night");
+        assert!(game.day_time() < 24000, "still night");
         game.with_player(1, |guest| guest.use_bed(guest_head));
         game.run_ticks(120);
-        assert!(game.time() >= 24000, "morning");
+        assert!(game.day_time() >= 24000, "morning");
         assert!(
             !game.is_sleeping() && game.others[0].sleep.is_none(),
             "both up"
@@ -367,7 +373,11 @@ mod tests {
         assert!(game.sleep_fade().unwrap() > 0.95);
         game.tick();
         assert!(!game.is_sleeping());
-        assert_eq!(game.time, 24000 * 4 + 1, "sunrise, plus the waking tick");
+        assert_eq!(
+            game.day_time(),
+            24000 * 4 + 1,
+            "sunrise, plus the waking tick"
+        );
         assert_eq!(game.player.bed, Some(head));
         let feet = game.player.body.position();
         assert_eq!(feet.y, 64.0, "standing beside the bed");
