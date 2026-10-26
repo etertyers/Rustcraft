@@ -390,6 +390,19 @@ impl ChunkManager {
 
     /// Collects finished work, unloads far chunks and queues new jobs around `center`.
     pub fn update(&mut self, center: ChunkPos) -> Changes {
+        self.update_around(&[center])
+    }
+
+    /// `update` around several centers at once (a server's players): a
+    /// chunk is kept while it's near any of them.
+    pub fn update_around(&mut self, centers: &[ChunkPos]) -> Changes {
+        let near = |pos: ChunkPos| {
+            centers
+                .iter()
+                .map(|&center| Self::distance(pos, center))
+                .min()
+                .unwrap_or(i32::MAX)
+        };
         let mut changes = Changes {
             meshes: std::mem::take(&mut self.remeshed),
             unloaded: std::mem::take(&mut self.forgotten),
@@ -402,9 +415,7 @@ impl ChunkManager {
                 Ok(Done::Generated(chunk)) => {
                     self.generating.remove(&chunk.pos);
                     // A chunk loaded on the spot (`load_now`) may beat its job.
-                    if self.world.get(chunk.pos).is_none()
-                        && Self::distance(chunk.pos, center) <= self.radius + 1
-                    {
+                    if self.world.get(chunk.pos).is_none() && near(chunk.pos) <= self.radius + 1 {
                         changes.loaded.push(chunk.pos);
                         self.world.insert(*chunk);
                     }
@@ -429,7 +440,7 @@ impl ChunkManager {
         let far: Vec<ChunkPos> = self
             .world
             .positions()
-            .filter(|&pos| !remote && Self::distance(pos, center) > keep)
+            .filter(|&pos| !remote && near(pos) > keep)
             .collect();
         for pos in far {
             if let Some(chunk) = self.world.remove(pos)
@@ -448,7 +459,7 @@ impl ChunkManager {
             .meshed
             .iter()
             .copied()
-            .filter(|&pos| Self::distance(pos, center) > self.radius)
+            .filter(|&pos| near(pos) > self.radius)
             .collect();
         for pos in hidden {
             self.meshed.remove(&pos);
@@ -460,7 +471,12 @@ impl ChunkManager {
         let Some(jobs) = self.jobs.clone() else {
             return changes;
         };
-        for &(dx, dz) in &self.offsets {
+        // The nearest first, taking each player's ring in turn.
+        let offsets = self.offsets.clone();
+        let jobs_for = offsets
+            .iter()
+            .flat_map(|&(dx, dz)| centers.iter().map(move |&center| (center, dx, dz)));
+        for (center, dx, dz) in jobs_for {
             if self.in_flight() >= self.max_in_flight {
                 break;
             }
@@ -856,6 +872,26 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         (meshed, unloaded)
+    }
+
+    #[test]
+    fn chunks_load_around_every_center_and_stay_while_any_is_near() {
+        let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 1, 2);
+        manager.serve();
+        let (a, b) = (ChunkPos::new(0, 0), ChunkPos::new(40, -40));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !(manager.world().get(a).is_some()
+            && manager.world().get(b.offset(1, 1)).is_some()
+            && manager.in_flight() == 0)
+        {
+            assert!(Instant::now() < deadline, "never loaded");
+            manager.update_around(&[a, b]);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // With only one center left, the other's chunks go.
+        manager.update_around(&[a]);
+        assert!(manager.world().get(a).is_some());
+        assert!(manager.world().get(b).is_none());
     }
 
     #[test]

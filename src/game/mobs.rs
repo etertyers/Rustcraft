@@ -766,7 +766,7 @@ impl Game {
 
     /// Mobs that count toward a cap: not tamed or ridden (persistent), and
     /// in a chunk near the player.
-    fn counted_in(&self, category: &Category, center: ChunkPos) -> usize {
+    fn counted_in(&self, category: &Category, centers: &[ChunkPos]) -> usize {
         self.mobs
             .iter()
             .filter(|mob| !mob.is_dead() && !mob.data.tamed && !mob.ridden)
@@ -777,18 +777,45 @@ impl Game {
             .filter(|mob| {
                 let at =
                     ChunkPos::of_block(mob.feet().x.floor() as i32, mob.feet().z.floor() as i32);
-                (at.x - center.x).abs().max((at.z - center.z).abs()) <= SPAWN_CHUNK_RADIUS
+                centers.iter().any(|center| {
+                    (at.x - center.x).abs().max((at.z - center.z).abs()) <= SPAWN_CHUNK_RADIUS
+                })
             })
             .count()
     }
 
+    /// The chunk each player stands in.
+    pub fn player_chunks(&self) -> Vec<ChunkPos> {
+        let mut chunks: Vec<ChunkPos> = (0..self.player_count())
+            .map(|i| {
+                let feet = self.feet_of(i);
+                ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)
+            })
+            .collect();
+        chunks.sort_by_key(|pos| (pos.x, pos.z));
+        chunks.dedup();
+        chunks
+    }
+
+    /// How far the nearest player is from `at`.
+    pub(super) fn nearest_player_distance(&self, at: DVec3) -> f64 {
+        (0..self.player_count())
+            .map(|i| self.feet_of(i).distance(at))
+            .fold(f64::INFINITY, f64::min)
+    }
+
     /// The chunks that take part in spawning: loaded, within the radius of
-    /// the player, in random order.
-    fn spawnable_chunks(&mut self, center: ChunkPos) -> Vec<ChunkPos> {
-        let mut chunks: Vec<ChunkPos> = (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS)
-            .flat_map(|dz| (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).map(move |dx| (dx, dz)))
-            .map(|(dx, dz)| center.offset(dx, dz))
-            .filter(|&pos| self.chunks.world().get(pos).is_some())
+    /// any player, each once, in random order.
+    fn spawnable_chunks(&mut self, centers: &[ChunkPos]) -> Vec<ChunkPos> {
+        let mut seen = crate::world::fast_hash::FastSet::default();
+        let mut chunks: Vec<ChunkPos> = centers
+            .iter()
+            .flat_map(|&center| {
+                (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).flat_map(move |dz| {
+                    (-SPAWN_CHUNK_RADIUS..=SPAWN_CHUNK_RADIUS).map(move |dx| center.offset(dx, dz))
+                })
+            })
+            .filter(|&pos| seen.insert(pos) && self.chunks.world().get(pos).is_some())
             .collect();
         for i in (1..chunks.len()).rev() {
             let j = self.rng.below(i as u32 + 1) as usize;
@@ -811,12 +838,12 @@ impl Game {
         if !self.time.is_multiple_of(category.every) {
             return;
         }
-        let player = self.player.body.position();
-        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
-        let chunks = self.spawnable_chunks(center);
-        // The cap grows with the chunks in range: 70 for a full 17 × 17.
+        let centers = self.player_chunks();
+        let chunks = self.spawnable_chunks(&centers);
+        // The cap grows with the chunks in range: 70 for a full 17 × 17
+        // around each player.
         let cap = category.cap * chunks.len() / spawning::CAP_CHUNKS;
-        let mut count = self.counted_in(category, center);
+        let mut count = self.counted_in(category, &centers);
         for pos in chunks {
             if count >= cap {
                 return;
@@ -912,7 +939,7 @@ impl Game {
 
     /// Far enough from the player and the world spawn, and not out of range.
     fn right_distance(&self, feet: DVec3) -> bool {
-        let player = feet.distance(self.player.body.position());
+        let player = self.nearest_player_distance(feet);
         (spawning::MIN_DISTANCE..=spawning::MAX_DISTANCE).contains(&player)
             && feet.distance(self.spawn) >= spawning::MIN_DISTANCE
     }
@@ -949,7 +976,7 @@ impl Game {
     pub(super) fn monster_count(&self) -> usize {
         let player = self.player.body.position();
         let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
-        self.counted_in(&spawning::MONSTER, center)
+        self.counted_in(&spawning::MONSTER, &[center])
     }
 
     /// Only the monster category's cycle (for the tests).
@@ -1138,8 +1165,8 @@ impl Game {
         if count >= STRIDER_CAP {
             return;
         }
-        let player = self.player.body.position();
-        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        let centers = self.player_chunks();
+        let center = centers[self.rng.below(centers.len() as u32) as usize];
         let reach = SPAWN_CHUNK_RADIUS as u32 * 2 + 1;
         let pos = center.offset(
             self.rng.below(reach) as i32 - SPAWN_CHUNK_RADIUS,
@@ -1166,7 +1193,7 @@ impl Game {
             return;
         };
         let feet = DVec3::new(x as f64 + 0.5, (surface + 1) as f64, z as f64 + 0.5);
-        if feet.distance(player) < MIN_SPAWN_DISTANCE {
+        if self.nearest_player_distance(feet) < MIN_SPAWN_DISTANCE {
             return;
         }
         for i in 0..1 + self.rng.below(u32::from(group)) {
@@ -1183,8 +1210,8 @@ impl Game {
         if !self.time.is_multiple_of(20) {
             return;
         }
-        let player = self.player.body.position();
-        let center = ChunkPos::of_block(player.x.floor() as i32, player.z.floor() as i32);
+        let centers = self.player_chunks();
+        let center = centers[self.rng.below(centers.len() as u32) as usize];
         let side = SPAWN_CHUNK_RADIUS * 2 + 1;
         let cap = WATER_MOBS_PER_256_CHUNKS * (side * side) as usize / 256;
         let count = |game: &Game| {
@@ -1237,7 +1264,7 @@ impl Game {
                     blocks: self.items.blocks,
                 };
                 let deep = (0..=min_depth as i32).all(|dy| terrain.water(cell + IVec3::Y * dy));
-                if !deep || cell.as_dvec3().distance(player) < 16.0 {
+                if !deep || self.nearest_player_distance(cell.as_dvec3()) < 16.0 {
                     continue;
                 }
                 for i in 0..group {

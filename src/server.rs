@@ -144,8 +144,8 @@ impl Server {
     pub fn advance(&mut self, dt: f32) {
         self.accept();
         self.read_messages();
-        let center = self.host_center();
-        let changes = self.game.chunks.update(center);
+        let centers = self.game.player_chunks();
+        let changes = self.game.chunks.update_around(&centers);
         self.game.on_chunks_loaded(&changes.loaded);
         let ticks = self.game.clock(dt);
         for _ in 0..ticks {
@@ -451,11 +451,6 @@ impl Server {
 
     fn feet(&self, index: usize) -> DVec3 {
         self.game.feet_of(index)
-    }
-
-    fn host_center(&self) -> ChunkPos {
-        let feet = self.feet(0);
-        ChunkPos::of_block(feet.x.floor() as i32, feet.z.floor() as i32)
     }
 }
 
