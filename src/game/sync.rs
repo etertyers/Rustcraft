@@ -121,6 +121,7 @@ impl Game {
                 particles: self.particles.clone(),
                 effects: self.effects.clone(),
                 arrows: self.arrows.clone(),
+                bobbers: self.bobbers.clone(),
                 fireballs: self.fireballs.clone(),
                 bullets: self.bullets.clone(),
                 thrown: self.thrown.clone(),
@@ -180,6 +181,7 @@ impl Game {
         self.particles = e.particles;
         self.effects = e.effects;
         self.arrows = e.arrows;
+        self.bobbers = e.bobbers;
         self.fireballs = e.fireballs;
         self.bullets = e.bullets;
         self.thrown = e.thrown;

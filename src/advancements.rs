@@ -464,6 +464,8 @@ mod tests {
         "levitate",
         "gateway",
         "kill_dragon",
+        "fish_caught",
+        "fish_bucket",
     ];
 
     #[test]

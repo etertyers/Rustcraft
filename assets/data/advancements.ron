@@ -4,7 +4,7 @@
 // tree is laid out from the parents, so the order here is only the order
 // the nodes of one parent are drawn in.
 //
-// Left out because nothing here makes them happen: breeding, fishing, bees,
+// Left out because nothing here makes them happen: bees,
 // goats, trims, the Wither, ocean monuments and the like.
 #![enable(implicit_some)]
 [
@@ -53,6 +53,8 @@
     (id: "adventure/dungeon", tab: Adventure, parent: "adventure/root", title: "Dungeon Crawler", description: "Enter a dungeon or a mineshaft", icon: "chest", frame: Task, criteria: [("dungeon", Structure("dungeon"))]),
     (id: "adventure/ride", tab: Adventure, parent: "adventure/root", title: "Hot Tourist Destinations", description: "Visit every Nether biome", icon: "netherrack", frame: Challenge, criteria: [("nether_wastes", Biome("nether_wastes")), ("crimson_forest", Biome("crimson_forest")), ("warped_forest", Biome("warped_forest")), ("soul_sand_valley", Biome("soul_sand_valley")), ("basalt_deltas", Biome("basalt_deltas"))]),
     (id: "adventure/glide", tab: Adventure, parent: "adventure/root", title: "Wings of Your Own", description: "Obtain a pair of elytra", icon: "elytra", frame: Goal, criteria: [("elytra", Have("elytra"))]),
+    (id: "adventure/fishy_business", tab: Adventure, parent: "adventure/root", title: "Fishy Business", description: "Catch a fish", icon: "fishing_rod", frame: Task, criteria: [("fish", Used("fish_caught"))]),
+    (id: "adventure/tactical_fishing", tab: Adventure, parent: "adventure/fishy_business", title: "Tactical Fishing", description: "Catch a fish... without a fishing rod!", icon: "cod_bucket", frame: Task, criteria: [("bucket", Used("fish_bucket"))]),
     (id: "husbandry/root", tab: Husbandry, title: "Husbandry", description: "The world is full of friends and food", icon: "hay_block", frame: Task, criteria: [("ate", Ate("*"))]),
     (id: "husbandry/plant_seed", tab: Husbandry, parent: "husbandry/root", title: "A Seedy Place", description: "Plant a seed and watch it grow", icon: "wheat_seeds", frame: Task, criteria: [("planted", Placed("wheat"))]),
     (id: "husbandry/tame_an_animal", tab: Husbandry, parent: "husbandry/root", title: "Best Friends Forever", description: "Tame an animal", icon: "bone", frame: Task, criteria: [("tamed", Used("tame"))]),

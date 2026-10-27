@@ -348,6 +348,18 @@ impl Game {
                 }
                 false
             }
+            "cod" | "salmon" => {
+                // A bucket scoops the fish up (Tactical Fishing).
+                if held.is_some_and(|s| s.id == items::BUCKET)
+                    && let Some(full) = items::by_name(&format!("{name}_bucket"))
+                {
+                    self.fill_held_bucket(full);
+                    self.mobs.remove(index);
+                    self.note(crate::advancements::Event::Used("fish_bucket".to_owned()));
+                    return true;
+                }
+                false
+            }
             "wolf" | "cat" => self.use_pet(index, held, survival),
             "horse" => self.use_horse(index, held, survival),
             "strider" => self.use_strider(index, held),

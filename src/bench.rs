@@ -42,7 +42,7 @@ impl Bench {
 /// The window's size: a 1080p screen.
 pub const WINDOW_SIZE: (u32, u32) = (1920, 1080);
 /// The milestone `--perf-test` writes up (`docs/perf/m<N>.md`).
-pub const PERF_MILESTONE: u32 = 40;
+pub const PERF_MILESTONE: u32 = 41;
 /// `--perf-test`'s flight length and render distance.
 pub const PERF_SECONDS: f32 = 60.0;
 pub const PERF_DISTANCE: i32 = 9;

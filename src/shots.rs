@@ -523,6 +523,16 @@ pub static SHOTS: &[Shot] = &[
         stage: wheat_farm,
     },
     Shot {
+        name: "m41-fishing",
+        about: "casting into a lake: the bobber floating on the water with the line running back to the rod, a rod in hand",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 1.5], std::f32::consts::PI, -0.28)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: fishing_lake,
+    },
+    Shot {
         name: "m35-key-binds",
         about: "Options, Controls, Key Binds over the paused game: every action by category, Sneak moved onto W so both show red, and Jump waiting for a new key",
         world: Some(WorldKind::Flat),
@@ -706,6 +716,22 @@ fn wheat_farm(game: &mut Game) {
     }
     game.set_blocks(&edits);
     game.run_ticks(5);
+}
+
+/// A lake south of the player (Z 4..20), and a cast into it.
+fn fishing_lake(game: &mut Game) {
+    use crate::world::blocks;
+    let mut edits = Vec::new();
+    for x in -14..=14 {
+        for z in 4..=20 {
+            edits.push((at(x, 63, z), BlockState::of(blocks::WATER)));
+        }
+    }
+    game.set_blocks(&edits);
+    game.mobs.clear();
+    game.run_ticks(5);
+    game.mobs.clear();
+    game.stage_cast();
 }
 
 /// Torches on the cave floor around (−72, −18, 56), every few blocks.
