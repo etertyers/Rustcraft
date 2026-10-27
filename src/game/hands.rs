@@ -86,6 +86,9 @@ impl Game {
         if stack.id == items::SHIELD || (hand == Hand::Main && item.scripted) {
             return true;
         }
+        if hand == Hand::Main && stack.id == items::FISHING_ROD {
+            return true;
+        }
         if hand == Hand::Main
             && hit.is_some()
             && (stack.id == items::BONE_MEAL
@@ -153,6 +156,10 @@ impl Game {
         if let Some(hit) = hit
             && self.farm_use_item(hit)
         {
+            return true;
+        }
+        // A fishing rod casts and reels in.
+        if self.use_fishing_rod() {
             return true;
         }
         // A mod item's `on_use`.

@@ -1199,4 +1199,74 @@ mod tests {
             "one calf, and the parents are done"
         );
     }
+
+    #[test]
+    fn two_lan_players_fish_side_by_side_and_both_see_both_bobbers() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2
+                && c.iter().all(|(client, game)| {
+                    client.welcomed && block_at(game, IVec3::new(3, 63, 3)).is_some()
+                })
+        });
+        // A pond in front of both, and a Lure III rod each.
+        let mut water = Vec::new();
+        for x in -2..=8 {
+            for z in 4..=12 {
+                water.push((
+                    IVec3::new(x, 63, z),
+                    crate::world::block::BlockState::of(blocks::WATER),
+                ));
+            }
+        }
+        server.game.set_blocks(&water);
+        for (i, x) in [1.5, 3.5].into_iter().enumerate() {
+            server.game.with_player(i, |game| {
+                game.fly_to(DVec3::new(x, 64.0, 1.5));
+                let mut rod = ItemStack::new(items::FISHING_ROD, 1);
+                rod.enchant(crate::inventory::enchant::Enchantment::Lure, 3);
+                game.player
+                    .inventory
+                    .set(game.player.inventory.selected, Some(rod));
+            });
+            clients[i].1.player.camera.yaw = std::f32::consts::PI;
+            clients[i].1.player.camera.pitch = -0.25;
+        }
+        let tap = |client: &mut Client| {
+            for pressed in [true, false] {
+                client.send(ClientMsg::Action {
+                    action: Action::Use,
+                    pressed,
+                    repeat: false,
+                    grabbed: true,
+                });
+            }
+        };
+        tap(&mut clients[0].0);
+        tap(&mut clients[1].0);
+        // Both bobbers float, and each client sees both.
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.bobbers.len() == 2
+                && s.game.bobbers.iter().all(|b| b.in_water)
+                && c.iter().all(|(_, game)| game.bobbers.len() == 2)
+        });
+        assert_ne!(server.game.bobbers[0].owner, server.game.bobbers[1].owner);
+        // Each waits for its own bite; reel in both when they bite.
+        run_until(&mut server, &mut clients, |s, _| {
+            s.game.bobbers.iter().all(|b| b.nibble > 0)
+        });
+        tap(&mut clients[0].0);
+        tap(&mut clients[1].0);
+        let caught = |game: &Game| {
+            (0..crate::inventory::player::SLOTS)
+                .filter_map(|i| game.player.inventory.slot(i))
+                .any(|s| s.id != items::FISHING_ROD)
+        };
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.bobbers.is_empty()
+                && c.iter().all(|(_, game)| game.bobbers.is_empty())
+                && caught(&c[0].1)
+                && caught(&c[1].1)
+        });
+    }
 }

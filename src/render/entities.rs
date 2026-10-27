@@ -237,6 +237,54 @@ pub fn add_crystal_beams(
     }
 }
 
+/// Adds each fishing bobber, a small picture turned to the camera, and
+/// the line from the rod's tip to it, sagging a little.
+pub fn add_bobbers(
+    mesh: &mut Mesh,
+    bobbers: &[crate::entity::bobber::Bobber],
+    uvs: &EffectUvs,
+    camera: &Camera,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+    let up = right.cross(camera.forward()).normalize_or_zero();
+    let eye = camera.position;
+    for b in bobbers {
+        let center = b.prev + (b.pos - b.prev) * alpha;
+        let (sky, block) = light_at(center);
+        let (r, u) = (right * 0.14, up * 0.14);
+        let c = center.as_vec3();
+        mesh.quad(
+            [c - r - u, c + r - u, c + r + u, c - r + u].map(|p| p.to_array()),
+            uvs.hook,
+            [[1.0; 3]; 4],
+            [[sky as f32, block as f32]; 4],
+        );
+        // The line: sixteen straight pieces along a drooping curve.
+        let from = b.tip.as_vec3();
+        let to = c;
+        let span = to - from;
+        let sag = (span.length() * 0.06).min(1.0);
+        let point = |t: f32| from + span * t - Vec3::Y * sag * 4.0 * t * (1.0 - t);
+        const PIECES: usize = 16;
+        for i in 0..PIECES {
+            let (a, z) = (
+                point(i as f32 / PIECES as f32),
+                point((i + 1) as f32 / PIECES as f32),
+            );
+            let dir = (z - a).normalize_or_zero();
+            let side = dir.cross(eye - (a + z) / 2.0).normalize_or_zero() * 0.008;
+            mesh.quad(
+                [a - side, a + side, z + side, z - side].map(|p| p.to_array()),
+                uvs.line,
+                [[1.0; 3]; 4],
+                [[sky as f32, block as f32]; 4],
+            );
+        }
+    }
+}
+
 /// Half the width of a crystal's beam, and how long one picture of it is.
 const BEAM_HALF: f32 = 0.35;
 const BEAM_SEGMENT: f32 = 2.0;
@@ -482,6 +530,9 @@ pub struct EffectUvs {
     pub dragon_fireball: [f32; 4],
     pub crystal_beam: [f32; 4],
     pub gateway_beam: [f32; 4],
+    /// The fishing bobber, and a dark picture for the line (M41).
+    pub hook: [f32; 4],
+    pub line: [f32; 4],
 }
 
 /// Vanilla's shadow picture.
@@ -571,6 +622,9 @@ pub fn add_shadows(
 pub const DRAGON_FIREBALL_TEXTURE: &str = "item/dragon_fireball";
 pub const CRYSTAL_BEAM_TEXTURE: &str = "entity/endercrystal/endercrystal_beam";
 pub const GATEWAY_BEAM_TEXTURE: &str = "entity/end_gateway_beam";
+/// The fishing bobber's picture, and black wool for its line.
+pub const HOOK_TEXTURE: &str = "entity/fishing/fishing_hook";
+pub const LINE_TEXTURE: &str = "block/black_wool";
 pub const END_TEXTURES: [&str; 3] = [
     DRAGON_FIREBALL_TEXTURE,
     CRYSTAL_BEAM_TEXTURE,

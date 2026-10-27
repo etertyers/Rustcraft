@@ -1693,6 +1693,14 @@ impl App {
                     game.tick_alpha(),
                 );
                 add_gateway_beams(&mut mesh, &game.gateways(), &self.effect_uvs, &view_camera);
+                crate::render::entities::add_bobbers(
+                    &mut mesh,
+                    &game.bobbers,
+                    &self.effect_uvs,
+                    &view_camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
                 if let Some(dragon) = &game.dragon {
                     crate::render::entities::add_death_beams(
                         &mut mesh,

@@ -222,6 +222,8 @@ impl Look {
         textures.extend((0..SWEEP_FRAMES).map(entities::sweep_texture));
         textures.extend((0..entities::ORB_ICONS).map(entities::orb_texture));
         textures.extend(entities::END_TEXTURES.map(str::to_owned));
+        textures.insert(entities::HOOK_TEXTURE.to_owned());
+        textures.insert(entities::LINE_TEXTURE.to_owned());
         let atlas = Atlas::build(&res, textures);
 
         let colors = BiomeColors::load(&res).unwrap_or_else(|err| {
@@ -247,6 +249,8 @@ impl Look {
             dragon_fireball: atlas.uv_or_missing(entities::DRAGON_FIREBALL_TEXTURE),
             crystal_beam: atlas.uv_or_missing(entities::CRYSTAL_BEAM_TEXTURE),
             gateway_beam: atlas.uv_or_missing(entities::GATEWAY_BEAM_TEXTURE),
+            hook: atlas.uv_or_missing(entities::HOOK_TEXTURE),
+            line: atlas.uv_or_missing(entities::LINE_TEXTURE),
         };
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);
