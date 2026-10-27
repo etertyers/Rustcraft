@@ -35,9 +35,31 @@ struct Table {
 /// aren't in the table).
 pub fn tabs() -> &'static [TabDef] {
     static TABS: LazyLock<Vec<TabDef>> = LazyLock::new(|| {
-        ron::from_str::<Table>(include_str!("../../assets/data/creative_tabs.ron"))
+        let mut tabs = ron::from_str::<Table>(include_str!("../../assets/data/creative_tabs.ron"))
             .expect("assets/data/creative_tabs.ron is valid")
-            .tabs
+            .tabs;
+        // A mod's tabs: the items of a tab of the same title go at the end
+        // of it, any other tab is added after the last.
+        for active in &crate::mods::active().active {
+            let Some(text) = &active.data.creative_tabs else {
+                continue;
+            };
+            match ron::from_str::<Table>(text) {
+                Ok(table) => {
+                    for tab in table.tabs {
+                        match tabs.iter_mut().find(|t| t.title == tab.title) {
+                            Some(own) => own.items.extend(tab.items),
+                            None => tabs.push(tab),
+                        }
+                    }
+                }
+                Err(err) => crate::mods::report_error(
+                    &active.manifest.id,
+                    format!("data/creative_tabs.ron: {err}"),
+                ),
+            }
+        }
+        tabs
     });
     &TABS
 }
@@ -189,6 +211,8 @@ mod tests {
         let missing: Vec<&str> = item::registry()
             .iter()
             .filter(|def| !listed.contains(&def.id))
+            // What a save's missing mods become is not for the player to get.
+            .filter(|def| def.name != "unknown_item")
             .map(|def| def.name.as_str())
             .collect();
         assert!(missing.is_empty(), "in no tab: {missing:?}");

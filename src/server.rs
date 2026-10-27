@@ -174,6 +174,11 @@ impl Server {
         }
         let Some(command) = line.strip_prefix('/') else {
             let name = self.game.player_at(index).name.clone();
+            self.game.mod_event(crate::mods::lua::Event::Chat {
+                player: index,
+                name: name.clone(),
+                message: line.to_owned(),
+            });
             self.broadcast(format!("<{name}> {line}"));
             return;
         };
@@ -199,6 +204,9 @@ impl Server {
     fn send_game_chat(&mut self) {
         for line in std::mem::take(&mut self.game.chat_out) {
             self.broadcast(line);
+        }
+        for (to, line) in std::mem::take(&mut self.game.chat_to) {
+            self.tell(to, line, false);
         }
     }
 
@@ -333,12 +341,22 @@ impl Server {
                 }
                 continue;
             };
-            let ClientMsg::Login { version, name } = msg else {
+            let ClientMsg::Login {
+                version,
+                name,
+                mods,
+            } = msg
+            else {
                 continue;
             };
             let refusal = if version != PROTOCOL_VERSION {
                 Some(format!(
                     "Incompatible version: the server runs protocol {PROTOCOL_VERSION}, you {version}"
+                ))
+            } else if let Some(lines) = self.mod_mismatch(&mods) {
+                Some(format!(
+                    "Your mods are not the host's:\n{}",
+                    lines.join("\n")
                 ))
             } else if !crate::options::valid_name(&name) {
                 Some("Names are 3 to 16 letters, digits or underscores".to_owned())
@@ -357,6 +375,17 @@ impl Server {
             self.join(pending.conn, name);
         }
         self.pending.extend(still);
+    }
+
+    /// What differs between a guest's mods and this server's, if
+    /// anything: the guest must have the same ones (not client-only).
+    fn mod_mismatch(&self, theirs: &[(String, String)]) -> Option<Vec<String>> {
+        let ours = crate::mods::active().required();
+        let mut lines = crate::mods::differences(&ours, theirs);
+        if lines.is_empty() {
+            lines.extend(crate::mods::order_difference(&ours, theirs));
+        }
+        (!lines.is_empty()).then_some(lines)
     }
 
     fn names(&self) -> impl Iterator<Item = &str> {
@@ -399,6 +428,9 @@ impl Server {
             skin: None,
         });
         self.announce(format!("{name} joined the game"));
+        let player = self.game.player_info(index);
+        self.game
+            .mod_event(crate::mods::lua::Event::PlayerJoin(player));
         // The newcomer sees everyone's skins.
         let index = self.remotes.len() - 1;
         for other in 0..index {
@@ -534,6 +566,9 @@ impl Server {
         if let Err(err) = self.game.with_player(index, |game| game.save_player()) {
             warn!("saving a leaving player: {err:#}");
         }
+        let info = self.game.player_info(index);
+        self.game
+            .mod_event(crate::mods::lua::Event::PlayerLeave(info));
         let player = self.game.others.remove(index - 1);
         info!("{} left", player.name);
         self.announce(format!("{} left the game", player.name));
@@ -930,6 +965,7 @@ mod tests {
         client_end.send(ClientMsg::Login {
             version: PROTOCOL_VERSION + 1,
             name: "Carol".to_owned(),
+            mods: Vec::new(),
         });
         server.advance(0.0);
         assert!(matches!(client_end.try_recv(), Some(ServerMsg::Refused(_))));
@@ -1002,5 +1038,117 @@ mod tests {
             clients[0].0.completions.as_deref(),
             Some(&["gamerule".to_owned()][..])
         );
+    }
+
+    /// How many of `name` player `inventory` holds (hotbar and main).
+    fn held(game: &Game, name: &str) -> u32 {
+        let id = crate::inventory::items::by_name(name).unwrap();
+        (0..crate::inventory::player::SLOTS)
+            .filter_map(|i| game.player.inventory.slot(i))
+            .filter(|stack| stack.id == id)
+            .map(|stack| u32::from(stack.count))
+            .sum()
+    }
+
+    #[test]
+    fn a_mods_command_event_and_block_play_out_the_same_for_every_client() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2
+                && c.iter().all(|(client, game)| {
+                    client.welcomed && block_at(game, IVec3::new(3, 63, 3)).is_some()
+                })
+        });
+        let ruby = crate::world::block::BlockState::of(blocks::by_name("ruby:ruby_block").unwrap());
+        let at = IVec3::new(3, 64, 3);
+        server.game.set_blocks(&[(at, ruby)]);
+        let is_ruby = move |game: &Game| block_at(game, at) == Some(ruby);
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(_, game)| is_ruby(game))
+        });
+        // /rubies is the Ruby mod's command, run on the server.
+        clients[0].0.send(ClientMsg::Chat("/rubies 3".to_owned()));
+        run_until(&mut server, &mut clients, |s, c| {
+            held(&s.game, "ruby:ruby") == 3 && held(&c[0].1, "ruby:ruby") == 3
+        });
+        assert_eq!(held(&clients[1].1, "ruby:ruby"), 0, "only Alice got them");
+        // A bad count comes back as the command's error.
+        clients[0].0.send(ClientMsg::Chat("/rubies 99".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            heard(&c[0].0, "§cThe count must be from 1 to 64")
+        });
+        // Bob has no permission for the command without cheats.
+        clients[1].0.send(ClientMsg::Chat("/rubies".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            heard(&c[1].0, "§cYou do not have permission to use this command")
+        });
+        // Alice breaks the block of ruby: the mod's block_break handler
+        // writes to her chat and hands her gold, and both clients see the
+        // block gone.
+        server
+            .game
+            .with_player(0, |game| game.fly_to(DVec3::new(3.5, 66.0, 3.5)));
+        clients[0].1.player.camera.pitch = -std::f32::consts::FRAC_PI_2;
+        clients[0].0.send(ClientMsg::Action {
+            action: Action::Attack,
+            pressed: true,
+            repeat: false,
+            grabbed: true,
+        });
+        run_until(&mut server, &mut clients, |s, c| {
+            block_at(&s.game, at).is_some_and(|b| b.is_air())
+                && c.iter()
+                    .all(|(_, game)| block_at(game, at).is_some_and(|b| b.is_air()))
+                && held(&s.game, "gold_nugget") == 3
+                && held(&c[0].1, "gold_nugget") == 3
+                && heard(&c[0].0, "A block of ruby was broken at 3, 64, 3")
+        });
+        assert!(
+            !clients[1]
+                .0
+                .chat
+                .iter()
+                .any(|(l, _)| l.contains("block of ruby")),
+            "the message was for Alice only"
+        );
+    }
+
+    #[test]
+    fn a_guest_with_other_mods_is_refused_and_told_which_differ() {
+        let (mut server, _clients) = world_with(&[]);
+        let try_login = |server: &mut Server, mods: Vec<(String, String)>| {
+            let (server_end, mut client_end) = local_pair();
+            server.connect(Box::new(server_end));
+            client_end.send(ClientMsg::Login {
+                version: PROTOCOL_VERSION,
+                name: "Carol".to_owned(),
+                mods,
+            });
+            server.advance(0.0);
+            client_end.try_recv()
+        };
+        // None at all: the host's required mods are missing.
+        let Some(ServerMsg::Refused(why)) = try_login(&mut server, Vec::new()) else {
+            panic!("a guest with no mods should be refused");
+        };
+        assert!(why.contains("missing: ruby 1.0.0"), "{why}");
+        assert!(
+            !why.contains("fullbright"),
+            "client-only mods needn't match: {why}"
+        );
+        // The wrong version of the right mod.
+        let Some(ServerMsg::Refused(why)) =
+            try_login(&mut server, vec![("ruby".to_owned(), "0.9".to_owned())])
+        else {
+            panic!("the wrong version should be refused");
+        };
+        assert!(why.contains("ruby: host has 1.0.0, you have 0.9"), "{why}");
+        // The same mods get in.
+        let required = crate::mods::active().required();
+        assert!(matches!(
+            try_login(&mut server, required),
+            Some(ServerMsg::Welcome { .. })
+        ));
     }
 }

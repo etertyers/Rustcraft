@@ -78,7 +78,7 @@ impl Game {
         let Some(item) = self.items.item(stack.id) else {
             return false;
         };
-        if stack.id == items::SHIELD {
+        if stack.id == items::SHIELD || (hand == Hand::Main && item.scripted) {
             return true;
         }
         if hand == Hand::Main && (item.bucket.is_some() || item.shoots.is_some()) {
@@ -133,7 +133,12 @@ impl Game {
         {
             return true;
         }
-        hit.is_some_and(|hit| self.activate(hit.block, true))
+        if hit.is_some_and(|hit| self.activate(hit.block, true)) {
+            return true;
+        }
+        // A mod item's `on_use`.
+        let held = self.player.inventory.hand_stack(Hand::Main).map(|s| s.id);
+        held.is_some_and(|id| self.mod_use_item(id, hit.map(|h| h.block)))
     }
 
     /// The block being mined and how far along it is (0–1), for the crack.
@@ -481,6 +486,7 @@ impl Game {
     /// Removes the block at `cell` and whatever it held up, dropping items
     /// and wearing the tool as the game mode says.
     pub(super) fn break_block(&mut self, cell: IVec3) {
+        let broken_state = self.chunks.world().block(cell.x, cell.y, cell.z);
         let mined = self
             .chunks
             .world()
@@ -584,6 +590,18 @@ impl Game {
             self.wear_selected(wear);
         }
         self.edit(&edits);
+        if let Some(block) = broken_state {
+            self.mod_block_by_player(crate::mods::lua::BlockEvent::Break, block, cell);
+            let (player, name) = (
+                self.turn,
+                crate::world::block::qualified(&block.def().name).into_owned(),
+            );
+            self.mod_event(crate::mods::lua::Event::BlockBreak {
+                player,
+                at: cell,
+                block: name,
+            });
+        }
         if let Some(name) = mined {
             self.note(crate::advancements::Event::Mined(name));
         }
@@ -941,6 +959,9 @@ impl Game {
         if self.player.keys.sneak && self.player.inventory.selected_stack().is_some() {
             return false;
         }
+        if pressed && self.mod_use_block(cell) {
+            return true;
+        }
         let Some(action) = self
             .chunks
             .world()
@@ -1037,6 +1058,18 @@ impl Game {
             self.block_sound(&block.def().name, "place", at);
         }
         self.note(crate::advancements::Event::Placed(block.def().name.clone()));
+        if let Some(&(at, placed)) = edits.iter().find(|(_, state)| state.id() == block.id()) {
+            self.mod_block_by_player(crate::mods::lua::BlockEvent::Place, placed, at);
+            let (player, name) = (
+                self.turn,
+                crate::world::block::qualified(&block.def().name).into_owned(),
+            );
+            self.mod_event(crate::mods::lua::Event::BlockPlace {
+                player,
+                at,
+                block: name,
+            });
+        }
         // A shulker box put down keeps what the item held.
         if !stack.contents().is_empty()
             && let Some(&(at, _)) = edits.iter().find(|(_, state)| state.id() == block.id())

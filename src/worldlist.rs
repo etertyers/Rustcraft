@@ -32,6 +32,9 @@ pub struct Meta {
     pub game_mode: GameMode,
     /// Unix seconds.
     pub last_played: u64,
+    /// The (id, version) of the mods it was last played with (M39).
+    #[serde(default)]
+    pub mods: Vec<(String, String)>,
 }
 
 /// One row of the list.
@@ -108,6 +111,7 @@ fn scan_level_head(text: &str) -> Option<Meta> {
         name: name?,
         game_mode: mode?,
         last_played: played?,
+        mods: Vec::new(),
     })
 }
 

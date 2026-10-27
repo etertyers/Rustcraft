@@ -64,7 +64,9 @@ impl Game {
         }
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
         self.swapped += 1;
+        let before = std::mem::replace(&mut self.turn, index);
         let result = self.hearing(f);
+        self.turn = before;
         self.swapped -= 1;
         std::mem::swap(&mut self.player, &mut self.others[index - 1]);
         result

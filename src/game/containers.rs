@@ -555,13 +555,15 @@ impl Game {
                     }
                     self.player.inventory = trial;
                     self.use_up_grid();
+                    self.mod_crafted(&result);
                 }
             }
             SlotRef::Result => {
                 if let Some(result) = self.crafting_result()
-                    && slots::take_onto_cursor(result, &mut self.player.cursor, &items)
+                    && slots::take_onto_cursor(result.clone(), &mut self.player.cursor, &items)
                 {
                     self.use_up_grid();
+                    self.mod_crafted(&result);
                 }
             }
             SlotRef::Block(index) if click == Click::Shift => {

@@ -241,6 +241,7 @@ mod tests {
         client.send(ClientMsg::Login {
             version: PROTOCOL_VERSION,
             name: "Alice".to_owned(),
+            mods: Vec::new(),
         });
         let mut chunk = crate::world::chunk::Chunk::new(crate::world::chunk::ChunkPos::new(3, -2));
         chunk.set(

@@ -46,6 +46,10 @@ enum Screen {
     SelectWorld,
     CreateWorld,
     Multiplayer(Multiplayer),
+    Mods(super::mods::ModsScreen),
+    /// A world played with mods that are missing: what is missing, until
+    /// the player says go on.
+    ConfirmMods(WorldDir, Vec<String>),
 }
 
 /// The Multiplayer screen: what the network announces, and an address.
@@ -134,6 +138,13 @@ impl Menu {
                         Screen::SelectWorld => self.select_world(ui),
                         Screen::CreateWorld => self.create_world(ui),
                         Screen::Multiplayer(_) => self.multiplayer(ui),
+                        Screen::ConfirmMods(..) => self.confirm_mods(ui),
+                        Screen::Mods(mods) => {
+                            if mods.show(ui) {
+                                self.screen = Screen::Title;
+                            }
+                            None
+                        }
                     };
                     if let Some(error) = &self.error {
                         ui.add_space(12.0);
@@ -168,7 +179,10 @@ impl Menu {
             }
             Screen::ResourcePacks(_, back) => *back,
             Screen::CreateWorld => Screen::SelectWorld,
-            Screen::Title | Screen::SelectWorld | Screen::Multiplayer(_) => Screen::Title,
+            Screen::ConfirmMods(..) => Screen::SelectWorld,
+            Screen::Title | Screen::SelectWorld | Screen::Multiplayer(_) | Screen::Mods(_) => {
+                Screen::Title
+            }
         };
     }
 
@@ -225,6 +239,13 @@ impl Menu {
             .clicked_with_sound()
         {
             self.open_packs(options, Screen::Title);
+        }
+        ui.add_space(8.0);
+        if ui
+            .add_sized(BUTTON, Button::new("Mods..."))
+            .clicked_with_sound()
+        {
+            self.screen = Screen::Mods(super::mods::ModsScreen::new());
         }
         ui.add_space(8.0);
         ui.add_sized(BUTTON, Button::new("Quit Game"))
@@ -330,7 +351,55 @@ impl Menu {
         {
             self.screen = Screen::Title;
         }
-        Some(MenuAction::Open(play?))
+        let play = play?;
+        // A world played with mods this game doesn't have: ask first.
+        let wanted = self
+            .worlds
+            .iter()
+            .find(|row| row.info.dir.path() == play.path())
+            .map(|row| row.info.meta.mods.clone())
+            .unwrap_or_default();
+        let missing = crate::mods::missing_from(&wanted, &crate::mods::active().all_versions());
+        if missing.is_empty() {
+            return Some(MenuAction::Open(play));
+        }
+        self.screen = Screen::ConfirmMods(play, missing);
+        None
+    }
+
+    /// "This world needs mods you don't have": play anyway or go back.
+    fn confirm_mods(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
+        let Screen::ConfirmMods(dir, missing) = &self.screen else {
+            return None;
+        };
+        heading(ui, "Mods are missing");
+        ui.label("This world was last played with mods you don't have or that changed:");
+        ui.add_space(8.0);
+        for line in missing {
+            ui.label(RichText::new(line).color(Color32::from_rgb(0xff, 0x80, 0x80)));
+        }
+        ui.add_space(8.0);
+        ui.label(RichText::new("Their blocks will show as unknown blocks. They are kept in the world, not deleted,").color(GRAY));
+        ui.label(RichText::new("and come back when the mods are installed again.").color(GRAY));
+        ui.add_space(16.0);
+        let dir = dir.clone();
+        let mut action = None;
+        ui.horizontal(|ui| {
+            ui.add_space((ui.available_width() - 2.0 * BUTTON[0] - 8.0).max(0.0) / 2.0);
+            if ui
+                .add(Button::new("Play Anyway").min_size(BUTTON.into()))
+                .clicked_with_sound()
+            {
+                action = Some(MenuAction::Open(dir));
+            }
+            if ui
+                .add(Button::new("Back").min_size(BUTTON.into()))
+                .clicked_with_sound()
+            {
+                self.screen = Screen::SelectWorld;
+            }
+        });
+        action
     }
 
     fn create_world(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {

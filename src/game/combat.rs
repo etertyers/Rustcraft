@@ -334,6 +334,17 @@ impl Game {
         let facing = DVec3::new(yaw.sin(), 0.0, -yaw.cos());
         let target = self.mobs[index].body.aabb();
         let hit = self.mobs[index].hurt(blow.damage, Some(from), DamageSource::Mob);
+        if hit {
+            let entity = format!(
+                "minecraft:{}",
+                self.mob_defs.get(self.mobs[index].kind).name
+            );
+            self.mod_event(crate::mods::lua::Event::EntityDamage {
+                entity,
+                amount: blow.damage,
+                source: "player".into(),
+            });
+        }
         self.mobs[index].hit_by_player();
         self.rally(index);
         let here = self.mobs[index].feet();

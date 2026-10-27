@@ -408,6 +408,29 @@ impl MobRegistry {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut mobs: Vec<MobDef> =
             ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        // A mod's `data/mob_drops.ron`: extra drops by mob name.
+        for active in &crate::mods::active().active {
+            let Some(text) = &active.data.mob_drops else {
+                continue;
+            };
+            match ron::from_str::<std::collections::BTreeMap<String, Vec<MobDrop>>>(text) {
+                Ok(extra) => {
+                    for (name, drops) in extra {
+                        match mobs.iter_mut().find(|mob| mob.name == name) {
+                            Some(mob) => mob.drops.extend(drops),
+                            None => crate::mods::report_error(
+                                &active.manifest.id,
+                                format!("data/mob_drops.ron: no mob named {name}"),
+                            ),
+                        }
+                    }
+                }
+                Err(err) => crate::mods::report_error(
+                    &active.manifest.id,
+                    format!("data/mob_drops.ron: {err}"),
+                ),
+            }
+        }
         for mob in &mut mobs {
             for layer in &mut mob.layers {
                 if let Some(grow) = layer.like_body {

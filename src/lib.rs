@@ -19,6 +19,7 @@ pub mod inventory;
 pub mod lantest;
 pub mod level;
 pub mod look;
+pub mod mods;
 pub mod net;
 pub mod options;
 pub mod pack;
