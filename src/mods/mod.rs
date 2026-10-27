@@ -576,6 +576,11 @@ impl ModSet {
             true
         }
         let id = self.active[index].manifest.id.clone();
+        if self.active[index].manifest.client_only
+            && (self.active[index].data.blocks.is_some() || self.active[index].data.items.is_some())
+        {
+            bail!("a client-only mod can't add blocks or items (every player needs the same ones)");
+        }
         let own = |name: &str| {
             name.strip_prefix(&format!("{id}:"))
                 .is_some_and(|rest| !rest.is_empty())
@@ -712,6 +717,42 @@ impl ModSet {
     }
 }
 
+/// `Some` text if the mods both have are not loaded in the same order
+/// (block and item IDs follow it).
+pub fn order_difference(theirs: &[(String, String)], ours: &[(String, String)]) -> Option<String> {
+    let ids = |list: &[(String, String)]| list.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+    let (theirs, ours) = (ids(theirs), ids(ours));
+    let common = |list: &[String], other: &[String]| -> Vec<String> {
+        list.iter()
+            .filter(|id| other.contains(id))
+            .cloned()
+            .collect()
+    };
+    let (a, b) = (common(&theirs, &ours), common(&ours, &theirs));
+    (a != b).then(|| {
+        format!(
+            "load order: the host has {}, you have {}",
+            a.join(", "),
+            b.join(", ")
+        )
+    })
+}
+
+/// The lines for the mods in `wanted` (a world's) that `have` lacks or has
+/// at another version.
+pub fn missing_from(wanted: &[(String, String)], have: &[(String, String)]) -> Vec<String> {
+    wanted
+        .iter()
+        .filter_map(|(id, version)| match have.iter().find(|(h, _)| h == id) {
+            None => Some(format!("{id} {version} is not installed")),
+            Some((_, mine)) if mine != version => {
+                Some(format!("{id}: the world used {version}, you have {mine}"))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// A mod name for the Mods screen: `Name 1.0`.
 pub fn title(manifest: &Manifest) -> String {
     format!("{} {}", manifest.name, manifest.version)
@@ -837,5 +878,125 @@ mod tests {
         );
         let ids: Vec<_> = set.active.iter().map(|m| m.manifest.id.as_str()).collect();
         assert_eq!(ids, ["c", "b"]);
+    }
+
+    // The tests below run with the bundled mods and the Ruby example.
+
+    #[test]
+    fn the_ruby_mod_adds_blocks_items_recipes_tabs_drops_and_loot() {
+        use crate::{
+            inventory::{crafting::Recipes, creative, item, items, stack::ItemStack},
+            world::{block, blocks},
+        };
+        let ruby_block = blocks::by_name("ruby:ruby_block").expect("the block");
+        assert!(ruby_block.index() >= blocks::COUNT);
+        assert_eq!(ruby_block.name(), "ruby:ruby_block");
+        let state = block::BlockState::parse("ruby:ruby_block").unwrap();
+        assert_eq!(state.to_string(), "ruby:ruby_block");
+        assert_eq!(block::registry().display_name(state), "Block of Ruby");
+        // Its item places it, and a Lua-registered item exists too.
+        let ruby = items::by_name("ruby:ruby").expect("the item");
+        assert_eq!(
+            item::registry().of_block(ruby_block),
+            items::by_name("ruby:ruby_block")
+        );
+        let map = item::registry()
+            .get(items::by_name("ruby:treasure_map").unwrap())
+            .unwrap();
+        assert!(map.scripted && map.max_stack == 1);
+        // Nine rubies craft a block, and back.
+        let recipes = Recipes::load(&crate::assets::dir().join("data/recipes.ron")).unwrap();
+        let grid = vec![Some(ItemStack::new(ruby, 1)); 9];
+        assert_eq!(
+            recipes.craft(&grid, 3),
+            Some(ItemStack::new(
+                items::by_name("ruby:ruby_block").unwrap(),
+                1
+            ))
+        );
+        // Creative tabs, mob drops and loot.
+        assert!(creative::tabs().iter().any(|t| t.items.contains(&ruby)));
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
+        let (_, zombie) = mobs.iter().find(|(_, m)| m.name == "zombie").unwrap();
+        assert!(zombie.drops.iter().any(|d| d.item == ruby));
+        assert!(crate::world::structure::loot::table("ruby:treasure").is_some());
+        let dungeon = crate::world::structure::loot::table("simple_dungeon").unwrap();
+        assert!(
+            dungeon
+                .iter()
+                .flat_map(|p| &p.entries)
+                .any(|e| e.item == "ruby:ruby")
+        );
+    }
+
+    #[test]
+    fn mod_blocks_survive_a_save_and_missing_mods_leave_unknown_blocks_that_save_back() {
+        use crate::world::{
+            block::BlockState,
+            blocks,
+            chunk::{Chunk, ChunkPos},
+            save::{decode_chunk, encode_chunk},
+        };
+        let ruby = BlockState::of(blocks::by_name("ruby:ruby_block").unwrap());
+        let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+        chunk.set(1, 70, 2, ruby);
+        chunk.set(4, 70, 4, BlockState::of(blocks::STONE));
+        let bytes = encode_chunk(&chunk);
+        assert_eq!(decode_chunk(&bytes).unwrap().get(1, 70, 2), ruby);
+        // The same save read without the mod: rewrite the name to one no
+        // mod has (the same length keeps the file valid).
+        let mut raw = lz4_flex::decompress_size_prepended(&bytes).unwrap();
+        let from = b"ruby:ruby_block";
+        let at = raw
+            .windows(from.len())
+            .position(|w| w == from)
+            .expect("the name is saved");
+        raw[at..at + 4].copy_from_slice(b"gone");
+        let missing = lz4_flex::compress_prepend_size(&raw);
+        let loaded = decode_chunk(&missing).unwrap();
+        assert!(loaded.get(1, 70, 2).is(blocks::UNKNOWN_BLOCK));
+        assert_eq!(loaded.get(4, 70, 4), BlockState::of(blocks::STONE));
+        // Saving again writes the real name back, so nothing is lost.
+        let again = lz4_flex::decompress_size_prepended(&encode_chunk(&loaded)).unwrap();
+        assert!(
+            again
+                .windows(b"gone:ruby_block".len())
+                .any(|w| w == b"gone:ruby_block")
+        );
+        assert!(
+            !again
+                .windows(b"unknown_block".len())
+                .any(|w| w == b"unknown_block")
+        );
+        // Breaking the unknown block forgets it.
+        let mut edited = loaded;
+        edited.set(1, 70, 2, BlockState::AIR);
+        let saved = lz4_flex::decompress_size_prepended(&encode_chunk(&edited)).unwrap();
+        assert!(!saved.windows(b"gone:".len()).any(|w| w == b"gone:"));
+    }
+
+    #[test]
+    fn fullbright_is_bundled_and_client_only_and_asks_for_g() {
+        let set = active();
+        let fullbright = set
+            .active
+            .iter()
+            .find(|m| m.manifest.id == "fullbright")
+            .expect("bundled");
+        assert!(fullbright.manifest.client_only);
+        assert!(!set.required().iter().any(|(id, _)| id == "fullbright"));
+        let key = set
+            .keys
+            .iter()
+            .find(|k| k.id == "fullbright:toggle")
+            .unwrap();
+        assert_eq!(key.default, "G");
+        assert_eq!(
+            crate::bindings::Action::Mod1.default_input(),
+            crate::bindings::key_from_label("G")
+        );
+        assert_eq!(crate::bindings::Action::Mod1.name(), "Toggle Fullbright");
     }
 }

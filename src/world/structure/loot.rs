@@ -750,8 +750,8 @@ mod tests {
         for _ in 0..50 {
             let slots = fill("simple_dungeon", &mut rng);
             let stacks: Vec<_> = slots.iter().flatten().collect();
-            // 1–3 + 1–4 + 3 rolls.
-            assert!((5..=10).contains(&stacks.len()), "{}", stacks.len());
+            // 1–3 + 1–4 + 3 rolls, and the Ruby mod's pool of 0–1.
+            assert!((5..=11).contains(&stacks.len()), "{}", stacks.len());
         }
     }
 

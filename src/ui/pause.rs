@@ -5,6 +5,7 @@
 use egui::{Align2, Button, Color32, RichText};
 
 use super::ClickSound;
+use super::mods::ModsScreen;
 use super::options::{OptionsAction, OptionsScreen};
 use super::packs::PackScreen;
 use crate::{level::Difficulty, options::Options};
@@ -31,6 +32,7 @@ pub struct PauseMenu {
     pub options: Option<OptionsScreen>,
     pub packs: Option<PackScreen>,
     pub lan: Option<LanScreen>,
+    pub mods: Option<ModsScreen>,
     /// Whether this world can be opened to LAN (the host's, not yet open),
     /// set by the caller.
     pub can_open_lan: bool,
@@ -50,7 +52,7 @@ impl PauseMenu {
     /// Escape: from Resource Packs back to Options without applying, up
     /// the Options pages to the menu, from the menu back to the game.
     pub fn back(&mut self) -> Option<PauseAction> {
-        if self.packs.take().is_some() || self.lan.take().is_some() {
+        if self.packs.take().is_some() || self.lan.take().is_some() || self.mods.take().is_some() {
             None
         } else if let Some(options) = self.options.as_mut() {
             if options.back() {
@@ -102,6 +104,12 @@ impl PauseMenu {
                         }
                         return;
                     }
+                    if let Some(mods) = self.mods.as_mut() {
+                        if mods.show(ui) {
+                            self.mods = None;
+                        }
+                        return;
+                    }
                     if let Some(lan) = self.lan.as_mut() {
                         match lan_screen(ui, lan) {
                             Some(LanChoice::Start(open)) => {
@@ -138,6 +146,13 @@ impl PauseMenu {
                             cheats: self.world_cheats,
                             port: String::new(),
                         });
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized(BUTTON, Button::new("Mods..."))
+                        .clicked_with_sound()
+                    {
+                        self.mods = Some(ModsScreen::new());
                     }
                     ui.add_space(8.0);
                     if ui

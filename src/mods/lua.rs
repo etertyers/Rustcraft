@@ -315,6 +315,21 @@ pub fn register(set: &mut ModSet) {
     set.commands = std::mem::take(&mut shared.commands_defined);
     set.keys = std::mem::take(&mut shared.keys_defined);
     drop(shared);
+    let client_only = |id: &str| {
+        set.active
+            .iter()
+            .any(|m| m.manifest.id == id && m.manifest.client_only)
+    };
+    let (blocks, items): (Vec<_>, Vec<_>) = (
+        blocks
+            .into_iter()
+            .filter(|b| !client_only(&b.mod_id))
+            .collect(),
+        items
+            .into_iter()
+            .filter(|i| !client_only(&i.mod_id))
+            .collect(),
+    );
     for block in blocks {
         let name = block.def["name"].as_str().unwrap_or_default().to_owned();
         let has_item = block

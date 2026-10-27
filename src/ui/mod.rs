@@ -9,6 +9,7 @@ pub mod geometry;
 pub mod glint;
 pub mod gui;
 pub mod menu;
+pub mod mods;
 pub mod options;
 pub mod packs;
 pub mod pause;

@@ -1597,6 +1597,9 @@ impl App {
                         None => (run.shot.stage)(game),
                     }
                     run.staged = Some(0);
+                    if run.shot.name == "m39-fullbright" {
+                        self.client_mods.key_pressed("fullbright:toggle");
+                    }
                 }
                 Some(frames) if frames >= SHOT_SETTLE_FRAMES && game.chunks.settled(center) => {
                     renderer.capture_next_frame(run.out.clone());
