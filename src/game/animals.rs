@@ -2,6 +2,7 @@
 //! laying eggs and drifting down, sheep regrowing wool, taming wolves and
 //! cats, telling them to sit, and saddling and riding horses.
 
+use crate::config::farming as cfg;
 use glam::DVec3;
 
 use super::{Game, mob_acts::WOOL};
@@ -30,11 +31,8 @@ const SEAT_DROP: f64 = 0.2;
 /// (modern's temper growth), and bucks in the meantime.
 const TAME_RIDE_TICKS: u32 = 20;
 
-/// Ticks an animal stays in love after it's fed (modern: 600).
-const LOVE_TICKS: u32 = 600;
-
-/// What each animal is fed to breed it.
-const BREEDING_FOOD: [(&str, &[&str]); 4] = [
+/// What each animal is fed to breed it (vanilla's foods).
+const BREEDING_FOOD: [(&str, &[&str]); 9] = [
     ("cow", &["wheat"]),
     ("sheep", &["wheat"]),
     ("pig", &["carrot", "potato", "beetroot"]),
@@ -47,10 +45,56 @@ const BREEDING_FOOD: [(&str, &[&str]); 4] = [
             "pumpkin_seeds",
         ],
     ),
+    ("rabbit", &["dandelion", "carrot", "golden_carrot"]),
+    (
+        "wolf",
+        &[
+            "beef",
+            "porkchop",
+            "chicken",
+            "mutton",
+            "rabbit",
+            "cooked_beef",
+            "cooked_porkchop",
+            "cooked_chicken",
+            "cooked_mutton",
+            "cooked_rabbit",
+            "rotten_flesh",
+        ],
+    ),
+    ("cat", &["cod", "salmon"]),
+    ("horse", &["golden_apple", "golden_carrot"]),
+    (
+        "bee",
+        &[
+            "dandelion",
+            "poppy",
+            "blue_orchid",
+            "allium",
+            "azure_bluet",
+            "red_tulip",
+            "orange_tulip",
+            "white_tulip",
+            "pink_tulip",
+            "oxeye_daisy",
+            "cornflower",
+            "lily_of_the_valley",
+            "sunflower",
+            "lilac",
+            "rose_bush",
+            "peony",
+        ],
+    ),
 ];
+
+/// The fox's food, apart: a tuple array with ten rows would hold it too.
+const FOX_FOOD: &str = "sweet_berries";
 
 /// Whether `item` is the breeding food of the mob called `mob`.
 fn is_breeding_food(mob: &str, item: ItemId) -> bool {
+    if mob == "fox" {
+        return items::by_name(FOX_FOOD) == Some(item);
+    }
     BREEDING_FOOD
         .iter()
         .filter(|(name, _)| *name == mob)
@@ -86,6 +130,7 @@ pub fn dye_color(item: ItemId) -> Option<u8> {
 impl Game {
     /// One tick of the things animals do on their own.
     pub(super) fn tick_animals(&mut self) {
+        self.mate_animals();
         let defs = self.mob_defs.clone();
         let mut laid = Vec::new();
         let mut regrown = Vec::new();
@@ -95,6 +140,10 @@ impl Game {
             }
             let def = defs.get(mob.kind);
             mob.data.love = mob.data.love.saturating_sub(1);
+            mob.data.breed_cooldown = mob.data.breed_cooldown.saturating_sub(1);
+            if mob.data.age < 0 {
+                mob.data.age += 1;
+            }
             match def.name.as_str() {
                 "chicken" => {
                     if !mob.body.on_ground && mob.body.velocity.y < 0.0 {
@@ -153,6 +202,93 @@ impl Game {
 
     /// Right-click on mob `index`. Returns whether something happened (so
     /// a block behind it isn't also used).
+    /// Animals in love walk to a partner and make a baby; animals follow
+    /// a player holding their food.
+    fn mate_animals(&mut self) {
+        let defs = self.mob_defs.clone();
+        let players: Vec<(DVec3, Option<ItemId>)> = (0..self.player_count())
+            .filter(|&i| self.player_at(i).dimension == self.dimension)
+            .map(|i| {
+                let p = self.player_at(i);
+                (self.feet_of(i), p.inventory.selected_stack().map(|s| s.id))
+            })
+            .collect();
+        let mut pairs = Vec::new();
+        for i in 0..self.mobs.len() {
+            let (kind, feet, love, adult, ready) = {
+                let m = &self.mobs[i];
+                (
+                    m.kind,
+                    m.feet(),
+                    m.data.love,
+                    m.data.age >= 0,
+                    m.data.breed_cooldown == 0,
+                )
+            };
+            if self.mobs[i].is_dead() || defs.get(kind).name == "villager" {
+                continue;
+            }
+            let name = defs.get(kind).name.as_str();
+            let mut toward = None;
+            if love > 0 && adult && ready {
+                let partner = (0..self.mobs.len())
+                    .filter(|&j| j != i)
+                    .filter(|&j| {
+                        let o = &self.mobs[j];
+                        o.kind == kind && o.data.love > 0 && o.data.age >= 0 && !o.is_dead()
+                    })
+                    .map(|j| (j, self.mobs[j].feet()))
+                    .filter(|(_, f)| f.distance(feet) <= cfg::MATE_RANGE)
+                    .min_by(|a, b| a.1.distance(feet).total_cmp(&b.1.distance(feet)));
+                if let Some((j, there)) = partner {
+                    if there.distance(feet) < 1.5 {
+                        if i < j {
+                            pairs.push((i, j));
+                        }
+                    } else {
+                        toward = Some(there);
+                    }
+                }
+            }
+            if toward.is_none() {
+                toward = players
+                    .iter()
+                    .filter(|(_, held)| held.is_some_and(|h| is_breeding_food(name, h)))
+                    .map(|(p, _)| *p)
+                    .filter(|p| p.distance(feet) < cfg::MATE_RANGE && p.distance(feet) > 2.0)
+                    .min_by(|a, b| a.distance(feet).total_cmp(&b.distance(feet)));
+            }
+            if let Some(there) = toward {
+                let d = (there - feet).with_y(0.0).normalize_or_zero();
+                let mob = &mut self.mobs[i];
+                mob.body.velocity.x += d.x * 0.02;
+                mob.body.velocity.z += d.z * 0.02;
+                mob.yaw = d.x.atan2(-d.z) as f32;
+            }
+        }
+        for (a, b) in pairs {
+            self.make_baby(a, b);
+        }
+    }
+
+    /// The pair's baby, their cooldown and a little experience.
+    fn make_baby(&mut self, a: usize, b: usize) {
+        let name = self.mob_defs.get(self.mobs[a].kind).name.clone();
+        let (fa, fb) = (self.mobs[a].feet(), self.mobs[b].feet());
+        let mid = (fa + fb) / 2.0;
+        for i in [a, b] {
+            self.mobs[i].data.love = 0;
+            self.mobs[i].data.breed_cooldown = cfg::BREED_COOLDOWN;
+        }
+        let variant = self.mobs[a].data.variant;
+        if let Some(baby) = self.summon(&name, mid, 0.0) {
+            baby.data.age = -cfg::BABY_TICKS;
+            baby.data.variant = variant;
+        }
+        let points = 1 + self.rng.below(7);
+        self.spawn_xp(points, mid);
+    }
+
     pub(super) fn use_mob(&mut self, index: usize) -> bool {
         let Some(mob) = self.mobs.get(index) else {
             return false;
@@ -164,11 +300,20 @@ impl Game {
         let held = self.held().cloned();
         let survival = self.player.mode.uses_up_items();
         // Breeding food goes to the animal, not into the player's mouth.
+        // (A wolf has to be tamed first.)
         if let Some(stack) = &held
             && is_breeding_food(&name, stack.id)
-            && self.mobs[index].data.love == 0
+            && (name != "wolf" || self.mobs[index].data.tamed)
         {
-            self.mobs[index].data.love = LOVE_TICKS;
+            let data = &mut self.mobs[index].data;
+            if data.age < 0 {
+                // A baby grows up sooner: a tenth of what is left off.
+                data.age += (-data.age as f32 * cfg::FEED_SPEEDUP) as i32;
+            } else if data.love == 0 && data.breed_cooldown == 0 {
+                data.love = cfg::LOVE_TICKS;
+            } else {
+                return false;
+            }
             if survival {
                 self.player.inventory.take(self.held_slot(), 1);
             }

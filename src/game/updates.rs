@@ -108,7 +108,9 @@ impl Game {
         let Some(support) = world.block(changed.x, changed.y, changed.z) else {
             return;
         };
-        if interaction::holds(def.shape, support) {
+        if interaction::holds(def.shape, support)
+            && def.soil.is_none_or(|soil| soil.allows(support))
+        {
             return;
         }
         let rng = &mut self.rng;

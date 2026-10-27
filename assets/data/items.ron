@@ -125,7 +125,7 @@
     (name: "ink_sac", texture: "ink_sac"),
     (name: "red_dye", texture: "red_dye"),
     (name: "green_dye", texture: "green_dye"),
-    (name: "cocoa_beans", texture: "cocoa_beans"),
+    (name: "cocoa_beans", texture: "cocoa_beans", places: "cocoa"),
     (name: "lapis_lazuli", texture: "lapis_lazuli"),
     (name: "purple_dye", texture: "purple_dye"),
     (name: "cyan_dye", texture: "cyan_dye"),
@@ -220,7 +220,7 @@
     // M26: thrown potions, and brewing ingredients that had no item yet.
     // A potion's kind is its stack's damage (see inventory::potion).
     (name: "splash_potion", texture: "splash_potion", max_stack: 1),
-    (name: "carrot", texture: "carrot", food: (hunger: 3, saturation: 0.6)),
+    (name: "carrot", texture: "carrot", food: (hunger: 3, saturation: 0.6), places: "carrots"),
     (name: "golden_carrot", texture: "golden_carrot", food: (hunger: 6, saturation: 1.2)),
     (name: "pufferfish", texture: "pufferfish", food: (hunger: 1, saturation: 0.1)),
     // M28
@@ -229,6 +229,11 @@
     (name: "chorus_fruit", texture: "chorus_fruit", food: (hunger: 4, saturation: 0.3, always_edible: true)),
     (name: "popped_chorus_fruit", texture: "popped_chorus_fruit"),
     (name: "firework_rocket", texture: "firework_rocket"),
+    (name: "potato", texture: "potato", food: (hunger: 1, saturation: 0.3), places: "potatoes"),
+    (name: "poisonous_potato", texture: "poisonous_potato", food: (hunger: 2, saturation: 0.3)),
+    (name: "beetroot", texture: "beetroot", food: (hunger: 1, saturation: 1.2)),
+    (name: "beetroot_seeds", texture: "beetroot_seeds", places: "beetroots"),
+    (name: "sweet_berries", texture: "sweet_berries", food: (hunger: 2, saturation: 0.1), places: "sweet_berry_bush"),
     // What an item of a mod that isn't installed reads as in a loaded save (M39).
     (name: "unknown_item", texture: "knowledge_book"),
 ]

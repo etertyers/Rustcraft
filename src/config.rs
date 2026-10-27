@@ -233,3 +233,25 @@ pub mod spawning {
     pub const SNOWY_PLAINS_PACK_CHANCE: f32 = 0.07;
     pub const BADLANDS_PACK_CHANCE: f32 = 0.03;
 }
+
+/// Farming and breeding (M40), vanilla's values.
+pub mod farming {
+    /// Light a crop needs to grow.
+    pub const CROP_LIGHT: u8 = 9;
+    /// Bone meal advances a crop by this many stages, inclusive.
+    pub const BONE_MEAL_STAGES: (u32, u32) = (2, 5);
+    /// Ticks in love mode after being fed (30 s).
+    pub const LOVE_TICKS: u32 = 600;
+    /// Ticks before an animal can breed again (5 minutes).
+    pub const BREED_COOLDOWN: u32 = 6000;
+    /// Ticks a baby takes to grow up (20 minutes).
+    pub const BABY_TICKS: i32 = 24000;
+    /// Feeding a baby removes this much of the time it has left.
+    pub const FEED_SPEEDUP: f32 = 0.1;
+    /// Ticks after a composter fills to level 7 before it is ready.
+    pub const COMPOSTER_READY_TICKS: u64 = 20;
+    /// Blocks within which two animals in love find each other.
+    pub const MATE_RANGE: f64 = 8.0;
+    /// Sugar cane and cactus grow to this many blocks.
+    pub const STALK_HEIGHT: i32 = 3;
+}
