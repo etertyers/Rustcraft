@@ -58,6 +58,9 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
     // Up to a section past the highest blocks, which block light can't
     // cross; everything above is open sky.
     let height = ((area.top_section() + 1) * CHUNK_SIZE).min(WORLD_HEIGHT);
+    // The sections under the lowest block are air: the Nether and End sit
+    // well above the bottom of the 384-tall world and needn't be walked.
+    let bottom = (area.bottom_section() * CHUNK_SIZE).min(height);
     let volume = AREA * AREA * height;
     let mut opacity = vec![0u8; volume];
     let mut sky = vec![0u8; volume];
@@ -67,35 +70,68 @@ pub fn light_chunk(models: &BlockModels, area: &ChunkArea) -> ChunkLight {
     let mut sky_queue = VecDeque::new();
     let mut block_queue = VecDeque::new();
 
-    for z in 0..AREA {
-        for x in 0..AREA {
-            let (ax, az) = (x as i32 - AREA_OFFSET, z as i32 - AREA_OFFSET);
-            // Sunlight goes straight down undimmed until something absorbs it.
-            let mut level = MAX_LIGHT;
-            let mut open = true;
-
-            for y in (0..height).rev() {
-                let state = area
-                    .get(ax, y as i32 + MIN_Y, az)
-                    .unwrap_or(BlockState::AIR);
-                if state.is_air() {
-                    sky[area_index(x, y, z)] = level;
-                    continue;
+    // Each column's light so far, going down, and whether it is still open.
+    let mut column_level = vec![MAX_LIGHT; AREA * AREA];
+    let mut column_open = vec![true; AREA * AREA];
+    let first_band = bottom / CHUNK_SIZE;
+    let end_band = height / CHUNK_SIZE;
+    for band in (first_band..end_band).rev() {
+        let (y_low, y_high) = (band * CHUNK_SIZE, (band + 1) * CHUNK_SIZE);
+        for cz in 0..3 {
+            for cx in 0..3 {
+                let air = area.section_is_air(cx, cz, band);
+                for lz in 0..CHUNK_SIZE {
+                    for lx in 0..CHUNK_SIZE {
+                        let (x, z) = (cx * CHUNK_SIZE + lx, cz * CHUNK_SIZE + lz);
+                        let col = z * AREA + x;
+                        let mut level = column_level[col];
+                        if air {
+                            // Open air: the light just goes down (and none
+                            // at all needs writing).
+                            if level > 0 {
+                                for y in y_low..y_high {
+                                    sky[area_index(x, y, z)] = level;
+                                }
+                            }
+                            continue;
+                        }
+                        let (ax, az) = (x as i32 - AREA_OFFSET, z as i32 - AREA_OFFSET);
+                        for y in (y_low..y_high).rev() {
+                            let state = area
+                                .get(ax, y as i32 + MIN_Y, az)
+                                .unwrap_or(BlockState::AIR);
+                            if state.is_air() {
+                                sky[area_index(x, y, z)] = level;
+                                continue;
+                            }
+                            let model = models.get(state);
+                            let (block_opacity, emission) = (model.opacity, model.emission);
+                            let i = area_index(x, y, z);
+                            opacity[i] = block_opacity;
+                            level = level.saturating_sub(block_opacity);
+                            sky[i] = level;
+                            if column_open[col] && block_opacity > 0 {
+                                column_open[col] = false;
+                                open_from[col] = y + 1;
+                            }
+                            if emission > 0 {
+                                block[i] = emission;
+                                block_queue.push_back(i as u32);
+                            }
+                        }
+                        column_level[col] = level;
+                    }
                 }
-                let model = models.get(state);
-                let (block_opacity, emission) = (model.opacity, model.emission);
-                let i = area_index(x, y, z);
-                opacity[i] = block_opacity;
-                level = level.saturating_sub(block_opacity);
-                sky[i] = level;
-                if open && block_opacity > 0 {
-                    open = false;
-                    open_from[z * AREA + x] = y + 1;
-                }
-                if emission > 0 {
-                    block[i] = emission;
-                    block_queue.push_back(i as u32);
-                }
+            }
+        }
+    }
+    // Whatever light is left goes straight down through the air under
+    // the lowest block.
+    for (col, &level) in column_level.iter().enumerate() {
+        if level > 0 {
+            let (x, z) = (col % AREA, col / AREA);
+            for y in 0..bottom {
+                sky[area_index(x, y, z)] = level;
             }
         }
     }

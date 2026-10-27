@@ -624,7 +624,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Advancements "Fishy Business" and "Tactical Fishing" (bucket a fish), if fish mobs exist.
 - **Done when:** fishing catches fish, junk and (in open water) treasure at the vanilla rates in a 1,000-catch simulation test, Lure speeds up bites, and two LAN players can fish side by side. One screenshot: casting into a lake.
 
-### - [ ] M42 — v1.2 performance and release
+### - [x] M42 — v1.2 performance and release (v1.2.0 is not tagged until Kenzo approves Checkpoint G)
 - Profile with the 384-tall world, all dimensions, mods loaded and an 8-bot `--lan-test`, and fix hot spots.
 - Rebuild the `.app`, set its version to 1.2.0, tag `v1.2.0`.
 - **Done when:** 60+ FPS at render distance 9 in each dimension on the Mac mini (single player), server ticks under 50 ms with 8 LAN bots, and the new `.app` launches by double-click, opens v1.1 worlds, and hosts and joins LAN games. **Stop: Checkpoint G.**
