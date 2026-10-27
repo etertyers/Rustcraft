@@ -10,6 +10,13 @@ use crate::{
 
 /// What no crafting, smelting or stonecutting recipe makes.
 const NOT_CRAFTED: &[&str] = &[
+    // Farmed, caught or found (M40).
+    "kelp",
+    "potato",
+    "poisonous_potato",
+    "beetroot",
+    "beetroot_seeds",
+    "sweet_berries",
     // Smithing, not crafting.
     "netherite_sword",
     "netherite_shovel",

@@ -290,7 +290,7 @@ pub fn place_block_looking(
         && let Some(offset) = new.support(state)
     {
         let support = state_at(world, at + offset)?;
-        if !holds(new.shape, support) {
+        if !holds(new.shape, support) || !new.soil.is_none_or(|soil| soil.allows(support)) {
             return None;
         }
     }

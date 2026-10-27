@@ -5,6 +5,7 @@
 use glam::{DVec3, IVec3};
 
 use super::{BenchKind, Game};
+use crate::inventory::item::ToolKind;
 use crate::{
     entity::{
         arrow::{self, Arrow, ArrowEvent},
@@ -34,6 +35,10 @@ use crate::{
 const BREAK_EXHAUSTION: f32 = 0.005;
 /// Ticks of holding right-click to eat (1.0.0's `getMaxItemUseDuration`).
 const EAT_TICKS: u32 = 32;
+fn compost_ok(id: crate::inventory::item::ItemId) -> bool {
+    super::farming::compost_chance(id.name()).is_some()
+}
+
 impl Game {
     /// Ticks a bow has been drawn, with the part of a tick.
     pub fn bow_ticks(&self) -> Option<f32> {
@@ -79,6 +84,14 @@ impl Game {
             return false;
         };
         if stack.id == items::SHIELD || (hand == Hand::Main && item.scripted) {
+            return true;
+        }
+        if hand == Hand::Main
+            && hit.is_some()
+            && (stack.id == items::BONE_MEAL
+                || item.tool.as_ref().is_some_and(|t| t.kind == ToolKind::Hoe)
+                || compost_ok(stack.id))
+        {
             return true;
         }
         if hand == Hand::Main && (item.bucket.is_some() || item.shoots.is_some()) {
@@ -134,6 +147,12 @@ impl Game {
             return true;
         }
         if hit.is_some_and(|hit| self.activate(hit.block, true)) {
+            return true;
+        }
+        // Hoes, bone meal, cocoa and the composter.
+        if let Some(hit) = hit
+            && self.farm_use_item(hit)
+        {
             return true;
         }
         // A mod item's `on_use`.
@@ -959,7 +978,7 @@ impl Game {
         if self.player.keys.sneak && self.player.inventory.selected_stack().is_some() {
             return false;
         }
-        if pressed && self.mod_use_block(cell) {
+        if pressed && (self.farm_use_block(cell) || self.mod_use_block(cell)) {
             return true;
         }
         let Some(action) = self

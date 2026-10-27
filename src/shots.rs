@@ -513,6 +513,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m40-wheat-farm",
+        about: "a wheat farm at noon: rows of wet farmland beside a water channel, wheat from freshly planted to ripe, with carrots and potatoes at their last stage",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 66.0, 5.5], 0.0, -0.45)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: wheat_farm,
+    },
+    Shot {
         name: "m35-key-binds",
         about: "Options, Controls, Key Binds over the paused game: every action by category, Sneak moved onto W so both show red, and Jump waiting for a new key",
         world: Some(WorldKind::Flat),
@@ -668,6 +678,34 @@ fn torchlit_room(game: &mut Game) {
         0.5,
     ));
     game.run_ticks(40);
+}
+
+/// Rows of farmland at X −4..4, Z −2..2 with a water channel down the
+/// middle (Z 0) and wheat from age 0 to 7 across each row.
+fn wheat_farm(game: &mut Game) {
+    use crate::world::{blocks, props::Prop};
+    let wet = BlockState::of(blocks::FARMLAND).with_number(Prop::Moisture, 7);
+    let mut edits = Vec::new();
+    for x in -4..=4 {
+        for z in -2..=2 {
+            if z == 0 {
+                edits.push((at(x, 63, z), BlockState::of(blocks::WATER)));
+                continue;
+            }
+            edits.push((at(x, 63, z), wet));
+            let age = (x + 4).min(7) as u8;
+            let crop = match z {
+                -1 | 1 => BlockState::of(blocks::WHEAT).with_number(Prop::Age7, age),
+                -2 => crate::world::block::BlockState::parse("carrots[age=7]")
+                    .unwrap_or(BlockState::AIR),
+                _ => crate::world::block::BlockState::parse("potatoes[age=7]")
+                    .unwrap_or(BlockState::AIR),
+            };
+            edits.push((at(x, 64, z), crop));
+        }
+    }
+    game.set_blocks(&edits);
+    game.run_ticks(5);
 }
 
 /// Torches on the cave floor around (−72, −18, 56), every few blocks.

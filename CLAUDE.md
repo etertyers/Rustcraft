@@ -148,6 +148,7 @@ src/
   server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat)
+  game/farming.rs   # crops on random ticks (vanilla's growth formula), farmland, hoes, bone meal, the composter, saplings, mushrooms; breeding is in game/animals.rs
   mods/{mod,lua,client}.rs, game/{modding,random_ticks}.rs, ui/mods.rs, mods/ examples/mods/   # mod folders and the set chosen at startup, the sandboxed Lua runtime and its API, the client's Lua (keys, HUD text, brightness), the server's mod host and events, random ticks, the Mods screen, the bundled Fullbright and the Ruby example (docs/modding.md)
   ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
@@ -603,7 +604,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - **Fullbright:** shipped as a bundled Lua mod (`mods/fullbright/`, enabled by default) that registers a **Toggle Fullbright** key (default G, rebindable in Controls → Mods) and sets the brightness override so every light level renders as fully lit; it shows "Fullbright: ON/OFF" above the hotbar. It's client-side only and works on LAN.
 - **Done when:** the example ruby mod adds a block, an item, a recipe, a command and a block-break event; a broken mod shows its error without crashing; Fullbright toggles with G; and a client with a different mod list is refused with a clear message. One screenshot: a cave with Fullbright on.
 
-### - [ ] M40 — Farming, breeding and farmer villagers
+### - [x] M40 — Farming, breeding and farmer villagers
 - **Random ticks:** vanilla's `randomTickSpeed` 3 (3 random blocks per 16³ section per tick), used by every crop.
 - **Hoes and farmland:** hoes till grass, dirt and dirt paths into farmland (coarse dirt → dirt, rooted dirt → dirt + hanging roots). Farmland is hydrated when water is within 4 blocks horizontally (same level or one above), dries back to dirt with no crop and no water, and is trampled by a player or mob landing on it from more than 0.5 blocks (chance grows with fall distance).
 - **Crops at vanilla growth rates:** wheat, carrots, potatoes, beetroot (age 0–7, beetroot 0–3), melon and pumpkin stems (fruit on an adjacent free dirt/grass/farmland block), sugar cane and cactus (grow to 3 tall), bamboo (to 12–16), sweet berry bushes, cocoa beans on jungle logs, nether wart on soul sand, kelp, saplings into trees, and mushrooms spreading. Crops need light level 9+ and grow faster on hydrated farmland and in neat rows (vanilla's growth formula). Vanilla drops (seeds, extra potatoes, poisonous potatoes, etc.) with Fortune.
