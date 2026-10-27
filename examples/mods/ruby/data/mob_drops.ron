@@ -1,0 +1,4 @@
+// Extra drops by mob: zombies sometimes drop a ruby.
+{
+    "zombie": [(item: "ruby:ruby", min: 1, max: 1, chance: 0.05)],
+}

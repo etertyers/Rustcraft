@@ -1,0 +1,7 @@
+// Loot tables: a built-in table's name adds a pool to it (dungeon chests
+// may hold rubies); any other name is a table of this mod, used with
+// rc.loot("ruby:treasure").
+{
+    "simple_dungeon": [(rolls: (0, 1), entries: [(item: "ruby:ruby", weight: 1, min: 1, max: 3)])],
+    "ruby:treasure": [(rolls: (2, 3), entries: [(item: "ruby:ruby", weight: 5, min: 1, max: 4), (item: "gold_nugget", weight: 2, min: 2, max: 6)])],
+}

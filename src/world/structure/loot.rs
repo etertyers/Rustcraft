@@ -45,6 +45,7 @@ const fn ench(item: &'static str, weight: u32, level: i32) -> Entry {
 const NOTHING_9: Entry = e("", 9, 1, 1);
 
 /// Rolls `rolls` times (a range) into `entries`.
+#[derive(Clone)]
 pub struct Pool {
     pub rolls: (u32, u32),
     pub entries: Vec<Entry>,
@@ -57,8 +58,87 @@ fn pool(min: u32, max: u32, entries: Vec<Entry>) -> Pool {
     }
 }
 
-/// The pools of the table called `name`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModEntry {
+    item: String,
+    weight: u32,
+    #[serde(default = "one")]
+    min: u8,
+    #[serde(default)]
+    max: Option<u8>,
+    #[serde(default)]
+    enchant: Option<i32>,
+}
+
+fn one() -> u8 {
+    1
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModPool {
+    rolls: (u32, u32),
+    entries: Vec<ModEntry>,
+}
+
+/// The pools mods add, by table name (`data/loot.ron`): a name of the
+/// built-in tables adds a pool to it, any other makes a table of its own
+/// (named `<mod>:<name>`).
+fn mod_tables() -> &'static std::collections::HashMap<String, Vec<Pool>> {
+    static TABLES: std::sync::OnceLock<std::collections::HashMap<String, Vec<Pool>>> =
+        std::sync::OnceLock::new();
+    TABLES.get_or_init(|| {
+        let mut tables: std::collections::HashMap<String, Vec<Pool>> = Default::default();
+        for active in &crate::mods::active().active {
+            let Some(text) = &active.data.loot else {
+                continue;
+            };
+            let parsed = ron::from_str::<std::collections::BTreeMap<String, Vec<ModPool>>>(text);
+            let Ok(file) = parsed.map_err(|err| {
+                crate::mods::report_error(&active.manifest.id, format!("data/loot.ron: {err}"))
+            }) else {
+                continue;
+            };
+            for (name, pools) in file {
+                for pool in pools {
+                    let entries = pool
+                        .entries
+                        .into_iter()
+                        .map(|entry| Entry {
+                            item: Box::leak(entry.item.into_boxed_str()),
+                            weight: entry.weight,
+                            min: entry.min,
+                            max: entry.max.unwrap_or(entry.min),
+                            enchant: entry.enchant,
+                        })
+                        .collect();
+                    tables.entry(name.clone()).or_default().push(Pool {
+                        rolls: pool.rolls,
+                        entries,
+                    });
+                }
+            }
+        }
+        tables
+    })
+}
+
+/// The pools of the table called `name`, with those mods add.
 pub fn table(name: &str) -> Option<Vec<Pool>> {
+    let extra = mod_tables().get(name);
+    match (builtin_table(name), extra) {
+        (Some(mut pools), Some(extra)) => {
+            pools.extend(extra.iter().cloned());
+            Some(pools)
+        }
+        (Some(pools), None) => Some(pools),
+        (None, Some(extra)) => Some(extra.clone()),
+        (None, None) => None,
+    }
+}
+
+fn builtin_table(name: &str) -> Option<Vec<Pool>> {
     Some(match name {
         "simple_dungeon" => vec![
             pool(

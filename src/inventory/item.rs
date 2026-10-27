@@ -9,7 +9,7 @@ use std::{
     sync::LazyLock,
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::world::block::{self, BlockId, Fluid};
@@ -28,22 +28,41 @@ impl ItemId {
         super::items::NAMES
             .get(self.index())
             .copied()
+            .or_else(|| crate::mods::active().item_name(self.index()))
             .unwrap_or("unknown")
     }
+}
+
+thread_local! {
+    static LENIENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `read` with items of mods that aren't installed reading as
+/// `UNKNOWN_ITEM` instead of failing (loading saves).
+pub fn lenient<R>(read: impl FnOnce() -> R) -> R {
+    let before = LENIENT.replace(true);
+    let out = read();
+    LENIENT.set(before);
+    out
 }
 
 /// Item IDs are written by name (`"stick"` or `"minecraft:stick"`).
 impl<'de> Deserialize<'de> for ItemId {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        super::items::by_name(block::strip_namespace(&name))
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown item {name:?}")))
+        if let Some(id) = super::items::by_name(block::strip_namespace(&name)) {
+            return Ok(id);
+        }
+        if LENIENT.get() && name.contains(':') && !name.starts_with("minecraft:") {
+            return Ok(super::items::UNKNOWN_ITEM);
+        }
+        Err(serde::de::Error::custom(format!("unknown item {name:?}")))
     }
 }
 
 impl Serialize for ItemId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&format_args!("{}:{}", block::NAMESPACE, self.name()))
+        serializer.collect_str(&block::qualified(self.name()))
     }
 }
 
@@ -86,6 +105,9 @@ pub struct ItemDef {
     /// A bucket, and what it holds.
     #[serde(default)]
     pub bucket: Option<Bucket>,
+    /// A mod's script has an `on_use` for it.
+    #[serde(default)]
+    pub scripted: bool,
 }
 
 /// An item texture name from `items.ron` as a resource location: bare
@@ -334,6 +356,7 @@ impl ItemDef {
             leftover: None,
             shoots: None,
             bucket: None,
+            scripted: false,
         }
     }
 }
@@ -357,6 +380,27 @@ pub fn registry() -> &'static ItemRegistry {
     &REGISTRY
 }
 
+/// The mods' plain items (their `data/items.ron` and `main.lua`).
+fn mod_defs() -> Result<std::collections::HashMap<String, ItemDef>> {
+    let mods = crate::mods::active();
+    let mut by_name = std::collections::HashMap::new();
+    for active in &mods.active {
+        if let Some(text) = &active.data.items {
+            for def in ron::from_str::<Vec<ItemDef>>(text)
+                .with_context(|| format!("{}'s data/items.ron", active.manifest.id))?
+            {
+                by_name.insert(def.name.clone(), def);
+            }
+        }
+    }
+    for lua in &mods.lua_items {
+        let def: ItemDef = serde_json::from_value(lua.def.clone())
+            .with_context(|| format!("an item of {}", lua.mod_id))?;
+        by_name.insert(def.name.clone(), def);
+    }
+    Ok(by_name)
+}
+
 impl ItemRegistry {
     fn from_ron(texts: &[&str]) -> Result<Self> {
         let mut plain: Vec<ItemDef> = Vec::new();
@@ -366,7 +410,10 @@ impl ItemRegistry {
         let blocks = block::registry();
         let mut items = Vec::with_capacity(super::items::COUNT);
         let mut by_block = vec![None; blocks.iter().count()];
-        for def in blocks.iter().filter(|def| def.item) {
+        for def in blocks
+            .iter()
+            .filter(|def| def.item && def.id.index() < crate::world::blocks::COUNT)
+        {
             let id = ItemId(items.len() as u16);
             by_block[def.id.index()] = Some(id);
             items.push(ItemDef::for_block(id, def));
@@ -393,6 +440,24 @@ impl ItemRegistry {
                     item.name,
                     super::items::NAMES[item.id.index()]
                 );
+            }
+        }
+        // The mods' items come after, in the order of the mod set's names.
+        let mods = crate::mods::active();
+        let mut plain_mod = mod_defs()?;
+        for name in mods.item_names_all() {
+            let id = ItemId(items.len() as u16);
+            if let Some(def) = blocks.iter().find(|def| def.name == *name && def.item) {
+                by_block[def.id.index()] = Some(id);
+                items.push(ItemDef::for_block(id, def));
+            } else if let Some(mut item) = plain_mod.remove(*name) {
+                if item.texture.is_none() {
+                    bail!("item {} has no texture", item.name);
+                }
+                item.id = id;
+                items.push(item);
+            } else {
+                bail!("no definition for the item {name}");
             }
         }
         Ok(Self { items, by_block })
@@ -519,6 +584,8 @@ mod tests {
         let registry = registry();
         let wrong: Vec<String> = registry
             .iter()
+            // Mods' items aren't vanilla's.
+            .filter(|item| !item.name.contains(':'))
             .filter(|item| item.max_stack != vanilla_max_stack(&item.name))
             .map(|item| {
                 format!(

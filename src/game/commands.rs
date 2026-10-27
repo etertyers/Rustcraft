@@ -363,7 +363,7 @@ impl Game {
         };
         let name = name.strip_prefix("minecraft:").unwrap_or(name);
         let Some(command) = find(name) else {
-            return vec![error(&format!("Unknown command: {name}"))];
+            return self.mod_command_replies(&caller, name, args);
         };
         if (command.cheat && !cheats) || (command.host && !host) {
             return vec![error("You do not have permission to use this command")];
@@ -371,6 +371,25 @@ impl Game {
         match (command.run)(self, &caller, args) {
             Ok(replies) => replies,
             Err(why) => vec![error(&why)],
+        }
+    }
+
+    /// A mod's command, or the error for an unknown one.
+    fn mod_command_replies(&mut self, caller: &Caller, name: &str, args: &[&str]) -> Vec<Reply> {
+        let spec = crate::mods::active()
+            .commands
+            .iter()
+            .find(|c| c.name == name);
+        let Some(spec) = spec else {
+            return vec![error(&format!("Unknown command: {name}"))];
+        };
+        if (spec.cheat && !caller.cheats) || (spec.host && !caller.host) {
+            return vec![error("You do not have permission to use this command")];
+        }
+        match self.run_mod_command(name, caller.index, args) {
+            Some(Ok(lines)) => lines.into_iter().map(Reply::Sender).collect(),
+            Some(Err(why)) => vec![error(&why)],
+            None => vec![error(&format!("Unknown command: {name}"))],
         }
     }
 

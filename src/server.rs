@@ -174,6 +174,11 @@ impl Server {
         }
         let Some(command) = line.strip_prefix('/') else {
             let name = self.game.player_at(index).name.clone();
+            self.game.mod_event(crate::mods::lua::Event::Chat {
+                player: index,
+                name: name.clone(),
+                message: line.to_owned(),
+            });
             self.broadcast(format!("<{name}> {line}"));
             return;
         };
@@ -199,6 +204,9 @@ impl Server {
     fn send_game_chat(&mut self) {
         for line in std::mem::take(&mut self.game.chat_out) {
             self.broadcast(line);
+        }
+        for (to, line) in std::mem::take(&mut self.game.chat_to) {
+            self.tell(to, line, false);
         }
     }
 
@@ -333,12 +341,22 @@ impl Server {
                 }
                 continue;
             };
-            let ClientMsg::Login { version, name } = msg else {
+            let ClientMsg::Login {
+                version,
+                name,
+                mods,
+            } = msg
+            else {
                 continue;
             };
             let refusal = if version != PROTOCOL_VERSION {
                 Some(format!(
                     "Incompatible version: the server runs protocol {PROTOCOL_VERSION}, you {version}"
+                ))
+            } else if let Some(lines) = self.mod_mismatch(&mods) {
+                Some(format!(
+                    "Your mods are not the host's:\n{}",
+                    lines.join("\n")
                 ))
             } else if !crate::options::valid_name(&name) {
                 Some("Names are 3 to 16 letters, digits or underscores".to_owned())
@@ -357,6 +375,13 @@ impl Server {
             self.join(pending.conn, name);
         }
         self.pending.extend(still);
+    }
+
+    /// What differs between a guest's mods and this server's, if
+    /// anything: the guest must have the same ones (not client-only).
+    fn mod_mismatch(&self, theirs: &[(String, String)]) -> Option<Vec<String>> {
+        let lines = crate::mods::differences(&crate::mods::active().required(), theirs);
+        (!lines.is_empty()).then_some(lines)
     }
 
     fn names(&self) -> impl Iterator<Item = &str> {
@@ -399,6 +424,9 @@ impl Server {
             skin: None,
         });
         self.announce(format!("{name} joined the game"));
+        let player = self.game.player_info(index);
+        self.game
+            .mod_event(crate::mods::lua::Event::PlayerJoin(player));
         // The newcomer sees everyone's skins.
         let index = self.remotes.len() - 1;
         for other in 0..index {
@@ -534,6 +562,9 @@ impl Server {
         if let Err(err) = self.game.with_player(index, |game| game.save_player()) {
             warn!("saving a leaving player: {err:#}");
         }
+        let info = self.game.player_info(index);
+        self.game
+            .mod_event(crate::mods::lua::Event::PlayerLeave(info));
         let player = self.game.others.remove(index - 1);
         info!("{} left", player.name);
         self.announce(format!("{} left the game", player.name));
@@ -930,6 +961,7 @@ mod tests {
         client_end.send(ClientMsg::Login {
             version: PROTOCOL_VERSION + 1,
             name: "Carol".to_owned(),
+            mods: Vec::new(),
         });
         server.advance(0.0);
         assert!(matches!(client_end.try_recv(), Some(ServerMsg::Refused(_))));

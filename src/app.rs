@@ -191,6 +191,8 @@ pub struct App {
     hide_gui: bool,
     /// List Players (Tab) is held.
     tab_held: bool,
+    /// The client's mods (key presses, HUD text, brightness).
+    client_mods: crate::mods::client::ClientMods,
     /// The chat lines and the box (M38).
     chat: crate::ui::chat::Chat,
     /// The world being played, served in this process, and this client's
@@ -243,6 +245,7 @@ impl App {
             pause: None,
             hide_gui: false,
             tab_held: false,
+            client_mods: crate::mods::client::ClientMods::start(),
             chat: Default::default(),
             server: None,
             link: None,
@@ -938,6 +941,12 @@ impl App {
             screen.bind(&mut self.options.keys, (!escape).then_some(input));
             return self.options_changed();
         }
+        // A mod's key, while playing with no screen open.
+        if press && self.playing() && self.stack.grabbed() && !self.chat.is_open() {
+            for id in actions.iter().filter_map(|a| a.mod_key_id()) {
+                self.client_mods.key_pressed(id);
+            }
+        }
         let sleeping = self.game.as_ref().is_some_and(Game::is_sleeping);
         let rolling = self
             .game
@@ -1500,6 +1509,7 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
+        self.client_mods.advance(dt);
         self.animate_textures();
         self.update_audio(dt);
         self.take_guest_skins();
@@ -2040,6 +2050,7 @@ impl App {
             }),
             sleep: game.sleep_fade(),
             message: game.player.message.as_ref().map(|(text, _)| text.clone()),
+            mod_lines: self.client_mods.lines(),
             portal: game.portal_swirl(),
             loading: game.is_arriving(),
             boss: game.dragon_bar(),
@@ -2175,6 +2186,7 @@ impl App {
         game.difficulty = difficulty;
         let mut environment = game.environment();
         environment.brightness = self.options.brightness;
+        environment.min_light = self.client_mods.min_light();
         environment.glint = crate::ui::glint::glint_scale().into();
         let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {

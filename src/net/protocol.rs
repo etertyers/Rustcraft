@@ -18,13 +18,19 @@ use crate::{
 
 /// Bumped whenever a message changes, so mismatched games refuse each
 /// other instead of misreading.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// What a client tells the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// The first message: who is joining, and which protocol they speak.
-    Login { version: u32, name: String },
+    /// `mods` are the (id, version) of the mods the client has that the
+    /// server must have too.
+    Login {
+        version: u32,
+        name: String,
+        mods: Vec<(String, String)>,
+    },
     /// Settings the server plays the player by (sent on joining and when
     /// they change).
     Settings(PlayerSettings),

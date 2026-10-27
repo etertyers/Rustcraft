@@ -23,17 +23,20 @@ pub enum Category {
     Creative,
     Multiplayer,
     Misc,
+    /// The key bindings mods register (M39).
+    Mods,
     Debug,
 }
 
 impl Category {
-    pub const ALL: [Category; 7] = [
+    pub const ALL: [Category; 8] = [
         Category::Movement,
         Category::Gameplay,
         Category::Inventory,
         Category::Creative,
         Category::Multiplayer,
         Category::Misc,
+        Category::Mods,
         Category::Debug,
     ];
 
@@ -45,6 +48,7 @@ impl Category {
             Category::Creative => "Creative Mode",
             Category::Multiplayer => "Multiplayer",
             Category::Misc => "Miscellaneous",
+            Category::Mods => "Mods",
             Category::Debug => "Debug",
         }
     }
@@ -64,14 +68,14 @@ macro_rules! actions {
             pub const ALL: &[Action] = &[$(Action::$action,)*];
 
             /// Vanilla's name for it in `options.txt`.
-            pub fn id(self) -> &'static str {
+            fn base_id(self) -> &'static str {
                 match self {
                     $(Action::$action => $id,)*
                 }
             }
 
             /// The Key Binds screen's label.
-            pub fn name(self) -> &'static str {
+            fn base_name(self) -> &'static str {
                 match self {
                     $(Action::$action => $name,)*
                 }
@@ -84,7 +88,7 @@ macro_rules! actions {
             }
 
             /// Vanilla's key for it.
-            pub fn default_input(self) -> Option<Input> {
+            fn base_default(self) -> Option<Input> {
                 use KeyCode as K;
                 use MouseButton as M;
                 #[allow(unused_imports)]
@@ -135,9 +139,77 @@ actions! {
     DevFlight, "key.debug.flight", "Toggle Dev Flight", Debug, Some(Key(K::F4));
     DevKit, "key.debug.kit", "Give Dev Kit", Debug, Some(Key(K::F6));
     SkipHour, "key.debug.skipHour", "Skip an Hour", Debug, Some(Key(K::F7));
+    Mod1, "key.mod.1", "Mod Key 1", Mods, None;
+    Mod2, "key.mod.2", "Mod Key 2", Mods, None;
+    Mod3, "key.mod.3", "Mod Key 3", Mods, None;
+    Mod4, "key.mod.4", "Mod Key 4", Mods, None;
+    Mod5, "key.mod.5", "Mod Key 5", Mods, None;
+    Mod6, "key.mod.6", "Mod Key 6", Mods, None;
+    Mod7, "key.mod.7", "Mod Key 7", Mods, None;
+    Mod8, "key.mod.8", "Mod Key 8", Mods, None;
 }
 
+/// How many keys mods can register (the Mod1…Mod8 actions).
+pub const MOD_KEYS: usize = 8;
+
 impl Action {
+    /// Which of the mods' keys this is (0 for `Mod1`).
+    pub fn mod_slot(self) -> Option<usize> {
+        const SLOTS: [Action; MOD_KEYS] = [
+            Action::Mod1,
+            Action::Mod2,
+            Action::Mod3,
+            Action::Mod4,
+            Action::Mod5,
+            Action::Mod6,
+            Action::Mod7,
+            Action::Mod8,
+        ];
+        SLOTS.iter().position(|&a| a == self)
+    }
+
+    /// The `mod:key` id of the mod key bound to this action, if some mod
+    /// registered one for its slot.
+    pub fn mod_key_id(self) -> Option<&'static str> {
+        crate::mods::active().key_ids.get(self.mod_slot()?).copied()
+    }
+
+    /// Vanilla's name for it in `options.txt`; a mod key is
+    /// `key.mod.<mod>:<key>`, so it keeps its binding when mods change.
+    pub fn id(self) -> &'static str {
+        match self.mod_slot() {
+            Some(slot) => crate::mods::active()
+                .key_option_ids
+                .get(slot)
+                .copied()
+                .unwrap_or(self.base_id()),
+            None => self.base_id(),
+        }
+    }
+
+    /// The Key Binds screen's label.
+    pub fn name(self) -> &'static str {
+        match self.mod_slot() {
+            Some(slot) => crate::mods::active()
+                .key_names
+                .get(slot)
+                .copied()
+                .unwrap_or(self.base_name()),
+            None => self.base_name(),
+        }
+    }
+
+    /// Vanilla's key for it (a mod key: the one its mod asks for).
+    pub fn default_input(self) -> Option<Input> {
+        match self.mod_slot() {
+            Some(slot) => crate::mods::active()
+                .keys
+                .get(slot)
+                .and_then(|k| key_from_label(&k.default)),
+            None => self.base_default(),
+        }
+    }
+
     /// The hotbar slot (0–8) a Hotbar Slot action picks.
     pub fn hotbar_slot(self) -> Option<usize> {
         const SLOTS: [Action; 9] = [
@@ -161,7 +233,10 @@ impl Action {
     /// Shown on the Key Binds screen: the Debug keys only do anything in a
     /// debug build.
     pub fn listed(self) -> bool {
-        self.category() != Category::Debug || cfg!(debug_assertions)
+        match self.mod_slot() {
+            Some(slot) => slot < crate::mods::active().keys.len(),
+            None => self.category() != Category::Debug || cfg!(debug_assertions),
+        }
     }
 }
 
@@ -412,6 +487,13 @@ pub fn input_id(input: Input) -> String {
             MouseButton::Other(n) => format!("key.mouse.{}", n + 1),
         },
     }
+}
+
+/// A key by the name the Key Binds screen shows ("G", "F7", "Keypad 1").
+pub fn key_from_label(label: &str) -> Option<Input> {
+    KEYS.iter()
+        .find(|(_, _, name)| name.eq_ignore_ascii_case(label))
+        .map(|(k, ..)| Input::Key(*k))
 }
 
 pub fn input_from_id(id: &str) -> Option<Input> {

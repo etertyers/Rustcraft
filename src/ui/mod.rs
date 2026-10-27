@@ -93,6 +93,8 @@ pub struct Hud {
     pub sleep: Option<f32>,
     /// A notice shown above the hotbar.
     pub message: Option<String>,
+    /// Lines mods draw above the hotbar, centered (Fullbright's "ON").
+    pub mod_lines: Vec<String>,
     /// How strongly a portal's swirl covers the screen, 0–1.
     pub portal: f32,
     /// Set while the chunks around a player who changed dimension load.
@@ -332,6 +334,9 @@ impl DebugUi {
             }
             if let Some(message) = &hud.message {
                 paint_message(ui.painter(), full, message);
+            }
+            if !hud.mod_lines.is_empty() && !hud.hidden {
+                paint_mod_lines(ui.painter(), full, &hud.mod_lines);
             }
             if let Some(health) = hud.boss {
                 paint_boss_bar(ui.painter(), full, "Ender Dragon", health);
@@ -1008,6 +1013,20 @@ fn paint_message(painter: &egui::Painter, full: egui::Rect, text: &str) {
     let rect = egui::Rect::from_min_size(at, galley.size()).expand(scale);
     painter.rect_filled(rect, 0.0, Color32::from_black_alpha(128));
     painter.galley(at, galley, Color32::WHITE);
+}
+
+/// What mods write above the hotbar: centered, the newest nearest it.
+fn paint_mod_lines(painter: &egui::Painter, full: egui::Rect, lines: &[String]) {
+    let scale = gui::gui_scale(full);
+    let font = egui::FontId::proportional(8.0 * scale);
+    for (i, line) in lines.iter().rev().enumerate() {
+        let galley = painter.layout_no_wrap(line.clone(), font.clone(), Color32::WHITE);
+        let y = full.bottom() - (72.0 + 11.0 * i as f32) * scale;
+        let at = egui::pos2(full.center().x - galley.size().x / 2.0, y);
+        let rect = egui::Rect::from_min_size(at, galley.size()).expand(scale);
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(128));
+        painter.galley(at, galley, Color32::WHITE);
+    }
 }
 
 fn show_overlay(ctx: &egui::Context, text: &str) {

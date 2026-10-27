@@ -1,0 +1,18 @@
+// Recipes in the same format as assets/data/recipes.ron; every part is
+// optional. Nine rubies make a block of ruby and back.
+#![enable(implicit_some)]
+(
+    shaped: [
+        (
+            result: (item: "ruby:ruby_block", count: 1),
+            pattern: ["RRR", "RRR", "RRR"],
+            key: {'R': (item: "ruby:ruby")},
+        ),
+    ],
+    shapeless: [
+        (
+            result: (item: "ruby:ruby", count: 9),
+            ingredients: [(item: "ruby:ruby_block")],
+        ),
+    ],
+)

@@ -333,6 +333,10 @@ impl Game {
                 let def = self.mob_defs.get(mob.kind);
                 (def.name.clone(), def.ai.is_monster())
             };
+            self.mod_event(crate::mods::lua::Event::EntityDeath {
+                entity: format!("minecraft:{name}"),
+                source: "player".into(),
+            });
             self.note(crate::advancements::Event::Killed { mob: name, hostile });
         }
         let def = self.mob_defs.get(mob.kind);
