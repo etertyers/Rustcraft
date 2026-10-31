@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+pub mod admin;
 pub mod advance;
 mod animals;
 mod armor;
@@ -55,6 +56,7 @@ pub mod sync;
 mod updates;
 pub mod view;
 mod villagers;
+pub mod weather;
 
 use std::{path::Path, sync::Arc};
 
@@ -230,6 +232,12 @@ pub struct PlayerState {
     drawing: Option<u32>,
     mounted: Option<u64>,
     /// The mob whose eyes a spectator sees through (M43).
+    /// `/attribute ... movement_speed base set`, as a multiple of normal.
+    #[serde(default = "one")]
+    pub speed_scale: f64,
+    /// Recipes `/recipe give` unlocked (the book shows them all).
+    #[serde(default)]
+    pub recipes: std::collections::BTreeSet<String>,
     /// `/tag`'s tags on this player (M43).
     #[serde(default)]
     pub tags: Vec<String>,
@@ -344,6 +352,8 @@ impl PlayerState {
             mounted: None,
             spectating: None,
             tags: Vec::new(),
+            speed_scale: 1.0,
+            recipes: Default::default(),
             previous_mode: GameMode::Survival,
             spectator_menu: false,
             mining: None,
@@ -399,6 +409,13 @@ pub struct Game {
     pub rules: crate::level::GameRules,
     /// `/defaultgamemode`: the mode players joining for the first time get.
     pub default_mode: Option<GameMode>,
+    /// Operators, bans and the whitelist (a hosted world's).
+    pub admin: admin::Admin,
+    pub weather: weather::Weather,
+    /// Ticks until the weather changes by itself.
+    pub weather_ticks: u32,
+    /// `/save-off` stops the autosave.
+    pub autosave: bool,
     pub difficulty: crate::level::Difficulty,
     /// Commands are allowed in this world (chosen when it was made).
     pub cheats: bool,
@@ -530,6 +547,10 @@ impl Game {
             spawn,
             rules: crate::level::GameRules::default(),
             default_mode: None,
+            admin: admin::Admin::default(),
+            weather: weather::Weather::Clear,
+            weather_ticks: weather::DEFAULT_TICKS,
+            autosave: true,
             difficulty: crate::level::Difficulty::default(),
             cheats: false,
             day_offset: 0,
@@ -645,6 +666,7 @@ impl Game {
         game.portals = level.portals.clone();
         game.end = level.end.clone();
         game.restore_fight(level.end.dragon);
+        game.admin = admin::Admin::load(dir.path());
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -1116,12 +1138,21 @@ impl Game {
         }
         self.time += 1;
         self.tick_mods();
+        if self.rules.do_weather_cycle {
+            self.weather_ticks = self.weather_ticks.saturating_sub(1);
+            if self.weather_ticks == 0 {
+                let roll = self.rng.below(100);
+                self.weather = self.weather.next(roll);
+                self.weather_ticks = weather::DEFAULT_TICKS + self.rng.below(6000);
+            }
+        }
         // With `doDaylightCycle` off the time of day holds still.
         if !self.rules.do_daylight_cycle {
             self.day_offset -= 1;
         }
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
+            && self.autosave
             && let Err(err) = self.save()
         {
             error!("autosave failed: {err:#}");
@@ -1173,6 +1204,11 @@ impl Game {
     /// Returns false while they wait for chunks or the credits roll.
     fn tick_player(&mut self) -> bool {
         self.player.prev_feet = self.player.body.position();
+        self.player.stats.exempt = [
+            !self.rules.fall_damage,
+            !self.rules.fire_damage,
+            !self.rules.drowning_damage,
+        ];
         // What the player aims at, from where they stand this tick (a
         // client's camera may be anywhere between ticks).
         let eye = self
@@ -1294,7 +1330,9 @@ impl Game {
             let source = self.player.stats.last_source.unwrap_or(DamageSource::Mob);
             let attacker = self.player.stats.last_attacker.as_deref();
             let line = format!("{} {}", self.player.name, source.death_message_by(attacker));
-            self.chat_out.push(line);
+            if self.rules.show_death_messages {
+                self.chat_out.push(line);
+            }
         }
     }
 
@@ -1327,6 +1365,7 @@ impl Game {
             ..self.player.keys.move_input()
         };
         effects_move(&mut self.player.body, &self.player.stats.effects);
+        self.player.body.speed_factor *= self.player.speed_scale;
         self.player
             .body
             .tick(&input, self.player.camera.yaw, &collider);
@@ -1520,6 +1559,10 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
     body.levitation = effects
         .get(Effect::Levitation)
         .map(|active| active.amplifier);
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// A seed for drop and throw randomness, from the clock.

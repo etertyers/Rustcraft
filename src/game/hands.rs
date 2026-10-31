@@ -546,7 +546,7 @@ impl Game {
             self.add_particles(burst);
         }
         let world = self.chunks.world();
-        if self.player.mode.drops_items() {
+        if self.player.mode.drops_items() && self.rules.do_tile_drops {
             let mut mined = Vec::new();
             let fortune = self.held_level(Enchantment::Fortune);
             let silk = self.held_level(Enchantment::SilkTouch) > 0;

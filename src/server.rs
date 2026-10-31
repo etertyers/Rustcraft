@@ -75,6 +75,8 @@ pub struct Server {
     changed: bool,
     /// Players `/kick` sent away, who leave after the messages are read.
     kicked: Vec<usize>,
+    /// `/stop` was run: whoever runs the server should save and close.
+    pub stopping: bool,
 }
 
 impl Server {
@@ -93,6 +95,7 @@ impl Server {
             changed: false,
             lan: None,
             kicked: Vec::new(),
+            stopping: false,
         }
     }
 
@@ -140,7 +143,13 @@ impl Server {
     /// Whether player `index` may cheat: the host in a world made with
     /// Allow Cheats, and everyone once Open to LAN allows it.
     fn may_cheat(&self, index: usize) -> bool {
-        self.cheats() || (index == 0 && self.game.cheats)
+        self.cheats()
+            || (index == 0 && self.game.cheats)
+            || self
+                .game
+                .admin
+                .ops
+                .contains(&self.game.player_at(index).name)
     }
 
     /// Sends a chat line to one player.
@@ -190,6 +199,18 @@ impl Server {
                 Reply::Sender(text) => self.tell(index, text, true),
                 Reply::Player(to, text) => self.tell(to, text, false),
                 Reply::Everyone(text) => self.broadcast(text),
+                Reply::Publish(port) => {
+                    let mode = self.game.default_mode.unwrap_or(self.game.player.mode);
+                    match self.open_to_lan(port, mode, false) {
+                        Ok(port) => {
+                            self.tell(index, format!("Local game hosted on port {port}"), true)
+                        }
+                        Err(err) => {
+                            self.tell(index, format!("§cFailed to start the server: {err}"), true)
+                        }
+                    }
+                }
+                Reply::Stop => self.stopping = true,
                 Reply::Kick(who, reason) => {
                     if let Some(remote) = self.remotes.get_mut(who).filter(|_| who > 0) {
                         remote.conn.send(ServerMsg::Disconnect(reason));
@@ -366,7 +387,7 @@ impl Server {
             } else if self.names().any(|taken| taken == name) {
                 Some(format!("{name} is already playing"))
             } else {
-                None
+                self.game.admin.refusal(&name)
             };
             if let Some(reason) = refusal {
                 info!("refused {name}: {reason}");

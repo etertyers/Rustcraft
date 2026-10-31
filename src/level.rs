@@ -161,6 +161,54 @@ pub struct GameRules {
     /// A full food bar heals.
     #[serde(rename = "naturalRegeneration")]
     pub natural_regeneration: bool,
+    /// Broken blocks drop items.
+    #[serde(rename = "doTileDrops")]
+    pub do_tile_drops: bool,
+    /// Mobs drop loot.
+    #[serde(rename = "doMobLoot")]
+    pub do_mob_loot: bool,
+    /// Boats and minecarts drop when broken.
+    #[serde(rename = "doEntityDrops")]
+    pub do_entity_drops: bool,
+    /// Deaths are told in chat.
+    #[serde(rename = "showDeathMessages")]
+    pub show_death_messages: bool,
+    /// Commands answer in chat.
+    #[serde(rename = "sendCommandFeedback")]
+    pub send_command_feedback: bool,
+    /// Command blocks tell ops what they did.
+    #[serde(rename = "commandBlockOutput")]
+    pub command_block_output: bool,
+    /// Command blocks run.
+    #[serde(rename = "commandBlocksEnabled")]
+    pub command_blocks_enabled: bool,
+    /// Falling hurts.
+    #[serde(rename = "fallDamage")]
+    pub fall_damage: bool,
+    /// Fire and lava hurt.
+    #[serde(rename = "fireDamage")]
+    pub fire_damage: bool,
+    /// Drowning hurts.
+    #[serde(rename = "drowningDamage")]
+    pub drowning_damage: bool,
+    /// The weather changes by itself.
+    #[serde(rename = "doWeatherCycle")]
+    pub do_weather_cycle: bool,
+    /// Advancements are told in chat.
+    #[serde(rename = "announceAdvancements")]
+    pub announce_advancements: bool,
+    /// Admin commands are logged.
+    #[serde(rename = "logAdminCommands")]
+    pub log_admin_commands: bool,
+    /// How far from the world spawn players first appear.
+    #[serde(rename = "spawnRadius")]
+    pub spawn_radius: u32,
+    /// Percent of players that must sleep to skip the night.
+    #[serde(rename = "playersSleepingPercentage")]
+    pub players_sleeping_percentage: u32,
+    /// The most commands one chain may run.
+    #[serde(rename = "maxCommandChainLength")]
+    pub max_command_chain_length: u32,
 }
 
 impl Default for GameRules {
@@ -173,13 +221,29 @@ impl Default for GameRules {
             do_fire_tick: true,
             random_tick_speed: 3,
             natural_regeneration: true,
+            do_tile_drops: true,
+            do_mob_loot: true,
+            do_entity_drops: true,
+            show_death_messages: true,
+            send_command_feedback: true,
+            command_block_output: true,
+            command_blocks_enabled: true,
+            fall_damage: true,
+            fire_damage: true,
+            drowning_damage: true,
+            do_weather_cycle: true,
+            announce_advancements: true,
+            log_admin_commands: true,
+            spawn_radius: 10,
+            players_sleeping_percentage: 100,
+            max_command_chain_length: 65536,
         }
     }
 }
 
 impl GameRules {
     /// The rules by vanilla's names, for `/gamerule`.
-    pub const NAMES: [&'static str; 7] = [
+    pub const NAMES: [&'static str; 23] = [
         "keepInventory",
         "doDaylightCycle",
         "doMobSpawning",
@@ -187,6 +251,22 @@ impl GameRules {
         "doFireTick",
         "randomTickSpeed",
         "naturalRegeneration",
+        "doTileDrops",
+        "doMobLoot",
+        "doEntityDrops",
+        "showDeathMessages",
+        "sendCommandFeedback",
+        "commandBlockOutput",
+        "commandBlocksEnabled",
+        "fallDamage",
+        "fireDamage",
+        "drowningDamage",
+        "doWeatherCycle",
+        "announceAdvancements",
+        "logAdminCommands",
+        "spawnRadius",
+        "playersSleepingPercentage",
+        "maxCommandChainLength",
     ];
 
     /// A rule's value as `/gamerule` shows it.
@@ -199,6 +279,22 @@ impl GameRules {
             "doFireTick" => self.do_fire_tick.to_string(),
             "randomTickSpeed" => self.random_tick_speed.to_string(),
             "naturalRegeneration" => self.natural_regeneration.to_string(),
+            "doTileDrops" => self.do_tile_drops.to_string(),
+            "doMobLoot" => self.do_mob_loot.to_string(),
+            "doEntityDrops" => self.do_entity_drops.to_string(),
+            "showDeathMessages" => self.show_death_messages.to_string(),
+            "sendCommandFeedback" => self.send_command_feedback.to_string(),
+            "commandBlockOutput" => self.command_block_output.to_string(),
+            "commandBlocksEnabled" => self.command_blocks_enabled.to_string(),
+            "fallDamage" => self.fall_damage.to_string(),
+            "fireDamage" => self.fire_damage.to_string(),
+            "drowningDamage" => self.drowning_damage.to_string(),
+            "doWeatherCycle" => self.do_weather_cycle.to_string(),
+            "announceAdvancements" => self.announce_advancements.to_string(),
+            "logAdminCommands" => self.log_admin_commands.to_string(),
+            "spawnRadius" => self.spawn_radius.to_string(),
+            "playersSleepingPercentage" => self.players_sleeping_percentage.to_string(),
+            "maxCommandChainLength" => self.max_command_chain_length.to_string(),
             _ => return None,
         })
     }
@@ -219,6 +315,34 @@ impl GameRules {
             "mobGriefing" => self.mob_griefing = flag()?,
             "doFireTick" => self.do_fire_tick = flag()?,
             "naturalRegeneration" => self.natural_regeneration = flag()?,
+            "doTileDrops" => self.do_tile_drops = flag()?,
+            "doMobLoot" => self.do_mob_loot = flag()?,
+            "doEntityDrops" => self.do_entity_drops = flag()?,
+            "showDeathMessages" => self.show_death_messages = flag()?,
+            "sendCommandFeedback" => self.send_command_feedback = flag()?,
+            "commandBlockOutput" => self.command_block_output = flag()?,
+            "commandBlocksEnabled" => self.command_blocks_enabled = flag()?,
+            "fallDamage" => self.fall_damage = flag()?,
+            "fireDamage" => self.fire_damage = flag()?,
+            "drowningDamage" => self.drowning_damage = flag()?,
+            "doWeatherCycle" => self.do_weather_cycle = flag()?,
+            "announceAdvancements" => self.announce_advancements = flag()?,
+            "logAdminCommands" => self.log_admin_commands = flag()?,
+            "spawnRadius" => {
+                self.spawn_radius = value
+                    .parse()
+                    .map_err(|_| format!("Invalid integer '{value}'"))?;
+            }
+            "playersSleepingPercentage" => {
+                self.players_sleeping_percentage = value
+                    .parse()
+                    .map_err(|_| format!("Invalid integer '{value}'"))?;
+            }
+            "maxCommandChainLength" => {
+                self.max_command_chain_length = value
+                    .parse()
+                    .map_err(|_| format!("Invalid integer '{value}'"))?;
+            }
             "randomTickSpeed" => {
                 self.random_tick_speed = value
                     .parse()

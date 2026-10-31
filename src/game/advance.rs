@@ -80,7 +80,9 @@ impl Game {
                     crate::advancements::Frame::Challenge => ("has completed the challenge", "§5"),
                 };
                 let line = format!("{} {made} {color}[{}]", self.player.name, def.title);
-                self.chat_out.push(line);
+                if self.rules.announce_advancements {
+                    self.chat_out.push(line);
+                }
             }
         }
     }

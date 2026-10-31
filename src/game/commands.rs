@@ -7,7 +7,13 @@
 
 use glam::{DVec3, IVec3};
 
-use super::{Game, dimensions::Arrival, selector::Target};
+mod extra;
+
+use super::{
+    Game,
+    dimensions::Arrival,
+    selector::{Range, Target, wrap_degrees},
+};
 use crate::{
     inventory::{
         enchant::{self, Enchantment, Gear},
@@ -39,6 +45,10 @@ pub enum Reply {
     Everyone(String),
     /// Send this player away with this reason (`/kick`).
     Kick(usize, String),
+    /// Open the world to LAN on this port (`/publish`; 0 for any).
+    Publish(u16),
+    /// Close the world (`/stop`).
+    Stop,
 }
 
 /// The most blocks one `/fill` changes (vanilla's limit).
@@ -55,7 +65,7 @@ struct Caller {
 }
 
 /// What a command's argument is, for Tab completion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum Arg {
     Players,
     Entities,
@@ -68,6 +78,8 @@ enum Arg {
     Mode,
     Difficulty,
     Words(&'static [&'static str]),
+    /// A list worked out from the game: sounds, advancements, biomes...
+    Dynamic(fn(&Game) -> Vec<String>),
     Coordinate,
     Free,
 }
@@ -85,6 +97,22 @@ struct Command {
     usage: &'static str,
     args: &'static [Arg],
     run: Run,
+}
+
+/// A table entry written short: name, aliases, who may run it
+/// (`cheat`, `host`), usage, Tab completion for each word, and the function.
+macro_rules! cmd {
+    ($name:expr, [$($alias:expr),*], $cheat:expr, $host:expr, $usage:expr, [$($arg:expr),*], $run:path) => {
+        Command {
+            name: $name,
+            aliases: &[$($alias),*],
+            cheat: $cheat,
+            host: $host,
+            usage: $usage,
+            args: &[$($arg),*],
+            run: $run,
+        }
+    };
 }
 
 const COMMANDS: &[Command] = &[
@@ -334,6 +362,269 @@ const COMMANDS: &[Command] = &[
         args: &[Arg::Players, Arg::Free],
         run: kick,
     },
+    cmd!(
+        "say",
+        [],
+        true,
+        false,
+        "/say <message>",
+        [Arg::Free],
+        extra::say
+    ),
+    cmd!(
+        "weather",
+        [],
+        true,
+        false,
+        "/weather <clear|rain|thunder> [duration]",
+        [Arg::Words(&["clear", "rain", "thunder"]), Arg::Free],
+        extra::weather
+    ),
+    cmd!(
+        "random",
+        [],
+        true,
+        false,
+        "/random <value|roll|reset> <range>",
+        [Arg::Words(&["value", "roll", "reset"]), Arg::Free],
+        extra::random
+    ),
+    cmd!(
+        "save-all",
+        [],
+        true,
+        true,
+        "/save-all [flush]",
+        [Arg::Words(&["flush"])],
+        extra::save_all
+    ),
+    cmd!("save-on", [], true, true, "/save-on", [], extra::save_on),
+    cmd!("save-off", [], true, true, "/save-off", [], extra::save_off),
+    cmd!(
+        "defaultgamemode",
+        [],
+        true,
+        false,
+        "/defaultgamemode <survival|creative|adventure|spectator>",
+        [Arg::Mode],
+        extra::defaultgamemode
+    ),
+    cmd!(
+        "spectate",
+        [],
+        true,
+        false,
+        "/spectate [target] [spectator]",
+        [Arg::Entities, Arg::Players],
+        extra::spectate
+    ),
+    cmd!(
+        "rotate",
+        [],
+        true,
+        false,
+        "/rotate <targets> (<yaw> <pitch> | facing <x y z> | facing entity <target>)",
+        [
+            Arg::Entities,
+            Arg::Words(&["facing", "~"]),
+            Arg::Words(&["entity", "~"]),
+            Arg::Free
+        ],
+        extra::rotate
+    ),
+    cmd!(
+        "spreadplayers",
+        [],
+        true,
+        false,
+        "/spreadplayers <x> <z> <spreadDistance> <maxRange> [under <maxHeight>] <respectTeams> <targets>",
+        [
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Free,
+            Arg::Free,
+            Arg::Words(&["under", "true", "false"]),
+            Arg::Words(&["true", "false"]),
+            Arg::Entities
+        ],
+        extra::spreadplayers
+    ),
+    cmd!(
+        "damage",
+        [],
+        true,
+        false,
+        "/damage <target> <amount> [type] [at <pos> | by <entity>]",
+        [
+            Arg::Entities,
+            Arg::Free,
+            Arg::Words(extra::DAMAGE_TYPES),
+            Arg::Words(&["at", "by"]),
+            Arg::Entities
+        ],
+        extra::damage
+    ),
+    cmd!(
+        "attribute",
+        [],
+        true,
+        false,
+        "/attribute <target> <attribute> (get | base get | base set <value>)",
+        [
+            Arg::Entities,
+            Arg::Dynamic(extra::attribute_names),
+            Arg::Words(&["get", "base"]),
+            Arg::Words(&["get", "set"])
+        ],
+        extra::attribute
+    ),
+    cmd!(
+        "advancement",
+        [],
+        true,
+        false,
+        "/advancement <grant|revoke> <targets> (everything | only | from | through | until) [advancement]",
+        [
+            Arg::Words(&["grant", "revoke"]),
+            Arg::Players,
+            Arg::Words(&["everything", "only", "from", "through", "until"]),
+            Arg::Dynamic(extra::advancement_ids)
+        ],
+        extra::advancement
+    ),
+    cmd!(
+        "recipe",
+        [],
+        true,
+        false,
+        "/recipe <give|take> <targets> (* | recipe)",
+        [
+            Arg::Words(&["give", "take"]),
+            Arg::Players,
+            Arg::Dynamic(extra::recipe_names)
+        ],
+        extra::recipe
+    ),
+    cmd!(
+        "particle",
+        [],
+        true,
+        false,
+        "/particle <name> [pos] [delta] [speed] [count]",
+        [
+            Arg::Dynamic(extra::particle_names),
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate
+        ],
+        extra::particle
+    ),
+    cmd!(
+        "playsound",
+        [],
+        true,
+        false,
+        "/playsound <sound> <source> <targets> [pos] [volume] [pitch] [minVolume]",
+        [
+            Arg::Dynamic(Game::sound_names),
+            Arg::Words(&[
+                "master", "music", "record", "weather", "block", "hostile", "neutral", "player",
+                "ambient", "voice"
+            ]),
+            Arg::Players,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate
+        ],
+        extra::playsound
+    ),
+    cmd!(
+        "stopsound",
+        [],
+        true,
+        false,
+        "/stopsound <targets> [source] [sound]",
+        [
+            Arg::Players,
+            Arg::Words(&[
+                "*", "master", "music", "record", "weather", "block", "hostile", "neutral",
+                "player", "ambient", "voice"
+            ]),
+            Arg::Dynamic(Game::sound_names)
+        ],
+        extra::stopsound
+    ),
+    cmd!(
+        "ride",
+        [],
+        true,
+        false,
+        "/ride <target> (mount <vehicle> | dismount)",
+        [
+            Arg::Entities,
+            Arg::Words(&["mount", "dismount"]),
+            Arg::Entities
+        ],
+        extra::ride
+    ),
+    cmd!(
+        "op",
+        [],
+        true,
+        true,
+        "/op <player>",
+        [Arg::Players],
+        extra::op
+    ),
+    cmd!(
+        "deop",
+        [],
+        true,
+        true,
+        "/deop <player>",
+        [Arg::Players],
+        extra::deop
+    ),
+    cmd!(
+        "ban",
+        [],
+        true,
+        true,
+        "/ban <player> [reason]",
+        [Arg::Players, Arg::Free],
+        extra::ban
+    ),
+    cmd!(
+        "pardon",
+        [],
+        true,
+        true,
+        "/pardon <player>",
+        [Arg::Free],
+        extra::pardon
+    ),
+    cmd!(
+        "whitelist",
+        [],
+        true,
+        true,
+        "/whitelist <on|off|list|add|remove|reload> [player]",
+        [
+            Arg::Words(&["on", "off", "list", "add", "remove", "reload"]),
+            Arg::Players
+        ],
+        extra::whitelist
+    ),
+    cmd!(
+        "publish",
+        [],
+        true,
+        true,
+        "/publish [port]",
+        [Arg::Free],
+        extra::publish
+    ),
+    cmd!("stop", [], true, true, "/stop", [], extra::stop),
 ];
 
 fn find(name: &str) -> Option<&'static Command> {
@@ -361,6 +652,8 @@ impl Game {
         let Some((&name, args)) = words.split_first() else {
             return vec![error("Unknown or incomplete command")];
         };
+        let p = self.player_at(index);
+        LOOK.set((p.camera.yaw, p.camera.pitch));
         let name = name.strip_prefix("minecraft:").unwrap_or(name);
         let Some(command) = find(name) else {
             return self.mod_command_replies(&caller, name, args);
@@ -369,6 +662,10 @@ impl Game {
             return vec![error("You do not have permission to use this command")];
         }
         match (command.run)(self, &caller, args) {
+            Ok(replies) if !self.rules.send_command_feedback => replies
+                .into_iter()
+                .filter(|r| !matches!(r, Reply::Sender(t) if !t.starts_with("§c")))
+                .collect(),
             Ok(replies) => replies,
             Err(why) => vec![error(&why)],
         }
@@ -427,6 +724,14 @@ impl Game {
         options
     }
 
+    /// The sound events the game knows, for Tab.
+    fn sound_names(&self) -> Vec<String> {
+        extra::SOUNDS
+            .iter()
+            .map(|s| format!("minecraft:{s}"))
+            .collect()
+    }
+
     fn options(&self, arg: Arg) -> Vec<String> {
         let players = || {
             (0..self.player_count())
@@ -458,7 +763,8 @@ impl Game {
                 .map(str::to_owned)
                 .to_vec(),
             Arg::Words(words) => words.iter().map(|w| (*w).to_owned()).collect(),
-            Arg::Coordinate => vec!["~".to_owned()],
+            Arg::Dynamic(list) => list(self),
+            Arg::Coordinate => vec!["~".to_owned(), "^".to_owned()],
             Arg::Free => Vec::new(),
         }
     }
@@ -570,11 +876,40 @@ fn coordinate(word: &str, origin: f64) -> Result<f64, String> {
     }
 }
 
-/// `x y z` from three words, relative to `origin`.
+thread_local! {
+    /// Where the running command is looking (camera yaw and pitch, radians),
+    /// for `^` coordinates; `run_command` sets it for the caller.
+    static LOOK: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((0.0, 0.0)) };
+}
+
+/// `x y z` from three words, relative to `origin`: numbers, `~` offsets,
+/// or all three `^` local offsets (left, up, forward) along the look.
 fn position(words: &[&str], origin: DVec3) -> Result<DVec3, String> {
     let [x, y, z] = words else {
         return Err("Expected three coordinates".to_owned());
     };
+    let local = [x, y, z].map(|w| w.starts_with('^'));
+    if local.iter().any(|&l| l) {
+        if !local.iter().all(|&l| l) {
+            return Err(
+                "Cannot mix world & local coordinates (everything must either use ^ or not)"
+                    .to_owned(),
+            );
+        }
+        let offset = |w: &str| match w.strip_prefix('^') {
+            Some("") => Ok(0.0),
+            Some(by) => number::<f64>(by, "coordinate"),
+            None => unreachable!(),
+        };
+        let (left, up, forward) = (offset(x)?, offset(y)?, offset(z)?);
+        let (yaw, pitch) = LOOK.with(|l| l.get());
+        let (sy, cy) = f64::from(yaw).sin_cos();
+        let (sp, cp) = f64::from(pitch).sin_cos();
+        let fwd = DVec3::new(sy * cp, sp, -cy * cp);
+        let up_v = DVec3::new(-sy * sp, cp, cy * sp);
+        let left_v = DVec3::new(-cy, 0.0, -sy);
+        return Ok(origin + left_v * left + up_v * up + fwd * forward);
+    }
     Ok(DVec3::new(
         coordinate(x, origin.x)?,
         coordinate(y, origin.y)?,
@@ -1457,11 +1792,14 @@ fn kick(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
 }
 
 #[cfg(test)]
+mod m43_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::game::{PlayerState, tests::flat_game};
 
-    fn world() -> Game {
+    pub(super) fn world() -> Game {
         let mut game = flat_game(GameMode::Survival);
         game.mob_defs = crate::game::tests::mob_registry();
         game.player.name = "Kenzo".to_owned();
@@ -1471,17 +1809,19 @@ mod tests {
         game
     }
 
-    fn run(game: &mut Game, line: &str) -> Vec<Reply> {
+    pub(super) fn run(game: &mut Game, line: &str) -> Vec<Reply> {
         game.run_command(0, line, true, true)
     }
 
-    fn said(replies: &[Reply]) -> String {
+    pub(super) fn said(replies: &[Reply]) -> String {
         replies
             .iter()
             .map(|r| match r {
                 Reply::Sender(t) | Reply::Everyone(t) | Reply::Player(_, t) | Reply::Kick(_, t) => {
                     t.as_str()
                 }
+                Reply::Publish(_) => "<publish>",
+                Reply::Stop => "<stop>",
             })
             .collect::<Vec<_>>()
             .join(" | ")
