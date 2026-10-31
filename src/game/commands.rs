@@ -7,7 +7,7 @@
 
 use glam::{DVec3, IVec3};
 
-use super::{Game, dimensions::Arrival};
+use super::{Game, dimensions::Arrival, selector::Target};
 use crate::{
     inventory::{
         enchant::{self, Enchantment, Gear},
@@ -138,7 +138,7 @@ const COMMANDS: &[Command] = &[
         aliases: &[],
         cheat: true,
         host: false,
-        usage: "/gamemode <survival|creative> [player]",
+        usage: "/gamemode <survival|creative|adventure|spectator> [player]",
         args: &[Arg::Mode, Arg::Players],
         run: gamemode,
     },
@@ -453,7 +453,7 @@ impl Game {
             Arg::Effect => Effect::ALL.iter().map(|e| e.id().to_owned()).collect(),
             Arg::Enchantment => enchant::ALL.iter().map(|e| enchantment_id(*e)).collect(),
             Arg::Rule => crate::level::GameRules::NAMES.map(str::to_owned).to_vec(),
-            Arg::Mode => ["survival", "creative"].map(str::to_owned).to_vec(),
+            Arg::Mode => GameMode::ALL.map(|m| m.id().to_owned()).to_vec(),
             Arg::Difficulty => ["peaceful", "easy", "normal", "hard"]
                 .map(str::to_owned)
                 .to_vec(),
@@ -463,28 +463,17 @@ impl Game {
         }
     }
 
-    /// The players `word` names: a name or `@p` (the nearest to the caller
-    /// in their dimension), `@a`, `@s` or `@r`.
+    /// The players `word` names: a name or a selector for players.
     fn players_named(&mut self, caller: &Caller, word: &str) -> Result<Vec<usize>, String> {
-        let here = self.player_at(caller.index).dimension;
-        let feet = self.feet_of(caller.index);
-        let chosen = match word {
-            "@s" => vec![caller.index],
-            "@a" => (0..self.player_count()).collect(),
-            "@p" => (0..self.player_count())
-                .filter(|&i| self.player_at(i).dimension == here)
-                .min_by(|&a, &b| {
-                    self.feet_of(a)
-                        .distance(feet)
-                        .total_cmp(&self.feet_of(b).distance(feet))
-                })
-                .into_iter()
-                .collect(),
-            "@r" => vec![self.rng.below(self.player_count() as u32) as usize],
-            name => (0..self.player_count())
-                .filter(|&i| self.player_at(i).name == name)
-                .collect(),
-        };
+        let at = self.feet_of(caller.index);
+        let chosen: Vec<usize> = self
+            .select(caller.index, at, word)?
+            .into_iter()
+            .filter_map(|t| match t {
+                Target::Player(i) => Some(i),
+                Target::Mob(_) => None,
+            })
+            .collect();
         if chosen.is_empty() {
             return Err(if word.starts_with('@') {
                 "No player was found".to_owned()
@@ -495,44 +484,16 @@ impl Game {
         Ok(chosen)
     }
 
-    /// The players and mobs `word` names: players as `players_named`, or
-    /// `@e` (everything) and `@e[type=zombie]` (in the caller's dimension).
+    /// The players and mobs `word` names, in the caller's dimension.
     fn targets(&mut self, caller: &Caller, word: &str) -> Result<Vec<Target>, String> {
-        let Some(rest) = word.strip_prefix("@e") else {
-            return Ok(self
-                .players_named(caller, word)?
-                .into_iter()
-                .map(Target::Player)
-                .collect());
-        };
-        let kind = rest
-            .strip_prefix("[type=")
-            .and_then(|r| r.strip_suffix(']'))
-            .map(|k| k.strip_prefix("minecraft:").unwrap_or(k));
-        if !rest.is_empty() && kind.is_none() {
-            return Err(format!("Unknown selector: {word}"));
-        }
-        self.enter_realm(self.player_at(caller.index).dimension);
-        let mut found: Vec<Target> = Vec::new();
-        if kind.is_none_or(|k| k == "player") {
-            found.extend(self.players_here().into_iter().map(Target::Player));
-        }
-        if kind != Some("player") {
-            if let Some(k) = kind
-                && self.mob_defs.find(k).is_none()
-            {
-                return Err(format!("Unknown entity type: {k}"));
-            }
-            found.extend(
-                self.mobs
-                    .iter()
-                    .filter(|m| !m.is_dead())
-                    .filter(|m| kind.is_none_or(|k| self.mob_defs.get(m.kind).name == k))
-                    .map(|m| Target::Mob(m.id)),
-            );
-        }
+        let at = self.feet_of(caller.index);
+        let found = self.select(caller.index, at, word)?;
         if found.is_empty() {
-            return Err("No entity was found".to_owned());
+            return Err(if word.starts_with('@') {
+                "No entity was found".to_owned()
+            } else {
+                format!("No player was found named {word}")
+            });
         }
         Ok(found)
     }
@@ -556,12 +517,6 @@ impl Game {
             Target::Mob(id) => self.mobs.iter().find(|m| m.id == id).map(|m| m.feet()),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Target {
-    Player(usize),
-    Mob(u64),
 }
 
 /// The words of a command line; a selector's `[...]` stays whole.
@@ -668,6 +623,8 @@ fn mode_name(mode: GameMode) -> &'static str {
     match mode {
         GameMode::Survival => "Survival Mode",
         GameMode::Creative => "Creative Mode",
+        GameMode::Adventure => "Adventure Mode",
+        GameMode::Spectator => "Spectator Mode",
     }
 }
 
@@ -731,10 +688,14 @@ fn seed(game: &mut Game, _: &Caller, _: &[&str]) -> Result<Vec<Reply>, String> {
 
 fn gamemode(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
     let mode = match args.first().copied() {
-        Some("survival" | "s" | "0") => GameMode::Survival,
-        Some("creative" | "c" | "1") => GameMode::Creative,
-        Some(other) => return Err(format!("Unknown game mode: {other}")),
-        None => return Err("Usage: /gamemode <survival|creative> [player]".to_owned()),
+        Some(word) => GameMode::parse(word)
+            .filter(|_| word.len() > 1 && !word.chars().all(|c| c.is_ascii_digit()))
+            .ok_or_else(|| format!("Unknown game mode: {word}"))?,
+        None => {
+            return Err(
+                "Usage: /gamemode <survival|creative|adventure|spectator> [player]".to_owned(),
+            );
+        }
     };
     let who = match args.get(1) {
         Some(word) => game.players_named(caller, word)?,
@@ -742,13 +703,7 @@ fn gamemode(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply
     };
     let mut replies = Vec::new();
     for index in who {
-        game.with_player(index, |g| {
-            g.player.mode = mode;
-            g.player.body.may_fly = mode.can_fly();
-            if !mode.can_fly() {
-                g.player.body.flying = false;
-            }
-        });
+        game.with_player(index, |g| g.set_game_mode(mode));
         let name = game.player_at(index).name.clone();
         if index == caller.index {
             replies.push(Reply::Sender(format!(

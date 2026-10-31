@@ -182,6 +182,10 @@ impl Game {
     pub(super) fn use_hands(&mut self) {
         self.player.break_cooldown = self.player.break_cooldown.saturating_sub(1);
         self.player.place_cooldown = self.player.place_cooldown.saturating_sub(1);
+        if !self.player.mode.interacts() {
+            self.spectator_hands();
+            return;
+        }
         let wants_break = self.player.breaking || self.player.break_clicked;
         let using = self.player.placing || self.player.place_clicked;
         let eye = self.player.body.position() + DVec3::Y * self.player.body.eye_height();
@@ -467,7 +471,7 @@ impl Game {
 
     /// One tick of mining `cell`; breaks it once the progress reaches 1.
     fn mine(&mut self, cell: IVec3) {
-        if self.player.break_cooldown > 0 {
+        if self.player.break_cooldown > 0 || !self.adventure_may_break(cell) {
             return;
         }
         let world = self.chunks.world();
@@ -1062,6 +1066,9 @@ impl Game {
         let Some(stack) = self.held().cloned() else {
             return;
         };
+        if !self.adventure_may_place(hit.block) {
+            return;
+        }
         let Some(block) = self.items.places(&stack) else {
             return;
         };
@@ -1248,7 +1255,7 @@ impl Game {
 
     /// `self.player` picks up the items they touch.
     fn pick_up_items(&mut self) {
-        if self.player.stats.is_dead() {
+        if self.player.stats.is_dead() || !self.player.mode.interacts() {
             return;
         }
         let player = self.player.body.aabb();

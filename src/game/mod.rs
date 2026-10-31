@@ -33,6 +33,7 @@ mod mob_acts;
 mod mob_tests;
 mod mobs;
 pub(crate) mod modding;
+mod modes;
 #[cfg(test)]
 mod moves;
 mod nether_mobs;
@@ -44,6 +45,7 @@ mod potions;
 mod progression;
 mod random_ticks;
 mod redstone;
+pub mod selector;
 mod shulkers;
 mod sleep;
 mod sounds;
@@ -227,6 +229,18 @@ pub struct PlayerState {
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
     mounted: Option<u64>,
+    /// The mob whose eyes a spectator sees through (M43).
+    /// `/tag`'s tags on this player (M43).
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub spectating: Option<modes::Spectated>,
+    /// The spectator menu (number keys) is open.
+    #[serde(skip)]
+    pub spectator_menu: bool,
+    /// The mode before the last change, for F3+N.
+    #[serde(skip)]
+    pub previous_mode: GameMode,
     /// The hotbar slot being eaten from and for how many ticks.
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
@@ -328,6 +342,10 @@ impl PlayerState {
             shield_ticks: 0,
             drawing: None,
             mounted: None,
+            spectating: None,
+            tags: Vec::new(),
+            previous_mode: GameMode::Survival,
+            spectator_menu: false,
             mining: None,
             eating: None,
             boat: None,
@@ -379,6 +397,8 @@ pub struct Game {
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
+    /// `/defaultgamemode`: the mode players joining for the first time get.
+    pub default_mode: Option<GameMode>,
     pub difficulty: crate::level::Difficulty,
     /// Commands are allowed in this world (chosen when it was made).
     pub cheats: bool,
@@ -509,6 +529,7 @@ impl Game {
             keeps_sounds: false,
             spawn,
             rules: crate::level::GameRules::default(),
+            default_mode: None,
             difficulty: crate::level::Difficulty::default(),
             cheats: false,
             day_offset: 0,
@@ -607,6 +628,7 @@ impl Game {
             ender_chest: Vec::new(),
             advancements: level.advancements.clone(),
             recipe_book: level.recipe_book.clone(),
+            game_mode: None,
         });
         game.rules = level.rules.clone();
         game.difficulty = level.difficulty;
@@ -663,6 +685,7 @@ impl Game {
             ender_chest: p.ender_chest.clone(),
             advancements: p.progress.clone(),
             recipe_book: p.recipe_book.clone(),
+            game_mode: Some(p.mode),
         }
     }
 
@@ -680,8 +703,12 @@ impl Game {
         p.inventory.repair(&self.items);
         p.stats = data.stats.clone();
         p.bed = data.bed.map(glam::IVec3::from_array);
+        if let Some(mode) = file.game_mode {
+            p.mode = mode;
+        }
         p.body.may_fly = p.mode.can_fly();
-        p.body.flying = data.flying && p.body.may_fly;
+        p.body.no_clip = p.mode.is_spectator();
+        p.body.flying = (data.flying || p.mode.is_spectator()) && p.body.may_fly;
         p.ender_chest = file.ender_chest.clone();
         p.dimension = file.dimension;
         p.seen_credits = file.seen_credits;
@@ -792,6 +819,9 @@ impl Game {
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
         saved.level.rules = self.rules.clone();
+        if let Some(mode) = self.default_mode {
+            saved.level.game_mode = mode;
+        }
         saved.level.difficulty = self.difficulty;
         saved.level.cheats = self.cheats;
         saved.level.day_offset = self.day_offset;
@@ -958,6 +988,12 @@ impl Game {
                 steps as i32
             }
         };
+        if self.player.mode.is_spectator() {
+            // The wheel sets a spectator's flight speed instead (0.1×–5×).
+            let scale = self.player.body.fly_scale * 1.15f64.powi(-steps);
+            self.player.body.fly_scale = scale.clamp(0.1, 5.0);
+            return;
+        }
         let slot = self.player.inventory.selected as i32 + steps;
         self.player.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
@@ -968,6 +1004,7 @@ impl Game {
         self.player.body = Body::new(feet);
         self.player.body.flying = self.player.mode.can_fly();
         self.player.body.may_fly = self.player.mode.can_fly();
+        self.player.body.no_clip = self.player.mode.is_spectator();
         self.player.prev_feet = feet;
         self.player.camera.yaw = yaw;
         self.player.camera.pitch = pitch;
@@ -1271,6 +1308,14 @@ impl Game {
             blocks: self.items.blocks,
         };
         self.player.body.may_fly = self.player.mode.can_fly();
+        self.player.body.no_clip = self.player.mode.is_spectator();
+        if !self.player.mode.is_spectator() {
+            self.player.body.fly_scale = 1.0;
+        }
+        // Looking through a mob's eyes, the player's own keys do nothing.
+        if self.player.spectating.is_some() {
+            return;
+        }
         // Wait for the chunks around the player to load before moving them.
         if !collider.is_loaded(&self.player.body.aabb()) {
             return;

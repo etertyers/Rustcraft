@@ -30,6 +30,11 @@ const KNOCKBACK: f64 = 0.4;
 /// is tame, sheared, saddled or angry, and a few counters.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MobData {
+    /// `/tag`'s tags and the custom name `/summon` can give (M43).
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub custom_name: Option<String>,
     /// Which of the kind's textures it wears (0 is the plain one).
     #[serde(default)]
     pub variant: u8,

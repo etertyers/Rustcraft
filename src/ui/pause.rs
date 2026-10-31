@@ -181,7 +181,9 @@ fn lan_screen(ui: &mut egui::Ui, lan: &mut LanScreen) -> Option<LanChoice> {
     if ui.add_sized(BUTTON, Button::new(mode)).clicked_with_sound() {
         lan.mode = match lan.mode {
             GameMode::Survival => GameMode::Creative,
-            GameMode::Creative => GameMode::Survival,
+            GameMode::Creative => GameMode::Adventure,
+            GameMode::Adventure => GameMode::Spectator,
+            GameMode::Spectator => GameMode::Survival,
         };
     }
     ui.add_space(8.0);

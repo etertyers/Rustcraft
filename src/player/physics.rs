@@ -119,6 +119,10 @@ const BELOW_FEET: f64 = 0.500_001;
 /// Water and lava are felt through a hitbox shrunk by this.
 const FLUID_MARGIN: f64 = 0.001;
 
+fn full_speed() -> f64 {
+    1.0
+}
+
 /// The player's physical body.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Body {
@@ -137,6 +141,12 @@ pub struct Body {
     /// Double-tapping jump toggles `flying` (creative).
     pub may_fly: bool,
     pub flying: bool,
+    /// Passes through blocks and never falls: spectator mode (M43).
+    #[serde(default)]
+    pub no_clip: bool,
+    /// Scales flight speed; spectators change it with the mouse wheel.
+    #[serde(default = "full_speed")]
+    pub fly_scale: f64,
     /// False when too hungry to sprint.
     pub can_sprint: bool,
     /// Flies freely whatever the ground (flying and swimming mobs).
@@ -200,6 +210,8 @@ impl Body {
             swimming: false,
             may_fly: false,
             flying: false,
+            no_clip: false,
+            fly_scale: 1.0,
             can_sprint: true,
             free_flight: false,
             jumped: false,
@@ -320,7 +332,7 @@ impl Body {
 
     /// Advances one tick. `yaw` is in radians, 0 facing north (−Z).
     pub fn tick(&mut self, input: &MoveInput, yaw: f32, world: &impl Collider) {
-        if self.free_flight {
+        if self.free_flight || self.no_clip {
             self.may_fly = true;
             self.flying = true;
         } else {
@@ -376,10 +388,10 @@ impl Body {
         let right = DVec3::new(cos_yaw, 0.0, sin_yaw);
         if self.flying {
             if input.sneak {
-                self.velocity.y -= FLY_VERTICAL_SPEED;
+                self.velocity.y -= FLY_VERTICAL_SPEED * self.fly_scale;
             }
             if input.jump {
-                self.velocity.y += FLY_VERTICAL_SPEED;
+                self.velocity.y += FLY_VERTICAL_SPEED * self.fly_scale;
             }
         } else if input.jump {
             let swims_up = liquid.is_some() && (!self.on_ground || depth > FLUID_JUMP_THRESHOLD);
@@ -399,7 +411,7 @@ impl Body {
         let friction = self.friction(world);
         let sprint = if self.sprinting { SPRINT_FACTOR } else { 1.0 };
         let acceleration = if self.flying {
-            FLY_ACCELERATION
+            FLY_ACCELERATION * self.fly_scale
         } else if liquid.is_some() {
             SWIM_ACCELERATION
         } else if self.on_ground {
@@ -502,7 +514,7 @@ impl Body {
         if self.flying {
             // Flight keeps 0.6 of the vertical speed and ignores gravity.
             self.velocity.y = vertical * FLY_VERTICAL_DRAG;
-            if self.on_ground && !self.free_flight {
+            if self.on_ground && !self.free_flight && !self.no_clip {
                 self.flying = false;
             }
         } else if let Some(level) = self.levitation {
@@ -744,6 +756,12 @@ impl Body {
     /// Moves by `wanted`, stopping at solid blocks and stepping up ledges.
     fn move_by(&mut self, wanted: DVec3, world: &impl Collider) {
         let start = self.aabb();
+        if self.no_clip {
+            self.bb = start.offset(wanted);
+            self.collided_horizontally = false;
+            self.on_ground = false;
+            return;
+        }
         let mut wanted = wanted;
         if self.on_ground && self.sneaking && wanted.y <= 0.0 {
             let (x, z) = back_off_edges(&start, wanted.x, wanted.z, world);

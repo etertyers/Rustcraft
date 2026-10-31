@@ -306,6 +306,9 @@ pub struct PlayerFile {
     pub advancements: crate::advancements::Progress,
     #[serde(default)]
     pub recipe_book: crate::inventory::book::Settings,
+    /// Their game mode, set by `/gamemode` (M43); the world's otherwise.
+    #[serde(default)]
+    pub game_mode: Option<GameMode>,
 }
 
 impl Level {

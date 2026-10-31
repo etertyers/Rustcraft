@@ -161,6 +161,9 @@ pub struct PlayerView {
     pub pose: crate::render::player::PlayerPose,
     pub wearer: crate::figure::Wearer,
     pub invisible: bool,
+    /// In spectator mode: other spectators see them, everyone else doesn't.
+    #[serde(default)]
+    pub spectator: bool,
 }
 
 /// Everything that moves in the player's dimension.

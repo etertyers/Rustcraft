@@ -285,9 +285,10 @@ impl Server {
             let dimension = self.game.player_at(index).dimension;
             self.game.enter_realm(dimension);
             let range = f64::from((self.remotes[index].view_distance + 1) * 16);
+            let sees_spectators = self.game.player_at(index).mode.is_spectator();
             let here: Vec<_> = views
                 .iter()
-                .filter(|(d, _)| *d == dimension)
+                .filter(|(d, view)| *d == dimension && (sees_spectators || !view.spectator))
                 .map(|(_, view)| view.clone())
                 .collect();
             let snapshot = self
@@ -405,10 +406,11 @@ impl Server {
             let spawn = self.game.spawn_point();
             let mut player = PlayerState::new(spawn, 0.0, 0.0);
             player.name = name.clone();
-            player.mode = self
-                .lan
-                .as_ref()
-                .map_or(self.game.player.mode, |lan| lan.guest_mode);
+            player.mode = self.game.default_mode.unwrap_or_else(|| {
+                self.lan
+                    .as_ref()
+                    .map_or(self.game.player.mode, |lan| lan.guest_mode)
+            });
             self.game.others.push(player);
         }
         self.game.with_player(index, Game::restore_player);

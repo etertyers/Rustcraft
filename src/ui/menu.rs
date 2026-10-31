@@ -539,6 +539,8 @@ fn mode_description(mode: GameMode) -> &'static str {
     match mode {
         GameMode::Survival => "Search for resources, crafting, gain levels, health and hunger",
         GameMode::Creative => "Unlimited resources, free flying and destroy blocks instantly",
+        GameMode::Adventure => "Play custom maps: blocks can't be broken or placed freely",
+        GameMode::Spectator => "Fly through the world and watch, touching nothing",
     }
 }
 
