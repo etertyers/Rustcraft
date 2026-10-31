@@ -111,6 +111,7 @@ impl Server {
         let motd = format!("{} - {world}", self.game.player.name);
         let listener = crate::net::lan::Listener::open(port, motd)?;
         let port = listener.port;
+        self.game.guests_cheat = cheats;
         self.lan = Some(Lan {
             listener,
             guest_mode,
@@ -597,6 +598,10 @@ impl Server {
             ClientMsg::Chat(line) => self.chat(index, &line),
             ClientMsg::SpectatorTeleport(name) => {
                 self.game.spectator_teleport(index, &name);
+            }
+            ClientMsg::CommandBlock(edit) => {
+                self.game
+                    .with_player(index, |g| g.finish_command_block_edit(edit));
             }
             ClientMsg::SpectatorTeleportTeam(team) => {
                 self.game.spectator_teleport_team(index, &team);
@@ -1258,6 +1263,132 @@ mod tests {
 
     fn c_heard_team(client: &Client) -> bool {
         client.chat.iter().any(|(l, _)| l.contains("team only"))
+    }
+
+    #[test]
+    fn a_command_block_chain_and_a_pack_function_play_out_for_both_clients() {
+        use crate::game::command_blocks::{Edit, Mode};
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        // A data pack with a tick function counting ticks.
+        let root = std::env::temp_dir().join(format!("rc-m45-server-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let pack = root.join("datapacks/p");
+        std::fs::create_dir_all(pack.join("data/demo/function")).unwrap();
+        std::fs::create_dir_all(pack.join("data/minecraft/tags/function")).unwrap();
+        std::fs::write(
+            pack.join("pack.mcmeta"),
+            r#"{"pack":{"pack_format":48,"description":"p"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("data/demo/function/t.mcfunction"),
+            "scoreboard players add #ticks n 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("data/minecraft/tags/function/tick.json"),
+            r#"{"values":["demo:t"]}"#,
+        )
+        .unwrap();
+        server.game.world_dir_for_packs = Some(root.clone());
+        server.game.reload_packs();
+        for line in [
+            "/scoreboard objectives add n dummy {\"text\":\"Count\"}",
+            "/scoreboard objectives setdisplay sidebar n",
+        ] {
+            clients[0].0.send(ClientMsg::Chat(line.to_owned()));
+        }
+        // Alice's block, set up through the editor's message; Bob's is refused.
+        run_until(&mut server, &mut clients, |s, c| {
+            block_at(&s.game, IVec3::new(4, 70, 4)).is_some()
+                && c.iter()
+                    .all(|(_, g)| block_at(g, IVec3::new(4, 70, 4)).is_some())
+        });
+        let base = IVec3::new(4, 70, 4);
+        let facing = crate::world::Face::East;
+        let kinds = [
+            (Mode::Repeat, "scoreboard players add #cmd n 1"),
+            (Mode::Chain, "scoreboard players add #chain n 1"),
+        ];
+        for (i, (mode, _)) in kinds.iter().enumerate() {
+            let state = crate::world::block::BlockState::of(mode.block())
+                .with_face(crate::world::props::Prop::FacingAll, facing);
+            server
+                .game
+                .set_blocks(&[(base + IVec3::X * i as i32, state)]);
+        }
+        for (i, (mode, command)) in kinds.iter().enumerate() {
+            let edit = Edit {
+                at: (base + IVec3::X * i as i32).to_array(),
+                command: (*command).to_owned(),
+                mode: *mode,
+                conditional: false,
+                auto: true,
+                track_output: true,
+                last_output: String::new(),
+            };
+            clients[0]
+                .0
+                .send(ClientMsg::CommandBlock(Some(edit.clone())));
+            if i == 0 {
+                let mut hostile = edit;
+                hostile.command = "kill @a".to_owned();
+                clients[1].0.send(ClientMsg::CommandBlock(Some(hostile)));
+            }
+        }
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(_, g)| {
+                g.board_view.sidebar.as_ref().is_some_and(|s| {
+                    let has = |name: &str| s.rows.iter().any(|(n, v)| n == name && v.len() > 2);
+                    has("#cmd") && has("#chain") && has("#ticks")
+                })
+            })
+        });
+        let cmd = server.game.board.score("n", "#cmd").unwrap();
+        let chain = server.game.board.score("n", "#chain").unwrap();
+        assert!(
+            (cmd - chain).abs() <= 1,
+            "the chain runs with its repeater: {cmd} {chain}"
+        );
+        assert!(
+            server.game.board.score("n", "#ticks").unwrap() > 0,
+            "the pack's tick function ran"
+        );
+        assert!(
+            server.game.player.stats.health > 0.0 && server.game.others[0].stats.health > 0.0,
+            "Bob's edit was refused"
+        );
+        // Both clients see the same blocks; only the op hears the output.
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(_, g)| {
+                block_at(g, base).is_some_and(|b| b.is(blocks::REPEATING_COMMAND_BLOCK))
+                    && block_at(g, base + IVec3::X)
+                        .is_some_and(|b| b.is(blocks::CHAIN_COMMAND_BLOCK))
+            })
+        });
+        assert!(
+            heard(
+                &clients[0].0,
+                "§7§o[@: Added 1 to [Count] for #cmd (now 1)]"
+            ) || clients[0]
+                .0
+                .chat
+                .iter()
+                .any(|(l, _)| l.starts_with("§7§o[@: Added 1 to"))
+        );
+        assert!(
+            !clients[1]
+                .0
+                .chat
+                .iter()
+                .any(|(l, _)| l.starts_with("§7§o[@:")),
+            "Bob isn't an operator"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// How many of `name` player `inventory` holds (hotbar and main).

@@ -8,11 +8,13 @@ mod animals;
 mod armor;
 mod benches;
 pub mod board;
+pub use minecarts::{CART_EDIT, item_of as minecarts_item_of};
 mod board_hooks;
 mod boats;
 pub mod border;
 mod capture;
 mod combat;
+pub mod command_blocks;
 pub mod commands;
 mod containers;
 pub mod datapack;
@@ -241,6 +243,9 @@ pub struct PlayerState {
     /// Recipes `/recipe give` unlocked (the book shows them all).
     #[serde(default)]
     pub recipes: std::collections::BTreeSet<String>,
+    /// The command block this player is editing (the editor is open).
+    #[serde(default)]
+    pub command_block_edit: Option<command_blocks::Edit>,
     /// `/title`'s text on this player's screen.
     #[serde(default)]
     pub title: board::TitleState,
@@ -359,6 +364,7 @@ impl PlayerState {
             spectating: None,
             tags: Vec::new(),
             title: Default::default(),
+            command_block_edit: None,
             speed_scale: 1.0,
             recipes: Default::default(),
             previous_mode: GameMode::Survival,
@@ -448,6 +454,8 @@ pub struct Game {
     pub world_dir_for_packs: Option<std::path::PathBuf>,
     /// `/tick`: the target rate, frozen, steps and sprint left.
     pub tick_rate: f32,
+    /// Open to LAN with Allow Cheats: guests count as operators for command blocks.
+    pub guests_cheat: bool,
     /// The world border (`/worldborder`).
     pub border: border::WorldBorder,
     /// `/forceload`'s chunks, kept loaded.
@@ -610,6 +618,7 @@ impl Game {
             replies_out: Vec::new(),
             world_dir_for_packs: None,
             tick_rate: 20.0,
+            guests_cheat: false,
             border: Default::default(),
             forced: Default::default(),
             tick_ms: 0.0,
@@ -1283,6 +1292,7 @@ impl Game {
         self.time += 1;
         self.tick_mods();
         self.run_server_functions();
+        self.tick_command_blocks();
         self.hold_inside_the_border();
         if self.rules.do_weather_cycle {
             self.weather_ticks = self.weather_ticks.saturating_sub(1);

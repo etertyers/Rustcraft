@@ -2,6 +2,7 @@
 
 pub mod board;
 pub mod chat;
+pub mod command_block;
 pub mod creative;
 pub mod doll;
 pub mod font;
@@ -296,10 +297,12 @@ impl DebugUi {
             &mut crate::level::Difficulty,
         )>,
         chat: Option<(&mut chat::Chat, &chat::ChatSettings)>,
+        editor: Option<&mut command_block::CommandBlockEditor>,
     ) -> (
         UiPaint,
         Vec<screens::ScreenAction>,
         Option<chat::ChatAction>,
+        Option<command_block::EditorAction>,
     ) {
         let input = self.state.take_egui_input(window);
         let visible = self.visible;
@@ -310,6 +313,8 @@ impl DebugUi {
         let mut pause = pause;
         let mut chat = chat;
         let mut chat_action = None;
+        let mut editor = editor;
+        let mut editor_action = None;
         let output = self.ctx.run_ui(input, |ui| {
             let full = ui.ctx().content_rect();
             if hud.crosshair && !hud.hidden {
@@ -355,6 +360,9 @@ impl DebugUi {
             }
             if let Some((chat, settings)) = &mut chat {
                 chat_action = chat.show(ui.ctx(), settings);
+            }
+            if let Some(editor) = &mut editor {
+                editor_action = editor.show(ui.ctx());
             }
             if let Some(sidebar) = &hud.board.sidebar
                 && !hud.hidden
@@ -411,7 +419,7 @@ impl DebugUi {
         });
         // egui's platform output (cursor icon, clipboard) is ignored: applying
         // it would unhide the cursor while it's grabbed for mouse look.
-        (self.paint(output), actions, chat_action)
+        (self.paint(output), actions, chat_action, editor_action)
     }
 
     /// Builds this frame's main menu and returns what the player chose.

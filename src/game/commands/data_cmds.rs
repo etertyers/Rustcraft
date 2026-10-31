@@ -333,6 +333,18 @@ pub(super) fn block_nbt(game: &Game, at: IVec3) -> Option<Nbt> {
             );
             "minecraft:mob_spawner"
         }
+        BlockEntity::CommandBlock(c) => {
+            map.insert("Command".to_owned(), Nbt::Str(c.command.clone()));
+            map.insert("auto".to_owned(), Nbt::Byte(i8::from(c.auto)));
+            map.insert("powered".to_owned(), Nbt::Byte(i8::from(c.powered)));
+            map.insert(
+                "TrackOutput".to_owned(),
+                Nbt::Byte(i8::from(c.track_output)),
+            );
+            map.insert("LastOutput".to_owned(), Nbt::Str(c.last_output.clone()));
+            map.insert("SuccessCount".to_owned(), Nbt::Int(c.success));
+            "minecraft:command_block"
+        }
         BlockEntity::Furnace(_) => "minecraft:furnace",
         BlockEntity::BrewingStand(_) => "minecraft:brewing_stand",
     };
@@ -344,6 +356,18 @@ pub(super) fn block_nbt(game: &Game, at: IVec3) -> Option<Nbt> {
 }
 
 fn apply_block(game: &mut Game, at: IVec3, new: &Nbt) -> Result<(), String> {
+    if let Some(BlockEntity::CommandBlock(c)) = game.chunks.block_entity_mut(at) {
+        if let Some(Nbt::Str(s)) = new.get("Command") {
+            c.command = s.clone();
+        }
+        if let Some(v) = new.get("auto").and_then(Nbt::as_i32) {
+            c.auto = v != 0;
+        }
+        if let Some(v) = new.get("TrackOutput").and_then(Nbt::as_i32) {
+            c.track_output = v != 0;
+        }
+        return Ok(());
+    }
     let Some(Nbt::List(_)) = new.get("Items") else {
         return Ok(());
     };

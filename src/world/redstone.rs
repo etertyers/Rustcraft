@@ -55,6 +55,8 @@ pub mod priority {
 pub enum Event {
     /// A dispenser or dropper fires.
     Dispense(IVec3),
+    /// A command block's power was looked at (it is `powered` or not).
+    CommandPower { at: IVec3, powered: bool },
     /// A note block plays (instrument and note as in its state).
     PlayNote { at: IVec3, instrument: u8, note: u8 },
     /// TNT was powered: it's gone from the world and primed.
@@ -544,6 +546,12 @@ impl Step<'_> {
                     self.set(at, BlockState::AIR);
                     self.events.push(Event::Prime(at));
                 }
+            }
+            blocks::COMMAND_BLOCK
+            | blocks::CHAIN_COMMAND_BLOCK
+            | blocks::REPEATING_COMMAND_BLOCK => {
+                let powered = self.has_neighbor_signal(at);
+                self.events.push(Event::CommandPower { at, powered });
             }
             blocks::DISPENSER | blocks::DROPPER => {
                 let powered =

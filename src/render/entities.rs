@@ -419,6 +419,7 @@ pub fn add_cart_blocks(
             CartKind::Chest => blocks::CHEST,
             CartKind::Hopper => blocks::HOPPER,
             CartKind::Tnt => blocks::TNT,
+            CartKind::CommandBlock => blocks::COMMAND_BLOCK,
             CartKind::Rideable => continue,
         };
         let model = models.get(BlockState::of(id));

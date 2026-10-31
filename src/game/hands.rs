@@ -474,6 +474,15 @@ impl Game {
         if self.player.break_cooldown > 0 || !self.adventure_may_break(cell) {
             return;
         }
+        if self
+            .chunks
+            .world()
+            .block(cell.x, cell.y, cell.z)
+            .is_some_and(|b| super::command_blocks::Mode::of(b).is_some())
+            && !self.may_edit_command_blocks()
+        {
+            return;
+        }
         let world = self.chunks.world();
         let Some(def) = world
             .block(cell.x, cell.y, cell.z)
@@ -1019,6 +1028,7 @@ impl Game {
                 self.open_dispenser(cell, dropper);
             }
             Activate::Hopper => self.open_hopper(cell),
+            Activate::CommandBlock => self.open_command_block(cell),
             Activate::Enchanting => self.open_bench(BenchKind::Enchanting, cell),
             Activate::Anvil => self.open_bench(BenchKind::Anvil, cell),
             Activate::Grindstone => self.open_bench(BenchKind::Grindstone, cell),
@@ -1072,6 +1082,14 @@ impl Game {
         let Some(block) = self.items.places(&stack) else {
             return;
         };
+        // Command blocks are for operators in creative.
+        if super::command_blocks::Mode::of(block).is_some() && !self.may_edit_command_blocks() {
+            self.player.message = Some((
+                "§cOnly operators in creative mode can place command blocks".to_owned(),
+                80,
+            ));
+            return;
+        }
         let world = self.chunks.world();
         let player = self.player.body.aabb();
         let yaw = self.player.camera.yaw;

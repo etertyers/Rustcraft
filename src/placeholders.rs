@@ -25,10 +25,6 @@ use serde_json::Value;
 /// the debug stick and knowledge book, and anything for the Wither or ocean
 /// monuments (CLAUDE.md §1.1).
 pub const SKIPPED: &[&str] = &[
-    "command_block",
-    "chain_command_block",
-    "repeating_command_block",
-    "command_block_minecart",
     "structure_block",
     "structure_void",
     "jigsaw",
@@ -889,7 +885,6 @@ mod tests {
     #[test]
     fn technical_and_out_of_scope_names_are_skipped() {
         for name in [
-            "command_block",
             "structure_block",
             "jigsaw",
             "barrier",

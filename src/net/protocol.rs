@@ -72,6 +72,8 @@ pub enum ClientMsg {
     SpectatorTeleport(String),
     /// ... or a team in its page of the menu: to one of its members.
     SpectatorTeleportTeam(String),
+    /// The command block editor's Done (the new settings) or Cancel (`None`).
+    CommandBlock(Option<crate::game::command_blocks::Edit>),
 }
 
 /// One tick of a player's movement input.

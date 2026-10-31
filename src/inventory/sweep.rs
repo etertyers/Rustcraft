@@ -10,6 +10,11 @@ use crate::{
 
 /// What no crafting, smelting or stonecutting recipe makes.
 const NOT_CRAFTED: &[&str] = &[
+    // Only `/give` makes these (M45).
+    "command_block",
+    "chain_command_block",
+    "repeating_command_block",
+    "command_block_minecart",
     // Farmed, caught or found (M40).
     "kelp",
     "potato",
