@@ -1045,3 +1045,317 @@ pub(super) fn stop(_: &mut Game, _: &Caller, _: &[&str]) -> Result<Vec<Reply>, S
         Reply::Stop,
     ])
 }
+
+// ---- /teleport in full ----
+
+/// Whether a word starts a coordinate rather than naming a target.
+fn is_coordinate(word: &str) -> bool {
+    word.starts_with(['~', '^', '-', '.'])
+        || word.chars().next().is_some_and(|c| c.is_ascii_digit())
+}
+
+/// Moves `target` to `to` (a player in another dimension travels).
+fn move_target(
+    game: &mut Game,
+    target: Target,
+    to: DVec3,
+    dimension: crate::world::dimension::Dimension,
+) {
+    match target {
+        Target::Player(index) => {
+            let (yaw, pitch) = (
+                game.player_at(index).camera.yaw,
+                game.player_at(index).camera.pitch,
+            );
+            if game.player_at(index).dimension == dimension {
+                game.with_player(index, |g| g.teleport(to, yaw, pitch));
+            } else {
+                game.with_player(index, |g| g.change_dimension(dimension, Arrival::At(to)));
+            }
+        }
+        Target::Mob(id) => {
+            if let Some(mob) = game.mobs.iter_mut().find(|m| m.id == id) {
+                mob.body.set_position(to);
+            }
+        }
+    }
+}
+
+pub(super) fn tp(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
+    let usage = "Usage: /tp [targets] (<destination> | <x y z> [<yaw> <pitch> | facing <x y z> | facing entity <target> [eyes|feet]])";
+    if args.is_empty() {
+        return Err(usage.to_owned());
+    }
+    let origin = game.feet_of(caller.index);
+    let coordinate_first = args.len() >= 3 && args[..3].iter().all(|w| is_coordinate(w));
+    let (who, rest): (Vec<Target>, &[&str]) = if args.len() == 1 || coordinate_first {
+        (vec![Target::Player(caller.index)], args)
+    } else {
+        (game.targets(caller, args[0])?, &args[1..])
+    };
+    let dimension = game.player_at(caller.index).dimension;
+    let (to, tail): (DVec3, &[&str]) =
+        if rest.len() >= 3 && rest[..3].iter().all(|w| is_coordinate(w)) {
+            (position(&rest[..3], origin)?, &rest[3..])
+        } else {
+            let dest = game.targets(caller, rest.first().ok_or(usage)?)?;
+            let [only] = dest.as_slice() else {
+                return Err(
+                    "Only one entity is allowed, but the selector allows more than one".to_owned(),
+                );
+            };
+            (
+                game.target_feet(*only).ok_or("No entity was found")?,
+                &rest[1..],
+            )
+        };
+    // What the targets face afterwards, if told.
+    enum Turn {
+        None,
+        Angles(f64, f64),
+        Facing(DVec3),
+        Entity(Target, bool),
+    }
+    let turn = match tail {
+        [] => Turn::None,
+        [yaw, pitch] => {
+            let rel =
+                |w: &str| -> Result<f64, String> { number(w.trim_start_matches('~'), "rotation") };
+            let y = if *yaw == "~" { 0.0 } else { rel(yaw)? };
+            let p = if *pitch == "~" { 0.0 } else { rel(pitch)? };
+            if yaw.starts_with('~') || pitch.starts_with('~') {
+                // Relative angles are added to each target's own below.
+                Turn::Angles(f64::NAN.min(y), p)
+            } else {
+                Turn::Angles(y, p)
+            }
+        }
+        ["facing", "entity", who, rest @ ..] => {
+            let [only] = game.targets(caller, who)?[..] else {
+                return Err(
+                    "Only one entity is allowed, but the selector allows more than one".to_owned(),
+                );
+            };
+            Turn::Entity(only, rest.first().copied() != Some("feet"))
+        }
+        ["facing", x, y, z] => Turn::Facing(position(&[*x, *y, *z], origin)?),
+        _ => return Err(usage.to_owned()),
+    };
+    let mut replies = Vec::new();
+    for target in &who {
+        let name = game.target_name(*target);
+        move_target(game, *target, to, dimension);
+        match &turn {
+            Turn::None => {}
+            Turn::Angles(yaw, pitch) => {
+                let (y0, p0) = target_angles(game, *target);
+                let yaw = if yaw.is_nan() { y0 } else { *yaw };
+                let _ = p0;
+                turn_target(game, *target, yaw, *pitch);
+            }
+            Turn::Facing(at) => face(game, *target, *at),
+            Turn::Entity(other, eyes) => {
+                if let Some(feet) = game.target_feet(*other) {
+                    face(
+                        game,
+                        *target,
+                        feet + DVec3::Y * if *eyes { 1.62 } else { 0.0 },
+                    );
+                }
+            }
+        }
+        replies.push(Reply::Sender(format!(
+            "Teleported {name} to {:.2}, {:.2}, {:.2}",
+            to.x, to.y, to.z
+        )));
+    }
+    Ok(replies)
+}
+
+/// Turns `target` to look at `at`.
+fn face(game: &mut Game, target: Target, at: DVec3) {
+    let from = game.target_feet(target).unwrap_or(at) + DVec3::Y * 1.62;
+    let d = at - from;
+    let yaw = wrap_degrees(-(d.x.atan2(d.z)).to_degrees());
+    let pitch = -(d.y.atan2(d.x.hypot(d.z))).to_degrees();
+    turn_target(game, target, yaw, pitch);
+}
+
+// ---- /summon with entity data ----
+
+/// Applies `{CustomName:'"x"',Tags:["a"],Health:5f,Rotation:[90f,0f],Age:-24000}`
+/// to the mob that was just summoned.
+pub(super) fn apply_entity_data(game: &mut Game, id: u64, data: &str) -> Result<(), String> {
+    let inner = data
+        .strip_prefix('{')
+        .and_then(|d| d.strip_suffix('}'))
+        .ok_or("Expected '{' to start the entity data")?;
+    for entry in components::split_top(inner) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (key, value) = entry
+            .split_once(':')
+            .ok_or_else(|| format!("Expected ':' after '{entry}'"))?;
+        let value = value.trim();
+        let number = |v: &str| -> Result<f32, String> {
+            v.trim_end_matches(['f', 'd', 'b', 's', 'L'])
+                .parse()
+                .map_err(|_| format!("Invalid number '{v}'"))
+        };
+        let Some(mob) = game.mobs.iter_mut().find(|m| m.id == id) else {
+            return Err("The entity is gone".to_owned());
+        };
+        match key.trim() {
+            "CustomName" => mob.data.custom_name = Some(components::plain_text(value)),
+            "Tags" => mob.data.tags = components::strings_in(value),
+            "Health" => mob.stats.health = number(value)?,
+            "Age" => mob.data.age = number(value)? as i32,
+            "Rotation" => {
+                let angles: Vec<f32> = components::strings_in(value.trim_matches(['[', ']']))
+                    .iter()
+                    .map(|a| number(a))
+                    .collect::<Result<_, _>>()?;
+                if let [yaw, pitch] = angles[..] {
+                    mob.yaw = wrap_degrees(f64::from(yaw) - 180.0).to_radians() as f32;
+                    mob.head_yaw = mob.yaw;
+                    mob.pitch = (-pitch).to_radians();
+                }
+            }
+            other => return Err(format!("Unknown entity data '{other}'")),
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn summon(
+    game: &mut Game,
+    caller: &Caller,
+    args: &[&str],
+) -> Result<Vec<Reply>, String> {
+    let Some(name) = args.first() else {
+        return Err("Usage: /summon <entity> [x y z] [data]".to_owned());
+    };
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    let origin = game.feet_of(caller.index);
+    let (at, data) = match args.get(1..) {
+        Some(words) if words.len() >= 3 && words[..3].iter().all(|w| is_coordinate(w)) => {
+            (position(&words[..3], origin)?, words.get(3).copied())
+        }
+        Some([data]) if data.starts_with('{') => (origin, Some(*data)),
+        _ => (origin, None),
+    };
+    game.enter_realm(game.player_at(caller.index).dimension);
+    let yaw = game.player_at(caller.index).camera.yaw;
+    let id = game
+        .summon(name, at, yaw)
+        .ok_or_else(|| format!("Unknown entity type: {name}"))?
+        .id;
+    if let Some(data) = data
+        && let Err(why) = apply_entity_data(game, id, data)
+    {
+        game.mobs.retain(|m| m.id != id);
+        return Err(why);
+    }
+    Ok(tell(format!(
+        "Summoned new {}",
+        crate::game::mob_acts::display_name(name)
+    )))
+}
+
+// ---- /locate poi ----
+
+/// Points of interest and the blocks that make them.
+const POIS: &[(&str, &[&str])] = &[
+    (
+        "bed",
+        &[
+            "white_bed",
+            "red_bed",
+            "blue_bed",
+            "black_bed",
+            "green_bed",
+            "yellow_bed",
+        ],
+    ),
+    ("nether_portal", &["nether_portal"]),
+    ("farmer", &["composter"]),
+    ("librarian", &["lectern"]),
+    ("armorer", &["blast_furnace"]),
+    ("toolsmith", &["smithing_table"]),
+    ("weaponsmith", &["grindstone"]),
+    ("cleric", &["brewing_stand"]),
+    ("butcher", &["smoker"]),
+    ("lightning_rod", &["lightning_rod"]),
+    ("lodestone", &["lodestone"]),
+];
+
+/// What `/locate`'s second word can be, from its first.
+pub(super) fn locate_names(game: &Game, before: &[&str]) -> Vec<String> {
+    match before.first().copied() {
+        Some("poi") => POIS.iter().map(|(n, _)| (*n).to_owned()).collect(),
+        Some("biome") => world::biome_ids(game),
+        Some("structure") => STRUCTURES.iter().map(|n| (*n).to_owned()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+const STRUCTURES: &[&str] = &[
+    "village",
+    "desert_pyramid",
+    "jungle_pyramid",
+    "shipwreck",
+    "ruined_portal",
+    "mineshaft",
+    "stronghold",
+    "fortress",
+    "bastion_remnant",
+    "end_city",
+];
+
+/// The nearest loaded block of the poi's kind within 128 blocks.
+pub(super) fn locate_poi(game: &Game, from: DVec3, name: &str) -> Result<IVec3, String> {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    let &(_, blocks) = POIS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .ok_or_else(|| format!("Unknown point of interest: {name}"))?;
+    let wanted: Vec<_> = blocks
+        .iter()
+        .filter_map(|b| crate::world::blocks::by_name(b))
+        .collect();
+    let world = game.chunks.world();
+    let mut best: Option<(f64, IVec3)> = None;
+    for pos in world.positions() {
+        let Some(chunk) = world.get(pos) else {
+            continue;
+        };
+        let (bx, bz) = pos.min_block();
+        if (f64::from(bx + 8) - from.x).hypot(f64::from(bz + 8) - from.z) > 128.0 + 12.0 {
+            continue;
+        }
+        for section in chunk.bottom_section()..=chunk.top_section() {
+            if chunk.section_is_empty(section) {
+                continue;
+            }
+            let bottom = crate::world::chunk::section_bottom(section);
+            for y in bottom..bottom + 16 {
+                for z in 0..16usize {
+                    for x in 0..16usize {
+                        let state = chunk.get(x, y, z);
+                        if wanted.contains(&state.id()) {
+                            let at = IVec3::new(bx + x as i32, y, bz + z as i32);
+                            let d = at.as_dvec3().distance(from);
+                            if d <= 128.0 && best.is_none_or(|(bd, _)| d < bd) {
+                                best = Some((d, at));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, at)| at)
+        .ok_or_else(|| format!("Could not find a point of interest of type \"{name}\" nearby"))
+}

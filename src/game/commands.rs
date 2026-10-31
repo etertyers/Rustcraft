@@ -7,7 +7,9 @@
 
 use glam::{DVec3, IVec3};
 
+mod components;
 mod extra;
+mod world;
 
 use super::{
     Game,
@@ -80,6 +82,8 @@ enum Arg {
     Words(&'static [&'static str]),
     /// A list worked out from the game: sounds, advancements, biomes...
     Dynamic(fn(&Game) -> Vec<String>),
+    /// A list that depends on the words typed before it.
+    After(fn(&Game, &[&str]) -> Vec<String>),
     Coordinate,
     Free,
 }
@@ -175,7 +179,7 @@ const COMMANDS: &[Command] = &[
         aliases: &[],
         cheat: true,
         host: false,
-        usage: "/give <player> <item> [count]",
+        usage: "/give <player> <item>[components] [count]",
         args: &[Arg::Players, Arg::Item, Arg::Free],
         run: give,
     },
@@ -200,7 +204,7 @@ const COMMANDS: &[Command] = &[
             Arg::Coordinate,
             Arg::Coordinate,
         ],
-        run: tp,
+        run: extra::tp,
     },
     Command {
         name: "time",
@@ -268,7 +272,7 @@ const COMMANDS: &[Command] = &[
         host: false,
         usage: "/summon <entity> [x y z]",
         args: &[Arg::Mob, Arg::Coordinate, Arg::Coordinate, Arg::Coordinate],
-        run: summon,
+        run: extra::summon,
     },
     Command {
         name: "setblock",
@@ -283,7 +287,7 @@ const COMMANDS: &[Command] = &[
             Arg::Block,
             Arg::Words(&["replace", "keep", "destroy"]),
         ],
-        run: setblock,
+        run: world::setblock,
     },
     Command {
         name: "fill",
@@ -301,7 +305,7 @@ const COMMANDS: &[Command] = &[
             Arg::Block,
             Arg::Words(&["replace", "keep", "hollow", "outline", "destroy"]),
         ],
-        run: fill,
+        run: world::fill,
     },
     Command {
         name: "gamerule",
@@ -340,8 +344,11 @@ const COMMANDS: &[Command] = &[
         aliases: &[],
         cheat: true,
         host: false,
-        usage: "/locate <structure|biome> <name>",
-        args: &[Arg::Words(&["structure", "biome"]), Arg::Free],
+        usage: "/locate <structure|biome|poi> <name>",
+        args: &[
+            Arg::Words(&["structure", "biome", "poi"]),
+            Arg::After(extra::locate_names),
+        ],
         run: locate,
     },
     Command {
@@ -362,6 +369,63 @@ const COMMANDS: &[Command] = &[
         args: &[Arg::Players, Arg::Free],
         run: kick,
     },
+    cmd!(
+        "clone",
+        [],
+        true,
+        false,
+        "/clone <begin> <end> <destination> [replace|masked|filtered <block>] [force|move|normal]",
+        [
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Words(&["replace", "masked", "filtered", "force", "move", "normal"]),
+            Arg::Block,
+            Arg::Words(&["force", "move", "normal"])
+        ],
+        world::clone
+    ),
+    cmd!(
+        "fillbiome",
+        [],
+        true,
+        false,
+        "/fillbiome <from> <to> <biome> [replace <filter>]",
+        [
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Dynamic(world::biome_ids),
+            Arg::Words(&["replace"]),
+            Arg::Dynamic(world::biome_ids)
+        ],
+        world::fillbiome
+    ),
+    cmd!(
+        "place",
+        [],
+        true,
+        false,
+        "/place (template <name> | structure <name> | feature <name> | jigsaw <pool> <target> <depth>) [pos] [rotation]",
+        [
+            Arg::Words(&["template", "structure", "feature", "jigsaw"]),
+            Arg::Dynamic(world::template_names),
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Coordinate,
+            Arg::Words(&["none", "clockwise_90", "180", "counterclockwise_90"])
+        ],
+        world::place
+    ),
     cmd!(
         "say",
         [],
@@ -714,10 +778,14 @@ impl Game {
                 return Vec::new();
             };
             match command.args.get(typed - 1) {
+                Some(Arg::After(list)) => list(self, &words[1..typed]),
                 Some(arg) => self.options(*arg),
                 None => Vec::new(),
             }
         };
+        if last.contains('[') {
+            options = world::state_completions(last);
+        }
         options.retain(|o| o.starts_with(last));
         options.sort();
         options.dedup();
@@ -764,6 +832,7 @@ impl Game {
                 .to_vec(),
             Arg::Words(words) => words.iter().map(|w| (*w).to_owned()).collect(),
             Arg::Dynamic(list) => list(self),
+            Arg::After(_) => Vec::new(),
             Arg::Coordinate => vec!["~".to_owned(), "^".to_owned()],
             Arg::Free => Vec::new(),
         }
@@ -1063,7 +1132,7 @@ fn give(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
     let (Some(who), Some(item)) = (args.first(), args.get(1)) else {
         return Err("Usage: /give <player> <item> [count]".to_owned());
     };
-    let id = item_named(item)?;
+    let (id, template) = components::item_with_components(item)?;
     let count: u32 = match args.get(2) {
         Some(n) => number(n, "count")?,
         None => 1,
@@ -1083,7 +1152,7 @@ fn give(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
                 if let Some(rest) = g
                     .player
                     .inventory
-                    .add(ItemStack::new(id, take as u8), &items)
+                    .add(template.with_count(take as u8), &items)
                 {
                     g.throw(rest);
                 }
@@ -1110,17 +1179,39 @@ fn clear(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, 
         Some(word) => game.players_named(caller, word)?,
         None => vec![caller.index],
     };
-    let only = args.get(1).map(|name| item_named(name)).transpose()?;
+    let only = args
+        .get(1)
+        .map(|name| components::item_with_components(name))
+        .transpose()?;
+    let wanted = only.as_ref().map(|(id, _)| *id);
     let max: Option<u32> = args.get(2).map(|n| number(n, "count")).transpose()?;
     let mut replies = Vec::new();
     for index in who {
+        if max == Some(0) {
+            // A count of 0 only asks how many there are.
+            let found: u32 = game.with_player(index, |g| {
+                (0..crate::inventory::player::SLOTS)
+                    .filter_map(|slot| g.player.inventory.slot(slot))
+                    .filter(|stack| wanted.is_none_or(|id| id == stack.id))
+                    .map(|stack| u32::from(stack.count))
+                    .sum()
+            });
+            let name = game.player_at(index).name.clone();
+            if found == 0 {
+                return Err(format!("No items were found on player {name}"));
+            }
+            replies.push(Reply::Sender(format!(
+                "Found {found} matching item(s) on player {name}"
+            )));
+            continue;
+        }
         let removed = game.with_player(index, |g| {
             let mut removed = 0u32;
             for slot in 0..crate::inventory::player::SLOTS {
                 let Some(mut stack) = g.player.inventory.slot(slot).cloned() else {
                     continue;
                 };
-                if only.is_some_and(|id| id != stack.id) {
+                if wanted.is_some_and(|id| id != stack.id) {
                     continue;
                 }
                 let room = max.map_or(u32::MAX, |m| m - removed.min(m));
@@ -1139,55 +1230,6 @@ fn clear(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, 
         }
         replies.push(Reply::Sender(format!(
             "Removed {removed} item(s) from player {name}"
-        )));
-    }
-    Ok(replies)
-}
-
-fn tp(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
-    let origin = game.feet_of(caller.index);
-    // /tp <x y z>, /tp <dest>, /tp <targets> <dest>, /tp <targets> <x y z>.
-    let (who, dest_words): (Vec<Target>, &[&str]) = match args.len() {
-        1 | 3 => (vec![Target::Player(caller.index)], args),
-        2 | 4 => (game.targets(caller, args[0])?, &args[1..]),
-        _ => return Err("Usage: /tp [targets] <destination | x y z>".to_owned()),
-    };
-    let to = if dest_words.len() == 3 {
-        position(dest_words, origin)?
-    } else {
-        let dest = game.targets(caller, dest_words[0])?;
-        let [only] = dest.as_slice() else {
-            return Err(
-                "Only one entity is allowed, but the selector allows more than one".to_owned(),
-            );
-        };
-        game.target_feet(*only).ok_or("No entity was found")?
-    };
-    let dimension = game.player_at(caller.index).dimension;
-    let mut replies = Vec::new();
-    for target in &who {
-        let name = game.target_name(*target);
-        match *target {
-            Target::Player(index) => {
-                let (yaw, pitch) = {
-                    let p = game.player_at(index);
-                    (p.camera.yaw, p.camera.pitch)
-                };
-                if game.player_at(index).dimension == dimension {
-                    game.with_player(index, |g| g.teleport(to, yaw, pitch));
-                } else {
-                    game.with_player(index, |g| g.change_dimension(dimension, Arrival::At(to)));
-                }
-            }
-            Target::Mob(id) => {
-                if let Some(mob) = game.mobs.iter_mut().find(|m| m.id == id) {
-                    mob.body.set_position(to);
-                }
-            }
-        }
-        replies.push(Reply::Sender(format!(
-            "Teleported {name} to {:.1}, {:.1}, {:.1}",
-            to.x, to.y, to.z
         )));
     }
     Ok(replies)
@@ -1451,110 +1493,6 @@ fn xp(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Str
     Ok(replies)
 }
 
-fn summon(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
-    let Some(name) = args.first() else {
-        return Err("Usage: /summon <entity> [x y z]".to_owned());
-    };
-    let name = name.strip_prefix("minecraft:").unwrap_or(name);
-    let origin = game.feet_of(caller.index);
-    let at = match args.get(1..4) {
-        Some(words) => position(words, origin)?,
-        None => origin,
-    };
-    game.enter_realm(game.player_at(caller.index).dimension);
-    let yaw = game.player_at(caller.index).camera.yaw;
-    game.summon(name, at, yaw)
-        .ok_or_else(|| format!("Unknown entity type: {name}"))?;
-    Ok(tell(format!(
-        "Summoned new {}",
-        super::mob_acts::display_name(name)
-    )))
-}
-
-fn setblock(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
-    let (Some(words), Some(block)) = (args.get(0..3), args.get(3)) else {
-        return Err("Usage: /setblock <x y z> <block> [replace|keep|destroy]".to_owned());
-    };
-    let at = block_position(words, game.feet_of(caller.index))?;
-    let block = block_named(block)?;
-    let mode = args.get(4).copied().unwrap_or("replace");
-    game.enter_realm(game.player_at(caller.index).dimension);
-    let here = game
-        .chunks
-        .world()
-        .block(at.x, at.y, at.z)
-        .ok_or("That position is not loaded")?;
-    match mode {
-        "keep" if !here.is_air() => return Err("Could not set the block".to_owned()),
-        "replace" | "keep" | "destroy" => {}
-        other => return Err(format!("Unknown mode: {other}")),
-    }
-    if here == block {
-        return Err("Could not set the block".to_owned());
-    }
-    game.edit(&[(at, block)]);
-    Ok(tell(format!(
-        "Changed the block at {}, {}, {}",
-        at.x, at.y, at.z
-    )))
-}
-
-fn fill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
-    let (Some(from), Some(to), Some(block)) = (args.get(0..3), args.get(3..6), args.get(6)) else {
-        return Err(
-            "Usage: /fill <x1 y1 z1> <x2 y2 z2> <block> [replace|keep|hollow|outline|destroy]"
-                .to_owned(),
-        );
-    };
-    let origin = game.feet_of(caller.index);
-    let (a, b) = (block_position(from, origin)?, block_position(to, origin)?);
-    let (lo, hi) = (a.min(b), a.max(b));
-    let size = (hi - lo + 1).as_i64vec3();
-    let count = size.x * size.y * size.z;
-    if count > FILL_LIMIT {
-        return Err(format!(
-            "Too many blocks in the specified area (maximum {FILL_LIMIT}, specified {count})"
-        ));
-    }
-    let block = block_named(block)?;
-    let mode = args.get(7).copied().unwrap_or("replace");
-    if !["replace", "keep", "hollow", "outline", "destroy"].contains(&mode) {
-        return Err(format!("Unknown mode: {mode}"));
-    }
-    game.enter_realm(game.player_at(caller.index).dimension);
-    let air = BlockState::of(crate::world::blocks::AIR);
-    let mut edits = Vec::new();
-    for y in lo.y..=hi.y {
-        for z in lo.z..=hi.z {
-            for x in lo.x..=hi.x {
-                let at = IVec3::new(x, y, z);
-                let edge =
-                    x == lo.x || x == hi.x || y == lo.y || y == hi.y || z == lo.z || z == hi.z;
-                let Some(here) = game.chunks.world().block(x, y, z) else {
-                    return Err("That position is not loaded".to_owned());
-                };
-                let new = match mode {
-                    "keep" if !here.is_air() => continue,
-                    "hollow" if !edge => air,
-                    "outline" if !edge => continue,
-                    _ => block,
-                };
-                if new != here {
-                    edits.push((at, new));
-                }
-            }
-        }
-    }
-    if edits.is_empty() {
-        return Err("No blocks were filled".to_owned());
-    }
-    game.edit(&edits);
-    Ok(tell(format!(
-        "Successfully filled {} block(s)",
-        edits.len()
-    )))
-}
-
 fn gamerule(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
     let Some(rule) = args.first() else {
         return Err("Usage: /gamerule <rule> [value]".to_owned());
@@ -1625,6 +1563,16 @@ fn locate(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>,
     let from = game.feet_of(caller.index);
     if game.player_at(caller.index).dimension != Dimension::Overworld {
         return Err("Only the Overworld can be searched".to_owned());
+    }
+    if what == "poi" {
+        let at = extra::locate_poi(game, from, name)?;
+        let away = at.as_dvec3().distance(from);
+        return Ok(tell(format!(
+            "The nearest {name} is at §a[{}, ~, {}]§r ({} blocks away)",
+            at.x,
+            at.z,
+            away.round() as i64
+        )));
     }
     let terrain = game
         .chunks

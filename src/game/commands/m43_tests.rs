@@ -531,3 +531,239 @@ fn damage_rules_switch_off_falls_fire_and_drowning() {
             .damage(5.0, crate::player::stats::DamageSource::Fall)
     );
 }
+
+fn block_name(game: &crate::game::Game, x: i32, y: i32, z: i32) -> String {
+    game.chunks
+        .world()
+        .block(x, y, z)
+        .unwrap()
+        .def()
+        .name
+        .clone()
+}
+
+#[test]
+fn give_takes_item_components_and_clear_counts() {
+    let mut game = world();
+    let told = said(&run(
+        &mut game,
+        r#"give @s diamond_sword[damage=5,enchantments={levels:{"minecraft:sharpness":3}},can_break=["stone"],custom_name='"Excalibur"'] 2"#,
+    ));
+    assert!(told.starts_with("Gave 2 ["), "{told}");
+    let sword = (0..crate::inventory::player::SLOTS)
+        .filter_map(|i| game.player.inventory.slot(i))
+        .find(|s| s.id == items::DIAMOND_SWORD)
+        .unwrap()
+        .clone();
+    assert_eq!(sword.damage, 5);
+    assert_eq!(
+        sword.level_of(crate::inventory::enchant::Enchantment::Sharpness),
+        3
+    );
+    assert_eq!(sword.can_break(), ["stone"]);
+    assert_eq!(sword.custom_name(), Some("Excalibur"));
+    assert!(
+        said(&run(&mut game, "give @s diamond_sword[bogus=1]")).contains("Unknown item component")
+    );
+    assert!(
+        said(&run(&mut game, "give @s dirt[can_place_on=[\"nothing\"]]"))
+            .contains("Unknown block type")
+    );
+    // /clear with a count of 0 only counts.
+    assert_eq!(
+        said(&run(&mut game, "clear @s diamond_sword 0")),
+        "Found 2 matching item(s) on player Kenzo"
+    );
+    assert!(!said(&run(&mut game, "clear @s diamond_sword 1")).is_empty());
+    assert_eq!(
+        said(&run(&mut game, "clear @s diamond_sword 0")),
+        "Found 1 matching item(s) on player Kenzo"
+    );
+}
+
+#[test]
+fn setblock_and_fill_take_block_states_filters_and_destroy() {
+    let mut game = world();
+    run(
+        &mut game,
+        "setblock 0 70 0 minecraft:oak_stairs[facing=east,half=top]",
+    );
+    let stairs = game.chunks.world().block(0, 70, 0).unwrap();
+    let facing = crate::world::props::Prop::Facing;
+    assert_eq!(stairs.def().name, "oak_stairs");
+    assert_eq!(stairs.face(facing), crate::world::Face::East);
+    assert!(
+        said(&run(&mut game, "setblock 0 70 1 oak_stairs[nope=1]"))
+            .contains("does not have property")
+    );
+    assert!(
+        said(&run(&mut game, "setblock 0 70 1 oak_stairs[facing=up]")).contains("does not accept")
+    );
+    // Filtered replace only touches the filter.
+    run(&mut game, "fill 0 70 2 2 70 2 stone");
+    run(&mut game, "setblock 1 70 2 dirt");
+    let told = said(&run(&mut game, "fill 0 70 2 2 70 2 glass replace stone"));
+    assert_eq!(told, "Successfully filled 2 block(s)");
+    assert_eq!(block_name(&game, 1, 70, 2), "dirt");
+    assert_eq!(block_name(&game, 0, 70, 2), "glass");
+    // Destroy drops items; replace doesn't.
+    let before = game.entities.len();
+    run(&mut game, "setblock 1 70 2 air destroy");
+    assert!(game.entities.len() > before, "dirt dropped");
+    // Hollow and outline keep their shapes.
+    run(&mut game, "fill 10 70 10 12 72 12 stone hollow");
+    assert_eq!(block_name(&game, 11, 71, 11), "air");
+    assert_eq!(block_name(&game, 10, 71, 11), "stone");
+    run(&mut game, "fill 20 70 10 22 72 12 stone outline");
+    assert_eq!(block_name(&game, 21, 71, 11), "air");
+    run(&mut game, "fill 20 70 10 22 72 12 dirt keep");
+    assert_eq!(block_name(&game, 21, 71, 11), "dirt");
+    assert!(said(&run(&mut game, "fill 0 0 0 100 100 100 stone")).contains("Too many blocks"));
+}
+
+#[test]
+fn clone_copies_masked_filtered_and_moves_with_block_entities() {
+    let mut game = world();
+    run(&mut game, "fill 0 70 0 2 70 0 stone");
+    run(&mut game, "setblock 1 70 0 dirt");
+    run(&mut game, "setblock 0 70 1 chest");
+    game.chunks.set_block_entity(
+        IVec3::new(0, 70, 1),
+        Some(crate::world::block_entity::BlockEntity::Chest({
+            let mut slots = vec![None; crate::world::block_entity::CHEST_SLOTS];
+            slots[0] = Some(ItemStack::new(items::DIAMOND, 3));
+            slots
+        })),
+    );
+    let told = said(&run(&mut game, "clone 0 70 0 2 70 0 0 72 0"));
+    assert_eq!(told, "Successfully cloned 3 block(s)");
+    assert_eq!(block_name(&game, 1, 72, 0), "dirt");
+    // Overlap needs force or move.
+    assert!(said(&run(&mut game, "clone 0 70 0 2 70 0 1 70 0")).contains("cannot overlap"));
+    // Masked skips air; filtered takes only the filter.
+    run(&mut game, "clone 0 70 0 2 71 0 10 70 0 masked");
+    assert_eq!(block_name(&game, 10, 71, 0), "air");
+    run(&mut game, "clone 0 70 0 2 70 0 20 70 0 filtered dirt");
+    assert_eq!(block_name(&game, 21, 70, 0), "dirt");
+    assert_eq!(
+        block_name(&game, 20, 70, 0),
+        "air",
+        "only the dirt was cloned"
+    );
+    // A chest's contents travel with it, and move leaves air behind.
+    let told = said(&run(&mut game, "clone 0 70 1 0 70 1 5 70 1 replace move"));
+    assert_eq!(told, "Successfully cloned 1 block(s)");
+    assert_eq!(block_name(&game, 0, 70, 1), "air");
+    match game.chunks.block_entity(IVec3::new(5, 70, 1)) {
+        Some(crate::world::block_entity::BlockEntity::Chest(slots)) => {
+            assert_eq!(slots[0], Some(ItemStack::new(items::DIAMOND, 3)));
+        }
+        other => panic!("the chest's contents should move: {other:?}"),
+    }
+}
+
+#[test]
+fn fillbiome_sets_columns_and_place_puts_down_a_template() {
+    let mut game = world();
+    let told = said(&run(&mut game, "fillbiome 0 64 0 3 64 3 minecraft:desert"));
+    assert!(told.starts_with("16 biome entries set"), "{told}");
+    assert_eq!(
+        game.chunks.world().biome_at(2, 2),
+        Some(crate::world::biome::Biome::Desert)
+    );
+    assert!(
+        said(&run(&mut game, "fillbiome 0 64 0 3 64 3 minecraft:desert"))
+            .contains("No biomes were changed")
+    );
+    let told = said(&run(
+        &mut game,
+        "fillbiome 0 64 0 3 64 3 plains replace desert",
+    ));
+    assert!(told.starts_with("16 biome entries set"));
+    assert!(said(&run(&mut game, "fillbiome 0 64 0 1 64 1 nowhere")).contains("Unknown biome"));
+    let registry = crate::world::structure::template::registry();
+    if let Some(name) = registry.templates.keys().next().cloned() {
+        let told = said(&run(&mut game, &format!("place template {name} 0 80 0")));
+        assert!(told.starts_with("Placed "), "{told}");
+    }
+    assert!(said(&run(&mut game, "place template nothing")).contains("Unknown template"));
+}
+
+#[test]
+fn teleport_takes_rotation_facing_and_other_entities() {
+    let mut game = world();
+    run(&mut game, "tp @s 10 70 10 90 0");
+    assert_eq!(game.feet_of(0), DVec3::new(10.0, 70.0, 10.0));
+    assert!(
+        (game.player.camera.yaw + std::f32::consts::FRAC_PI_2).abs() < 0.01,
+        "faces west"
+    );
+    run(&mut game, "tp @s 0 70 0 facing 0 70 -5");
+    assert!(game.player.camera.yaw.abs() < 0.2);
+    game.summon("pig", DVec3::new(0.5, 70.0, -8.5), 0.0);
+    run(&mut game, "tp @s 0.5 70 0.5 facing entity @e[type=pig]");
+    assert!(
+        game.player.camera.yaw.abs() < 0.2,
+        "faces the pig, to the north"
+    );
+    // Mobs and other players too.
+    run(&mut game, "tp @e[type=pig] Alex");
+    let pig = game
+        .mobs
+        .iter()
+        .find(|m| game.mob_defs.get(m.kind).name == "pig")
+        .unwrap();
+    assert_eq!(pig.feet(), game.feet_of(1));
+    run(&mut game, "tp Alex 3 70 3");
+    assert_eq!(game.feet_of(1), DVec3::new(3.0, 70.0, 3.0));
+    run(&mut game, "tp 7 70 7");
+    assert_eq!(game.feet_of(0), DVec3::new(7.0, 70.0, 7.0));
+    run(&mut game, "tp Alex Kenzo");
+    assert_eq!(game.feet_of(1), game.feet_of(0));
+}
+
+#[test]
+fn summon_takes_entity_data() {
+    let mut game = world();
+    let told = said(&run(
+        &mut game,
+        r#"summon pig 4 70 4 {CustomName:'"Bacon"',Tags:["farm","tasty"],Health:5f}"#,
+    ));
+    assert_eq!(told, "Summoned new Pig");
+    let pig = game.mobs.last().unwrap();
+    assert_eq!(pig.data.custom_name.as_deref(), Some("Bacon"));
+    assert_eq!(pig.data.tags, ["farm", "tasty"]);
+    assert_eq!(pig.stats.health, 5.0);
+    let at = DVec3::ZERO;
+    assert_eq!(game.select(0, at, "@e[tag=farm]").unwrap().len(), 1);
+    assert_eq!(game.select(0, at, "@e[name=Bacon]").unwrap().len(), 1);
+    assert_eq!(game.select(0, at, "@e[nbt={Health:5f}]").unwrap().len(), 1);
+    let count = game.mobs.len();
+    assert!(said(&run(&mut game, "summon pig {Bogus:1}")).contains("Unknown entity data"));
+    assert_eq!(game.mobs.len(), count, "a bad summon leaves nothing");
+    assert!(said(&run(&mut game, "summon dragonfruit")).contains("Unknown entity type"));
+}
+
+#[test]
+fn locate_finds_points_of_interest_and_tab_knows_block_states() {
+    let mut game = world();
+    run(&mut game, "setblock 20 64 0 composter");
+    let told = said(&run(&mut game, "locate poi farmer"));
+    assert!(told.contains("[20, ~, 0]"), "{told}");
+    assert!(said(&run(&mut game, "locate poi cleric")).contains("Could not find"));
+    assert!(said(&run(&mut game, "locate poi nonsense")).contains("Unknown point of interest"));
+    let options = game.complete_command("locate poi f", true, true);
+    assert_eq!(options, ["farmer"]);
+    let options = game.complete_command("setblock ~ ~ ~ oak_stairs[fac", true, true);
+    assert_eq!(options, ["oak_stairs[facing="]);
+    let options = game.complete_command("setblock ~ ~ ~ oak_stairs[facing=n", true, true);
+    assert_eq!(options, ["oak_stairs[facing=north"]);
+    let options = game.complete_command("setblock ~ ~ ~ oak_stairs[facing=north,ha", true, true);
+    assert_eq!(options, ["oak_stairs[facing=north,half="]);
+    let options = game.complete_command("gamemode sp", true, true);
+    assert_eq!(options, ["spectator"]);
+    let options = game.complete_command("tp @", true, true);
+    assert!(options.contains(&"@e".to_owned()) && options.contains(&"@s".to_owned()));
+    let options = game.complete_command("setblock ~ ~ ", true, true);
+    assert_eq!(options, ["^", "~"]);
+}
