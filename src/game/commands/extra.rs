@@ -142,7 +142,7 @@ pub(super) fn spectate(
     };
     let seen = match target {
         Target::Player(i) if i == spectator => return Err("Can't spectate yourself".to_owned()),
-        Target::Player(i) => Spectated::Player(i - 1),
+        Target::Player(i) => Spectated::Player(game.player_at(i).name.clone()),
         Target::Mob(id) => Spectated::Mob(id),
     };
     let shown = game.target_name(target);

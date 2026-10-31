@@ -7,11 +7,11 @@ use glam::{DVec3, IVec3};
 use super::Game;
 
 /// Whom a spectator is looking through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Spectated {
     Mob(u64),
-    /// An index into `Game::others`.
-    Player(usize),
+    /// A player, by name.
+    Player(String),
 }
 
 /// A block id in a rule list without its namespace.
@@ -42,6 +42,30 @@ impl Game {
         p.placing = false;
     }
 
+    /// A spectator's pick in the menu: go to player `name`, if they're in
+    /// the same dimension. Returns whether it happened.
+    pub fn spectator_teleport(&mut self, index: usize, name: &str) -> bool {
+        if !self.player_at(index).mode.is_spectator() {
+            return false;
+        }
+        let dimension = self.player_at(index).dimension;
+        let Some(to) = (0..self.player_count()).find(|&i| {
+            i != index && self.player_at(i).name == name && self.player_at(i).dimension == dimension
+        }) else {
+            return false;
+        };
+        let feet = self.feet_of(to);
+        let (yaw, pitch) = (
+            self.player_at(index).camera.yaw,
+            self.player_at(index).camera.pitch,
+        );
+        self.with_player(index, |g| {
+            g.player.spectating = None;
+            g.teleport(feet, yaw, pitch);
+        });
+        true
+    }
+
     /// F3+N: between spectator and the mode before it (creative if none).
     pub fn toggle_spectator(&mut self) {
         let mode = if self.player.mode.is_spectator() {
@@ -69,7 +93,7 @@ impl Game {
             if let Some(mob) = self.target_mob(eye, None) {
                 self.player.spectating = Some(Spectated::Mob(self.mobs[mob].id));
             } else if let Some((other, _)) = self.target_player(eye, None) {
-                self.player.spectating = Some(Spectated::Player(other));
+                self.player.spectating = Some(Spectated::Player(self.others[other].name.clone()));
             }
         }
         if self.player.keys.sneak {
@@ -81,7 +105,7 @@ impl Game {
     /// Puts a spectating player's eyes where the mob's or player's are, and
     /// looks where they look. A target that is gone or dead is let go.
     fn follow_spectated(&mut self) {
-        let Some(who) = self.player.spectating else {
+        let Some(who) = self.player.spectating.clone() else {
             return;
         };
         let seen = match who {
@@ -90,14 +114,18 @@ impl Game {
                 .iter()
                 .find(|m| m.id == id && !m.is_dead())
                 .map(|m| (m.feet(), m.body.eye_height(), m.head_yaw, m.pitch)),
-            Spectated::Player(i) => self.others.get(i).filter(|p| !p.stats.is_dead()).map(|p| {
-                (
-                    p.body.position(),
-                    p.body.eye_height(),
-                    p.camera.yaw,
-                    p.camera.pitch,
-                )
-            }),
+            Spectated::Player(name) => std::iter::once(&self.player)
+                .chain(&self.others)
+                .find(|p| p.name == name && p.dimension == self.player.dimension)
+                .filter(|p| !p.stats.is_dead())
+                .map(|p| {
+                    (
+                        p.body.position(),
+                        p.body.eye_height(),
+                        p.camera.yaw,
+                        p.camera.pitch,
+                    )
+                }),
         };
         let Some((feet, eye, yaw, pitch)) = seen else {
             self.player.spectating = None;

@@ -9,6 +9,7 @@ pub mod geometry;
 pub mod glint;
 pub mod gui;
 pub mod menu;
+pub mod modes;
 pub mod mods;
 pub mod options;
 pub mod packs;
@@ -83,6 +84,12 @@ pub struct Hud {
     /// The swing's recharge under the crosshair.
     pub attack: Option<gui::AttackIndicator>,
     pub hotbar: Vec<Option<SlotView>>,
+    /// The hotbar and off-hand are drawn (not in spectator mode).
+    pub bars: bool,
+    /// F3+F4's mode switcher, with the mode chosen.
+    pub switcher: Option<usize>,
+    /// The spectator menu, with the players it lists.
+    pub spectator_menu: Option<Vec<String>>,
     /// What the off-hand holds.
     pub offhand: Option<SlotView>,
     pub selected: usize,
@@ -251,6 +258,10 @@ impl DebugUi {
         self.visible = !self.visible;
     }
 
+    pub fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
     pub fn is_visible(&self) -> bool {
         self.visible
     }
@@ -299,11 +310,18 @@ impl DebugUi {
                     gui::paint_attack_indicator(ui.painter(), full, indicator, textures);
                 }
             }
-            if !hud.hidden {
+            if !hud.hidden && hud.bars {
                 gui::paint_hotbar(ui.painter(), full, &hud.hotbar, hud.selected, textures);
+            }
+            if let Some(chosen) = hud.switcher {
+                modes::paint_switcher(ui.painter(), full, chosen);
+            }
+            if let Some(players) = &hud.spectator_menu {
+                modes::paint_spectator_menu(ui.painter(), full, players);
             }
             if let Some(offhand) = &hud.offhand
                 && !hud.hidden
+                && hud.bars
             {
                 gui::paint_offhand(ui.painter(), full, offhand, textures);
             }

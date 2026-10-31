@@ -199,6 +199,11 @@ impl Server {
                 Reply::Sender(text) => self.tell(index, text, true),
                 Reply::Player(to, text) => self.tell(to, text, false),
                 Reply::Everyone(text) => self.broadcast(text),
+                Reply::Publish(_) if self.lan.is_some() => self.tell(
+                    index,
+                    "§cThe world is already published to LAN".to_owned(),
+                    true,
+                ),
                 Reply::Publish(port) => {
                     let mode = self.game.default_mode.unwrap_or(self.game.player.mode);
                     match self.open_to_lan(port, mode, false) {
@@ -567,6 +572,9 @@ impl Server {
             ClientMsg::ReleaseInput => self.game.with_player(index, Game::release_input),
             ClientMsg::Fly { feet } => self.game.with_player(index, |game| game.fly_to(feet)),
             ClientMsg::Chat(line) => self.chat(index, &line),
+            ClientMsg::SpectatorTeleport(name) => {
+                self.game.spectator_teleport(index, &name);
+            }
             ClientMsg::Complete(line) => {
                 let cheats = self.may_cheat(index);
                 let options = self.game.complete_command(&line, cheats, index == 0);
@@ -1061,6 +1069,81 @@ mod tests {
             clients[0].0.completions.as_deref(),
             Some(&["gamerule".to_owned()][..])
         );
+    }
+
+    #[test]
+    fn spectators_are_unseen_spectate_and_teleport_the_same_for_every_client() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        // Alice, the host, can see Bob until he turns to spectator.
+        run_until(&mut server, &mut clients, |_, c| {
+            c[0].1.remote_players.iter().any(|v| v.name == "Bob")
+        });
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/gamemode spectator Bob".to_owned()));
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.others[0].mode == GameMode::Spectator
+                && c[1].1.player.mode == GameMode::Spectator
+                && !c[0].1.remote_players.iter().any(|v| v.name == "Bob")
+        });
+        // Bob sees Alice; Alice, a survivor, doesn't see Bob; two
+        // spectators see each other.
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/gamemode spectator Alice".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            c[0].1.player.mode == GameMode::Spectator
+                && c[0].1.remote_players.iter().any(|v| v.name == "Bob")
+                && c[1].1.remote_players.iter().any(|v| v.name == "Alice")
+        });
+        // Alice sets Bob to spectate her: his eyes follow hers on both screens.
+        server
+            .game
+            .with_player(0, |game| game.fly_to(DVec3::new(6.5, 70.0, 6.5)));
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/spectate Alice Bob".to_owned()));
+        run_until(&mut server, &mut clients, |s, c| {
+            let alice = s.game.feet_of(0);
+            heard(&c[0].0, "Now spectating Alice")
+                && (s.game.feet_of(1) - alice).length() < 3.0
+                && (c[1].1.feet_of(0) - alice).length() < 3.0
+        });
+        // Letting go (a new mode clears it) and picking Alice in the menu.
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/gamemode spectator Bob".to_owned()));
+        server
+            .game
+            .with_player(0, |game| game.fly_to(DVec3::new(-8.5, 70.0, -8.5)));
+        clients[1]
+            .0
+            .send(ClientMsg::SpectatorTeleport("Alice".to_owned()));
+        run_until(&mut server, &mut clients, |s, c| {
+            let alice = s.game.feet_of(0);
+            (s.game.feet_of(1) - alice).length() < 1.5 && (c[1].1.feet_of(0) - alice).length() < 1.5
+        });
+        // Not a spectator, not allowed.
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/gamemode survival Bob".to_owned()));
+        run_until(&mut server, &mut clients, |s, _| {
+            s.game.others[0].mode == GameMode::Survival
+        });
+        server
+            .game
+            .with_player(0, |game| game.fly_to(DVec3::new(12.5, 70.0, 12.5)));
+        clients[1]
+            .0
+            .send(ClientMsg::SpectatorTeleport("Alice".to_owned()));
+        for _ in 0..20 {
+            server.advance(0.05);
+        }
+        assert!((server.game.feet_of(1) - server.game.feet_of(0)).length() > 5.0);
     }
 
     /// How many of `name` player `inventory` holds (hotbar and main).

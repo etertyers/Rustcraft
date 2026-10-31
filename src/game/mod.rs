@@ -247,7 +247,7 @@ pub struct PlayerState {
     #[serde(skip)]
     pub spectator_menu: bool,
     /// The mode before the last change, for F3+N.
-    #[serde(skip)]
+    #[serde(default)]
     pub previous_mode: GameMode,
     /// The hotbar slot being eaten from and for how many ticks.
     eating: Option<(usize, u32)>,
