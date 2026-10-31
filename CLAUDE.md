@@ -154,6 +154,7 @@ src/
   ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
   game/commands/{extra,world,components}.rs, game/{selector,modes,admin,weather}.rs, ui/modes.rs
   game/commands/{execute,board_cmds,text_cmds,data_cmds}.rs, game/{board,board_hooks,text,nbt,predicate}.rs, ui/board.rs   # (M44) /execute; /scoreboard, /team, /tag, /trigger; /tellraw, /title, /bossbar; /data, /item, /loot; the scoreboard, its criteria hooks and views; JSON text; NBT and paths; predicates; the sidebar, bars and titles drawn   # (M43) the everyday, block-editing and item-component commands; selectors in full; spectator and adventure rules and spectating; operators, bans and the whitelist; the weather state; the F3+F4 switcher and spectator menu
+  game/commands/{function_cmds,server_cmds}.rs, game/{datapack,border,command_blocks}.rs, ui/command_block.rs   # (M45) /function, /return, /schedule, /datapack, /reload; /tick, /worldborder, /forceload; reading data packs and the packs enabled; the world border; command blocks (modes, chains, power, the minecart); the editor screen
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
@@ -660,7 +661,7 @@ General rules for every command: vanilla Java 1.21 syntax, Tab completion for ev
 - **Data:** `/data get/merge/modify/remove` for entities, block entities and storage, over the data paths the game supports (record which ones in DECISIONS.md); `/item replace/modify`; `/loot` (spawn, give, insert, replace from loot tables, kill, mine, fish).
 - **Done when:** a scoreboard counts kills and shows in the sidebar, `/execute as @a at @s if block ~ ~-1 ~ minecraft:gold_block run ...` works, teams color names, and titles and bossbars display. One screenshot: the sidebar and a bossbar.
 
-### - [ ] M45 — Functions, data packs and command blocks
+### - [x] M45 — Functions, data packs and command blocks
 - **Data packs:** `saves/<world>/datapacks/<pack>/` with `pack.mcmeta` and `data/<namespace>/function/*.mcfunction` (also loot tables, advancements, recipes and predicates the game already loads). `/datapack list/enable/disable`, `/reload`. Function tags `minecraft:load` and `minecraft:tick` run on load and every tick.
 - **`/function`** (with macro arguments), `/return`, `/schedule function` (and `clear`), and the `maxCommandChainLength` limit.
 - **Command blocks:** impulse (orange), chain (green) and repeating (purple), each conditional or unconditional and Needs Redstone or Always Active, facing like vanilla. The GUI: command field with Tab completion, previous output, track output toggle, mode, conditional and redstone buttons. Only operators in creative can place or edit them; obtained only with `/give`. Minecart with command block. Chained blocks run in the same tick in vanilla's order. `commandBlockOutput` and `commandBlocksEnabled` game rules.
