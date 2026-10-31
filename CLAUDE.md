@@ -152,6 +152,7 @@ src/
   game/farming.rs   # crops on random ticks (vanilla's growth formula), farmland, hoes, bone meal, the composter, saplings, mushrooms; breeding is in game/animals.rs
   mods/{mod,lua,client}.rs, game/{modding,random_ticks}.rs, ui/mods.rs, mods/ examples/mods/   # mod folders and the set chosen at startup, the sandboxed Lua runtime and its API, the client's Lua (keys, HUD text, brightness), the server's mod host and events, random ticks, the Mods screen, the bundled Fullbright and the Ruby example (docs/modding.md)
   ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
+  game/commands/{extra,world,components}.rs, game/{selector,modes,admin,weather}.rs, ui/modes.rs   # (M43) the everyday, block-editing and item-component commands; selectors in full; spectator and adventure rules and spectating; operators, bans and the whitelist; the weather state; the F3+F4 switcher and spectator menu
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
@@ -641,7 +642,7 @@ General rules for every command: vanilla Java 1.21 syntax, Tab completion for ev
 
 #### Checkpoint H — Commands
 
-### - [ ] M43 — Game modes and everyday commands
+### - [x] M43 — Game modes and everyday commands
 - **Spectator mode:** fly through blocks (no collision), no gravity, invisible to mobs and to non-spectator players (other spectators see a translucent head), can't break, place, pick up or interact, except to look inside containers read-only. Mouse wheel changes flight speed. Left-click a mob or player to spectate from its eyes (vanilla shaders for creepers, spiders and endermen are optional), Shift to leave. Number keys open vanilla's spectator menu (teleport to a player, or to a team in M44). The hotbar and hearts are hidden. Saved per player.
 - **Adventure mode:** can't break or place blocks, except items with the `can_break` / `can_place_on` components (settable with `/give` component syntax), but can use doors, buttons, levers, containers, beds and fight.
 - **F3+F4** opens vanilla's game-mode switcher, and **F3+N** toggles between spectator and the previous mode (cheats required).

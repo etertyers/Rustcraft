@@ -1979,7 +1979,8 @@ impl App {
                 );
             }
             renderer.set_entities(&mesh);
-            if self.hide_gui {
+            // A spectator has no hand, and a hidden GUI hides it too.
+            if self.hide_gui || game.player.mode.is_spectator() {
                 renderer.set_hand(None, None);
             } else {
                 renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
