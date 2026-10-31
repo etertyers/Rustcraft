@@ -785,6 +785,7 @@ impl Game {
         };
         if last.contains('[') {
             options = world::state_completions(last);
+            options.extend(components::completions(last));
         }
         options.retain(|o| o.starts_with(last));
         options.sort();
@@ -1242,7 +1243,7 @@ fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String
             "noon" => 6000,
             "night" => 13000,
             "midnight" => 18000,
-            n => number(n, "time")?,
+            n => u64::from(extra::parse_time(n)?),
         })
     };
     match (args.first().copied(), args.get(1).copied()) {
@@ -1255,7 +1256,7 @@ fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String
             Ok(tell(format!("Set the time to {day}")))
         }
         (Some("add"), Some(value)) => {
-            let ticks: i64 = number(value, "time")?;
+            let ticks = i64::from(extra::parse_time(value)?);
             game.day_offset += ticks;
             Ok(tell(format!("Set the time to {}", game.day_time() % 24000)))
         }

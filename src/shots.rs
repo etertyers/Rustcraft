@@ -553,6 +553,16 @@ pub static SHOTS: &[Shot] = &[
         stage: two_players,
     },
     Shot {
+        name: "m43-spectate",
+        about: "a spectator through a cow's eyes: no hotbar or hearts, the pasture ahead as the cow sees it",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 70.0, 12.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Spectator),
+        overlay: false,
+        stage: spectate_cow,
+    },
+    Shot {
         name: "m38-chat",
         about: "chat open over a plains world at noon: a join line, a few messages, a death, an advancement, command results and a red error, with a command half typed",
         world: Some(WorldKind::Flat),
@@ -719,6 +729,28 @@ fn wheat_farm(game: &mut Game) {
 }
 
 /// A lake south of the player (Z 4..20), and a cast into it.
+/// A cow and a herd ahead of it; the spectator takes the cow's eyes.
+fn spectate_cow(game: &mut Game) {
+    game.mobs.clear();
+    for (name, x, z) in [
+        ("sheep", -2.5, -3.5),
+        ("pig", 1.5, -4.5),
+        ("sheep", 4.5, -6.5),
+        ("cow", -4.5, -7.5),
+        ("pig", 0.5, -9.5),
+        ("cow", 3.0, -11.5),
+    ] {
+        game.summon(name, glam::DVec3::new(x, 64.0, z), 0.0);
+    }
+    let id = game
+        .summon("cow", glam::DVec3::new(0.5, 64.0, 0.5), 0.0)
+        .map(|cow| cow.id);
+    game.player.spectating = id.map(crate::game::modes::Spectated::Mob);
+    game.run_ticks(1);
+    // The herd stands still for the picture.
+    game.run_ticks(0);
+}
+
 fn fishing_lake(game: &mut Game) {
     use crate::world::blocks;
     let mut edits = Vec::new();

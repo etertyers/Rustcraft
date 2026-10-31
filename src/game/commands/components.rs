@@ -5,6 +5,37 @@
 
 use super::*;
 
+/// The component names Tab offers inside `item[...]`.
+pub(super) const NAMES: &[&str] = &[
+    "can_break",
+    "can_place_on",
+    "custom_name",
+    "damage",
+    "enchantments",
+];
+
+/// What Tab offers once a word is inside `item[`: the components not given yet.
+pub(super) fn completions(word: &str) -> Vec<String> {
+    let Some((name, rest)) = word.split_once('[') else {
+        return Vec::new();
+    };
+    if item_named(name).is_err() {
+        return Vec::new();
+    }
+    let (done, current) = match rest.rfind(',') {
+        Some(at) => (&rest[..=at], &rest[at + 1..]),
+        None => ("", rest),
+    };
+    if current.contains('=') {
+        return Vec::new();
+    }
+    NAMES
+        .iter()
+        .filter(|n| !done.contains(&format!("{n}=")))
+        .map(|n| format!("{name}[{done}{n}="))
+        .collect()
+}
+
 /// Splits at the commas that are outside brackets, braces and quotes.
 pub(super) fn split_top(text: &str) -> Vec<&str> {
     let (mut parts, mut depth, mut start) = (Vec::new(), 0i32, 0);

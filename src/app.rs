@@ -1887,7 +1887,10 @@ impl App {
             let mut guest_elytra = Mesh::default();
             if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
                 let alpha = game.tick_alpha();
-                for view in &game.remote_players {
+                for view in game.remote_players.iter().filter(|v| {
+                    !matches!(&game.player.spectating,
+                        Some(crate::game::modes::Spectated::Player(n)) if *n == v.name)
+                }) {
                     let skin = self.guest_skins.iter().position(|(n, _)| *n == view.name);
                     let fig = Figure {
                         icons,
@@ -1997,7 +2000,18 @@ impl App {
                     }
                 }
             };
-            for mob in game.mobs.iter().filter(near) {
+            // A spectator sees through the eyes of the mob they spectate,
+            // so its own body isn't drawn around them.
+            let spectated = match &game.player.spectating {
+                Some(crate::game::modes::Spectated::Mob(id)) => Some(*id),
+                _ => None,
+            };
+            for mob in game
+                .mobs
+                .iter()
+                .filter(near)
+                .filter(|m| Some(m.id) != spectated)
+            {
                 let def = defs.get(mob.kind);
                 let light = light_at(mob.eye());
                 let slot = defs.texture_slot(mob.kind, mob.data.variant);

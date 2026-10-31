@@ -34,7 +34,7 @@ mod mob_acts;
 mod mob_tests;
 mod mobs;
 pub(crate) mod modding;
-mod modes;
+pub mod modes;
 #[cfg(test)]
 mod moves;
 mod nether_mobs;

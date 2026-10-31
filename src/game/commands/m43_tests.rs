@@ -767,3 +767,29 @@ fn locate_finds_points_of_interest_and_tab_knows_block_states() {
     let options = game.complete_command("setblock ~ ~ ", true, true);
     assert_eq!(options, ["^", "~"]);
 }
+
+#[test]
+fn time_takes_units_and_item_components_complete() {
+    let mut game = world();
+    run(&mut game, "time set 0");
+    assert_eq!(
+        said(&run(&mut game, "time set 1d")),
+        "Set the time to 24000"
+    );
+    run(&mut game, "time set 0");
+    run(&mut game, "time add 5s");
+    assert_eq!(
+        said(&run(&mut game, "time query daytime")),
+        "The time is 100"
+    );
+    let options = game.complete_command("give @s diamond_sword[can_", true, true);
+    assert_eq!(
+        options,
+        ["diamond_sword[can_break=", "diamond_sword[can_place_on="]
+    );
+    let options = game.complete_command("give @s diamond_sword[damage=1,en", true, true);
+    assert_eq!(options, ["diamond_sword[damage=1,enchantments="]);
+    assert!(said(&run(&mut game, "help give")).starts_with("/give <player> <item>[components]"));
+    let listed = run(&mut game, "help");
+    assert!(listed.len() >= 50, "{} commands listed", listed.len());
+}

@@ -467,6 +467,39 @@ mod tests {
     }
 
     #[test]
+    fn can_break_and_can_place_on_round_trip_with_the_rest_and_old_stacks_load() {
+        let mut ruled = enchanted();
+        ruled.set_block_rules(
+            vec!["minecraft:stone".to_owned()],
+            vec!["grass_block".to_owned(), "dirt".to_owned()],
+        );
+        let mut shulker = ItemStack::new(items::DIRT, 1);
+        shulker.set_contents(vec![Some(ItemStack::new(items::COAL, 4)), None]);
+        shulker.set_block_rules(vec!["stone".to_owned()], vec![]);
+        let slots = vec![
+            Some(ruled.clone()),
+            Some(ItemStack::new(items::DIRT, 3)),
+            Some(shulker),
+            Some(enchanted()),
+        ];
+        let bytes = bincode::serde::encode_to_vec(&slots, bincode_config()).unwrap();
+        let (back, used): (Vec<Option<ItemStack>>, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode_config()).unwrap();
+        assert_eq!((&back, used), (&slots, bytes.len()));
+        let first = back[0].as_ref().unwrap();
+        assert_eq!(first.can_break(), ["minecraft:stone"]);
+        assert_eq!(first.can_place_on(), ["grass_block", "dirt"]);
+        assert_eq!(first.level_of(Enchantment::Efficiency), 3);
+        let text = ron::to_string(&ruled).unwrap();
+        assert_eq!(ron::from_str::<ItemStack>(&text).unwrap(), ruled);
+        // Clearing the rules leaves a plain stack that saves as plain.
+        let mut plain = ItemStack::new(items::DIRT, 2);
+        plain.set_block_rules(vec!["stone".to_owned()], vec![]);
+        plain.set_block_rules(vec![], vec![]);
+        assert_eq!(plain, ItemStack::new(items::DIRT, 2));
+    }
+
+    #[test]
     fn a_list_of_mixed_stacks_stays_in_step() {
         let slots = vec![
             Some(ItemStack::new(items::DIRT, 3)),
