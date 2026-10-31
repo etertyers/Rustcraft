@@ -39,6 +39,7 @@ pub(crate) mod modding;
 pub mod modes;
 #[cfg(test)]
 mod moves;
+pub mod nbt;
 mod nether_mobs;
 #[cfg(test)]
 mod offhand;
@@ -422,6 +423,8 @@ pub struct Game {
     pub admin: admin::Admin,
     /// Objectives, scores, display slots and teams (M44).
     pub board: board::Scoreboard,
+    /// `/data ... storage`: command storage by id.
+    pub storage: std::collections::BTreeMap<String, nbt::Nbt>,
     /// `/bossbar`'s bars by id (not saved).
     pub bossbars: std::collections::BTreeMap<String, board::Bossbar>,
     pub weather: weather::Weather,
@@ -563,6 +566,7 @@ impl Game {
             default_mode: None,
             admin: admin::Admin::default(),
             board: board::Scoreboard::default(),
+            storage: Default::default(),
             bossbars: Default::default(),
             weather: weather::Weather::Clear,
             weather_ticks: weather::DEFAULT_TICKS,
@@ -684,6 +688,7 @@ impl Game {
         game.restore_fight(level.end.dragon);
         game.admin = admin::Admin::load(dir.path());
         game.board = board::Scoreboard::load(dir.path());
+        game.storage = load_storage(dir.path());
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -868,6 +873,7 @@ impl Game {
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
         self.board.save(saved.dir.path());
+        save_storage(&self.storage, saved.dir.path());
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -1580,6 +1586,25 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
     body.levitation = effects
         .get(Effect::Levitation)
         .map(|active| active.amplifier);
+}
+
+/// Command storage as `command_storage.ron`: each compound's text form by id.
+fn load_storage(dir: &std::path::Path) -> std::collections::BTreeMap<String, nbt::Nbt> {
+    let text = std::fs::read_to_string(dir.join("command_storage.ron")).unwrap_or_default();
+    let saved: std::collections::BTreeMap<String, String> =
+        ron::from_str(&text).unwrap_or_default();
+    saved
+        .into_iter()
+        .filter_map(|(k, v)| Some((k, nbt::Nbt::parse(&v).ok()?)))
+        .collect()
+}
+
+fn save_storage(storage: &std::collections::BTreeMap<String, nbt::Nbt>, dir: &std::path::Path) {
+    let text: std::collections::BTreeMap<&String, String> =
+        storage.iter().map(|(k, v)| (k, v.snbt())).collect();
+    if let Ok(out) = ron::ser::to_string_pretty(&text, ron::ser::PrettyConfig::default()) {
+        let _ = std::fs::write(dir.join("command_storage.ron"), out);
+    }
 }
 
 fn one() -> f64 {

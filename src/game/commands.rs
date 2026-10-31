@@ -9,6 +9,7 @@ use glam::{DVec3, IVec3};
 
 mod board_cmds;
 mod components;
+mod data_cmds;
 mod extra;
 mod text_cmds;
 mod world;
@@ -417,6 +418,59 @@ const COMMANDS: &[Command] = &[
         args: &[Arg::Players, Arg::Free],
         run: kick,
     },
+    cmd!(
+        "data",
+        [],
+        true,
+        false,
+        "/data (get|merge|modify|remove) (entity|block|storage) ...",
+        [
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab)
+        ],
+        data_cmds::data
+    ),
+    cmd!(
+        "item",
+        [],
+        true,
+        false,
+        "/item (replace|modify) (entity|block) <target> <slot> (with <item> [count] | from <source> <slot> [modifier] | <modifier>)",
+        [
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab)
+        ],
+        data_cmds::item
+    ),
+    cmd!(
+        "loot",
+        [],
+        true,
+        false,
+        "/loot (spawn <pos> | give <players> | insert <pos> | replace (entity|block) <target> <slot> [count]) (fish <table> <pos> | loot <table> | kill <entity> | mine <pos> [tool])",
+        [
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab)
+        ],
+        data_cmds::loot
+    ),
     cmd!(
         "tellraw",
         [],

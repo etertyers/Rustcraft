@@ -679,3 +679,285 @@ fn the_board_survives_a_save_and_tab_completes() {
     let side = view.sidebar.unwrap();
     assert_eq!(side.rows, [("Kenzo".to_owned(), "§c3".to_owned())]);
 }
+
+#[test]
+fn data_gets_merges_modifies_and_removes_on_mobs_blocks_and_storage() {
+    let mut game = world();
+    game.summon("pig", DVec3::new(3.5, 64.0, 0.5), 0.0);
+    let go = |game: &mut Game, line: &str| said(&run(game, line));
+    // Get: whole, a path, a scaled number.
+    assert!(
+        go(&mut game, "data get entity @e[type=pig]")
+            .contains("Pig has the following entity data: {")
+    );
+    assert_eq!(
+        go(&mut game, "data get entity @e[type=pig] Pos[0]"),
+        "Pig has the following entity data: 3.5d"
+    );
+    assert_eq!(
+        go(&mut game, "data get entity @e[type=pig] Pos[0] 10"),
+        "Pig after scale factor of 10 is 35"
+    );
+    assert!(
+        go(&mut game, "data get entity @e[type=pig] Nothing")
+            .contains("Found no elements matching Nothing")
+    );
+    assert!(go(&mut game, "data get entity @e[type=cow]").contains("No entity was found"));
+    assert!(go(&mut game, "data get entity @e").contains("Only one entity is allowed"));
+    // Players read, but can't be modified (as vanilla).
+    assert!(go(&mut game, "data get entity @s foodLevel").contains("20"));
+    assert_eq!(
+        go(&mut game, "data merge entity @s {Health:5f}"),
+        "§cUnable to modify player data"
+    );
+    // Merge into a mob: health, tags, name, position.
+    assert_eq!(
+        go(
+            &mut game,
+            "data merge entity @e[type=pig] {Health:4f,Tags:[\"a\",\"b\"],CustomName:'{\"text\":\"Bacon\"}'}"
+        ),
+        "Modified entity data of Pig"
+    );
+    let pig = game.mobs.last().unwrap();
+    assert_eq!((pig.stats.health, pig.data.tags.len()), (4.0, 2));
+    assert_eq!(pig.data.custom_name.as_deref(), Some("Bacon"));
+    assert!(
+        go(&mut game, "data merge entity @e[type=pig] {Health:4f}").contains("Nothing changed")
+    );
+    assert!(
+        go(&mut game, "data merge entity @e[type=pig] {Bogus:1}")
+            .contains("can't change entity data 'Bogus'")
+    );
+    // Modify: set, append, prepend, insert, merge.
+    go(
+        &mut game,
+        "data modify entity @e[type=pig] Pos[1] set value 70.5d",
+    );
+    assert_eq!(game.mobs.last().unwrap().feet().y, 70.5);
+    go(
+        &mut game,
+        "data modify entity @e[type=pig] Tags append value \"c\"",
+    );
+    go(
+        &mut game,
+        "data modify entity @e[type=pig] Tags prepend value \"z\"",
+    );
+    go(
+        &mut game,
+        "data modify entity @e[type=pig] Tags insert 1 value \"y\"",
+    );
+    assert_eq!(
+        game.mobs.last().unwrap().data.tags,
+        ["z", "y", "a", "b", "c"]
+    );
+    assert!(
+        go(
+            &mut game,
+            "data modify entity @e[type=pig] Tags set value [\"z\",\"y\",\"a\",\"b\",\"c\"]"
+        )
+        .contains("Nothing changed")
+    );
+    go(&mut game, "data remove entity @e[type=pig] Tags[0]");
+    assert_eq!(game.mobs.last().unwrap().data.tags, ["y", "a", "b", "c"]);
+    assert!(
+        go(
+            &mut game,
+            "data modify entity @e[type=pig] Tags set value 5"
+        )
+        .contains("Tags must be a list")
+    );
+    // Storage keeps values, copies between sources, and substrings strings.
+    assert_eq!(
+        go(
+            &mut game,
+            "data merge storage mine:box {n:1,list:[1,2],name:\"hello world\"}"
+        ),
+        "Modified storage mine:box"
+    );
+    assert_eq!(
+        go(&mut game, "data get storage mine:box n"),
+        "Storage mine:box has the following contents: 1"
+    );
+    go(
+        &mut game,
+        "data modify storage mine:box list append value 3",
+    );
+    assert_eq!(
+        game.storage["mine:box"].get("list").unwrap().snbt(),
+        "[1,2,3]"
+    );
+    go(
+        &mut game,
+        "data modify storage mine:box copy set from storage mine:box n",
+    );
+    assert_eq!(game.storage["mine:box"].get("copy").unwrap().snbt(), "1");
+    go(
+        &mut game,
+        "data modify storage mine:box part set string storage mine:box name 6",
+    );
+    assert_eq!(
+        game.storage["mine:box"].get("part").unwrap().snbt(),
+        "'world'"
+    );
+    go(
+        &mut game,
+        "data modify storage mine:box merged merge value {a:1}",
+    );
+    go(
+        &mut game,
+        "data modify storage mine:box obj set value {a:1}",
+    );
+    go(
+        &mut game,
+        "data modify storage mine:box obj merge from storage mine:box merged",
+    );
+    // A chest's items.
+    go(&mut game, "setblock 5 70 5 chest");
+    game.chunks.set_block_entity(
+        IVec3::new(5, 70, 5),
+        Some(crate::world::block_entity::BlockEntity::chest()),
+    );
+    go(
+        &mut game,
+        "data modify block 5 70 5 Items append value {Slot:2b,id:\"minecraft:diamond\",count:3}",
+    );
+    match game.chunks.block_entity(IVec3::new(5, 70, 5)) {
+        Some(crate::world::block_entity::BlockEntity::Chest(s)) => {
+            assert_eq!(
+                s[2].as_ref().map(|x| (x.id, x.count)),
+                Some((crate::inventory::items::DIAMOND, 3))
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(go(&mut game, "data get block 5 70 5 Items[0].count").contains("3"));
+    assert!(go(&mut game, "data get block 6 70 5").contains("not a block entity"));
+}
+
+use glam::IVec3;
+
+#[test]
+fn item_replaces_and_modifies_slots_and_loot_fills_them() {
+    let mut game = world();
+    let go = |game: &mut Game, line: &str| said(&run(game, line));
+    assert!(
+        go(
+            &mut game,
+            "item replace entity @s hotbar.2 with minecraft:diamond 5"
+        )
+        .starts_with("Replaced a slot on Kenzo")
+    );
+    assert_eq!(game.player.inventory.slot(2).map(|s| s.count), Some(5));
+    go(
+        &mut game,
+        "item replace entity @s armor.head with minecraft:iron_helmet",
+    );
+    assert!(
+        game.player
+            .inventory
+            .slot(crate::inventory::player::ARMOR_HEAD)
+            .is_some()
+    );
+    go(
+        &mut game,
+        "item replace entity @s weapon.offhand from entity @s hotbar.2",
+    );
+    assert_eq!(
+        game.player
+            .inventory
+            .slot(crate::inventory::player::OFFHAND)
+            .map(|s| s.count),
+        Some(5)
+    );
+    assert!(
+        go(
+            &mut game,
+            "item replace entity @s hotbar.9 with minecraft:dirt"
+        )
+        .contains("Unknown slot")
+    );
+    assert!(go(&mut game, "item replace entity @s hotbar.0 with nothing").contains("Unknown item"));
+    assert_eq!(
+        go(
+            &mut game,
+            r#"item modify entity @s hotbar.2 {"function":"minecraft:set_count","count":9}"#
+        ),
+        "Modified item on Kenzo: [Diamond]"
+    );
+    assert_eq!(game.player.inventory.slot(2).map(|s| s.count), Some(9));
+    go(
+        &mut game,
+        r#"item modify entity @s hotbar.2 {"function":"minecraft:set_count","count":3,"add":true}"#,
+    );
+    assert_eq!(game.player.inventory.slot(2).map(|s| s.count), Some(12));
+    assert!(
+        go(
+            &mut game,
+            r#"item modify entity @s hotbar.5 {"function":"set_count","count":1}"#
+        )
+        .contains("no item")
+    );
+    assert!(
+        go(
+            &mut game,
+            r#"item modify entity @s hotbar.2 {"function":"explode"}"#
+        )
+        .contains("Unknown item modifier")
+    );
+    // Container slots of a block.
+    go(&mut game, "setblock 5 70 5 chest");
+    game.chunks.set_block_entity(
+        IVec3::new(5, 70, 5),
+        Some(crate::world::block_entity::BlockEntity::chest()),
+    );
+    go(
+        &mut game,
+        "item replace block 5 70 5 container.4 with minecraft:gold_ingot 7",
+    );
+    assert!(
+        go(
+            &mut game,
+            "item replace block 5 70 5 container.40 with minecraft:dirt"
+        )
+        .contains("Unknown slot")
+    );
+    go(
+        &mut game,
+        "item replace entity @s hotbar.3 from block 5 70 5 container.4",
+    );
+    assert_eq!(game.player.inventory.slot(3).map(|s| s.count), Some(7));
+    // Loot into a spot, a player, a container and a slot.
+    game.summon("pig", DVec3::new(2.5, 64.0, 0.5), 0.0);
+    let before = game.entities.len();
+    let told = go(&mut game, "loot spawn 0 70 0 kill @e[type=pig]");
+    assert!(told.starts_with("Dropped"), "{told}");
+    assert!(game.entities.len() > before || told.contains("0 items"));
+    go(&mut game, "setblock 0 64 6 stone");
+    let n_before: u32 = (0..crate::inventory::player::SLOTS)
+        .filter_map(|i| game.player.inventory.slot(i))
+        .map(|s| u32::from(s.count))
+        .sum();
+    let told = go(&mut game, "loot give @s mine 0 64 6");
+    assert!(told.starts_with("Gave"), "{told}");
+    let n_after: u32 = (0..crate::inventory::player::SLOTS)
+        .filter_map(|i| game.player.inventory.slot(i))
+        .map(|s| u32::from(s.count))
+        .sum();
+    assert_eq!(n_after, n_before, "stone drops nothing by hand");
+    go(&mut game, "setblock 0 64 7 dirt");
+    let told = go(&mut game, "loot give @s mine 0 64 7");
+    assert_eq!(told, "Gave 1 [Dirt] to Kenzo");
+    let told = go(
+        &mut game,
+        "loot insert 5 70 5 loot minecraft:chests/simple_dungeon",
+    );
+    assert!(told.starts_with("Inserted"), "{told}");
+    assert!(
+        go(&mut game, "loot give @s loot minecraft:chests/nowhere").contains("Unknown loot table")
+    );
+    let told = go(
+        &mut game,
+        "loot replace entity @s hotbar.6 1 fish minecraft:gameplay/fishing 0 70 0",
+    );
+    assert!(told.starts_with("Replaced"), "{told}");
+}
