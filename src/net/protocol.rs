@@ -159,6 +159,8 @@ pub struct Snapshot {
     pub players: Vec<PlayerView>,
     /// The scoreboard, titles' companions and bossbars this player sees.
     pub board: crate::game::board::BoardView,
+    /// The world border, to draw.
+    pub border: crate::game::border::WorldBorder,
 }
 
 /// Another player as others see them.

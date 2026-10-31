@@ -2027,6 +2027,13 @@ impl App {
                     |cell| chunks.light_at(cell.x, cell.y, cell.z).unwrap_or((15, 0)),
                 );
             }
+            crate::render::entities::add_border(
+                &mut mesh,
+                &game.border,
+                game.time(),
+                self.effect_uvs.shadow,
+                game.player.camera.position.as_dvec3(),
+            );
             renderer.set_entities(&mesh);
             // A spectator has no hand, and a hidden GUI hides it too.
             if self.hide_gui || game.player.mode.is_spectator() {

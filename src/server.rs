@@ -195,8 +195,16 @@ impl Server {
         let cheats = self.may_cheat(index);
         let replies = self.game.run_command(index, command, cheats, index == 0);
         self.changed = true;
+        self.route(Some(index), replies);
+    }
+
+    /// Delivers what a command said: to its sender (`Some`), or, for the
+    /// server's own functions and command blocks (`None`), to those it names.
+    fn route(&mut self, sender: Option<usize>, replies: Vec<Reply>) {
+        let index = sender.unwrap_or(0);
         for reply in replies {
             match reply {
+                Reply::Sender(_) if sender.is_none() => {}
                 Reply::Sender(text) => self.tell(index, text, true),
                 Reply::Player(to, text) => self.tell(to, text, false),
                 Reply::Everyone(text) => self.broadcast(text),
@@ -239,6 +247,10 @@ impl Server {
 
     /// Sends the game's own chat lines (deaths, advancements) to everyone.
     fn send_game_chat(&mut self) {
+        let said = std::mem::take(&mut self.game.replies_out);
+        if !said.is_empty() {
+            self.route(None, said);
+        }
         for line in std::mem::take(&mut self.game.chat_out) {
             self.broadcast(line);
         }

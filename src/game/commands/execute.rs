@@ -421,7 +421,8 @@ fn condition(game: &mut Game, ctx: &Ctx, args: &[&str]) -> Result<(i32, usize), 
         "function" => {
             let id = rest.first().ok_or_else(missing)?;
             let caller = ctx_caller(game, ctx);
-            let result = game.call_function(&caller, id)?;
+            let (result, _, replies, _) = game.call_function(&caller, id, None)?;
+            game.replies_out.extend(replies);
             Ok((result, 2))
         }
         other => Err(format!("Unknown condition '{other}'")),
@@ -1179,36 +1180,4 @@ fn store_tab<'a>(game: &'a Game, rest: &[&str]) -> (usize, Options<'a>) {
             _ => Vec::new(),
         }),
     )
-}
-
-impl Game {
-    /// The ids of every loaded function, for Tab.
-    pub fn function_ids(&self) -> Vec<String> {
-        self.functions
-            .keys()
-            .map(|k| format!("minecraft:{}", k.strip_prefix("minecraft:").unwrap_or(k)))
-            .collect()
-    }
-
-    /// Runs function `id` as `caller`; its result is the number of its
-    /// commands that succeeded.
-    fn call_function(&mut self, caller: &Caller, id: &str) -> Result<i32, String> {
-        let key = id.strip_prefix("minecraft:").unwrap_or(id);
-        let lines = self
-            .functions
-            .get(key)
-            .or_else(|| self.functions.get(id))
-            .cloned()
-            .ok_or_else(|| format!("Unknown function: {id}"))?;
-        let mut ok = 0;
-        for line in lines {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let (_, result) = self.run_as(caller, line.strip_prefix('/').unwrap_or(line));
-            ok += i32::from(result.is_some());
-        }
-        Ok(ok)
-    }
 }

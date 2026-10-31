@@ -554,6 +554,59 @@ pub struct Shadow {
 /// the brighter the spot, fading out 16 blocks from the camera. `full`
 /// says whether a block is a full cube, and `light_at` gives a cell's
 /// (sky, block) light.
+/// The world border as translucent walls within 24 blocks of the eye: four
+/// sheets of dark squares, seen from either side.
+pub fn add_border(
+    mesh: &mut Mesh,
+    border: &crate::game::border::WorldBorder,
+    now: u64,
+    uv: [f32; 4],
+    eye: DVec3,
+) {
+    let half = border.size_at(now) / 2.0;
+    if half > 1.0e7 {
+        return;
+    }
+    let [u0, v0, u1, v1] = uv;
+    let (cx, cz) = (border.center[0], border.center[1]);
+    let light = [SHADOW_FLAG + 15.0, 0.0];
+    let alpha = if border.is_moving(now) { 0.55 } else { 0.4 };
+    let (y_lo, y_hi) = ((eye.y - 8.0).floor() as i32, (eye.y + 14.0).ceil() as i32);
+    // Each wall: the fixed coordinate, whether it runs along x or z, and the
+    // eye's position along it.
+    for (fixed, along_x, near) in [
+        (cx - half, false, eye.z),
+        (cx + half, false, eye.z),
+        (cz - half, true, eye.x),
+        (cz + half, true, eye.x),
+    ] {
+        let across = if along_x { eye.z } else { eye.x };
+        if (across - fixed).abs() > 24.0 {
+            continue;
+        }
+        let (lo, hi) = ((near - 24.0).floor() as i32, (near + 24.0).ceil() as i32);
+        for t in lo..hi {
+            for y in y_lo..y_hi {
+                let (a, b) = (t as f32, (t + 1) as f32);
+                let (y0, y1) = (y as f32, (y + 1) as f32);
+                let f = fixed as f32;
+                let corners = if along_x {
+                    [[a, y0, f], [b, y0, f], [b, y1, f], [a, y1, f]]
+                } else {
+                    [[f, y0, a], [f, y0, b], [f, y1, b], [f, y1, a]]
+                };
+                let uvs = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+                mesh.translucent_quad(corners, uvs, [[alpha; 3]; 4], [light; 4]);
+                let mut back = corners;
+                back.reverse();
+                let mut back_uvs = uvs;
+                back_uvs.reverse();
+                mesh.translucent_quad(back, back_uvs, [[alpha; 3]; 4], [light; 4]);
+            }
+        }
+    }
+}
+
 pub fn add_shadows(
     mesh: &mut Mesh,
     shadows: &[Shadow],

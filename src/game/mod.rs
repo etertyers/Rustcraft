@@ -10,10 +10,12 @@ mod benches;
 pub mod board;
 mod board_hooks;
 mod boats;
+pub mod border;
 mod capture;
 mod combat;
 pub mod commands;
 mod containers;
+pub mod datapack;
 mod dimensions;
 mod dragon;
 mod elytra;
@@ -111,10 +113,6 @@ const MAX_FRAME_DT: f32 = 0.1;
 
 /// Seconds per game tick.
 const TICK: f32 = 1.0 / config::TICKS_PER_SECOND as f32;
-
-/// Most game time simulated in one frame; after a longer stall the game
-/// slows down instead of running a burst of ticks.
-const MAX_CATCH_UP: f32 = 10.0 * TICK;
 
 /// Trackpad scrolling this many pixels moves one hotbar slot.
 const SCROLL_PIXELS_PER_SLOT: f64 = 30.0;
@@ -431,6 +429,34 @@ pub struct Game {
     pub predicates: std::collections::BTreeMap<String, predicate::Predicate>,
     /// Loaded command functions by id: their lines (M45's data packs).
     pub functions: std::collections::BTreeMap<String, Vec<String>>,
+    /// Function tags (`minecraft:load`, `minecraft:tick`, ...) from the packs.
+    pub function_tags: std::collections::BTreeMap<String, Vec<String>>,
+    /// Which data packs are enabled, in order.
+    pub packs: datapack::Selection,
+    /// `/schedule function`: what runs when (game time).
+    pub scheduled: Vec<Scheduled>,
+    /// `/return` sets this; the running function takes it.
+    pub fn_return: Option<i32>,
+    /// Commands the running function chain has run (against `maxCommandChainLength`).
+    pub fn_budget: usize,
+    /// Run the `minecraft:load` tag at the next tick (after a load or reload).
+    pub load_pending: bool,
+    /// Lines the server itself says (functions, command blocks, schedules)
+    /// for the server to deliver.
+    pub replies_out: Vec<commands::Reply>,
+    /// The world's folder, where its data packs are (a saved world's).
+    pub world_dir_for_packs: Option<std::path::PathBuf>,
+    /// `/tick`: the target rate, frozen, steps and sprint left.
+    pub tick_rate: f32,
+    /// The world border (`/worldborder`).
+    pub border: border::WorldBorder,
+    /// `/forceload`'s chunks, kept loaded.
+    pub forced: std::collections::BTreeSet<(i32, i32)>,
+    /// Average milliseconds a tick took, for `/tick query`.
+    pub tick_ms: f32,
+    pub frozen: bool,
+    pub tick_steps: u32,
+    pub tick_sprint: u32,
     /// `/bossbar`'s bars by id (not saved).
     pub bossbars: std::collections::BTreeMap<String, board::Bossbar>,
     pub weather: weather::Weather,
@@ -575,6 +601,21 @@ impl Game {
             storage: Default::default(),
             predicates: Default::default(),
             functions: Default::default(),
+            function_tags: Default::default(),
+            packs: Default::default(),
+            scheduled: Vec::new(),
+            fn_return: None,
+            fn_budget: 0,
+            load_pending: false,
+            replies_out: Vec::new(),
+            world_dir_for_packs: None,
+            tick_rate: 20.0,
+            border: Default::default(),
+            forced: Default::default(),
+            tick_ms: 0.0,
+            frozen: false,
+            tick_steps: 0,
+            tick_sprint: 0,
             bossbars: Default::default(),
             weather: weather::Weather::Clear,
             weather_ticks: weather::DEFAULT_TICKS,
@@ -696,6 +737,13 @@ impl Game {
         game.restore_fight(level.end.dragon);
         game.admin = admin::Admin::load(dir.path());
         game.board = board::Scoreboard::load(dir.path());
+        game.scheduled = load_schedule(dir.path());
+        game.packs = datapack::Selection::load(dir.path());
+        game.world_dir_for_packs = Some(dir.path().to_path_buf());
+        game.border = level.border.clone();
+        game.forced = level.forced.iter().map(|c| (c[0], c[1])).collect();
+        game.sync_forced();
+        game.reload_packs();
         game.storage = load_storage(dir.path());
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
@@ -870,6 +918,8 @@ impl Game {
         saved.level.end = self.end.clone();
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
+        saved.level.border = self.border.clone();
+        saved.level.forced = self.forced.iter().map(|c| [c.0, c.1]).collect();
         saved.level.rules = self.rules.clone();
         if let Some(mode) = self.default_mode {
             saved.level.game_mode = mode;
@@ -882,6 +932,8 @@ impl Game {
         saved.level.end.dragon = dragon;
         self.board.save(saved.dir.path());
         save_storage(&self.storage, saved.dir.path());
+        save_schedule(&self.scheduled, saved.dir.path());
+        self.packs.save(saved.dir.path());
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -1052,6 +1104,47 @@ impl Game {
         self.player.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
 
+    /// Hands the chunks `/forceload` marked to the chunk manager.
+    pub fn sync_forced(&mut self) {
+        let chunks: Vec<ChunkPos> = self
+            .forced
+            .iter()
+            .map(|&(x, z)| ChunkPos::new(x, z))
+            .collect();
+        self.chunks.set_forced(chunks);
+    }
+
+    /// The world border: players and mobs are held inside it, and a player
+    /// left out beyond the buffer takes its damage.
+    fn hold_inside_the_border(&mut self) {
+        let now = self.time;
+        if self.border.size_at(now) >= border::DEFAULT_SIZE - 1.0 {
+            return;
+        }
+        let border = self.border.clone();
+        let (damage, buffer) = (border.damage, border.buffer);
+        self.for_each_player(|g| {
+            let feet = g.player.body.position();
+            let inside = border.inside_by(now, feet.x, feet.z);
+            if inside < 0.0 {
+                let held = border.clamp(now, feet, 0.3);
+                g.player.body.set_position(held);
+                g.player.body.velocity.x = 0.0;
+                g.player.body.velocity.z = 0.0;
+                if -inside > buffer && damage > 0.0 && g.player.mode.is_vulnerable() {
+                    let amount = ((-inside - buffer) * damage / 20.0) as f32;
+                    g.player.stats.damage(amount.max(0.05), DamageSource::Kill);
+                }
+            }
+        });
+        for mob in &mut self.mobs {
+            let feet = mob.feet();
+            if border.inside_by(now, feet.x, feet.z) < 0.0 {
+                mob.body.set_position(border.clamp(now, feet, 0.5));
+            }
+        }
+    }
+
     /// Puts the player's feet at `feet`, looking along `yaw` and `pitch`
     /// (for `--shot` scenes).
     pub fn teleport(&mut self, feet: DVec3, yaw: f32, pitch: f32) {
@@ -1116,10 +1209,22 @@ impl Game {
     /// Adds `dt` seconds to the game's clock and returns how many ticks are
     /// due (a few at most, so a stall doesn't run the world ahead).
     pub fn clock(&mut self, dt: f32) -> u32 {
-        self.tick_time = (self.tick_time + dt).min(MAX_CATCH_UP);
+        // `/tick freeze` holds the world still except for steps; a sprint
+        // runs ticks as fast as they come, in batches.
+        if self.frozen {
+            self.tick_time = 0.0;
+            return std::mem::take(&mut self.tick_steps).min(10_000);
+        }
+        if self.tick_sprint > 0 {
+            let batch = self.tick_sprint.min(100);
+            self.tick_sprint -= batch;
+            return batch;
+        }
+        let tick = 1.0 / self.tick_rate.max(1.0);
+        self.tick_time = (self.tick_time + dt).min(10.0 * tick);
         let mut due = 0;
-        while self.tick_time >= TICK {
-            self.tick_time -= TICK;
+        while self.tick_time >= tick {
+            self.tick_time -= tick;
             due += 1;
         }
         due
@@ -1150,6 +1255,13 @@ impl Game {
     /// player made of it. The world waits while every player is arriving
     /// in a dimension or watching the credits.
     fn tick(&mut self) {
+        let started = std::time::Instant::now();
+        self.tick_inner();
+        let ms = started.elapsed().as_secs_f32() * 1000.0;
+        self.tick_ms = self.tick_ms * 0.95 + ms * 0.05;
+    }
+
+    fn tick_inner(&mut self) {
         self.ticking = true;
         let mut ticked = false;
         for dimension in self.dimensions_with_players() {
@@ -1170,6 +1282,8 @@ impl Game {
         }
         self.time += 1;
         self.tick_mods();
+        self.run_server_functions();
+        self.hold_inside_the_border();
         if self.rules.do_weather_cycle {
             self.weather_ticks = self.weather_ticks.saturating_sub(1);
             if self.weather_ticks == 0 {
@@ -1613,6 +1727,36 @@ fn save_storage(storage: &std::collections::BTreeMap<String, nbt::Nbt>, dir: &st
     if let Ok(out) = ron::ser::to_string_pretty(&text, ron::ser::PrettyConfig::default()) {
         let _ = std::fs::write(dir.join("command_storage.ron"), out);
     }
+}
+
+/// A function waiting for its time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scheduled {
+    pub id: String,
+    /// Game time (ticks) it runs at.
+    pub due: u64,
+}
+
+fn load_schedule(dir: &std::path::Path) -> Vec<Scheduled> {
+    std::fs::read_to_string(dir.join("scheduled.txt"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let (due, id) = l.split_once(' ')?;
+            Some(Scheduled {
+                id: id.to_owned(),
+                due: due.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+fn save_schedule(scheduled: &[Scheduled], dir: &std::path::Path) {
+    let text: String = scheduled
+        .iter()
+        .map(|s| format!("{} {}\n", s.due, s.id))
+        .collect();
+    let _ = std::fs::write(dir.join("scheduled.txt"), text);
 }
 
 fn one() -> f64 {
