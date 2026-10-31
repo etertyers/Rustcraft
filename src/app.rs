@@ -1187,7 +1187,10 @@ impl App {
             return;
         };
         for (text, command) in std::mem::take(&mut link.chat) {
-            self.chat.push(text, command);
+            match link.chat_events.remove(&text) {
+                Some((click, hover)) => self.chat.push_with(text, command, click, hover),
+                None => self.chat.push(text, command),
+            }
         }
         if let Some(options) = link.completions.take() {
             self.chat.completions(options);
@@ -1213,6 +1216,26 @@ impl App {
         match action {
             Some(ChatAction::Send(text)) => self.tell_server(ClientMsg::Chat(text)),
             Some(ChatAction::Complete(line)) => self.tell_server(ClientMsg::Complete(line)),
+            Some(ChatAction::Click(action, value)) => match action.as_str() {
+                "run_command" => {
+                    let line = if value.starts_with('/') {
+                        value
+                    } else {
+                        format!("/{value}")
+                    };
+                    self.tell_server(ClientMsg::Chat(line));
+                }
+                "suggest_command" => self.chat.suggest(&value),
+                "open_url" if value.starts_with("https://") || value.starts_with("http://") => {
+                    let _ = std::process::Command::new("open").arg(&value).spawn();
+                }
+                "copy_to_clipboard" => {
+                    if let Some(debug_ui) = self.debug_ui.as_ref() {
+                        debug_ui.context().copy_text(value);
+                    }
+                }
+                _ => {}
+            },
             None => {}
         }
         // Enter closed it.
@@ -2143,6 +2166,7 @@ impl App {
             .remote_players
             .iter()
             .filter(|view| !view.invisible)
+            .filter(|view| !game.board_view.hidden_tags.contains(&view.name))
             .filter_map(|view| {
                 let head = view.prev_feet.lerp(view.feet, alpha) + DVec3::Y * 2.3;
                 let distance = head.distance(eye) as f32;
@@ -2150,8 +2174,23 @@ impl App {
                     return None;
                 }
                 let clip = view_proj * head.as_vec3().extend(1.0);
+                let dressed = game
+                    .board_view
+                    .dressed
+                    .iter()
+                    .find(|(n, _)| *n == view.name)
+                    .map_or_else(|| view.name.clone(), |(_, d)| d.clone());
+                let below = game
+                    .board_view
+                    .below_name
+                    .as_ref()
+                    .and_then(|(label, scores)| {
+                        let (_, v) = scores.iter().find(|(n, _)| *n == view.name)?;
+                        Some(format!("{v} {label}"))
+                    });
                 (clip.w > 0.0).then(|| crate::ui::NameTag {
-                    name: view.name.clone(),
+                    name: dressed,
+                    below,
                     at: egui::pos2((clip.x / clip.w + 1.0) / 2.0, (1.0 - clip.y / clip.w) / 2.0),
                     distance,
                 })
@@ -2161,8 +2200,31 @@ impl App {
             .link
             .as_ref()
             .filter(|_| self.tab_held && !self.hide_gui)
-            .map(|link| link.players.clone());
+            .map(|link| {
+                link.players
+                    .iter()
+                    .map(|name| {
+                        let dressed = game
+                            .board_view
+                            .dressed
+                            .iter()
+                            .find(|(n, _)| n == name)
+                            .map_or_else(|| name.clone(), |(_, d)| d.clone());
+                        let score = game
+                            .board_view
+                            .list
+                            .iter()
+                            .find(|(n, _)| n == name)
+                            .map(|(_, s)| s.clone())
+                            .unwrap_or_default();
+                        (dressed, score)
+                    })
+                    .collect()
+            });
         let hud = Hud {
+            board: game.board_view.clone(),
+            title_alpha: game.player.title.alpha(game.tick_alpha() as f32),
+            title: game.player.title.clone(),
             hidden: self.hide_gui,
             bars: game.player.mode.shows_hotbar(),
             switcher: self.mode_switcher,

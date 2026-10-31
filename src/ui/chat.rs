@@ -117,6 +117,10 @@ struct Line {
     /// Only).
     command: bool,
     at: f64,
+    /// What a click on the line does (`run_command`, `suggest_command`,
+    /// `open_url`, `copy_to_clipboard`) and the text a hover shows.
+    click: Option<(String, String)>,
+    hover: Option<String>,
 }
 
 /// What the chat box asked for.
@@ -126,6 +130,8 @@ pub enum ChatAction {
     Send(String),
     /// Tab: what can follow this command line.
     Complete(String),
+    /// A click on a line with a click event: its action and value.
+    Click(String, String),
 }
 
 #[derive(Debug, Default)]
@@ -153,10 +159,24 @@ pub struct Chat {
 impl Chat {
     /// A line arrives (a command's answer if `command`).
     pub fn push(&mut self, text: String, command: bool) {
+        self.push_with(text, command, None, None);
+    }
+
+    /// A line that may run, suggest, open or copy something when clicked,
+    /// and show a hover text.
+    pub fn push_with(
+        &mut self,
+        text: String,
+        command: bool,
+        click: Option<(String, String)>,
+        hover: Option<String>,
+    ) {
         self.lines.push_back(Line {
             text,
             command,
             at: self.now,
+            click,
+            hover,
         });
         while self.lines.len() > KEPT {
             self.lines.pop_front();
@@ -342,6 +362,7 @@ impl Chat {
         let left = full.left() + 2.0 * scale;
         let bottom = full.bottom() - 40.0 * scale;
         let mut action = None;
+        let mut action_out = None;
         if self.open {
             let events = ctx.input(|i| i.events.clone());
             action = self.keys(&events);
@@ -357,9 +378,22 @@ impl Chat {
             egui::Id::unique("chat"),
         ));
         let lines = self.visible(now, settings);
+        let pointer = ctx.input(|i| i.pointer.hover_pos());
+        let clicked = ctx.input(|i| i.pointer.primary_clicked());
+        let mut tooltip: Option<(Pos2, String)> = None;
         for (i, (line, fade)) in lines.iter().rev().enumerate() {
             let y = bottom - row * (i + 1) as f32;
             let band = Rect::from_min_size(Pos2::new(left - scale, y), vec2(width, row));
+            if self.open
+                && let Some(at) = pointer.filter(|p| band.contains(*p))
+            {
+                if let Some(hover) = &line.hover {
+                    tooltip = Some((at, hover.clone()));
+                }
+                if clicked && let Some((action, value)) = &line.click {
+                    action_out = Some(ChatAction::Click(action.clone(), value.clone()));
+                }
+            }
             let back = (settings.background * fade * 255.0) as u8;
             painter.rect_filled(band, 0.0, Color32::from_black_alpha(back));
             let alpha = (settings.opacity * fade * 255.0) as u8;
@@ -371,6 +405,24 @@ impl Chat {
                 &line.text,
                 color,
                 size,
+            );
+        }
+        if let Some((at, text)) = tooltip {
+            let shown = font::job(&text, 8.0 * scale, Color32::WHITE, false);
+            let galley = painter.layout_job(shown);
+            let rect = Rect::from_min_size(at + vec2(8.0 * scale, -14.0 * scale), galley.size())
+                .expand(2.0 * scale);
+            painter.rect_filled(rect, 0.0, Color32::from_rgb(16, 0, 16));
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(scale, Color32::from_rgb(80, 0, 160)),
+                egui::StrokeKind::Inside,
+            );
+            painter.galley(
+                rect.min + vec2(2.0 * scale, 2.0 * scale),
+                galley,
+                Color32::WHITE,
             );
         }
         if self.open {
@@ -432,7 +484,12 @@ impl Chat {
                 }
             }
         }
-        action
+        action_out.or(action)
+    }
+
+    /// Puts `text` in the box (a `suggest_command` click).
+    pub fn suggest(&mut self, text: &str) {
+        self.set_input(text.to_owned());
     }
 }
 

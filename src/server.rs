@@ -188,7 +188,8 @@ impl Server {
                 name: name.clone(),
                 message: line.to_owned(),
             });
-            self.broadcast(format!("<{name}> {line}"));
+            let shown = self.game.board.dressed(&name);
+            self.broadcast(format!("<{shown}> {line}"));
             return;
         };
         let cheats = self.may_cheat(index);
@@ -199,6 +200,16 @@ impl Server {
                 Reply::Sender(text) => self.tell(index, text, true),
                 Reply::Player(to, text) => self.tell(to, text, false),
                 Reply::Everyone(text) => self.broadcast(text),
+                Reply::Rich {
+                    to,
+                    text,
+                    click,
+                    hover,
+                } => {
+                    if let Some(remote) = self.remotes.get_mut(to) {
+                        remote.conn.send(ServerMsg::RichChat { text, click, hover });
+                    }
+                }
                 Reply::Publish(_) if self.lan.is_some() => self.tell(
                     index,
                     "§cThe world is already published to LAN".to_owned(),

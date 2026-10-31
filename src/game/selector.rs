@@ -488,12 +488,12 @@ impl Game {
     /// the `@p` kinds. Empty when nothing matches.
     pub(super) fn select(
         &mut self,
-        caller: usize,
+        executor: Target,
+        dimension: crate::world::dimension::Dimension,
         at: DVec3,
         word: &str,
     ) -> Result<Vec<Target>, String> {
         let selector = Selector::parse(word)?;
-        let dimension = self.player_at(caller).dimension;
         let mut pool = self.candidates(dimension);
         let (kind, filters) = match selector {
             Selector::Name(name) => {
@@ -509,7 +509,7 @@ impl Game {
             Kind::NearestPlayer | Kind::AllPlayers | Kind::RandomPlayer => {
                 pool.retain(|c| c.is_player);
             }
-            Kind::Own => pool.retain(|c| c.target == Target::Player(caller)),
+            Kind::Own => pool.retain(|c| c.target == executor),
             Kind::Entities | Kind::NearestEntity => {}
         }
         let from = DVec3::new(
@@ -517,7 +517,15 @@ impl Game {
             filters.origin[1].unwrap_or(at.y),
             filters.origin[2].unwrap_or(at.z),
         );
-        pool.retain(|c| filters.accepts(c, from, None, &|_| None));
+        let board = &self.board;
+        pool.retain(|c| {
+            let holder = match c.target {
+                Target::Player(_) => c.name.clone(),
+                Target::Mob(id) => format!("entity.{id}"),
+            };
+            let team = board.team_of(&holder).map(|(n, _)| n);
+            filters.accepts(c, from, team, &|o| board.score(o, &holder))
+        });
         let sort = filters.sort.unwrap_or(match kind {
             Kind::NearestPlayer | Kind::NearestEntity => Sort::Nearest,
             Kind::RandomPlayer => Sort::Random,

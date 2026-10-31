@@ -58,6 +58,7 @@ impl Game {
     /// Counts `event`; every advancement it completes pops up a toast
     /// (except a tab's first, which the game makes at its start).
     pub fn note(&mut self, event: Event) {
+        self.count_for_board(&event);
         let registry = advancements::registry();
         for index in self.player.progress.record(registry, &event) {
             if registry.defs[index].parent.is_some() {
