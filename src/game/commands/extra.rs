@@ -33,7 +33,7 @@ pub(super) fn say(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec
     if args.is_empty() {
         return Err("Usage: /say <message>".to_owned());
     }
-    let name = &game.player_at(caller.index).name;
+    let name = caller.actor_name(game);
     Ok(vec![Reply::Everyone(format!("[{name}] {}", rest(args, 0)))])
 }
 
@@ -67,11 +67,12 @@ pub(super) fn random(
             }
             let n = lo + i64::from(game.rng.below((hi - lo + 1) as u32));
             if mode == "roll" {
-                let name = game.player_at(caller.index).name.clone();
+                let name = caller.actor_name(game);
                 Ok(vec![Reply::Everyone(format!(
                     "{name} rolled {n} ({lo}..{hi})"
                 ))])
             } else {
+                caller.report(n as i32);
                 Ok(tell(format!("Rolled {n}")))
             }
         }

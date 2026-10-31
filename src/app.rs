@@ -199,8 +199,9 @@ pub struct App {
     f3_was_visible: bool,
     /// F3+F4's mode switcher: the mode chosen.
     mode_switcher: Option<usize>,
-    /// The spectator menu is open.
+    /// The spectator menu is open, on its players (0) or teams (1) page.
     spectator_menu: bool,
+    spectator_page: u8,
     /// The client's mods (key presses, HUD text, brightness).
     client_mods: crate::mods::client::ClientMods,
     /// The chat lines and the box (M38).
@@ -260,6 +261,7 @@ impl App {
             f3_was_visible: false,
             mode_switcher: None,
             spectator_menu: false,
+            spectator_page: 0,
             client_mods: crate::mods::client::ClientMods::start(),
             chat: Default::default(),
             server: None,
@@ -604,6 +606,22 @@ impl App {
                 if self.spectator_menu {
                     self.spectator_menu = false;
                     let own = game.player.name.clone();
+                    if self.spectator_page == 1 {
+                        let teams: Vec<String> = game
+                            .board_view
+                            .teams
+                            .iter()
+                            .map(|(n, _)| n.clone())
+                            .collect();
+                        if let Some(team) = teams.get(slot) {
+                            self.tell_server(
+                                crate::net::protocol::ClientMsg::SpectatorTeleportTeam(
+                                    team.clone(),
+                                ),
+                            );
+                        }
+                        return;
+                    }
                     let names: Vec<String> = self
                         .link
                         .as_ref()
@@ -615,6 +633,7 @@ impl App {
                         ));
                     }
                 } else {
+                    self.spectator_page = 0;
                     self.spectator_menu = true;
                 }
             }
@@ -972,6 +991,13 @@ impl App {
         let escape = input == Input::Key(KeyCode::Escape);
         let press = pressed && !repeat;
         if self.f3_combo(input, pressed, repeat) {
+            return;
+        }
+        if self.spectator_menu
+            && press
+            && matches!(input, Input::Key(KeyCode::ArrowLeft | KeyCode::ArrowRight))
+        {
+            self.spectator_page = 1 - self.spectator_page;
             return;
         }
         if escape && press && (self.spectator_menu || self.mode_switcher.is_some()) {
@@ -2229,11 +2255,25 @@ impl App {
             bars: game.player.mode.shows_hotbar(),
             switcher: self.mode_switcher,
             spectator_menu: (self.spectator_menu && game.player.mode.is_spectator()).then(|| {
-                let own = &game.player.name;
-                self.link
-                    .as_ref()
-                    .map(|l| l.players.iter().filter(|n| *n != own).cloned().collect())
-                    .unwrap_or_default()
+                if self.spectator_page == 1 {
+                    (
+                        "Teleport to Team".to_owned(),
+                        game.board_view
+                            .teams
+                            .iter()
+                            .map(|(n, _)| n.clone())
+                            .collect(),
+                    )
+                } else {
+                    let own = &game.player.name;
+                    (
+                        "Teleport to Player".to_owned(),
+                        self.link
+                            .as_ref()
+                            .map(|l| l.players.iter().filter(|n| *n != own).cloned().collect())
+                            .unwrap_or_default(),
+                    )
+                }
             }),
             name_tags,
             player_list,

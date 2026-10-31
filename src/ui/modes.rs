@@ -50,7 +50,7 @@ pub fn paint_switcher(painter: &Painter, full: Rect, chosen: usize) {
 }
 
 /// The spectator menu: "Teleport to Player", one numbered row per player.
-pub fn paint_spectator_menu(painter: &Painter, full: Rect, players: &[String]) {
+pub fn paint_spectator_menu(painter: &Painter, full: Rect, title: &str, players: &[String]) {
     let scale = gui::gui_scale(full);
     let font = FontId::proportional(8.0 * scale);
     let width = 120.0 * scale;
@@ -58,7 +58,7 @@ pub fn paint_spectator_menu(painter: &Painter, full: Rect, players: &[String]) {
     let top = full.center().y - (players.len().max(1) as f32 * row) / 2.0 - 16.0 * scale;
     let left = full.center().x - width / 2.0;
     let head = painter.layout_no_wrap(
-        "Teleport to Player (press a number)".to_owned(),
+        format!("{title} (press a number, \u{2190}/\u{2192} switches)"),
         font.clone(),
         Color32::WHITE,
     );
@@ -77,7 +77,7 @@ pub fn paint_spectator_menu(painter: &Painter, full: Rect, players: &[String]) {
     );
     if players.is_empty() {
         let none =
-            painter.layout_no_wrap("No other players".to_owned(), font.clone(), Color32::GRAY);
+            painter.layout_no_wrap("Nobody to go to".to_owned(), font.clone(), Color32::GRAY);
         painter.galley(
             pos2(left + 4.0 * scale, top + row + 2.0 * scale),
             none,

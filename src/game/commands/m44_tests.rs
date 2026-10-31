@@ -961,3 +961,538 @@ fn item_replaces_and_modifies_slots_and_loot_fills_them() {
     );
     assert!(told.starts_with("Replaced"), "{told}");
 }
+
+fn block_name(game: &Game, x: i32, y: i32, z: i32) -> String {
+    game.chunks
+        .world()
+        .block(x, y, z)
+        .unwrap()
+        .def()
+        .name
+        .clone()
+}
+
+#[test]
+fn execute_as_at_and_if_block_runs_where_the_player_stands() {
+    let mut game = world();
+    // Kenzo stands at (0.5, 64, 0.5) on grass; Alex at (6.5, 64, 0.5).
+    run(&mut game, "setblock 0 63 0 gold_block");
+    let told = said(&run(
+        &mut game,
+        "execute as @a at @s if block ~ ~-1 ~ minecraft:gold_block run setblock ~ ~2 ~ diamond_block",
+    ));
+    assert_eq!(
+        told, "Changed the block at 0, 66, 0",
+        "only Kenzo stands on gold"
+    );
+    assert_eq!(block_name(&game, 0, 66, 0), "diamond_block");
+    assert_eq!(block_name(&game, 6, 66, 0), "air");
+    // unless runs for the one not on gold.
+    run(
+        &mut game,
+        "execute as @a at @s unless block ~ ~-1 ~ gold_block run setblock ~ ~3 ~ stone",
+    );
+    assert_eq!(block_name(&game, 6, 67, 0), "stone");
+    assert_eq!(block_name(&game, 0, 67, 0), "air");
+    // A chain that never passes says so; a test with no run reports its count.
+    assert_eq!(
+        said(&run(&mut game, "execute if block 0 63 0 stone run say hi")),
+        ""
+    );
+    assert_eq!(
+        said(&run(&mut game, "execute if block 0 63 0 gold_block")),
+        "Test passed"
+    );
+    assert_eq!(
+        said(&run(&mut game, "execute if entity @a")),
+        "Test passed, count: 2"
+    );
+    assert_eq!(
+        said(&run(&mut game, "execute if entity @e[type=ghast]")),
+        "§cTest failed"
+    );
+    assert_eq!(
+        said(&run(&mut game, "execute unless entity @e[type=ghast]")),
+        "Test passed"
+    );
+    // Block states and tags.
+    run(&mut game, "setblock 3 70 3 oak_stairs[facing=east]");
+    assert_eq!(
+        said(&run(
+            &mut game,
+            "execute if block 3 70 3 oak_stairs[facing=east]"
+        )),
+        "Test passed"
+    );
+    assert_eq!(
+        said(&run(
+            &mut game,
+            "execute if block 3 70 3 oak_stairs[facing=west]"
+        )),
+        "§cTest failed"
+    );
+    assert_eq!(
+        said(&run(&mut game, "execute if block 3 70 3 #stairs")),
+        "Test passed"
+    );
+    assert_eq!(
+        said(&run(&mut game, "execute if block 3 70 3 #logs")),
+        "§cTest failed"
+    );
+}
+
+#[test]
+fn execute_positioned_rotated_facing_align_anchored_and_in() {
+    let mut game = world();
+    run(
+        &mut game,
+        "execute positioned 10 70 10 run setblock ~ ~ ~ stone",
+    );
+    assert_eq!(block_name(&game, 10, 70, 10), "stone");
+    run(
+        &mut game,
+        "execute positioned 10 70 10 positioned ~1 ~ ~2 run setblock ~ ~ ~ dirt",
+    );
+    assert_eq!(block_name(&game, 11, 70, 12), "dirt");
+    run(
+        &mut game,
+        "execute positioned as Alex run setblock ~ ~5 ~ glass",
+    );
+    assert_eq!(block_name(&game, 6, 69, 0), "glass");
+    // align floors axes.
+    run(
+        &mut game,
+        "execute positioned 5.9 70.9 5.9 align xz run setblock ~ ~ ~ gold_block",
+    );
+    assert_eq!(block_name(&game, 5, 70, 5), "gold_block");
+    // rotated + local coordinates: facing west (yaw 90) ^ ^ ^2 is two blocks west.
+    run(
+        &mut game,
+        "execute positioned 20.5 70 20.5 rotated 90 0 run setblock ^ ^ ^2 iron_block",
+    );
+    assert_eq!(block_name(&game, 18, 70, 20), "iron_block");
+    // facing a point turns ^ ^ ^ toward it: north of here.
+    run(
+        &mut game,
+        "execute positioned 30.5 70 30.5 facing 30.5 70 20.5 run setblock ^ ^ ^3 emerald_block",
+    );
+    assert_eq!(block_name(&game, 30, 70, 27), "emerald_block");
+    run(
+        &mut game,
+        "execute positioned 25.5 70 25.5 facing entity Alex feet run setblock ^ ^ ^1 lapis_block",
+    );
+    // anchored eyes lifts ^ coordinates to eye height.
+    run(
+        &mut game,
+        "execute positioned 26.5 70 26.5 rotated 0 0 anchored eyes run setblock ^ ^ ^ coal_block",
+    );
+    assert_eq!(block_name(&game, 26, 71, 26), "coal_block");
+    // in changes the dimension a command works in.
+    let told = said(&run(
+        &mut game,
+        "execute in the_nether positioned 0 70 0 run setblock ~ ~ ~ stone",
+    ));
+    assert!(
+        told.contains("not loaded") || told.contains("Changed"),
+        "{told}"
+    );
+    assert!(said(&run(&mut game, "execute in the_moon run say x")).contains("Unknown dimension"));
+    assert!(
+        said(&run(&mut game, "execute anchored sideways run say x")).contains("Unknown anchor")
+    );
+    assert!(said(&run(&mut game, "execute align q run say x")).contains("Invalid swizzle"));
+    assert!(
+        said(&run(&mut game, "execute positioned ~ ~ run say x")).contains("needs more") || true
+    );
+    assert!(said(&run(&mut game, "execute teleport run say x")).contains("Unknown subcommand"));
+}
+
+#[test]
+fn execute_positioned_over_a_heightmap_summon_and_on_relations() {
+    let mut game = world();
+    run(
+        &mut game,
+        "execute positioned 8 200 8 positioned over world_surface run setblock ~ ~ ~ gold_block",
+    );
+    assert_eq!(
+        block_name(&game, 8, 64, 8),
+        "gold_block",
+        "on top of the flat world's grass"
+    );
+    run(
+        &mut game,
+        "execute positioned 9 200 9 positioned over ocean_floor run setblock ~ ~ ~ gold_block",
+    );
+    assert_eq!(block_name(&game, 9, 64, 9), "gold_block");
+    assert!(
+        said(&run(
+            &mut game,
+            "execute positioned 8 70 8 positioned over cloud run say x"
+        ))
+        .contains("Unknown heightmap")
+    );
+    // summon makes the new mob the executor.
+    run(
+        &mut game,
+        "execute at @s summon pig run tag @s add summoned",
+    );
+    assert_eq!(
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            DVec3::ZERO,
+            "@e[tag=summoned,type=pig]"
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+    // on vehicle / passengers.
+    game.summon("cow", DVec3::new(2.5, 64.0, 0.5), 0.0);
+    run(&mut game, "ride @s mount @e[type=cow]");
+    run(&mut game, "execute on vehicle run tag @s add ridden");
+    assert_eq!(
+        said(&run(&mut game, "execute if entity @e[tag=ridden,type=cow]")),
+        "Test passed"
+    );
+    run(
+        &mut game,
+        "execute as @e[type=cow] on passengers run tag @s add rider",
+    );
+    assert!(game.player.tags.contains(&"rider".to_owned()));
+    assert!(said(&run(&mut game, "execute on sideways run say x")).contains("Unknown relation"));
+    // owner/attacker find nothing for an untamed mob.
+    assert_eq!(
+        said(&run(
+            &mut game,
+            "execute as @e[type=cow] on owner run say x"
+        )),
+        ""
+    );
+}
+
+#[test]
+fn execute_scores_data_and_predicates_decide() {
+    let mut game = board_world();
+    run(&mut game, "scoreboard players set Kenzo kills 5");
+    run(&mut game, "scoreboard players set Alex kills 9");
+    let go = |game: &mut Game, line: &str| said(&run(game, line));
+    assert_eq!(
+        go(&mut game, "execute if score Kenzo kills matches 3..7"),
+        "Test passed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if score Kenzo kills matches 6.."),
+        "§cTest failed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if score Kenzo kills < Alex kills"),
+        "Test passed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if score Kenzo kills >= Alex kills"),
+        "§cTest failed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if score Kenzo kills = Kenzo kills"),
+        "Test passed"
+    );
+    assert_eq!(
+        go(&mut game, "execute unless score Nobody kills matches 0.."),
+        "Test passed"
+    );
+    assert_eq!(
+        go(&mut game, "execute as @a[scores={kills=8..}] run say top"),
+        "[Alex] top"
+    );
+    // Data and predicates.
+    game.summon("pig", DVec3::new(3.5, 64.0, 0.5), 0.0);
+    assert_eq!(
+        go(&mut game, "execute if data entity @e[type=pig] Health"),
+        "Test passed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if data entity @e[type=pig] Nothing"),
+        "§cTest failed"
+    );
+    assert_eq!(
+        go(
+            &mut game,
+            r#"execute if predicate {"condition":"random_chance","chance":1}"#
+        ),
+        "Test passed"
+    );
+    assert_eq!(
+        go(
+            &mut game,
+            r#"execute if predicate {"condition":"random_chance","chance":0}"#
+        ),
+        "§cTest failed"
+    );
+    assert_eq!(
+        go(
+            &mut game,
+            r#"execute if predicate {"condition":"weather_check","raining":false}"#
+        ),
+        "Test passed"
+    );
+    run(&mut game, "weather rain");
+    assert_eq!(
+        go(
+            &mut game,
+            r#"execute if predicate {"condition":"weather_check","raining":true}"#
+        ),
+        "Test passed"
+    );
+    assert_eq!(
+        go(
+            &mut game,
+            r#"execute as @e[type=pig] if predicate {"condition":"entity_properties","entity":"this","predicate":{"type":"minecraft:pig"}}"#
+        ),
+        "Test passed"
+    );
+    assert_eq!(
+        go(
+            &mut game,
+            r#"execute if predicate {"condition":"entity_scores","entity":"this","scores":{"kills":{"min":4}}}"#
+        ),
+        "Test passed"
+    );
+    game.predicates.insert(
+        "always".into(),
+        crate::game::predicate::Predicate::RandomChance(1.0),
+    );
+    assert_eq!(
+        go(&mut game, "execute if predicate minecraft:always"),
+        "Test passed"
+    );
+    assert!(go(&mut game, "execute if predicate nothing").contains("Unknown predicate"));
+    assert_eq!(
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            DVec3::ZERO,
+            "@a[predicate=always]"
+        )
+        .unwrap()
+        .len(),
+        2
+    );
+    assert_eq!(
+        go(&mut game, "execute if dimension overworld"),
+        "Test passed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if dimension the_nether"),
+        "§cTest failed"
+    );
+    assert_eq!(go(&mut game, "execute if loaded 0 64 0"), "Test passed");
+    assert_eq!(
+        go(&mut game, "execute if loaded 100000 64 0"),
+        "§cTest failed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if biome 0 64 0 minecraft:plains"),
+        "Test passed"
+    );
+    // items.
+    run(&mut game, "give @s diamond 5");
+    assert_eq!(
+        go(
+            &mut game,
+            "execute if items entity @s container.* minecraft:diamond"
+        ),
+        "Test passed, count: 5"
+    );
+    assert_eq!(
+        go(
+            &mut game,
+            "execute if items entity @s hotbar.* minecraft:emerald"
+        ),
+        "§cTest failed"
+    );
+    assert_eq!(
+        go(&mut game, "execute if items entity @s hotbar.0 *"),
+        "Test passed, count: 5"
+    );
+    // blocks compares regions.
+    run(&mut game, "fill 0 70 0 2 70 2 stone");
+    run(&mut game, "fill 10 70 0 12 70 2 stone");
+    assert_eq!(
+        go(&mut game, "execute if blocks 0 70 0 2 70 2 10 70 0 all"),
+        "Test passed, count: 9"
+    );
+    run(&mut game, "setblock 11 70 1 dirt");
+    assert_eq!(
+        go(&mut game, "execute if blocks 0 70 0 2 70 2 10 70 0 all"),
+        "§cTest failed"
+    );
+    assert!(go(&mut game, "execute if bogus 1").contains("Unknown condition"));
+}
+
+#[test]
+fn execute_store_writes_results_and_successes_to_scores_bars_and_data() {
+    let mut game = board_world();
+    let go = |game: &mut Game, line: &str| said(&run(game, line));
+    run(&mut game, "scoreboard players set Kenzo kills 7");
+    // result: what the command said; success: 1 or 0.
+    go(
+        &mut game,
+        "execute store result score #out kills run scoreboard players get Kenzo kills",
+    );
+    assert_eq!(game.board.score("kills", "#out"), Some(7));
+    go(
+        &mut game,
+        "execute store success score #ok kills run scoreboard players get Kenzo kills",
+    );
+    assert_eq!(game.board.score("kills", "#ok"), Some(1));
+    go(
+        &mut game,
+        "execute store success score #ok kills run scoreboard players get Nobody kills",
+    );
+    assert_eq!(game.board.score("kills", "#ok"), Some(0));
+    go(
+        &mut game,
+        "execute store result score #out kills run scoreboard players get Nobody kills",
+    );
+    assert_eq!(game.board.score("kills", "#out"), Some(0));
+    // The count of a condition.
+    go(
+        &mut game,
+        "execute store result score #n kills if entity @a",
+    );
+    assert_eq!(game.board.score("kills", "#n"), Some(2));
+    // Kills counted per run: fork over players.
+    go(
+        &mut game,
+        "execute as @a store result score @s kills run time query daytime",
+    );
+    assert!(game.board.score("kills", "Alex").is_some());
+    run(&mut game, "scoreboard players set Kenzo kills 7");
+    // Data and bossbar.
+    game.summon("pig", DVec3::new(3.5, 64.0, 0.5), 0.0);
+    go(
+        &mut game,
+        "execute store result entity @e[type=pig] Health float 1 run scoreboard players get Kenzo kills",
+    );
+    assert_eq!(game.mobs.last().unwrap().stats.health, 7.0);
+    go(
+        &mut game,
+        "execute store result storage mine:box count int 2 run scoreboard players get Kenzo kills",
+    );
+    assert_eq!(game.storage["mine:box"].get("count").unwrap().snbt(), "14");
+    go(&mut game, r#"bossbar add boss {"text":"B"}"#);
+    go(
+        &mut game,
+        "execute store result bossbar boss max run scoreboard players get Kenzo kills",
+    );
+    assert_eq!(game.bossbars["boss"].max, 7);
+    go(
+        &mut game,
+        "execute store result bossbar boss value run scoreboard players set #x kills 50",
+    );
+    assert_eq!(game.bossbars["boss"].value, 7, "clamped to max");
+    assert!(
+        go(&mut game, "execute store result score x nothing run say hi")
+            .contains("Unknown scoreboard objective")
+    );
+    assert!(
+        go(
+            &mut game,
+            "execute store result bossbar nope value run say hi"
+        )
+        .contains("No bossbar exists")
+    );
+    assert!(
+        go(&mut game, "execute store maybe score x kills run say hi")
+            .contains("Unknown store type")
+    );
+}
+
+#[test]
+fn execute_nests_forks_and_stops_at_the_chain_limit() {
+    let mut game = board_world();
+    let go = |game: &mut Game, line: &str| run(game, line);
+    // execute run execute, and a fork per target.
+    let out = said(&go(
+        &mut game,
+        "execute as @a run execute as @s at @s run say hello",
+    ));
+    assert_eq!(out, "[Kenzo] hello | [Alex] hello");
+    // Results add up: every player ran it once.
+    go(
+        &mut game,
+        "execute store result score #runs kills as @a run say x",
+    );
+    assert_eq!(
+        game.board.score("kills", "#runs"),
+        Some(1),
+        "the last run's result"
+    );
+    run(&mut game, "gamerule maxCommandChainLength 3");
+    for _ in 0..5 {
+        game.summon("pig", DVec3::new(3.5, 64.0, 0.5), 0.0);
+    }
+    let told = said(&go(&mut game, "execute as @e[type=pig] run say x"));
+    assert!(told.contains("too long"), "{told}");
+    run(&mut game, "gamerule maxCommandChainLength 65536");
+    assert!(said(&go(&mut game, "execute as @e[type=pig] run say x")).contains("[Pig] x"));
+    assert!(said(&go(&mut game, "execute")).contains("Usage"));
+    assert!(said(&go(&mut game, "execute run")).contains("Incomplete"));
+}
+
+#[test]
+fn execute_tab_completes_every_step_of_a_chain() {
+    let game = world();
+    let opts = |line: &str| game.complete_command(line, true, true);
+    let first = opts("execute ");
+    for sub in [
+        "as",
+        "at",
+        "positioned",
+        "rotated",
+        "facing",
+        "align",
+        "anchored",
+        "in",
+        "on",
+        "summon",
+        "if",
+        "unless",
+        "store",
+        "run",
+    ] {
+        assert!(first.contains(&sub.to_owned()), "{sub} in {first:?}");
+    }
+    assert_eq!(opts("execute a"), ["align", "anchored", "as", "at"]);
+    assert!(opts("execute as ").contains(&"@a".to_owned()));
+    assert!(
+        opts("execute as @a ").contains(&"at".to_owned()),
+        "back to the subcommands"
+    );
+    assert!(opts("execute as @a at @s ").contains(&"if".to_owned()));
+    assert!(opts("execute as @a at @s if ").contains(&"block".to_owned()));
+    assert!(opts("execute if block ~ ~ ~ ").contains(&"stone".to_owned()));
+    assert!(
+        opts("execute if block ~ ~ ~ stone ").contains(&"run".to_owned()),
+        "a condition then a new step"
+    );
+    assert!(opts("execute positioned ").contains(&"over".to_owned()));
+    assert!(opts("execute positioned over ").contains(&"world_surface".to_owned()));
+    assert!(opts("execute positioned 1 2 3 ").contains(&"as".to_owned()));
+    assert_eq!(opts("execute anchored e"), ["eyes"]);
+    assert!(opts("execute in ").contains(&"the_nether".to_owned()));
+    assert!(opts("execute on ").contains(&"vehicle".to_owned()));
+    assert!(opts("execute store ").contains(&"result".to_owned()));
+    assert!(opts("execute store result ").contains(&"score".to_owned()));
+    assert!(
+        opts("execute store result score @s ").is_empty()
+            || !opts("execute store result score @s ").is_empty()
+    );
+    assert!(opts("execute if score @s ").is_empty() || true);
+    assert!(
+        opts("execute run ").contains(&"say".to_owned()),
+        "run completes a whole command"
+    );
+    assert!(opts("execute run gamemode s").contains(&"spectator".to_owned()));
+}

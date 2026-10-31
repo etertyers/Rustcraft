@@ -95,7 +95,7 @@ pub struct Hud {
     /// F3+F4's mode switcher, with the mode chosen.
     pub switcher: Option<usize>,
     /// The spectator menu, with the players it lists.
-    pub spectator_menu: Option<Vec<String>>,
+    pub spectator_menu: Option<(String, Vec<String>)>,
     /// What the off-hand holds.
     pub offhand: Option<SlotView>,
     pub selected: usize,
@@ -324,8 +324,8 @@ impl DebugUi {
             if let Some(chosen) = hud.switcher {
                 modes::paint_switcher(ui.painter(), full, chosen);
             }
-            if let Some(players) = &hud.spectator_menu {
-                modes::paint_spectator_menu(ui.painter(), full, players);
+            if let Some((title, players)) = &hud.spectator_menu {
+                modes::paint_spectator_menu(ui.painter(), full, title, players);
             }
             if let Some(offhand) = &hud.offhand
                 && !hud.hidden

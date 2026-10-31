@@ -193,6 +193,7 @@ pub(super) fn fill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Ve
         destroy(game, caller.index, at);
     }
     game.edit(&edits);
+    caller.report(edits.len() as i32);
     Ok(tell(format!(
         "Successfully filled {} block(s)",
         edits.len()

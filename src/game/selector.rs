@@ -526,6 +526,21 @@ impl Game {
             let team = board.team_of(&holder).map(|(n, _)| n);
             filters.accepts(c, from, team, &|o| board.score(o, &holder))
         });
+        // `predicate=` runs each candidate's named predicate as that entity.
+        for (not, name) in &filters.predicates {
+            let predicate = self
+                .predicates
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("Unknown predicate: {name}"))?;
+            let mut kept = Vec::new();
+            for c in pool {
+                if predicate.test(self, c.target, c.feet, dimension) != *not {
+                    kept.push(c);
+                }
+            }
+            pool = kept;
+        }
         let sort = filters.sort.unwrap_or(match kind {
             Kind::NearestPlayer | Kind::NearestEntity => Sort::Nearest,
             Kind::RandomPlayer => Sort::Random,

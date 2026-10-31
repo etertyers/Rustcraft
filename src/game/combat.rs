@@ -213,6 +213,15 @@ impl Game {
     /// Sharpness, knockback (more sprinting), Fire Aspect, weapon wear and
     /// exhaustion; a blocking shield stops it.
     pub(super) fn attack_player(&mut self, other: usize) {
+        // Teammates on a team with friendlyFire off can't hurt each other.
+        let victim_name = self.others.get(other).map(|p| p.name.clone());
+        if let Some(victim) = victim_name
+            && let Some((team, info)) = self.board.team_of(&self.player.name)
+            && !info.friendly_fire
+            && self.board.team_of(&victim).is_some_and(|(t, _)| t == team)
+        {
+            return;
+        }
         let tool = self.selected_tool().cloned();
         let sword = tool.as_ref().is_some_and(|t| t.kind == ToolKind::Sword);
         let axe = tool.as_ref().is_some_and(|t| t.kind == ToolKind::Axe);

@@ -70,6 +70,8 @@ pub enum ClientMsg {
     Disconnect,
     /// A spectator picked a player in the spectator menu (M43).
     SpectatorTeleport(String),
+    /// ... or a team in its page of the menu: to one of its members.
+    SpectatorTeleportTeam(String),
 }
 
 /// One tick of a player's movement input.

@@ -66,6 +66,18 @@ impl Game {
         true
     }
 
+    /// A spectator's pick of a team: go to the first of its members in the
+    /// same dimension.
+    pub fn spectator_teleport_team(&mut self, index: usize, team: &str) -> bool {
+        let members: Vec<String> = self
+            .board
+            .teams
+            .get(team)
+            .map(|t| t.members.iter().cloned().collect())
+            .unwrap_or_default();
+        members.iter().any(|m| self.spectator_teleport(index, m))
+    }
+
     /// F3+N: between spectator and the mode before it (creative if none).
     pub fn toggle_spectator(&mut self) {
         let mode = if self.player.mode.is_spectator() {

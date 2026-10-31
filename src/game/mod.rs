@@ -45,6 +45,7 @@ mod nether_mobs;
 mod offhand;
 mod portals;
 mod potions;
+pub mod predicate;
 #[cfg(test)]
 mod progression;
 mod random_ticks;
@@ -425,6 +426,11 @@ pub struct Game {
     pub board: board::Scoreboard,
     /// `/data ... storage`: command storage by id.
     pub storage: std::collections::BTreeMap<String, nbt::Nbt>,
+    /// Named predicates (data packs, M45); `/execute if predicate` and
+    /// selectors look them up here.
+    pub predicates: std::collections::BTreeMap<String, predicate::Predicate>,
+    /// Loaded command functions by id: their lines (M45's data packs).
+    pub functions: std::collections::BTreeMap<String, Vec<String>>,
     /// `/bossbar`'s bars by id (not saved).
     pub bossbars: std::collections::BTreeMap<String, board::Bossbar>,
     pub weather: weather::Weather,
@@ -567,6 +573,8 @@ impl Game {
             admin: admin::Admin::default(),
             board: board::Scoreboard::default(),
             storage: Default::default(),
+            predicates: Default::default(),
+            functions: Default::default(),
             bossbars: Default::default(),
             weather: weather::Weather::Clear,
             weather_ticks: weather::DEFAULT_TICKS,

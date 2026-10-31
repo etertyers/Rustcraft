@@ -10,6 +10,7 @@ use glam::{DVec3, IVec3};
 mod board_cmds;
 mod components;
 mod data_cmds;
+mod execute;
 mod extra;
 mod text_cmds;
 mod world;
@@ -107,6 +108,11 @@ impl Caller {
             eyes: false,
             result: std::cell::Cell::new(None),
         }
+    }
+
+    /// Who is speaking: the executor's name (a player's, or a mob's shown name).
+    fn actor_name(&self, game: &Game) -> String {
+        game.target_name(self.executor)
     }
 
     /// Reports the number a command produced (its result for `store`).
@@ -418,6 +424,36 @@ const COMMANDS: &[Command] = &[
         args: &[Arg::Players, Arg::Free],
         run: kick,
     },
+    cmd!(
+        "execute",
+        [],
+        true,
+        false,
+        "/execute (as|at|positioned|rotated|facing|align|anchored|in|on|summon|if|unless|store|run) ...",
+        [
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab)
+        ],
+        execute::execute
+    ),
     cmd!(
         "data",
         [],
@@ -957,6 +993,7 @@ impl Game {
                 };
                 (replies, Some(result))
             }
+            Err(why) if why.is_empty() => (Vec::new(), None),
             Err(why) => (vec![error(&why)], None),
         }
     }
@@ -1277,10 +1314,11 @@ fn help(_: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Stri
         .collect())
 }
 
-fn list(game: &mut Game, _: &Caller, _: &[&str]) -> Result<Vec<Reply>, String> {
+fn list(game: &mut Game, caller: &Caller, _: &[&str]) -> Result<Vec<Reply>, String> {
     let names: Vec<String> = (0..game.player_count())
         .map(|i| game.player_at(i).name.clone())
         .collect();
+    caller.report(names.len() as i32);
     Ok(tell(format!(
         "There are {} of a max of {} players online: {}",
         names.len(),
@@ -1294,7 +1332,7 @@ fn msg(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, St
         return Err("Usage: /msg <player> <message>".to_owned());
     };
     let text = rest(args, 1);
-    let from = game.player_at(caller.index).name.clone();
+    let from = caller.actor_name(game);
     let mut replies = Vec::new();
     for to in game.players_named(caller, target)? {
         let name = game.player_at(to).name.clone();
@@ -1311,7 +1349,7 @@ fn me(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Str
     if args.is_empty() {
         return Err("Usage: /me <action>".to_owned());
     }
-    let name = &game.player_at(caller.index).name;
+    let name = caller.actor_name(game);
     Ok(vec![Reply::Everyone(format!("* {name} {}", rest(args, 0)))])
 }
 
@@ -1397,6 +1435,7 @@ fn give(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
             items_display(id)
         )));
     }
+    caller.report((count as usize * replies.len()) as i32);
     Ok(replies)
 }
 
@@ -1419,6 +1458,7 @@ fn clear(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, 
     let wanted = only.as_ref().map(|(id, _)| *id);
     let max: Option<u32> = args.get(2).map(|n| number(n, "count")).transpose()?;
     let mut replies = Vec::new();
+    let mut total = 0i32;
     for index in who {
         if max == Some(0) {
             // A count of 0 only asks how many there are.
@@ -1461,14 +1501,16 @@ fn clear(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, 
         if removed == 0 {
             return Err(format!("No items were found on player {name}"));
         }
+        total += removed as i32;
         replies.push(Reply::Sender(format!(
             "Removed {removed} item(s) from player {name}"
         )));
     }
+    caller.report(total);
     Ok(replies)
 }
 
-fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
+fn time(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
     let named = |word: &str| -> Result<u64, String> {
         Ok(match word {
             "day" => 1000,
@@ -1485,18 +1527,25 @@ fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String
             let now = game.day_time();
             let target = now / 24000 * 24000 + day % 24000;
             game.day_offset += target as i64 - now as i64;
+            caller.report(day as i32);
             Ok(tell(format!("Set the time to {day}")))
         }
         (Some("add"), Some(value)) => {
             let ticks = i64::from(extra::parse_time(value)?);
             game.day_offset += ticks;
+            caller.report((game.day_time() % 24000) as i32);
             Ok(tell(format!("Set the time to {}", game.day_time() % 24000)))
         }
         (Some("query"), Some("daytime")) => {
+            caller.report((game.day_time() % 24000) as i32);
             Ok(tell(format!("The time is {}", game.day_time() % 24000)))
         }
-        (Some("query"), Some("gametime")) => Ok(tell(format!("The time is {}", game.time()))),
+        (Some("query"), Some("gametime")) => {
+            caller.report(game.time() as i32);
+            Ok(tell(format!("The time is {}", game.time())))
+        }
         (Some("query"), Some("day")) => {
+            caller.report((game.day_time() / 24000) as i32);
             Ok(tell(format!("The time is {}", game.day_time() / 24000)))
         }
         _ => Err("Usage: /time <set|add|query> <value>".to_owned()),
@@ -1526,6 +1575,7 @@ fn kill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
         }
         replies.push(Reply::Sender(format!("Killed {name}")));
     }
+    caller.report(replies.len() as i32);
     Ok(replies)
 }
 
@@ -1716,13 +1766,20 @@ fn xp(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Str
                         Ok(format!("Set {amount} experience points on {name}"))
                     }
                 }
-                "query" if levels => Ok(format!("{name} has {} experience levels", xp.level)),
-                "query" => Ok(format!("{name} has {} experience points", xp.points())),
+                "query" if levels => {
+                    caller.report(xp.level as i32);
+                    Ok(format!("{name} has {} experience levels", xp.level))
+                }
+                "query" => {
+                    caller.report(xp.points() as i32);
+                    Ok(format!("{name} has {} experience points", xp.points()))
+                }
                 other => Err(format!("Unknown action: {other}")),
             }
         })?;
         replies.push(Reply::Sender(line));
     }
+    caller.report(replies.len() as i32);
     Ok(replies)
 }
 

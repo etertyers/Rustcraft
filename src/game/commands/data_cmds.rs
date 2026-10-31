@@ -676,7 +676,6 @@ fn modify(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>,
 
 /// Sets the value at `path` of `target` to a number of type `ty` times `scale`
 /// (`/execute store ... data`).
-#[allow(dead_code)] // used by /execute store
 pub(super) fn store_number(
     game: &mut Game,
     target: &DataTarget,
@@ -1287,4 +1286,41 @@ pub(super) fn loot_tab(game: &Game, before: &[&str]) -> Vec<String> {
 #[allow(dead_code)]
 pub(super) fn json_text(game: &mut Game, caller: &Caller, json: &str) -> Result<String, String> {
     render_json(game, caller, json).map(|r| r.text)
+}
+
+/// How many items in the slots of `target` that `pattern` names (`hotbar.*`,
+/// `container.3`, `armor.*`) are `wanted` (`*`, an item id, or `#tag`-less
+/// id with components ignored).
+pub(super) fn count_items(
+    game: &mut Game,
+    target: &DataTarget,
+    pattern: &str,
+    wanted: &str,
+) -> Result<i32, String> {
+    let want_id = if wanted == "*" {
+        None
+    } else {
+        Some(item_named(wanted.split('[').next().unwrap_or(wanted))?)
+    };
+    let names: Vec<String> = match target {
+        DataTarget::Block(_) => (0..54).map(|i| format!("container.{i}")).collect(),
+        _ => slot_names(game),
+    };
+    let matching: Vec<String> = if let Some(prefix) = pattern.strip_suffix(".*") {
+        names
+            .into_iter()
+            .filter(|n| n.starts_with(&format!("{prefix}.")))
+            .collect()
+    } else {
+        vec![pattern.to_owned()]
+    };
+    let mut total = 0;
+    for slot in matching {
+        if let Ok(Some(stack)) = slot_get(game, target, &slot)
+            && want_id.is_none_or(|id| id == stack.id)
+        {
+            total += i32::from(stack.count);
+        }
+    }
+    Ok(total)
 }
