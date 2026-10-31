@@ -553,6 +553,16 @@ pub static SHOTS: &[Shot] = &[
         stage: two_players,
     },
     Shot {
+        name: "m44-board",
+        about: "the sidebar listing a kills objective (names on a gold team colored) and a bossbar across the top of a plains view",
+        world: Some(WorldKind::Flat),
+        view: Some(([0.5, 64.0, 0.5], 0.5, -0.12)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: scoreboard_and_bossbar,
+    },
+    Shot {
         name: "m43-spectate",
         about: "a spectator through a cow's eyes: no hotbar or hearts, the pasture ahead as the cow sees it",
         world: Some(WorldKind::Flat),
@@ -729,6 +739,30 @@ fn wheat_farm(game: &mut Game) {
 }
 
 /// A lake south of the player (Z 4..20), and a cast into it.
+/// A sidebar of kills with the player on a gold team, and a purple bossbar.
+fn scoreboard_and_bossbar(game: &mut Game) {
+    for line in [
+        r#"scoreboard objectives add kills dummy {"text":"Kills","color":"gold","bold":true}"#,
+        "scoreboard objectives setdisplay sidebar kills",
+        "scoreboard players set Zombies kills 12",
+        "scoreboard players set Skeletons kills 7",
+        "scoreboard players set Creepers kills 4",
+        "scoreboard players set Player kills 9",
+        "team add gold",
+        "team modify gold color gold",
+        "team join gold Player",
+        r#"bossbar add dragon {"text":"Ender Dragon","color":"light_purple"}"#,
+        "bossbar set dragon color purple",
+        "bossbar set dragon style notched_10",
+        "bossbar set dragon max 200",
+        "bossbar set dragon value 130",
+        "bossbar set dragon players @a",
+    ] {
+        game.run_command(0, line, true, true);
+    }
+    game.run_ticks(2);
+}
+
 /// A cow and a herd ahead of it; the spectator takes the cow's eyes.
 fn spectate_cow(game: &mut Game) {
     game.mobs.clear();
