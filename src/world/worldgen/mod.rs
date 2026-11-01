@@ -11,6 +11,7 @@ pub mod flat;
 pub mod flower_stats;
 pub mod gallery;
 pub mod nether;
+pub mod nether_stats;
 pub mod normal_noise;
 pub mod ores;
 pub mod rng;

@@ -57,6 +57,13 @@ fn main() -> Result<()> {
             .map_or(Ok(default), |s| s.parse())
             .with_context(|| format!("{flag} needs a number"))
     };
+    // `--nether-map [--seed <n>] [--chunks <side>]`: basalt pillars and
+    // column clusters per chunk, by biome.
+    if args.iter().any(|arg| arg == "--nether-map") {
+        let seed = number("--seed", 12345)? as u64;
+        rustcraft::world::worldgen::nether_stats::print_stats(seed, number("--chunks", 64)? as i32);
+        return Ok(());
+    }
     if args.iter().any(|arg| arg == "--cave-test") {
         let seed = number("--seed", 12345)? as u64;
         rustcraft::world::worldgen::cave_stats::print_stats(

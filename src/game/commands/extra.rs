@@ -1294,23 +1294,10 @@ pub(super) fn locate_names(game: &Game, before: &[&str]) -> Vec<String> {
     match before.first().copied() {
         Some("poi") => POIS.iter().map(|(n, _)| (*n).to_owned()).collect(),
         Some("biome") => world::biome_ids(game),
-        Some("structure") => STRUCTURES.iter().map(|n| (*n).to_owned()).collect(),
+        Some("structure") => super::locate::structure_names(),
         _ => Vec::new(),
     }
 }
-
-const STRUCTURES: &[&str] = &[
-    "village",
-    "desert_pyramid",
-    "jungle_pyramid",
-    "shipwreck",
-    "ruined_portal",
-    "mineshaft",
-    "stronghold",
-    "fortress",
-    "bastion_remnant",
-    "end_city",
-];
 
 /// The nearest loaded block of the poi's kind within 128 blocks.
 pub(super) fn locate_poi(game: &Game, from: DVec3, name: &str) -> Result<IVec3, String> {

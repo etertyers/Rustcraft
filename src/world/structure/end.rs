@@ -52,22 +52,26 @@ fn pillar(at: IVec3) -> BlockState {
 /// The cities that start in the regions round chunk `pos`: where, as the
 /// chunk their island's middle is in.
 fn starts_near(end: &End, pos: ChunkPos) -> Vec<ChunkPos> {
-    let reach = Kind::EndCity.reach();
-    let (x, z) = pos.min_block();
+    starts_within(end, pos, Kind::EndCity.reach())
+}
+
+/// The cities that may start within `radius` chunks (each way) of `pos`:
+/// the biggest outer island of each 320-block region that is big enough
+/// holds one (the one rule the generator and `/locate` share).
+pub fn starts_within(end: &End, pos: ChunkPos, radius: i32) -> Vec<ChunkPos> {
     let mut found = Vec::new();
     let region = |c: i32| (c * 16).div_euclid(REGION);
-    for rz in region(pos.z - reach)..=region(pos.z + reach) {
-        for rx in region(pos.x - reach)..=region(pos.x + reach) {
+    for rz in region(pos.z - radius)..=region(pos.z + radius) {
+        for rx in region(pos.x - radius)..=region(pos.x + radius) {
             let mut best: Option<(IVec3, i32)> = None;
-            for (at, radius) in end.big_islands_in(rx * REGION, rz * REGION, REGION, MIN_RADIUS) {
-                if best.is_none_or(|(_, r)| radius > r) {
-                    best = Some((at, radius));
+            for (at, island) in end.big_islands_in(rx * REGION, rz * REGION, REGION, MIN_RADIUS) {
+                if best.is_none_or(|(_, r)| island > r) {
+                    best = Some((at, island));
                 }
             }
             if let Some((at, _)) = best {
                 let start = ChunkPos::of_block(at.x, at.z);
-                let _ = (x, z);
-                if (start.x - pos.x).abs() <= reach && (start.z - pos.z).abs() <= reach {
+                if (start.x - pos.x).abs() <= radius && (start.z - pos.z).abs() <= radius {
                     found.push(start);
                 }
             }
@@ -407,22 +411,11 @@ pub fn spawns_in(end: &End, pos: ChunkPos) -> Vec<MobSpawn> {
 /// The city, if any, whose start is the nearest within `radius` chunks of
 /// `pos` (for tests and screenshots).
 pub fn find(end: &End, pos: ChunkPos, radius: i32) -> Option<Arc<Structure>> {
-    let mut best: Option<(i32, Arc<Structure>)> = None;
-    for dz in -radius / 5..=radius / 5 {
-        for dx in -radius / 5..=radius / 5 {
-            let at = pos.offset(dx * 5, dz * 5);
-            for start in starts_near(end, at) {
-                let d = (start.x - pos.x).abs().max((start.z - pos.z).abs());
-                if d <= radius
-                    && best.as_ref().is_none_or(|(b, _)| d < *b)
-                    && let Some(found) = structure_at(end, start)
-                {
-                    best = Some((d, found));
-                }
-            }
-        }
-    }
-    best.map(|(_, s)| s)
+    let mut starts = starts_within(end, pos, radius);
+    starts.sort_by_key(|s| (s.x - pos.x).abs().max((s.z - pos.z).abs()));
+    starts
+        .into_iter()
+        .find_map(|start| structure_at(end, start))
 }
 
 #[cfg(test)]

@@ -38,26 +38,40 @@ fn complex_at(nether: &Nether, start: ChunkPos) -> Kind {
     }
 }
 
-/// The chunks within `kind`'s reach of `pos` where one of them starts.
-fn starts_near(nether: &Nether, kind: Kind, pos: ChunkPos) -> Vec<ChunkPos> {
-    let reach = kind.reach();
-    let spread = kind.spread();
-    let region = |c: i32| c.div_euclid(spread.spacing);
+/// The chunk where `kind` may start in placement region (rx, rz), if its
+/// complex is that kind: the one rule the generator and `/locate` share.
+fn region_start(nether: &Nether, kind: Kind, rx: i32, rz: i32) -> Option<ChunkPos> {
+    let start = kind
+        .spread()
+        .candidate(nether.world_seed(), kind.salt(), rx, rz);
+    let ours = match kind {
+        Kind::Fortress | Kind::Bastion => complex_at(nether, start) == kind,
+        _ => true,
+    };
+    ours.then_some(start)
+}
+
+/// Where `kind` may start within `radius` chunks (each way) of `pos`.
+pub fn starts_within(nether: &Nether, kind: Kind, pos: ChunkPos, radius: i32) -> Vec<ChunkPos> {
+    let spacing = kind.spread().spacing;
+    let region = |c: i32| c.div_euclid(spacing);
     let mut found = Vec::new();
-    for rz in region(pos.z - reach)..=region(pos.z + reach) {
-        for rx in region(pos.x - reach)..=region(pos.x + reach) {
-            let start = spread.candidate(nether.world_seed(), kind.salt(), rx, rz);
-            let near = (start.x - pos.x).abs() <= reach && (start.z - pos.z).abs() <= reach;
-            let ours = match kind {
-                Kind::Fortress | Kind::Bastion => complex_at(nether, start) == kind,
-                _ => true,
-            };
-            if near && ours {
+    for rz in region(pos.z - radius)..=region(pos.z + radius) {
+        for rx in region(pos.x - radius)..=region(pos.x + radius) {
+            if let Some(start) = region_start(nether, kind, rx, rz)
+                && (start.x - pos.x).abs() <= radius
+                && (start.z - pos.z).abs() <= radius
+            {
                 found.push(start);
             }
         }
     }
     found
+}
+
+/// The chunks within `kind`'s reach of `pos` where one of them starts.
+fn starts_near(nether: &Nether, kind: Kind, pos: ChunkPos) -> Vec<ChunkPos> {
+    starts_within(nether, kind, pos, kind.reach())
 }
 
 fn generate(nether: &Nether, kind: Kind, start: ChunkPos) -> Option<Structure> {
@@ -157,31 +171,11 @@ pub fn kind_at(nether: &Nether, at: IVec3) -> Option<Kind> {
 /// Where the nearest structure of `kind` starts within `radius` chunks of
 /// `pos`, for tests and screenshots.
 pub fn find(nether: &Nether, kind: Kind, pos: ChunkPos, radius: i32) -> Option<Arc<Structure>> {
-    let spacing = kind.spread().spacing;
-    let mut best: Option<(i32, Arc<Structure>)> = None;
-    let region = |c: i32| c.div_euclid(spacing);
-    for rz in region(pos.z - radius)..=region(pos.z + radius) {
-        for rx in region(pos.x - radius)..=region(pos.x + radius) {
-            let start = kind
-                .spread()
-                .candidate(nether.world_seed(), kind.salt(), rx, rz);
-            let ours = match kind {
-                Kind::Fortress | Kind::Bastion => complex_at(nether, start) == kind,
-                _ => true,
-            };
-            if !ours {
-                continue;
-            }
-            let d = (start.x - pos.x).abs().max((start.z - pos.z).abs());
-            if d > radius || best.as_ref().is_some_and(|(b, _)| *b <= d) {
-                continue;
-            }
-            if let Some(found) = structure_at(nether, kind, start) {
-                best = Some((d, found));
-            }
-        }
-    }
-    best.map(|(_, s)| s)
+    let mut starts = starts_within(nether, kind, pos, radius);
+    starts.sort_by_key(|s| (s.x - pos.x).abs().max((s.z - pos.z).abs()));
+    starts
+        .into_iter()
+        .find_map(|start| structure_at(nether, kind, start))
 }
 
 #[cfg(test)]

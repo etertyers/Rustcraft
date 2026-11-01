@@ -52,6 +52,7 @@ Tools: --write-structures, --asset-report, --gen-placeholders,
        --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>],
        --spawn-test [--seed <n>] (one night of mob counts in plains),
        --flower-test [--seed <n>] (flowers per chunk by biome)
+       --nether-map [--seed <n>] [--chunks <side>] (basalt pillars and columns by Nether biome)
        --cave-test [--seed <n>] [--chunks <n>] (the underground in numbers)
        --cave-slice --seed <n> --x <x> --z <z> --size 256 --out <file> (a cross-section picture)
        --structure-test [--seed <n>] (20 ruined portals, 20 geodes and 5 fortresses checked)

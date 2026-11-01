@@ -765,9 +765,14 @@ mod tests {
 
     /// A flat creative world on a server, and clients for `names`.
     fn world_with(names: &[&str]) -> (Server, Vec<(Client, Game)>) {
+        world_on(ChunkSource::Flat, names)
+    }
+
+    /// Like `world_with`, on any chunk source.
+    fn world_on(source: ChunkSource, names: &[&str]) -> (Server, Vec<(Client, Game)>) {
         let (items, models) = registries();
         let mobs = mob_registry();
-        let chunks = ChunkManager::new(ChunkSource::Flat, models.clone(), 2, 2);
+        let chunks = ChunkManager::new(source, models.clone(), 2, 2);
         let feet = DVec3::new(0.5, 64.0, 0.5);
         let mut game =
             Game::new(chunks, items.clone(), feet, feet, 0.0, 0.0).with_mobs(mobs.clone());
@@ -1778,5 +1783,46 @@ mod tests {
         }
         assert_eq!(clients[0].0.records[2], (at, Some("cat".to_owned())));
         assert_eq!(clients[1].0.records.len(), 2, "Bob heard nothing");
+    }
+
+    #[test]
+    fn a_locate_result_goes_only_to_the_player_who_ran_it() {
+        let source = ChunkSource::Terrain(Box::new(crate::world::worldgen::terrain::Terrain::new(
+            12345,
+        )));
+        let (mut server, mut clients) = world_on(source, &["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/locate structure village".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            c[0].0
+                .chat_events
+                .keys()
+                .any(|line| line.starts_with("The nearest village is at"))
+        });
+        // Bob heard no such line, in the chat or among the click events.
+        for _ in 0..30 {
+            for (client, game) in clients.iter_mut() {
+                client.advance(game, 0.05);
+            }
+            server.advance(0.05);
+            for (client, game) in clients.iter_mut() {
+                client.receive(game);
+            }
+        }
+        assert!(
+            clients[1]
+                .0
+                .chat
+                .iter()
+                .all(|(line, _)| !line.contains("The nearest village")),
+            "{:?}",
+            clients[1].0.chat
+        );
+        assert!(clients[1].0.chat_events.is_empty());
     }
 }
