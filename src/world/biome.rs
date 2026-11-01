@@ -318,12 +318,32 @@ impl BiomeColors {
         };
         let mut colors = Self::from_colormaps(&open("colormap/grass")?, &open("colormap/foliage")?);
         // A water texture that is already blue (1.12 and older packs) isn't
-        // tinted again; a gray one (1.13 on) takes each biome's water color.
-        if res
-            .image("block/water_still")
-            .is_some_and(|image| !is_gray(&image))
-        {
-            colors.water = [[1.0; 3]; Biome::COUNT];
+        // tinted again; a gray one (1.13 on) takes each biome's water color,
+        // once.
+        if let Some(texture) = res.texture("block/water_still") {
+            let layer = if texture.vanilla {
+                "the vanilla fallback".to_owned()
+            } else {
+                format!("layer {}", texture.layer)
+            };
+            let image = texture.first_frame();
+            let stats = water_stats(&image);
+            let gray = is_gray(&image);
+            log::info!(
+                "water texture from {layer}: average RGB ({:.0}, {:.0}, {:.0}), alpha {:.0}, {}",
+                stats.rgb[0],
+                stats.rgb[1],
+                stats.rgb[2],
+                stats.alpha,
+                if gray {
+                    "gray: tinted by the biome's water color"
+                } else {
+                    "colored: not tinted again"
+                }
+            );
+            if !gray {
+                colors.water = [[1.0; 3]; Biome::COUNT];
+            }
         }
         Ok(colors)
     }
@@ -387,6 +407,29 @@ impl BiomeColors {
 /// Vanilla's default water color and underwater fog color.
 pub const DEFAULT_WATER: u32 = 0x3F76E4;
 pub const DEFAULT_WATER_FOG: u32 = 0x050533;
+
+/// A water texture's average color and alpha, 0–255 (for the log, and for
+/// telling a gray texture from a blue one).
+pub struct WaterStats {
+    pub rgb: [f32; 3],
+    pub alpha: f32,
+}
+
+pub fn water_stats(image: &RgbaImage) -> WaterStats {
+    let mut sum = [0.0f64; 4];
+    let mut count = 0.0;
+    for p in image.pixels() {
+        for (total, c) in sum.iter_mut().zip(p.0) {
+            *total += f64::from(c);
+        }
+        count += 1.0;
+    }
+    let mean = |i: usize| (sum[i] / f64::max(count, 1.0)) as f32;
+    WaterStats {
+        rgb: [mean(0), mean(1), mean(2)],
+        alpha: mean(3),
+    }
+}
 
 /// Whether an image is gray: no pixel's channels spread far apart.
 fn is_gray(image: &RgbaImage) -> bool {
@@ -486,6 +529,53 @@ mod tests {
         let colors = BiomeColors::load(&base).unwrap();
         // Forest grass is a different green from desert grass.
         assert_ne!(colors.grass(Biome::Forest), colors.grass(Biome::Desert));
+    }
+
+    #[test]
+    fn a_blue_water_texture_is_not_tinted_again_but_a_gray_one_is() {
+        let paint = |rgb: [u8; 3]| {
+            RgbaImage::from_pixel(16, 16, image::Rgba([rgb[0], rgb[1], rgb[2], 180]))
+        };
+        let blue = paint([8, 88, 193]);
+        let gray = paint([177, 177, 177]);
+        assert!(!is_gray(&blue) && is_gray(&gray));
+        let stats = water_stats(&blue);
+        assert_eq!((stats.rgb, stats.alpha), ([8.0, 88.0, 193.0], 180.0));
+        // Kenzo's own water is blue: the real base layer leaves it alone.
+        let base =
+            crate::pack::Resources::load_with(&crate::assets::dir(), Vec::new(), false).unwrap();
+        let own = base.image("block/water_still").unwrap();
+        eprintln!("WATER base layer avg {:?}", water_stats(&own).rgb);
+        let colors = BiomeColors::load(&base).unwrap();
+        assert_eq!(colors.water(Biome::Ocean), [1.0; 3]);
+    }
+
+    #[test]
+    fn ocean_water_and_fog_colors_match_vanilla() {
+        let table = [
+            (Biome::Ocean, 0x3F76E4, 0x050533),
+            (Biome::DeepOcean, 0x3F76E4, 0x050533),
+            (Biome::WarmOcean, 0x43D5EE, 0x041F33),
+            (Biome::LukewarmOcean, 0x45ADF2, 0x041633),
+            (Biome::DeepLukewarmOcean, 0x45ADF2, 0x041633),
+            (Biome::ColdOcean, 0x3D57D6, 0x050533),
+            (Biome::DeepColdOcean, 0x3D57D6, 0x050533),
+            (Biome::FrozenOcean, 0x3938C9, 0x050533),
+            (Biome::DeepFrozenOcean, 0x3938C9, 0x050533),
+            (Biome::Swamp, 0x617B64, 0x232317),
+            (Biome::MangroveSwamp, 0x3A7A6A, 0x4D7A60),
+        ];
+        let colors = BiomeColors::uniform();
+        let tinted = BiomeColors::from_colormaps(
+            &RgbaImage::from_pixel(256, 256, image::Rgba([0, 255, 0, 255])),
+            &RgbaImage::from_pixel(256, 256, image::Rgba([0, 255, 0, 255])),
+        );
+        for (biome, water, fog) in table {
+            assert_eq!(biome.water_color(), water, "{biome:?}");
+            assert_eq!(biome.water_fog_color(), fog, "{biome:?}");
+            assert_eq!(tinted.water(biome), rgb(water), "{biome:?}");
+        }
+        assert_eq!(colors.water(Biome::Plains), rgb(DEFAULT_WATER));
     }
 
     #[test]

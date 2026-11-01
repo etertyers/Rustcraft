@@ -503,6 +503,16 @@ pub static SHOTS: &[Shot] = &[
         stage: torches_in_cave,
     },
     Shot {
+        name: "m47-ocean",
+        about: "a deep ocean on seed 12345 at noon from Y 90, looking 45 degrees down: a light, clear blue",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([1248.5, 88.4, 1248.5], 0.0, -std::f32::consts::FRAC_PI_4)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m39-fullbright",
         about: "the m34 deepslate cheese cave at night with no torches, seen with Fullbright switched on by its G key: every block lit, \"Fullbright: ON\" above the hotbar",
         world: Some(WorldKind::Generated { seed: 20111118 }),
