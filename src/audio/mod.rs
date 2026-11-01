@@ -10,7 +10,7 @@ pub mod table;
 
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, io::Cursor, time::Duration};
 
-use glam::DVec3;
+use glam::{DVec3, IVec3};
 use kira::{
     AudioManager, AudioManagerSettings, DefaultBackend, Tween,
     sound::{
@@ -141,6 +141,28 @@ const MAX_QUEUED: usize = 256;
 
 thread_local! {
     static QUEUE: RefCell<Vec<Cue>> = const { RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    static RECORDS: RefCell<Vec<(IVec3, Option<String>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A jukebox at `at` started the song of disc `song` (`cat`), or stopped
+/// (`None`); `Audio::update` plays or ends the stream.
+pub fn record(at: IVec3, song: Option<String>) {
+    RECORDS.with(|records| records.borrow_mut().push((at, song)));
+}
+
+/// How far a record carries (volume 4.0 times the default range of 16).
+pub const RECORD_RANGE: f64 = 64.0;
+/// Records play at this volume, falling off linearly to nothing at
+/// `RECORD_RANGE` (vanilla's `JukeboxSong` sound at volume 4.0).
+pub const RECORD_VOLUME: f64 = 4.0;
+
+/// How loud a record sounds `distance` blocks from its jukebox, 0–1:
+/// vanilla's linear falloff of volume 4.0, capped at full volume.
+pub fn record_gain(distance: f64) -> f32 {
+    (RECORD_VOLUME * (1.0 - distance / RECORD_RANGE)).clamp(0.0, 1.0) as f32
 }
 
 fn queue(cue: Cue) {
@@ -280,6 +302,10 @@ pub struct Audio {
     )>,
     /// Seconds until the next track may start.
     music_wait: f32,
+    /// Songs playing from jukeboxes: where, the stream and the file's volume.
+    records: HashMap<IVec3, (StreamingSoundHandle<kira::sound::FromFileError>, f32)>,
+    /// A record is audible, so the background music keeps quiet.
+    record_near: bool,
     /// Files already reported missing.
     reported: std::collections::HashSet<String>,
 }
@@ -302,6 +328,8 @@ impl Audio {
             random: Random(0x9E37_79B9_7F4A_7C15),
             music: None,
             music_wait: 5.0,
+            records: HashMap::new(),
+            record_near: false,
             reported: Default::default(),
         };
         audio.reload(res);
@@ -337,6 +365,7 @@ impl Audio {
         if self.manager.is_none() {
             return;
         }
+        self.update_records(res, listener, volumes.of(Category::Records));
         // The queue is bounded, but a burst (an explosion) doesn't need all of it.
         for cue in cues.iter().rev().take(24) {
             let r = self.random.next();
@@ -345,6 +374,59 @@ impl Audio {
                 continue;
             };
             self.play(res, playback);
+        }
+    }
+
+    /// Starts and stops the jukeboxes' songs, and sets each one's loudness
+    /// from how far the listener is from it.
+    fn update_records(&mut self, res: &Resources, listener: &Listener, slider: f32) {
+        let commands = RECORDS.with(|records| std::mem::take(&mut *records.borrow_mut()));
+        for (at, song) in commands {
+            if let Some((mut handle, _)) = self.records.remove(&at) {
+                handle.stop(Tween::default());
+            }
+            let Some(song) = song else {
+                continue;
+            };
+            let event = format!("music_disc.{song}");
+            let Some(entry) = self.table.pick(&event, 0.0) else {
+                warn!("no sound event {event}");
+                continue;
+            };
+            let Some(bytes) = res.bytes(&format!("sounds/{}.ogg", entry.name)) else {
+                if self.reported.insert(entry.name.clone()) {
+                    warn!(
+                        "no sound file sounds/{}.ogg: the jukebox plays silently",
+                        entry.name
+                    );
+                }
+                continue;
+            };
+            match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
+                Ok(data) => {
+                    if let Some(manager) = &mut self.manager {
+                        match manager.play(data.volume(decibels(0.0001))) {
+                            Ok(handle) => {
+                                self.records.insert(at, (handle, entry.volume));
+                            }
+                            Err(err) => debug!("can't play {}: {err}", entry.name),
+                        }
+                    }
+                }
+                Err(err) => warn!("can't stream {}: {err}", entry.name),
+            }
+        }
+        self.records
+            .retain(|_, (handle, _)| handle.state() != PlaybackState::Stopped);
+        self.record_near = false;
+        for (at, (handle, own)) in &mut self.records {
+            let middle = at.as_dvec3() + DVec3::splat(0.5);
+            let distance = middle.distance(listener.position);
+            let gain = record_gain(distance) * *own * slider;
+            if distance < RECORD_RANGE {
+                self.record_near = true;
+            }
+            handle.set_volume(decibels(gain), Tween::default());
         }
     }
 
@@ -393,6 +475,8 @@ impl Audio {
         if self.manager.is_none() {
             return;
         }
+        // The background music gives way to a jukebox in hearing range.
+        let request = if self.record_near { None } else { request };
         let playing = self
             .music
             .as_ref()
@@ -507,6 +591,29 @@ pub fn report(res: &Resources) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_disc_has_a_streamed_sound_event_and_a_record_falls_off_with_distance() {
+        let res = Resources::load(&crate::assets::dir(), Vec::new()).unwrap();
+        let table = build_table(&res);
+        for disc in crate::inventory::discs::DISCS {
+            let entry = table
+                .pick(&disc.event(), 0.0)
+                .unwrap_or_else(|| panic!("no event {}", disc.event()));
+            assert!(entry.stream, "{} streams", disc.event());
+            if res.bytes(&format!("sounds/{}.ogg", entry.name)).is_none() {
+                // Without the files the jukebox plays silently, and warns.
+                eprintln!("no sound file for {}", disc.event());
+            }
+        }
+        assert_eq!(category("music_disc.cat"), Category::Records);
+        // Volume 4.0: full strength out to 48 blocks, nothing at 64.
+        assert_eq!(record_gain(0.0), 1.0);
+        assert_eq!(record_gain(48.0), 1.0);
+        assert!((record_gain(56.0) - 0.5).abs() < 1e-6);
+        assert_eq!(record_gain(64.0), 0.0);
+        assert_eq!(record_gain(100.0), 0.0);
+    }
 
     #[test]
     fn events_fall_in_vanillas_sound_categories() {

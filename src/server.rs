@@ -329,6 +329,7 @@ impl Server {
                 (self.game.player_at(index).dimension, view)
             })
             .collect();
+        let records = std::mem::take(&mut self.game.record_events);
         for index in 0..self.remotes.len() {
             let ack = self.remotes[index].ack;
             // What's in the chunks the client has, in their dimension.
@@ -348,6 +349,17 @@ impl Server {
             self.remotes[index]
                 .conn
                 .send(ServerMsg::Snapshot(Box::new(snapshot)));
+            // Jukebox songs starting within earshot, and any stopping.
+            for event in &records {
+                let middle = event.at.as_dvec3() + glam::DVec3::splat(0.5);
+                let near = middle.distance(feet) <= crate::game::jukebox::HEARING_RANGE;
+                if event.dimension == dimension && (event.song.is_none() || near) {
+                    self.remotes[index].conn.send(ServerMsg::Record {
+                        at: event.at,
+                        song: event.song.clone(),
+                    });
+                }
+            }
             // Sounds near them, and their own.
             let own = self
                 .game
@@ -1715,5 +1727,56 @@ mod tests {
             max - min < 0.01 && (avg - 2.0 * 10.89).abs() < 0.05,
             "{min}..{max}"
         );
+    }
+
+    #[test]
+    fn both_clients_hear_a_jukebox_start_and_stop_but_only_those_in_range() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        let at = IVec3::new(2, 64, 0);
+        run_until(&mut server, &mut clients, |s, c| {
+            block_at(&s.game, at).is_some()
+                && c.iter().all(|(_, game)| block_at(game, at).is_some())
+        });
+        server
+            .game
+            .set_blocks(&[(at, crate::world::block::BlockState::of(blocks::JUKEBOX))]);
+        let cat = ItemStack::new(items::by_name("music_disc_cat").unwrap(), 1);
+        assert!(server.game.insert_disc(at, cat.clone()).is_none());
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(client, _)| client.records.len() == 1)
+        });
+        for (client, game) in &clients {
+            assert_eq!(client.records, vec![(at, Some("cat".to_owned()))]);
+            // "Now Playing" is on both screens, and a note rises.
+            assert_eq!(game.player.title.actionbar, "Now Playing: C418 - cat");
+        }
+        // Stopping reaches both.
+        server.game.take_out_disc(at, true);
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(client, _)| client.records.len() == 2)
+        });
+        for (client, _) in &clients {
+            assert_eq!(client.records[1], (at, None));
+        }
+        // Bob walks off beyond earshot: a song starting now is Alice's alone.
+        let mut body = server.game.others[0].body_state().clone();
+        body.set_position(DVec3::new(300.5, 64.0, 0.5));
+        server.game.others[0].set_body(body, DVec3::new(300.5, 64.0, 0.5));
+        assert!(server.game.insert_disc(at, cat).is_none());
+        run_until(&mut server, &mut clients, |_, c| c[0].0.records.len() == 3);
+        for _ in 0..40 {
+            for (client, game) in clients.iter_mut() {
+                client.advance(game, 0.05);
+            }
+            server.advance(0.05);
+            for (client, game) in clients.iter_mut() {
+                client.receive(game);
+            }
+        }
+        assert_eq!(clients[0].0.records[2], (at, Some("cat".to_owned())));
+        assert_eq!(clients[1].0.records.len(), 2, "Bob heard nothing");
     }
 }

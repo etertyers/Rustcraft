@@ -659,6 +659,7 @@ impl Game {
         }
         self.schedule_fluids(chunks);
         self.queue_post_process(chunks);
+        self.settle_jukeboxes(chunks);
         for &pos in chunks {
             if let Some(mobs) = self.stashed_mobs.remove(&pos) {
                 for mob in mobs {

@@ -53,6 +53,7 @@ impl Game {
                         | blocks::DISPENSER
                         | blocks::DROPPER
                         | blocks::HOPPER
+                        | blocks::JUKEBOX
                 ) || state.def().shape == crate::world::block::Shape::Chest
             })
     }
@@ -72,6 +73,10 @@ impl Game {
         let Some(block) = self.chunks.world().block(cell.x, cell.y, cell.z) else {
             return Some(stack);
         };
+        // A jukebox takes one disc, and plays it.
+        if block.id() == blocks::JUKEBOX {
+            return self.insert_disc(cell, stack);
+        }
         if self.chunks.block_entity(cell).is_none() {
             let made = match block.id() {
                 blocks::DISPENSER | blocks::DROPPER => BlockEntity::dispenser(),
@@ -128,6 +133,14 @@ impl Game {
     }
 
     pub(super) fn remove_one(&mut self, cell: IVec3, slot: usize) {
+        if matches!(
+            self.chunks.block_entity(cell),
+            Some(BlockEntity::Jukebox(_))
+        ) {
+            // The disc goes with the hopper, and the song stops.
+            self.take_out_disc(cell, false);
+            return;
+        }
         let Some(entity) = self.chunks.block_entity_mut(cell) else {
             return;
         };

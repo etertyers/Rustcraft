@@ -19,7 +19,7 @@ use crate::{
         mobs::Ai,
         path::Terrain,
     },
-    inventory::{enchant::Enchantment, items, stack::ItemStack},
+    inventory::{discs, enchant::Enchantment, items, stack::ItemStack},
     player::stats::DamageSource,
     world::block::BlockState,
 };
@@ -234,6 +234,10 @@ impl Game {
             from,
         );
         arrow.hostile = true;
+        arrow.from_skeleton = matches!(
+            self.mob_defs.get(mob.kind).name.as_str(),
+            "skeleton" | "stray"
+        );
         arrow.critical = false;
         self.arrows.push(arrow);
     }
@@ -354,6 +358,15 @@ impl Game {
             let mut random = || rng.next_f64() as f32;
             mob.drops(def, looting, &mut random)
         };
+        // A creeper an archer's arrow killed leaves a music disc.
+        if mob.shot_by_skeleton && matches!(def.ai, Ai::Creeper { .. }) {
+            let pick = self.rng.below(discs::CREEPER_DROPS.len() as u32) as usize;
+            if let Some(item) =
+                items::by_name(&format!("music_disc_{}", discs::CREEPER_DROPS[pick]))
+            {
+                stacks.push(ItemStack::new(item, 1));
+            }
+        }
         if def.name == "sheep"
             && !mob.data.sheared
             && let Some(wool) = items::by_name(WOOL[usize::from(mob.data.color) % 16])

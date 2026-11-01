@@ -314,6 +314,10 @@ pub(super) fn block_nbt(game: &Game, at: IVec3) -> Option<Nbt> {
             map.insert("Items".to_owned(), items_nbt(s));
             "minecraft:dispenser"
         }
+        BlockEntity::Jukebox(j) => {
+            map.insert("RecordItem".to_owned(), items_nbt(&j.slots));
+            "minecraft:jukebox"
+        }
         BlockEntity::Hopper(h) => {
             map.insert("Items".to_owned(), items_nbt(&h.slots));
             map.insert(

@@ -6,6 +6,7 @@ pub mod book;
 pub mod brewing;
 pub mod crafting;
 pub mod creative;
+pub mod discs;
 pub mod enchant;
 pub mod furnace;
 pub mod grindstone;

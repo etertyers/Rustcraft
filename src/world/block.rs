@@ -694,6 +694,8 @@ pub enum Activate {
     Dispenser,
     /// Opens its five slots.
     Hopper,
+    /// Takes a music disc, or gives it back (M47).
+    Jukebox,
     /// Opens a command block's editor (operators in creative).
     CommandBlock,
     /// Opens the enchanting screen.

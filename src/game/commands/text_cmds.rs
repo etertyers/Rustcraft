@@ -54,6 +54,7 @@ pub(super) fn title(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<V
                         _ => {
                             t.actionbar = text;
                             t.actionbar_left = TitleState::ACTIONBAR_TICKS;
+                            t.actionbar_rainbow = false;
                         }
                     }
                 });

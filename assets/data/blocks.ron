@@ -245,7 +245,7 @@
     (name: "cactus", soil: Sand, random_ticks: true, hardness: 0.4, props: [Age15], needs_ground: true, shape: Cactus, layer: Cutout, textures: (top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side")),
     (name: "clay", hardness: 0.6, tool: Shovel, drops: All([(item: "clay_ball", min: 4)]), textures: (all: "clay")),
     (name: "sugar_cane", random_ticks: true, hardness: 0.0, props: [Age15], item_texture: "sugar_cane", needs_ground: true, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "sugar_cane")),
-    (name: "jukebox", hardness: 2.0, props: [HasRecord], textures: (all: "jukebox_side", top: "jukebox_top")),
+    (name: "jukebox", activate: Jukebox, hardness: 2.0, props: [HasRecord, Powered], textures: (all: "jukebox_side", top: "jukebox_top")),
     (name: "oak_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], burns: (encourage: 5, catch: 20), shape: Fence, textures: (all: "oak_planks")),
     // 1.0.0's pumpkin, which always had a face.
     (name: "carved_pumpkin", hardness: 1.0, props: [Facing], placement: Facing, textures: (end: "pumpkin_top", side: "pumpkin_side", south: "carved_pumpkin")),

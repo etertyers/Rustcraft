@@ -18,7 +18,7 @@ use crate::{
 
 /// Bumped whenever a message changes, so mismatched games refuse each
 /// other instead of misreading.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// What a client tells the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +146,12 @@ pub enum ServerMsg {
     Completions(Vec<String>),
     /// The server is going away, or sent this player off.
     Disconnect(String),
+    /// A jukebox at `at` started the song of disc `song` (`cat`), or
+    /// stopped its song (`None`) (M47).
+    Record {
+        at: glam::IVec3,
+        song: Option<String>,
+    },
 }
 
 /// One tick of the world for one player: their own state and everything

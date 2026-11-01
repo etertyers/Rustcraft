@@ -63,6 +63,14 @@ pub struct Arrow {
     /// The player who loosed it, whom it never hits (others it does).
     #[serde(default)]
     pub shooter: Option<String>,
+    /// Loosed by a skeleton or a stray, whose arrows can hit the creepers
+    /// in their way (M47's music discs).
+    #[serde(default)]
+    pub from_skeleton: bool,
+    /// For that arrow, which of the game's mobs (by index) it may hit;
+    /// set by the game before each tick.
+    #[serde(skip)]
+    pub may_hit: Vec<bool>,
 }
 
 /// What a flying arrow did this tick.
@@ -122,6 +130,8 @@ impl Arrow {
             flame: false,
             slows: false,
             shooter: None,
+            from_skeleton: false,
+            may_hit: Vec::new(),
         }
     }
 
@@ -176,7 +186,7 @@ impl Arrow {
         let target = mobs
             .iter()
             .enumerate()
-            .filter(|_| !self.hostile)
+            .filter(|(i, _)| !self.hostile || self.may_hit.get(*i).copied().unwrap_or(false))
             .filter(|(_, mob)| !mob.is_dead())
             .filter_map(|(i, mob)| {
                 let t = mob
