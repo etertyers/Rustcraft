@@ -513,6 +513,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m48-deepslate-cave",
+        about: "a big deepslate cheese cave on seed 20111118 (a cavern at Y -53 to -20 with lava at the bottom of its far end), torches on the floor, ore in its walls",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([-124.5, -52.0, 135.5], std::f32::consts::FRAC_PI_2, -0.12)),
+        time: Some(18000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: torches_in_cavern,
+    },
+    Shot {
         name: "m39-fullbright",
         about: "the m34 deepslate cheese cave at night with no torches, seen with Fullbright switched on by its G key: every block lit, \"Fullbright: ON\" above the hotbar",
         world: Some(WorldKind::Generated { seed: 20111118 }),
@@ -856,6 +866,26 @@ fn fishing_lake(game: &mut Game) {
     game.run_ticks(5);
     game.mobs.clear();
     game.stage_cast();
+}
+
+/// Torches on the floor of the big cavern at (−136..−100, −53, 120..152).
+fn torches_in_cavern(game: &mut Game) {
+    let world = game.chunks.world();
+    let mut edits = Vec::new();
+    for x in (-136..=-100).step_by(4) {
+        for z in (120..=152).step_by(4) {
+            let floor = (-58..-30).find(|&y| {
+                world.block(x, y, z).is_some_and(|b| b.def().solid)
+                    && world.block(x, y + 1, z).is_some_and(BlockState::is_air)
+                    && world.block(x, y + 2, z).is_some_and(BlockState::is_air)
+            });
+            if let Some(y) = floor {
+                edits.push((at(x, y + 1, z), BlockState::of(TORCH)));
+            }
+        }
+    }
+    game.set_blocks(&edits);
+    game.run_ticks(5);
 }
 
 /// Torches on the cave floor around (−72, −18, 56), every few blocks.

@@ -221,23 +221,6 @@ pub struct Fluids {
     pub warm: bool,
 }
 
-/// Whether fluid at local (x, y, z) could flow into a cell beside or below
-/// it in the same chunk (cells in other chunks count as closed).
-fn open_beside(chunk: &Chunk, x: usize, y: i32, z: usize) -> bool {
-    let own = chunk.get(x, y, z).id();
-    [(-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1), (0, -1, 0)]
-        .into_iter()
-        .any(|(dx, dy, dz)| {
-            let (nx, ny, nz) = (x as i32 + dx, y + dy, z as i32 + dz);
-            let size = CHUNK_SIZE as i32;
-            if !(0..size).contains(&nx) || !(0..size).contains(&nz) || ny < crate::config::MIN_Y {
-                return false;
-            }
-            let next = chunk.get(nx as usize, ny, nz as usize);
-            next.id() != own && !next.def().stops_fluid() && next.def().fluid.is_none()
-        })
-}
-
 /// What a tick of fluids did.
 #[derive(Debug, Default, PartialEq)]
 pub struct Outcome {
@@ -275,9 +258,9 @@ impl Fluids {
                             blocks::LAVA => Fluid::Lava,
                             _ => continue,
                         };
-                        // A source only if it has somewhere to go (one poured
-                        // just before the chunk was saved); oceans don't.
-                        if level(block) == 0 && !open_beside(chunk, x, y, z) {
+                        // Sources stay put (an aquifer's edge is scheduled by
+                        // the generator); only flowing fluid carries on.
+                        if level(block) == 0 {
                             continue;
                         }
                         let at = IVec3::new(min_x + x as i32, y, min_z + z as i32);
@@ -1008,14 +991,22 @@ mod tests {
     }
 
     #[test]
-    fn flowing_blocks_in_a_loaded_chunk_are_rescheduled() {
+    fn flowing_blocks_in_a_loaded_chunk_are_rescheduled_but_sources_wait_for_the_generator() {
         let mut pond = Pond::new();
         pond.write(IVec3::new(0, 64, 0), BlockState::of(blocks::WATER));
         let chunk = pond.world.get(ChunkPos::new(0, 0)).unwrap().clone();
         pond.fluids.chunk_loaded(&chunk, 0);
-        assert_eq!(pond.fluids.pending(), 1, "a source with room to flow");
+        assert_eq!(pond.fluids.pending(), 0, "a source stays put on loading");
+        // The generator marks an aquifer's edge (post-processing): it flows.
+        pond.fluids.changed(IVec3::new(0, 64, 0));
         pond.run(100);
         assert_eq!(pond.level(3, 0), Some(3));
+        // A flowing block that was saved mid-flow carries on.
+        let mut pond = Pond::new();
+        pond.write(IVec3::new(0, 64, 0), at_level(Fluid::Water, 3));
+        let chunk = pond.world.get(ChunkPos::new(0, 0)).unwrap().clone();
+        pond.fluids.chunk_loaded(&chunk, 0);
+        assert_eq!(pond.fluids.pending(), 1);
         // Water with nowhere to go, like an ocean, stays asleep.
         let mut pond = Pond::new();
         for y in 61..=63 {

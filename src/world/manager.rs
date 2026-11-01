@@ -13,7 +13,12 @@
 //! With a region store, workers load saved chunks instead of generating
 //! them, and `save` writes the chunks changed since the last save.
 
-use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 
 use glam::IVec3;
 
@@ -148,6 +153,9 @@ pub struct ChunkManager {
     remeshed: Vec<(ChunkPos, Mesh)>,
     /// Drawn chunks whose light changed, waiting for a background remesh.
     relight: FastSet<ChunkPos>,
+    /// When each drawn chunk was last sent to be meshed, so a chunk whose
+    /// blocks keep changing (flowing water) isn't remeshed every tick.
+    last_mesh: FastMap<ChunkPos, Instant>,
     /// Light of every drawn chunk.
     lights: FastMap<ChunkPos, ChunkLight>,
     /// Time the workers spent, for `--perf-test`.
@@ -221,6 +229,9 @@ fn local_pos(at: IVec3) -> Option<(ChunkPos, LocalPos)> {
     let local = [at.x.rem_euclid(size), at.y, at.z.rem_euclid(size)].map(|v| v as i16);
     Some((ChunkPos::of_block(at.x, at.z), local))
 }
+
+/// The least time between two background remeshes of one drawn chunk.
+const REMESH_EVERY: Duration = Duration::from_millis(500);
 
 /// Farthest a light change reaches (a level-15 source fades out after 14 blocks).
 const LIGHT_REACH: i32 = 14;
@@ -346,6 +357,7 @@ impl ChunkManager {
             forced: std::collections::HashSet::new(),
             remeshed: Vec::new(),
             relight: FastSet::default(),
+            last_mesh: FastMap::default(),
             lights: FastMap::default(),
             stats,
             loaded_now: Vec::new(),
@@ -518,9 +530,14 @@ impl ChunkManager {
             } else if dx.abs().max(dz.abs()) <= self.radius
                 && (!self.meshed.contains(&pos) || self.relight.contains(&pos))
                 && !self.meshing.contains(&pos)
+                && !self.too_soon_to_remesh(pos)
                 && self.neighbors_loaded(pos)
                 && let Some(mut area) = self.world.area(pos)
             {
+                if self.last_mesh.len() > 4096 {
+                    self.last_mesh.clear();
+                }
+                self.last_mesh.insert(pos, Instant::now());
                 area.blend = self.blend;
                 area.smooth = self.smooth;
                 area.fast_leaves = self.fast_leaves;
@@ -535,6 +552,17 @@ impl ChunkManager {
             }
         }
         changes
+    }
+
+    /// Whether a drawn chunk was meshed so recently that a change the world
+    /// made on its own (fluids, fire) can wait: at most one such remesh
+    /// every `REMESH_EVERY`.
+    fn too_soon_to_remesh(&self, pos: ChunkPos) -> bool {
+        self.meshed.contains(&pos)
+            && self
+                .last_mesh
+                .get(&pos)
+                .is_some_and(|at| at.elapsed() < REMESH_EVERY)
     }
 
     /// Meshes with new block models from now on (after the resource packs

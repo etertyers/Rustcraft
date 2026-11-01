@@ -163,7 +163,8 @@ mod tests {
                 assert!(at.y < terrain.height(at.x, at.z), "underground");
             }
         }
-        // Rare but not unheard of: modern has a few per dozen chunks.
-        assert!(found >= 5, "{found}");
+        // Rare but not unheard of: with vanilla's caves (a tenth of the
+        // underground is open) fewer spots are solid rock all round.
+        assert!(found >= 2, "{found}");
     }
 }

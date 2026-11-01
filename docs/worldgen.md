@@ -280,7 +280,7 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
   - The noise fades out between Y 180 and 200, so nothing floats up there.
   - The pull is capped at Y 240, and nothing is solid from Y 248.
   - The chunk fill, the area's column heights and single-column `height()` all use the same corner grid, so features, structures and the filled chunk always agree.
-- **Water and caves**: water fills from the surface to Y 63. Caves stay 4 blocks below the floor of any water (it was 3).
+- **Water and caves**: water fills from the surface to Y 63. (M48 replaced the old "caves stay 4 blocks under water" rule: see "Caves and aquifers (M48)" below.)
 - **Depth**: cave biome depth now comes from the offset (the preliminary surface) at the quart's corner.
 - **Height map tool**: `cargo run --release -- --height-map --seed <n> --size <pixels> [--out <png>]`.
   - It writes biome colors hillshaded from the north-west, with water darkened by depth. The default output is `docs/screenshots/m21-height-map.png`.
@@ -320,7 +320,7 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 **Known issues**
 - **Mushroom fields** rise as low islands (Y 54–72), as in vanilla, not the Y 35–45 sea floor the brief listed.
 - **Valley steps**: worn land can step up to 7 blocks where it drops into a river valley.
-- **Overhangs and caves**: mountains with low erosion have 3D overhangs. Air pockets the 3D noise leaves under the surface stay dry, even below sea level (there are no aquifers).
+- **Overhangs and caves**: mountains with low erosion have 3D overhangs. Air pockets the 3D noise leaves under the surface hold whatever their aquifer says (M48).
 - **Valleys in mountains**: every valley dips to just under sea level, even where the biome table says mountain (Valleys E0–E1 Mid/Far). These are dry or water-filled gorges.
 - **Old chunks**: chunks generated before this change keep their old shape, so there's a seam where old meets new.
 
@@ -372,6 +372,17 @@ Fallbacks if missing: flower_forest→forest, sunflower_plains→plains, old_gro
 - **Missing biomes**: `stony_peaks`, `snowy_beach` and `frozen_river` are still fallbacks (windswept hills, beach, river) with their surfaces approximated.
 - **Old chunks**: saved worlds show seams at the edge of explored land (DECISIONS).
 - **Badlands below Y 100**: gentle badlands land is plain red sand. Bands show only on slopes and higher ground.
+
+## Caves and aquifers (M48)
+
+The underground is vanilla 1.18+'s: one **final density** over the 4 × 8 × 4-block cells of the chunk, from Y −64 up, with the land's own density (the `sloped_cheese` the climate splines make) as its base.
+
+- **Final density** (`caves::Caves::final_density`), positive is solid: where the land's density `s` is 0 or less nothing changes; under 1.5625 (near the surface) it is `min(s, 5 × entrances)`; from 1.5625 up it is `underground(s)` = `max(min(min(cave_layer + cheese, entrances), spaghetti_2d + roughness), pillars if ≥ 0.03)`; the bottom slide blends Y −64 to −40 toward solid (0.117); and `min(that, noodle)` (noodles only from Y −60 to 320). `entrances` is `min(cave_entrance blob, spaghetti_3d tunnel)`.
+- **Noises** (`normal_noise`): vanilla's `NormalNoise` over its improved noise with vanilla's first octaves and amplitudes (`cave_layer` −8, `cave_cheese` −8 [0.5 1 2 1 2 1 0 2 0], `cave_entrance` −7 [0.4 0.5 1], `spaghetti_*`, `noodle_*`, `pillar*`, `aquifer_*`). An octave lighter than 0.01 is left out (finer than the cell grid). The 2D spaghetti is skipped above Y 75, where its thick term is always positive.
+- **Aquifers** (`caves::Aquifer`, `NoiseBasedAquifer`): centers on a 16 × 12 × 16 grid, jittered 0–9 / 0–8 blocks; a block takes the three nearest of the 2 × 3 × 2 round it. A center within 4 blocks of an ocean, river or lake bed takes sea level (63) water, so the sea runs into caves; otherwise floodedness decides: flooded (only near the sea), a local level (`spread` noise, 3-block steps, never above Y 30 inland: M48's rule), or dry. A local level at or under Y −10 is lava where |`aquifer_lava`| > 0.3. Open blocks at Y −55 and under are lava. Where two centers with different levels are about as close, `density + similarity × pressure` above 0 keeps the block rock, which makes the irregular walls between pockets; there is no flat wall on a cell or chunk border. A fluid block close to such an edge with air under it is a fall: up to four a chunk are scheduled to flow when the chunk loads (`Chunk::post_process`).
+- **The top block** of a column is only carved where the column is a cave entrance (`Column::entrance`: `entrances` under 0.15 at the quart's preliminary surface), so plants and trees stand on what they were planned on. The top three blocks of a sea or river bed that a cave opens are water, never a hole under water. Worm carvers (15% cave, 7% deep, 1% canyon) ask the aquifer what to place, skip a block with water above it, and leave the top block unless the column is an entrance.
+- **Ores** go in after all of it (`ores::populate`), in vanilla's table; a vein's blocks are about half its size (`cave_stats::VEIN_FILL`).
+- **Tools**: `--cave-test` measures a sample (400 chunks: 25 windows of 4 × 4) and `--cave-slice` draws a cross-section.
 
 ## The Nether (M24)
 

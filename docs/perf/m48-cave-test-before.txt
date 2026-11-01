@@ -1,0 +1,28 @@
+cave test: 400 chunks in 25 windows of 4×4 chunks
+(a,b,f) per 16-block band: cave air %, water %, lava %
+  Y  -64.. -49: air   2.8%  water  0.58%  lava  7.33%   stone  0.0% deepslate 92.7% tuff  7.3%
+  Y  -48.. -33: air   5.0%  water  0.67%  lava  0.01%   stone  0.0% deepslate 92.8% tuff  7.2%
+  Y  -32.. -17: air   4.6%  water  1.34%  lava  0.03%   stone  0.0% deepslate 91.4% tuff  8.6%
+  Y  -16..  -1: air   5.7%  water  0.56%  lava  0.01%   stone  0.0% deepslate 91.5% tuff  8.5%
+  Y    0..  15: air   3.5%  water  0.70%  lava  0.02%   stone 70.9% deepslate 28.2% tuff  0.9%
+  Y   16..  31: air   4.0%  water  0.66%  lava  0.02%
+  Y   32..  47: air   2.9%  water  0.47%  lava  0.02%
+  Y   48..  63: air   2.7%  water  0.00%  lava  0.01%
+  Y   64..  79: air   2.3%  water  0.00%  lava  0.01%
+  Y   80..  95: air   2.7%  water  0.00%  lava  0.00%
+  Y   96.. 111: air   1.7%  water  0.00%  lava  0.00%
+  Y  112.. 127: air   2.0%  water  0.00%  lava  0.00%
+(b) cave water/lava bodies: 487 judged, 0 boxes (flat walls on chunk borders over half their sides), 4 with a fifth or more
+(c) columns with cave air: 65.1%, median depth to first cave air: 113 blocks; chunks open to the sky: 4.0%; 256×256 areas with an opening: 8/25
+(d) windows where one system holds over half the cave air: 8/25 (average share 41%)
+(e) ore blocks per chunk (stone + deepslate), exposed per chunk:
+  coal      132.19 (131.57 stone,  0.62 deepslate)   exposed  1.60
+  iron       74.94 (52.63 stone, 22.31 deepslate)   exposed  2.18
+  copper     91.29 (84.58 stone,  6.72 deepslate)   exposed  2.32
+  gold       25.46 ( 4.22 stone, 21.24 deepslate)   exposed  0.34
+  redstone   31.70 ( 2.93 stone, 28.77 deepslate)   exposed  0.68
+  diamond    12.60 ( 0.49 stone, 12.11 deepslate)   exposed  0.08
+  lapis      18.60 ( 8.01 stone, 10.59 deepslate)   exposed  0.21
+  emerald     1.55 ( 1.51 stone,  0.04 deepslate)   exposed  0.05
+  stone ores below Y -8: 0, deepslate ores above Y 8: 0, chunks with diamond exposed or one block in (below Y -48): 7.5%
+
