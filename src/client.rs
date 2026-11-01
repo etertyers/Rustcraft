@@ -49,6 +49,9 @@ pub struct Client {
     /// The click and hover of lines in `chat` that have them, by text.
     pub chat_events: std::collections::HashMap<String, ChatEvents>,
     pub completions: Option<Vec<String>>,
+    /// How many times the server's body disagreed with the predicted one
+    /// and replaced it (the rubber band).
+    pub corrections: u32,
 }
 
 impl Client {
@@ -72,6 +75,7 @@ impl Client {
             chat_events: Default::default(),
             completions: None,
             players: Vec::new(),
+            corrections: 0,
         }
     }
 
@@ -97,6 +101,7 @@ impl Client {
                 keys: game.player.keys,
                 yaw: game.player.camera.yaw,
                 pitch: game.player.camera.pitch,
+                fly_scale: game.player.body_state().fly_scale,
             };
             game.predict(&input);
             self.history
@@ -170,6 +175,11 @@ impl Client {
         if agrees && game.predicts() {
             return;
         }
+        self.corrections += 1;
+        // The wheel's speed is the client's to set; the server plays the
+        // inputs with it, so it is never what disagrees.
+        let mut server = server;
+        server.fly_scale = game.player.body_state().fly_scale;
         game.player.set_body(server, prev);
         if game.predicts() {
             let keep = (

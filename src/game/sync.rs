@@ -312,6 +312,7 @@ impl Game {
         p.keys = input.keys;
         p.camera.yaw = input.yaw;
         p.camera.pitch = input.pitch;
+        p.set_fly_scale(input.fly_scale);
     }
 }
 
@@ -411,6 +412,11 @@ impl super::PlayerState {
     /// The player's body as physics moves it.
     pub fn body_state(&self) -> &Body {
         &self.body
+    }
+
+    /// Sets a spectator's flight speed to the one a client played with.
+    pub fn set_fly_scale(&mut self, scale: f64) {
+        self.body.fly_scale = scale.clamp(0.1, 5.0);
     }
 
     /// Takes the server's body for the player's, and where it was the

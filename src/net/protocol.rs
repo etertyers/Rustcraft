@@ -83,6 +83,9 @@ pub struct Input {
     pub keys: crate::player::input::MoveKeys,
     pub yaw: f32,
     pub pitch: f32,
+    /// A spectator's flight speed from the mouse wheel (1 for others), which
+    /// the server plays the move with.
+    pub fly_scale: f64,
 }
 
 /// The options that change how the server plays a player.

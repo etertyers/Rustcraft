@@ -96,6 +96,8 @@ const SURFACE_CHECK: f64 = 0.9;
 const LEDGE_HOP: f64 = 0.3;
 /// A second jump press within this many ticks toggles creative flight.
 const FLY_DOUBLE_TAP_TICKS: u8 = 7;
+/// Sprinting while flying multiplies the flying speed by this.
+const FLY_SPRINT_FACTOR: f64 = 2.0;
 /// Forward input needed to start or keep sprinting on land.
 const SPRINT_MIN_FORWARD: f64 = 0.8;
 /// Any forward input at all, which is all sprinting under water needs.
@@ -330,6 +332,21 @@ impl Body {
         factor(x, y, z) as f64
     }
 
+    /// Whether anything but the body's own input can move it. Spectators
+    /// (`no_clip`) are never pushed: not by blocks, fluids, mobs, pistons,
+    /// knockback or blasts. Every external push goes through this.
+    pub fn pushable(&self) -> bool {
+        !self.no_clip
+    }
+
+    /// Adds `by` to the velocity (a blast, a wing, a toss), unless the body
+    /// isn't pushable.
+    pub fn push_velocity(&mut self, by: DVec3) {
+        if self.pushable() {
+            self.velocity += by;
+        }
+    }
+
     /// Advances one tick. `yaw` is in radians, 0 facing north (−Z).
     pub fn tick(&mut self, input: &MoveInput, yaw: f32, world: &impl Collider) {
         if self.free_flight || self.no_clip {
@@ -411,7 +428,14 @@ impl Body {
         let friction = self.friction(world);
         let sprint = if self.sprinting { SPRINT_FACTOR } else { 1.0 };
         let acceleration = if self.flying {
-            FLY_ACCELERATION * self.fly_scale
+            // Vanilla's `getFlyingSpeed`: sprinting doubles it.
+            FLY_ACCELERATION
+                * self.fly_scale
+                * if self.sprinting {
+                    FLY_SPRINT_FACTOR
+                } else {
+                    1.0
+                }
         } else if liquid.is_some() {
             SWIM_ACCELERATION
         } else if self.on_ground {
@@ -508,7 +532,11 @@ impl Body {
             self.velocity.y = CLIMB_UP;
         }
         // The block underfoot or around the feet slows the walker.
-        let factor = self.block_factor(|x, y, z| world.speed_factor(x, y, z));
+        let factor = if self.no_clip {
+            1.0
+        } else {
+            self.block_factor(|x, y, z| world.speed_factor(x, y, z))
+        };
         self.velocity.x *= factor;
         self.velocity.z *= factor;
         if self.flying {
@@ -587,7 +615,7 @@ impl Body {
         if !self.has_poses {
             return;
         }
-        let fits = |pose: Pose| !collides(&self.box_in(pose), world);
+        let fits = |pose: Pose| self.no_clip || !collides(&self.box_in(pose), world);
         if !fits(Pose::Swimming) {
             return;
         }
@@ -674,7 +702,7 @@ impl Body {
         } else {
             forward >= SPRINT_MIN_FORWARD
         };
-        let can_start = (self.on_ground || eyes_in_water)
+        let can_start = (self.on_ground || eyes_in_water || self.flying)
             && enough
             && self.can_sprint
             && !self.moving_slowly()
@@ -2076,5 +2104,157 @@ mod tests {
             stop_distance(Kind::Ice),
         );
         assert!(stone < slime && slime < ice, "{stone} {slime} {ice}");
+    }
+
+    /// A spectator (or creative flier) at `y`, flying.
+    fn flier(y: f64, spectator: bool) -> Body {
+        let mut body = Body::new(DVec3::new(0.5, y, 0.5));
+        body.may_fly = true;
+        body.flying = true;
+        body.no_clip = spectator;
+        body
+    }
+
+    /// Blocks gone over after `ticks` of `input` heading north.
+    fn flown(world: &TestWorld, mut body: Body, input: MoveInput, ticks: u32) -> f64 {
+        let start = body.position();
+        for _ in 0..ticks {
+            body.tick(&input, 0.0, world);
+            assert!(!body.swimming, "a flier never swims");
+        }
+        (body.position() - start).length()
+    }
+
+    const SPRINT: MoveInput = MoveInput {
+        forward: 1.0,
+        sprint: true,
+        ..MoveInput::IDLE
+    };
+
+    #[test]
+    fn a_spectator_crosses_ten_blocks_of_water_like_air() {
+        let air = flown(&TestWorld::default(), flier(58.0, true), FORWARD, 40);
+        let water = flown(&pool(), flier(58.0, true), FORWARD, 40);
+        assert!((air - water).abs() < 1e-9, "{air} in air, {water} in water");
+        let sprinting = flown(&pool(), flier(58.0, true), SPRINT, 40);
+        assert!(sprinting > water * 1.5, "sprinting under water works");
+    }
+
+    #[test]
+    fn creative_flight_ignores_water_but_walking_is_slowed() {
+        let air = flown(&TestWorld::default(), flier(58.0, false), FORWARD, 40);
+        let water = flown(&pool(), flier(58.0, false), FORWARD, 40);
+        assert!((air - water).abs() < 1e-9, "{air} in air, {water} in water");
+        let mut walker = Body::new(DVec3::new(0.5, 58.0, 0.5));
+        walker.may_fly = true;
+        let walked = flown(&pool(), walker, FORWARD, 40);
+        assert!(walked < water * 0.3, "walking in water crawls: {walked}");
+    }
+
+    #[test]
+    fn a_spectator_inside_stone_stays_put_and_feels_no_block() {
+        let mut world = TestWorld::default();
+        for z in -3..4 {
+            for x in -3..4 {
+                for y in 60..70 {
+                    world.set(x, y, z, Kind::Full);
+                }
+            }
+        }
+        let mut body = flier(64.0, true);
+        let start = body.position();
+        for _ in 0..100 {
+            body.tick(&MoveInput::default(), 0.0, &world);
+        }
+        assert_eq!(body.position(), start);
+        assert_eq!(body.eye_height(), EYE_HEIGHT, "no crawling inside blocks");
+        // Soul sand, honey and ice change nothing for a spectator.
+        let mut slow = TestWorld::default();
+        for (x, y) in [(0, 63), (0, 64)] {
+            slow.set(x, y, 0, Kind::Soul);
+        }
+        slow.set(0, 64, -1, Kind::Honey);
+        slow.set(0, 63, -1, Kind::Ice);
+        let free = flown(&TestWorld::default(), flier(64.0, true), FORWARD, 30);
+        assert!((flown(&slow, flier(64.0, true), FORWARD, 30) - free).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_spectator_is_not_pushed_by_anything() {
+        let mut body = flier(64.0, true);
+        body.push_velocity(DVec3::new(1.0, 1.0, 1.0));
+        crate::entity::mob::push(&mut body, 0.4, DVec3::X);
+        assert_eq!(body.velocity, DVec3::ZERO);
+        assert!(!body.pushable());
+        let mut walker = Body::new(DVec3::new(0.5, 64.0, 0.5));
+        walker.push_velocity(DVec3::X);
+        assert_eq!(walker.velocity, DVec3::X);
+    }
+
+    #[test]
+    fn spectator_speed_is_steady_and_decays_like_flight() {
+        let world = TestWorld::default();
+        let mut body = flier(64.0, true);
+        let mut steps = Vec::new();
+        for _ in 0..240 {
+            let before = body.position();
+            body.tick(&FORWARD, 0.0, &world);
+            steps.push((body.position() - before).length());
+        }
+        let late = &steps[200..];
+        let (low, high) = (
+            late.iter().copied().fold(f64::MAX, f64::min),
+            late.iter().copied().fold(0.0, f64::max),
+        );
+        assert!(high - low < 1e-6, "steady: {low}..{high}");
+        assert!((high * 20.0 - 10.89).abs() < 0.01);
+        // Let go: horizontal speed keeps 0.91 a tick.
+        let before = body.velocity.length();
+        body.tick(&MoveInput::default(), 0.0, &world);
+        assert!((body.velocity.length() / before - 0.91).abs() < 1e-9);
+        // Vertical speed keeps 0.6 a tick.
+        body.velocity = DVec3::Y;
+        body.tick(&MoveInput::default(), 0.0, &world);
+        assert!((body.velocity.y - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn flying_sprint_doubles_the_speed_at_any_hunger() {
+        let world = TestWorld::default();
+        for spectator in [false, true] {
+            let mut tired = flier(64.0, spectator);
+            tired.can_sprint = true;
+            let walk = flown(&world, tired.clone(), FORWARD, 60);
+            let run = flown(&world, tired.clone(), SPRINT, 60);
+            assert!(
+                (run / walk - 2.0).abs() < 0.08,
+                "spectator {spectator}: {run} vs {walk}"
+            );
+            // Double-tapping forward sprints in the air too.
+            let mut body = tired;
+            let tap = [FORWARD, MoveInput::IDLE, FORWARD];
+            for input in tap {
+                body.tick(&input, 0.0, &world);
+            }
+            assert!(body.sprinting, "double tap, spectator {spectator}");
+            // And it ends when forward is let go.
+            body.tick(&MoveInput::IDLE, 0.0, &world);
+            assert!(!body.sprinting);
+        }
+    }
+
+    #[test]
+    fn creative_flying_sprint_stops_at_a_wall_but_a_spectators_does_not() {
+        let mut world = TestWorld::default();
+        for y in 60..70 {
+            world.set(0, y, -3, Kind::Full);
+        }
+        for spectator in [false, true] {
+            let mut body = flier(64.0, spectator);
+            for _ in 0..30 {
+                body.tick(&SPRINT, 0.0, &world);
+            }
+            assert_eq!(body.sprinting, spectator, "spectator {spectator}");
+        }
     }
 }

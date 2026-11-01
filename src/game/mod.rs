@@ -34,6 +34,8 @@ mod gateways;
 mod gear;
 mod hands;
 mod logistics;
+#[cfg(test)]
+mod m46_tests;
 mod minecarts;
 mod mob_acts;
 #[cfg(test)]
@@ -1513,8 +1515,10 @@ impl Game {
         if self.player.spectating.is_some() {
             return;
         }
-        // Wait for the chunks around the player to load before moving them.
-        if !collider.is_loaded(&self.player.body.aabb()) {
+        // Wait for the chunks around the player to load before moving them
+        // (a spectator touches nothing, so waits for nothing, and the
+        // client and the server move them alike whatever each has loaded).
+        if !self.player.body.no_clip && !collider.is_loaded(&self.player.body.aabb()) {
             return;
         }
         let input = MoveInput {
