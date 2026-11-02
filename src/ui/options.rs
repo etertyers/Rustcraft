@@ -37,6 +37,8 @@ pub enum Page {
     KeyBinds,
     Chat,
     Accessibility,
+    /// Video Settings' Trailer Settings: each Trailer effect on or off (v1.4).
+    Trailer,
 }
 
 impl Page {
@@ -46,6 +48,7 @@ impl Page {
         match self {
             Page::Main => None,
             Page::Mouse | Page::KeyBinds => Some(Page::Controls),
+            Page::Trailer => Some(Page::Video),
             _ => Some(Page::Main),
         }
     }
@@ -61,6 +64,7 @@ impl Page {
             Page::KeyBinds => "Key Binds",
             Page::Chat => "Chat Settings",
             Page::Accessibility => "Accessibility Settings",
+            Page::Trailer => "Trailer Settings",
         }
     }
 }
@@ -192,6 +196,10 @@ impl OptionsScreen {
             }
             Page::Accessibility => {
                 self.accessibility(ui, options);
+                None
+            }
+            Page::Trailer => {
+                self.trailer(ui, options);
                 None
             }
         };
@@ -343,6 +351,27 @@ impl OptionsScreen {
             .show(ui, |ui| {
                 pairs(ui, "options-video", |ui, cell| {
                     cell(ui);
+                    let look = options.visuals.look;
+                    let response =
+                        ui.add_sized(HALF, Button::new(format!("Visuals: {}", look.name())));
+                    if self.clicked(&response) {
+                        options.set_look(look.other());
+                    }
+                    cell(ui);
+                    let quality = options.visuals.quality;
+                    let response = ui.add_sized(
+                        HALF,
+                        Button::new(format!("Trailer Quality: {}", quality.name())),
+                    );
+                    if self.clicked(&response) {
+                        options.visuals.quality = quality.next();
+                    }
+                    cell(ui);
+                    let response = ui.add_sized(HALF, Button::new("Trailer Settings..."));
+                    if self.clicked(&response) {
+                        self.page = Page::Trailer;
+                    }
+                    cell(ui);
                     let graphics = match options.graphics {
                         Graphics::Fast => "Fast",
                         Graphics::Fancy => "Fancy",
@@ -426,6 +455,42 @@ impl OptionsScreen {
                     int_slider(ui, &mut options.biome_blend, BIOME_BLENDS, |v| {
                         format!("Biome Blend: {}", blend_name(v))
                     });
+                });
+            });
+    }
+
+    /// Each Trailer effect, on or off: the quality profile's choice unless
+    /// the player changed it (marked with a *).
+    fn trailer(&mut self, ui: &mut Ui, options: &mut Options) {
+        use crate::render::visuals::Effect;
+        let height = list_height(ui);
+        ui.label(
+            RichText::new(format!(
+                "Profile: {} (* differs from the profile)",
+                options.visuals.quality.name()
+            ))
+            .color(GRAY),
+        );
+        egui::ScrollArea::vertical()
+            .max_height(height)
+            .show(ui, |ui| {
+                pairs(ui, "options-trailer", |ui, cell| {
+                    for effect in Effect::ALL {
+                        cell(ui);
+                        let mut on = options.visuals.enabled(effect);
+                        let changed = options.visuals.effects.contains_key(&effect);
+                        let label = format!("{}{}", effect.name(), if changed { "*" } else { "" });
+                        let before = on;
+                        self.toggle(ui, &label, &mut on);
+                        if on != before {
+                            options.visuals.set(effect, on);
+                        }
+                    }
+                    cell(ui);
+                    let response = ui.add_sized(HALF, Button::new("Reset to Profile"));
+                    if self.clicked(&response) {
+                        options.visuals.effects.clear();
+                    }
                 });
             });
     }

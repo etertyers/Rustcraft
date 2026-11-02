@@ -203,6 +203,10 @@ pub struct Options {
     /// defaults are 0.5 and 0.75).
     pub glint_speed: f32,
     pub glint_strength: f32,
+    /// The look (Vanilla or Trailer), the Trailer quality and effects, and
+    /// each look's resource packs (v1.4). Options from before v1.4 have
+    /// none, so they get the Trailer look on first run.
+    pub visuals: crate::render::visuals::Visuals,
 }
 
 impl Default for Options {
@@ -239,6 +243,7 @@ impl Default for Options {
             damage_tilt: 1.0,
             glint_speed: 0.5,
             glint_strength: 0.75,
+            visuals: Default::default(),
         }
     }
 }
@@ -280,6 +285,51 @@ impl Options {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
         std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
+    }
+
+    /// Sets up each look's pack list the first time (options from before
+    /// v1.4: Vanilla's starts empty, Trailer's is the packs chosen until
+    /// now), puts Trailer packs found in `available` (file name,
+    /// description) on the Trailer list once each, and makes
+    /// `resource_packs` the list of the look that's on.
+    pub fn set_up_packs(&mut self, available: &[(String, String)]) {
+        let v = &mut self.visuals;
+        if !v.packs_set_up {
+            v.packs_set_up = true;
+            v.vanilla_packs = Vec::new();
+            v.trailer_packs = self.resource_packs.clone();
+        } else {
+            // The list being edited is the one of the look that's on.
+            *v.packs_mut(v.look) = self.resource_packs.clone();
+        }
+        let (list, missing) = crate::render::visuals::packs::trailer_list(
+            &v.trailer_packs,
+            available,
+            &mut v.offered,
+        );
+        v.trailer_packs = list;
+        for pack in missing {
+            log::info!(
+                "{} isn't in resourcepacks/, so the Trailer look goes without it",
+                pack.title()
+            );
+        }
+        self.resource_packs = v.packs(v.look).clone();
+    }
+
+    /// Keeps the list being edited (`resource_packs`) as the look's own.
+    pub fn store_packs(&mut self) {
+        let look = self.visuals.look;
+        *self.visuals.packs_mut(look) = self.resource_packs.clone();
+    }
+
+    /// Switches to `look`, keeping each look's pack list: the list being
+    /// edited is stored for the old look and the new look's comes in.
+    pub fn set_look(&mut self, look: crate::render::visuals::LookKind) {
+        let v = &mut self.visuals;
+        *v.packs_mut(v.look) = std::mem::take(&mut self.resource_packs);
+        v.look = look;
+        self.resource_packs = v.packs(look).clone();
     }
 
     /// Every value inside its slider's range.
@@ -325,6 +375,52 @@ impl Options {
 mod tests {
     use super::*;
     use crate::world::save::TempDir;
+
+    #[test]
+    fn visuals_round_trip_and_an_m53_file_gets_the_trailer_look() {
+        use crate::render::visuals::{Effect, LookKind, Quality};
+        let dir = TempDir::new("options-visuals");
+        let path = dir.path().join("options.ron");
+        // An M53 options file: packs chosen, no visuals.
+        std::fs::write(
+            &path,
+            r#"(render_distance: 9, resource_packs: ["Ashen_1.8.3.zip"])"#,
+        )
+        .unwrap();
+        let mut options = Options::load(&path);
+        assert_eq!(options.visuals.look, LookKind::Trailer);
+        assert_eq!(options.visuals.quality, Quality::Medium);
+        let available = [
+            ("Ashen_1.8.3.zip".to_owned(), String::new()),
+            ("FreshAnimations_v1.9.4.zip".to_owned(), String::new()),
+            ("Bare Bones 1.21.zip".to_owned(), String::new()),
+        ];
+        options.set_up_packs(&available);
+        assert!(options.visuals.vanilla_packs.is_empty());
+        assert_eq!(
+            options.resource_packs,
+            [
+                "FreshAnimations_v1.9.4.zip",
+                "Bare Bones 1.21.zip",
+                "Ashen_1.8.3.zip"
+            ]
+        );
+        // Vanilla's own list, edited while Vanilla is on.
+        options.set_look(LookKind::Vanilla);
+        assert!(options.resource_packs.is_empty());
+        options.resource_packs.push("Ashen_1.8.3.zip".to_owned());
+        options.visuals.quality = Quality::High;
+        options.visuals.set(Effect::Bloom, false);
+        options.save(&path).unwrap();
+        let mut back = Options::load(&path);
+        assert_eq!(back, options);
+        back.set_up_packs(&available);
+        assert_eq!(back.resource_packs, ["Ashen_1.8.3.zip"]);
+        back.set_look(LookKind::Trailer);
+        assert_eq!(back.resource_packs.len(), 3, "Trailer's list kept");
+        assert!(!back.visuals.enabled(Effect::Bloom));
+        assert_eq!(back.visuals.quality, Quality::High);
+    }
 
     #[test]
     fn names_are_vanillas() {

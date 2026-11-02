@@ -50,6 +50,65 @@
           "min_ratio": 0.46,
           "reason": "Measured noise: three launches of --perf-test --runs 3 on this Mac mini gave medians spread 27.0% (max-min over the median); threshold widened to twice that. See docs/perf/noise/."
         }
+      },
+      "budgets": {
+        "one_percent_low_fps": {
+          "min": 40
+        }
+      }
+    },
+    "trailer-low": {
+      "note": "Absolute budgets from docs/milestones/v1.4.md (Trailer look). gpu_extra_ms is this row's GPU time per frame over the Vanilla row's, measured in the same --all-looks run.",
+      "budgets": {
+        "average_fps": {
+          "min": 100
+        },
+        "one_percent_low_fps": {
+          "min": 50
+        },
+        "gpu_extra_ms": {
+          "max": 2.0
+        },
+        "frames_over_50ms": {
+          "max": 0
+        }
+      }
+    },
+    "trailer-medium": {
+      "note": "Absolute budgets from docs/milestones/v1.4.md (Trailer look). gpu_extra_ms is this row's GPU time per frame over the Vanilla row's, measured in the same --all-looks run.",
+      "budgets": {
+        "average_fps": {
+          "min": 75
+        },
+        "one_percent_low_fps": {
+          "min": 45
+        },
+        "gpu_extra_ms": {
+          "max": 4.5
+        },
+        "frames_over_50ms": {
+          "max": 0
+        },
+        "gpu_post_ms": {
+          "max": 0.3
+        }
+      }
+    },
+    "trailer-high": {
+      "note": "Absolute budgets from docs/milestones/v1.4.md (Trailer look). gpu_extra_ms is this row's GPU time per frame over the Vanilla row's, measured in the same --all-looks run.",
+      "budgets": {
+        "average_fps": {
+          "min": 60
+        },
+        "one_percent_low_fps": {
+          "min": 40
+        },
+        "gpu_extra_ms": {
+          "max": 7.5
+        },
+        "frames_over_50ms": {
+          "max": 0
+        }
       }
     }
   },

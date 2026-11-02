@@ -102,6 +102,9 @@ pub struct Bench {
     /// `--perf-out <file>` (internal): one of `--runs`' flights writes its
     /// measures here instead of into docs/perf.
     pub run_out: Option<std::path::PathBuf>,
+    /// The GPU profiler's mean ms per frame of each pass over the flight,
+    /// and their sum (set at the end by the app).
+    pub gpu: Option<(std::collections::BTreeMap<String, f64>, f64)>,
     elapsed: f32,
     warm_up: Vec<FrameTimes>,
     frames: Vec<FrameTimes>,
@@ -119,6 +122,7 @@ impl Bench {
             label: None,
             row: "vanilla".to_owned(),
             run_out: None,
+            gpu: None,
             elapsed: 0.0,
             warm_up: Vec::new(),
             frames: Vec::new(),
@@ -132,6 +136,11 @@ impl Bench {
         } else {
             self.frames.push(times);
         }
+    }
+
+    /// Still in the warm-up (GPU times are counted after it).
+    pub fn warming_up(&self) -> bool {
+        self.elapsed <= WARM_UP
     }
 
     pub fn done(&self) -> bool {
@@ -212,6 +221,12 @@ impl Bench {
         put("light_mesh_ms", run.meshed.1);
         if let Some(memory) = run.memory_mib {
             put("memory_mib", memory);
+        }
+        if let Some((passes, total)) = &self.gpu {
+            for (pass, ms) in passes {
+                put(&format!("gpu_{pass}_ms"), *ms);
+            }
+            put("gpu_total_ms", *total);
         }
         Some(m)
     }

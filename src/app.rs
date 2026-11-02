@@ -157,6 +157,8 @@ pub struct App {
     start_view: crate::game::view::ViewMode,
     /// The resource packs the look was built with, highest first.
     applied_packs: Vec<String>,
+    /// A look being built with these packs on a background thread.
+    pending_look: Option<(Vec<String>, crossbeam_channel::Receiver<Result<Look>>)>,
     /// When texture animations started.
     animation_start: Instant,
     /// Every block and item, for the creative inventory.
@@ -231,6 +233,43 @@ pub struct App {
     lan_at_start: Option<u16>,
 }
 
+/// Every pack in `resourcepacks/`: (file name, description).
+fn available_packs() -> Vec<(String, String)> {
+    crate::pack::list(&crate::pack::packs_dir())
+        .into_iter()
+        .map(|pack| (pack.id.clone(), pack.info.description.clone()))
+        .collect()
+}
+
+/// F12's switch: the other look (with its packs), named on the HUD.
+fn toggle_look(
+    options: &mut Options,
+    player: Option<&mut crate::game::PlayerState>,
+) -> crate::render::visuals::LookKind {
+    let look = options.visuals.look.other();
+    options.set_look(look);
+    if let Some(player) = player {
+        player.show(visuals_message(look));
+    }
+    look
+}
+
+/// What F12 shows: "Visuals: Trailer".
+pub fn visuals_message(look: crate::render::visuals::LookKind) -> String {
+    format!("Visuals: {}", look.name())
+}
+
+/// "Vanilla", or "Trailer (Medium)", for F3.
+fn visuals_label(visuals: &crate::render::visuals::Visuals) -> &'static str {
+    use crate::render::visuals::{LookKind, Quality};
+    match (visuals.look, visuals.quality) {
+        (LookKind::Vanilla, _) => "Vanilla",
+        (LookKind::Trailer, Quality::Low) => "Trailer (Low)",
+        (LookKind::Trailer, Quality::Medium) => "Trailer (Medium)",
+        (LookKind::Trailer, Quality::High) => "Trailer (High)",
+    }
+}
+
 /// How far `--shot` has got with its scene.
 pub struct ShotRun {
     shot: &'static shots::Shot,
@@ -259,7 +298,11 @@ impl App {
             game: None,
             screen: None,
             advancements: None,
-            options: Options::load(&Options::path()),
+            options: {
+                let mut options = Options::load(&Options::path());
+                options.set_up_packs(&available_packs());
+                options
+            },
             audio: None,
             res: None,
             pause: None,
@@ -290,6 +333,7 @@ impl App {
             skin_slim: false,
             start_view: Default::default(),
             applied_packs: Vec::new(),
+            pending_look: None,
             animation_start: Instant::now(),
             catalog: Vec::new(),
             tab_views: Vec::new(),
@@ -324,6 +368,22 @@ impl App {
             staged: None,
             captured: false,
         });
+        self
+    }
+
+    /// Draws with this look and quality this run (`--visuals`, `--quality`),
+    /// with the look's own resource packs.
+    pub fn with_visuals(
+        mut self,
+        look: Option<crate::render::visuals::LookKind>,
+        quality: Option<crate::render::visuals::Quality>,
+    ) -> Self {
+        if let Some(look) = look {
+            self.options.set_look(look);
+        }
+        if let Some(quality) = quality {
+            self.options.visuals.quality = quality;
+        }
         self
     }
 
@@ -1150,6 +1210,8 @@ impl App {
         } else if is(Action::Fullscreen) && press {
             self.options.fullscreen = !self.options.fullscreen;
             self.options_changed();
+        } else if is(Action::ToggleVisuals) && press {
+            self.toggle_visuals();
         } else if is(Action::HideGui) && press && self.game.is_some() {
             self.hide_gui = !self.hide_gui;
         } else if is(Action::Inventory)
@@ -1475,15 +1537,51 @@ impl App {
         audio.update_music(res, music, dt, self.options.volumes.music);
     }
 
-    /// Rebuilds the look with the selected resource packs and swaps it in
-    /// everywhere, without restarting. On failure the old look stays.
+    /// Rebuilds the look with the selected resource packs on a background
+    /// thread; the old textures stay on screen until it's ready, then
+    /// `poll_pending_look` swaps it in everywhere. On failure the old look
+    /// stays.
     fn apply_resource_packs(&mut self) {
         let Some(mobs) = self.mob_defs.clone() else {
             return;
         };
         let packs = self.options.resource_packs.clone();
         info!("applying resource packs {packs:?}");
-        let look = match Look::with_packs(&assets::dir(), &packs, &mobs) {
+        // Asked for again before it's ready: the newer request wins.
+        self.applied_packs = packs.clone();
+        let (send, receive) = crossbeam_channel::bounded(1);
+        let wanted = packs.clone();
+        std::thread::Builder::new()
+            .name("resource packs".into())
+            .spawn(move || {
+                let _ = send.send(Look::with_packs(&assets::dir(), &wanted, &mobs));
+            })
+            .map_err(|err| error!("can't start loading resource packs: {err}"))
+            .ok();
+        self.pending_look = Some((packs, receive));
+    }
+
+    /// Swaps in the look `apply_resource_packs` was building, once it's
+    /// ready.
+    fn poll_pending_look(&mut self) {
+        let Some((packs, receive)) = self.pending_look.as_ref() else {
+            return;
+        };
+        let look = match receive.try_recv() {
+            Ok(look) => look,
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                self.pending_look = None;
+                return;
+            }
+        };
+        let packs = packs.clone();
+        self.pending_look = None;
+        if packs != self.applied_packs {
+            // A newer list is on its way.
+            return;
+        }
+        let look = match look {
             Ok(look) => look,
             Err(err) => return error!("can't apply resource packs: {err:#}"),
         };
@@ -1498,7 +1596,6 @@ impl App {
         if let Some(game) = self.game.as_mut() {
             game.chunks.set_models(look.models.clone());
         }
-        self.applied_packs = packs;
         self.animation_start = Instant::now();
         self.install_look(look);
     }
@@ -1508,11 +1605,25 @@ impl App {
         let (Some(atlas), Some(renderer)) = (self.atlas.as_mut(), self.renderer.as_ref()) else {
             return;
         };
-        let ticks = self.animation_start.elapsed().as_secs_f64() * config::TICKS_PER_SECOND as f64;
+        // `--shot` scenes stand still: textures keep their first frame,
+        // so a scene renders the same every run.
+        let ticks = match self.shot {
+            Some(_) => 0.0,
+            None => self.animation_start.elapsed().as_secs_f64() * config::TICKS_PER_SECOND as f64,
+        };
         let changed = atlas.animate(ticks as u64);
         if !changed.is_empty() {
             renderer.update_atlas(&changed);
         }
+    }
+
+    /// F12: switches between the Vanilla and Trailer looks, each with its
+    /// own resource packs, and says which is on.
+    fn toggle_visuals(&mut self) {
+        let player = self.game.as_mut().map(|game| &mut game.player);
+        let look = toggle_look(&mut self.options, player);
+        info!("visuals: {}", look.name());
+        self.options_changed();
     }
 
     /// F2: saves the next frame in `screenshots/` beside the saves, named
@@ -1557,6 +1668,7 @@ impl App {
 
     /// Applies settings changed on the Options screen and saves them.
     fn options_changed(&mut self) {
+        self.options.store_packs();
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_vsync(self.options.vsync);
             renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
@@ -1753,6 +1865,7 @@ impl App {
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
         self.client_mods.advance(dt);
+        self.poll_pending_look();
         self.animate_textures();
         self.update_audio(dt);
         self.take_guest_skins();
@@ -2260,6 +2373,16 @@ impl App {
             mode: game.player.mode,
             time: game.time(),
             dimension: game.dimension(),
+            look: visuals_label(&self.options.visuals),
+            gpu: match self.options.visuals.look {
+                crate::render::visuals::LookKind::Trailer => crate::ui::GpuTimes::from_averages(
+                    &renderer
+                        .profiler()
+                        .map(|p| p.averages())
+                        .unwrap_or_default(),
+                ),
+                crate::render::visuals::LookKind::Vanilla => Default::default(),
+            },
         };
         // Other players' names, where their heads are on screen.
         let view_proj = game.view_camera().view_proj(renderer.aspect());
@@ -2535,6 +2658,7 @@ impl App {
         let mut environment = game.environment_with(self.client_mods.min_light());
         environment.brightness = self.options.brightness;
         environment.glint = crate::ui::glint::glint_scale().into();
+        renderer.set_visuals(self.options.visuals.frame());
         let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {
             run.captured = true;
@@ -2549,6 +2673,7 @@ impl App {
         let offscreen = renderer.drew_offscreen();
         self.finish_frame(event_loop, now, result);
         if let Some(bench) = self.bench.as_mut() {
+            let was_warming_up = bench.warming_up();
             bench.record(FrameTimes {
                 frame: dt,
                 game: ticked - now,
@@ -2556,7 +2681,19 @@ impl App {
                 draw: uploaded.elapsed(),
                 offscreen,
             });
+            // GPU times count from the end of the warm-up.
+            if was_warming_up
+                && !bench.warming_up()
+                && let Some(profiler) = self.renderer.as_mut().and_then(|r| r.profiler())
+            {
+                profiler.reset_totals();
+            }
             if bench.done() {
+                bench.gpu = self
+                    .renderer
+                    .as_mut()
+                    .and_then(|r| r.profiler())
+                    .map(|p| p.means());
                 let report = format!("{}\n  {place}", bench.report(render_distance));
                 info!("{report}");
                 println!("{report}");
@@ -3055,6 +3192,27 @@ fn advancements_view(
 mod tests {
     use super::*;
     use crate::{advancements::Event, game::tests::flat_game, look::Look, player::mode::GameMode};
+
+    #[test]
+    fn f12_switches_the_look_and_says_so() {
+        use crate::bindings::{Action, Bindings, Input};
+        use crate::render::visuals::LookKind;
+        assert_eq!(
+            Bindings::default().get(Action::ToggleVisuals),
+            Some(Input::Key(winit::keyboard::KeyCode::F12))
+        );
+        let mut game = flat_game(GameMode::Survival);
+        let mut options = Options::default();
+        assert_eq!(options.visuals.look, LookKind::Trailer);
+        assert_eq!(
+            toggle_look(&mut options, Some(&mut game.player)),
+            LookKind::Vanilla
+        );
+        assert_eq!(options.visuals.look, LookKind::Vanilla);
+        assert_eq!(game.player.message.as_ref().unwrap().0, "Visuals: Vanilla");
+        toggle_look(&mut options, Some(&mut game.player));
+        assert_eq!(game.player.message.as_ref().unwrap().0, "Visuals: Trailer");
+    }
 
     fn icons() -> crate::render::icons::ItemIcons {
         let mobs =

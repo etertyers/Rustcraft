@@ -14,7 +14,8 @@ const BOX_VERTICES: u32 = 24;
 const MAX_BOXES: usize = 8;
 
 pub struct Outline {
-    pipeline: wgpu::RenderPipeline,
+    /// Drawing into the frame (Vanilla) and into the HDR target (Trailer).
+    pipelines: [wgpu::RenderPipeline; 2],
     vertices: wgpu::Buffer,
     /// The block outlined in the next frame, and its outline boxes.
     target: Option<(IVec3, Vec<Cuboid>)>,
@@ -24,7 +25,7 @@ impl Outline {
     pub fn new(
         device: &wgpu::Device,
         globals_layout: &wgpu::BindGroupLayout,
-        format: wgpu::TextureFormat,
+        formats: [wgpu::TextureFormat; 2],
         depth_format: wgpu::TextureFormat,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("outline.wgsl"));
@@ -33,43 +34,45 @@ impl Outline {
             bind_group_layouts: &[Some(globals_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("outline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
+        let pipelines = formats.map(|format| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("outline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
         });
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("outline vertices"),
@@ -79,7 +82,7 @@ impl Outline {
             mapped_at_creation: false,
         });
         Self {
-            pipeline,
+            pipelines,
             vertices,
             target: None,
         }
@@ -110,8 +113,9 @@ impl Outline {
     }
 
     /// Draws `vertices` uploaded by `prepare`. Bind group 0 must hold the globals.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, vertices: u32) {
-        pass.set_pipeline(&self.pipeline);
+    /// Draws into the frame, or with `trailer` into the HDR target.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, vertices: u32, trailer: bool) {
+        pass.set_pipeline(&self.pipelines[usize::from(trailer)]);
         pass.set_vertex_buffer(0, self.vertices.slice(..));
         pass.draw(0..vertices, 0..1);
     }

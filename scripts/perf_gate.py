@@ -2,8 +2,12 @@
 """The performance gate: compares perf results with docs/perf/baseline.json.
 
     scripts/perf_gate.py docs/perf/m54.json
+    scripts/perf_gate.py docs/perf/m54.json docs/perf/m54-trailer-*.json   (every look)
     scripts/perf_gate.py docs/perf/m54.json --update-baseline
     scripts/perf_gate.py docs/perf/m54.json --update-baseline --accept "why"
+
+Several results files are checked one after the other (each against its
+own row); the exit code is the worst. --update-baseline takes one file.
 
 Exit code 0: every check passed. 1: a check failed. 2: the comparison was
 refused (different machine, unknown row, unreadable file).
@@ -124,15 +128,28 @@ def print_table(rows):
 
 def main():
     ap = argparse.ArgumentParser(description="Compare perf results with the baseline.")
-    ap.add_argument("results")
+    ap.add_argument("results", nargs="+")
     ap.add_argument("--baseline", default="docs/perf/baseline.json")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--accept", metavar="REASON")
     args = ap.parse_args()
     if args.accept and not args.update_baseline:
         ap.error("--accept goes with --update-baseline")
+    if args.update_baseline and len(args.results) != 1:
+        ap.error("--update-baseline takes one results file")
+    if len(args.results) > 1:
+        worst = 0
+        for path in args.results:
+            print(f"\n### {path}\n")
+            worst = max(worst, gate(args, path))
+        print("\nPASS (every file)" if worst == 0 else "\nFAIL (see above)")
+        sys.exit(worst)
+    sys.exit(gate(args, args.results[0]))
 
-    results = load(args.results)
+
+def gate(args, results_path):
+    """Checks one results file; returns the exit code."""
+    results = load(results_path)
     baseline_path = Path(args.baseline)
     baseline = load(baseline_path) if baseline_path.exists() else None
     row_name = results.get("row", "vanilla")
@@ -165,7 +182,7 @@ def main():
         else:
             print_table(check_row(results, row))
             print("\nnot updating: some measure is worse. Use --accept only when Kenzo agreed.", file=sys.stderr)
-            sys.exit(1)
+            return 1
         new = {
             "commit": results.get("commit"),
             "recorded": datetime.date.today().isoformat(),
@@ -184,15 +201,16 @@ def main():
         baseline["rows"][row_name] = new
         baseline_path.write_text(json.dumps(baseline, indent=2) + "\n")
         print(f"wrote {baseline_path}")
-        return
+        return 0
 
     rows = check_row(results, row)
     print_table(rows)
     failed = [r[0] for r in rows if not r[5]]
     if failed:
         print(f"\nFAIL: {', '.join(failed)}")
-        sys.exit(1)
+        return 1
     print("\nPASS")
+    return 0
 
 
 if __name__ == "__main__":

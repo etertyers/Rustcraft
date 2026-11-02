@@ -70,6 +70,28 @@ pub struct DebugStats {
     /// Game time in ticks.
     pub time: u64,
     pub dimension: crate::world::dimension::Dimension,
+    /// The look and its quality (v1.4), and in Trailer the GPU profiler's
+    /// per-pass times, averaged over 60 frames.
+    pub look: &'static str,
+    pub gpu: GpuTimes,
+}
+
+/// Up to 16 (pass, ms) pairs, for the F3 overlay.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GpuTimes {
+    pub passes: [(&'static str, f32); 16],
+    pub len: usize,
+}
+
+impl GpuTimes {
+    pub fn from_averages(averages: &[(&'static str, f64)]) -> Self {
+        let mut times = Self::default();
+        for (slot, (name, ms)) in times.passes.iter_mut().zip(averages) {
+            *slot = (name, *ms as f32);
+            times.len += 1;
+        }
+        times
+    }
 }
 
 /// Always-on HUD pieces.
@@ -473,7 +495,8 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
          Light: {}\n\
          Seed: {}\n\
          Mode: {}\n\
-         Time: {}",
+         Time: {}\n\
+         Visuals: {}{}",
         stats.chunks_drawn,
         stats.chunks_loaded,
         p.x,
@@ -506,7 +529,24 @@ fn debug_text(fps: f32, camera: &Camera, stats: &DebugStats) -> String {
         stats.seed.map_or_else(|| "-".to_owned(), |s| s.to_string()),
         stats.mode.name(),
         daytime::clock(stats.time),
+        stats.look,
+        gpu_text(&stats.gpu),
     )
+}
+
+/// The GPU profiler's lines (Trailer only), each on its own line.
+fn gpu_text(gpu: &GpuTimes) -> String {
+    let passes: Vec<(&'static str, f64)> = gpu.passes[..gpu.len]
+        .iter()
+        .map(|(n, ms)| (*n, f64::from(*ms)))
+        .collect();
+    if passes.is_empty() {
+        return String::new();
+    }
+    crate::render::visuals::profiler::overlay_lines(&passes)
+        .into_iter()
+        .map(|line| format!("\n{line}"))
+        .collect()
 }
 
 /// A small white plus at the screen center, outlined so it shows on bright blocks too.
@@ -1168,8 +1208,15 @@ mod tests {
             mode: GameMode::Creative,
             time: 6000,
             dimension: Default::default(),
+            look: "Trailer (Medium)",
+            gpu: GpuTimes::from_averages(&[("world", 3.5), ("post", 0.2)]),
         };
         let text = debug_text(59.6, &camera, &stats);
+        assert!(text.contains("Visuals: Trailer (Medium)"), "{text}");
+        assert!(
+            text.contains("GPU 3.70 ms") && text.contains("  post: 0.20 ms"),
+            "{text}"
+        );
         assert!(
             text.contains("60 fps, chunks: 12 drawn, 81 loaded"),
             "{text}"

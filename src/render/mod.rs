@@ -15,6 +15,7 @@ pub mod models;
 mod outline;
 pub mod player;
 pub mod vertex;
+pub mod visuals;
 
 use std::sync::Arc;
 
@@ -144,6 +145,9 @@ macro_rules! world_shader {
 /// A mesh on the GPU: opaque indices first, then translucent ones.
 struct ChunkBuffers {
     vertices: wgpu::Buffer,
+    /// The face attribute per vertex (slot 1), read only by the Trailer
+    /// look's pipelines.
+    faces: wgpu::Buffer,
     indices: wgpu::Buffer,
     opaque: u32,
     translucent: u32,
@@ -168,12 +172,18 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     depth_view: wgpu::TextureView,
-    pipeline: wgpu::RenderPipeline,
-    translucent_pipeline: wgpu::RenderPipeline,
-    mob_pipeline: wgpu::RenderPipeline,
-    /// Depth only, for a boat's water mask.
-    mask_pipeline: wgpu::RenderPipeline,
-    crack_pipeline: wgpu::RenderPipeline,
+    /// The Vanilla look's pipelines (M53's, drawing into the surface) and
+    /// the Trailer look's (the same shaders into the HDR target, reading
+    /// the face buffer). Both are made at startup so switching is instant.
+    vanilla: Pipelines,
+    trailer: Pipelines,
+    /// The Trailer look's targets and post passes (made on first use and
+    /// on resize).
+    trailer_frame: visuals::frame::TrailerFrame,
+    /// Which look draws, and its settings.
+    visuals: visuals::FrameVisuals,
+    /// Pass timings, if the GPU has timestamp queries.
+    profiler: Option<visuals::profiler::GpuProfiler>,
     /// The crack over the block being mined, if any.
     crack: Option<ChunkBuffers>,
     /// One texture per mob kind.
@@ -182,10 +192,8 @@ pub struct Renderer {
     guest_skins: Vec<wgpu::BindGroup>,
     /// This frame's mob meshes, by kind.
     mobs: Vec<(usize, ChunkBuffers)>,
-    sky_pipeline: wgpu::RenderPipeline,
     sun_bind_group: wgpu::BindGroup,
     moon_bind_group: wgpu::BindGroup,
-    cloud_pipeline: wgpu::RenderPipeline,
     cloud_bind_group: wgpu::BindGroup,
     glint_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
@@ -212,6 +220,92 @@ pub struct Renderer {
     chunks_drawn: usize,
     outline: Outline,
     egui_renderer: egui_wgpu::Renderer,
+    /// How long making the Trailer look's pipelines took at startup.
+    trailer_startup: std::time::Duration,
+}
+
+/// The pipelines that draw the world into one kind of target. The Vanilla
+/// set is exactly M53's; the Trailer set draws the same shaders into the
+/// HDR target with the face buffer bound.
+struct Pipelines {
+    blocks: wgpu::RenderPipeline,
+    translucent: wgpu::RenderPipeline,
+    mob: wgpu::RenderPipeline,
+    /// Depth only, for a boat's water mask.
+    mask: wgpu::RenderPipeline,
+    crack: wgpu::RenderPipeline,
+    sky: wgpu::RenderPipeline,
+    clouds: wgpu::RenderPipeline,
+    /// Binds the face buffer (slot 1) with each mesh.
+    faces: bool,
+}
+
+/// The layouts every pipeline set shares.
+struct Layouts {
+    globals: wgpu::BindGroupLayout,
+    texture: wgpu::BindGroupLayout,
+    blocks: wgpu::PipelineLayout,
+}
+
+impl Pipelines {
+    /// Every world pipeline drawing into `format`; `faces` adds the face
+    /// buffer to the block pipelines' vertex buffers.
+    fn new(
+        device: &wgpu::Device,
+        layouts: &Layouts,
+        shaders: &Shaders,
+        format: wgpu::TextureFormat,
+        faces: bool,
+    ) -> Self {
+        let blocks = &layouts.blocks;
+        let shader = &shaders.blocks;
+        Self {
+            blocks: create_block_pipeline(device, blocks, shader, format, false, true, faces),
+            translucent: create_block_pipeline(device, blocks, shader, format, true, true, faces),
+            // Mob boxes are drawn from both sides, so face winding doesn't matter.
+            mob: create_block_pipeline(device, blocks, shader, format, false, false, faces),
+            mask: create_mask_pipeline(device, blocks, shader, format, faces),
+            crack: create_crack_pipeline(device, blocks, shader, format, faces),
+            sky: create_sky_pipeline(device, layouts, &shaders.sky, format),
+            clouds: create_cloud_pipeline(device, layouts, &shaders.clouds, format),
+            faces,
+        }
+    }
+}
+
+/// The world shaders, compiled once for both looks.
+struct Shaders {
+    blocks: wgpu::ShaderModule,
+    sky: wgpu::ShaderModule,
+    clouds: wgpu::ShaderModule,
+}
+
+impl Shaders {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            blocks: world_shader!(device, "shader.wgsl"),
+            sky: world_shader!(device, "sky.wgsl"),
+            clouds: world_shader!(device, "clouds.wgsl"),
+        }
+    }
+}
+
+impl Layouts {
+    fn new(device: &wgpu::Device) -> Self {
+        let globals = create_globals_layout(device);
+        let texture = create_texture_layout(device);
+        let blocks = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blocks"),
+            // The glint pattern is group 2 (the sky borrows it for the moon).
+            bind_group_layouts: &[Some(&globals), Some(&texture), Some(&texture)],
+            immediate_size: 0,
+        });
+        Self {
+            globals,
+            texture,
+            blocks,
+        }
+    }
 }
 
 impl Renderer {
@@ -231,9 +325,20 @@ impl Renderer {
             ..Default::default()
         }))?;
         log::info!("GPU adapter: {:?}", adapter.get_info());
+        // Timestamps for the GPU profiler, where the GPU has them.
+        let features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+        log::info!(
+            "GPU timestamp queries: {}",
+            if features.is_empty() {
+                "no (the profiler is off)"
+            } else {
+                "yes"
+            }
+        );
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("rustcraft device"),
+                required_features: features,
                 ..Default::default()
             }))?;
 
@@ -251,28 +356,17 @@ impl Renderer {
         surface.configure(&device, &config);
         let depth_view = create_depth_view(&device, &config);
 
+        let layouts = Layouts::new(&device);
+        let globals_layout = &layouts.globals;
         let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
             size: std::mem::size_of::<Globals>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("globals"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
-            layout: &globals_layout,
+            layout: globals_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: globals_buffer.as_entire_binding(),
@@ -286,14 +380,14 @@ impl Renderer {
         });
         let hand_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hand globals"),
-            layout: &globals_layout,
+            layout: globals_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: hand_globals_buffer.as_entire_binding(),
             }],
         });
 
-        let texture_layout = create_texture_layout(&device);
+        let texture_layout = layouts.texture.clone();
         let (atlas_texture, atlas_bind_group) =
             create_texture(&device, &queue, &texture_layout, "atlas", atlas.image());
         let sun_bind_group =
@@ -304,57 +398,36 @@ impl Renderer {
             create_texture_bind_group(&device, &queue, &texture_layout, "clouds", &sky.clouds);
         let glint_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "glint", &sky.glint);
-        let atlas_layout = &texture_layout;
-
-        let shader = world_shader!(device, "shader.wgsl");
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("blocks"),
-            // The glint pattern is group 2 (the sky borrows it for the moon).
-            bind_group_layouts: &[
-                Some(&globals_layout),
-                Some(atlas_layout),
-                Some(atlas_layout),
-            ],
-            immediate_size: 0,
-        });
-        let pipeline = create_block_pipeline(
+        let shaders = Shaders::new(&device);
+        let vanilla = Pipelines::new(&device, &layouts, &shaders, config.format, false);
+        // The Trailer look's pipelines are made now too, so F12 never waits
+        // for them; this is what they add to startup.
+        let started = std::time::Instant::now();
+        let trailer = Pipelines::new(
             &device,
-            &pipeline_layout,
-            &shader,
-            config.format,
-            false,
+            &layouts,
+            &shaders,
+            visuals::frame::HDR_FORMAT,
             true,
         );
-        let translucent_pipeline = create_block_pipeline(
-            &device,
-            &pipeline_layout,
-            &shader,
-            config.format,
-            true,
-            true,
+        let trailer_frame = visuals::frame::TrailerFrame::new(&device, config.format);
+        let trailer_startup = started.elapsed();
+        log::info!(
+            "Trailer look's pipelines made in {:.1} ms",
+            trailer_startup.as_secs_f64() * 1000.0
         );
-        // Mob boxes are drawn from both sides, so face winding doesn't matter.
-        let mob_pipeline = create_block_pipeline(
-            &device,
-            &pipeline_layout,
-            &shader,
-            config.format,
-            false,
-            false,
-        );
-        let mask_pipeline = create_mask_pipeline(&device, &pipeline_layout, &shader, config.format);
-        let crack_pipeline =
-            create_crack_pipeline(&device, &pipeline_layout, &shader, config.format);
+        let profiler = visuals::profiler::GpuProfiler::new(&device, &queue);
         let mob_bind_groups = mob_textures
             .iter()
             .map(|image| create_texture_bind_group(&device, &queue, &texture_layout, "mob", image))
             .collect();
 
-        let sky_pipeline =
-            create_sky_pipeline(&device, &globals_layout, &texture_layout, config.format);
-        let cloud_pipeline =
-            create_cloud_pipeline(&device, &globals_layout, &texture_layout, config.format);
-        let outline = Outline::new(&device, &globals_layout, config.format, DEPTH_FORMAT);
+        let outline = Outline::new(
+            &device,
+            globals_layout,
+            [config.format, visuals::frame::HDR_FORMAT],
+            DEPTH_FORMAT,
+        );
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             config.format.remove_srgb_suffix(),
@@ -372,19 +445,17 @@ impl Renderer {
             queue,
             config,
             depth_view,
-            pipeline,
-            translucent_pipeline,
-            mob_pipeline,
-            mask_pipeline,
-            crack_pipeline,
+            vanilla,
+            trailer,
+            trailer_frame,
+            visuals: visuals::FrameVisuals::default(),
+            profiler,
             crack: None,
             mob_bind_groups,
             guest_skins: Vec::new(),
             mobs: Vec::new(),
-            sky_pipeline,
             sun_bind_group,
             moon_bind_group,
-            cloud_pipeline,
             cloud_bind_group,
             glint_bind_group,
             globals_buffer,
@@ -403,7 +474,23 @@ impl Renderer {
             chunks_drawn: 0,
             outline,
             egui_renderer,
+            trailer_startup,
         })
+    }
+
+    /// Which look draws from the next frame on.
+    pub fn set_visuals(&mut self, visuals: visuals::FrameVisuals) {
+        self.visuals = visuals;
+    }
+
+    /// How long making the Trailer look's pipelines took at startup.
+    pub fn trailer_startup(&self) -> std::time::Duration {
+        self.trailer_startup
+    }
+
+    /// The GPU profiler, if the GPU has timestamp queries.
+    pub fn profiler(&mut self) -> Option<&mut visuals::profiler::GpuProfiler> {
+        self.profiler.as_mut()
     }
 
     /// Swaps in new textures after the resource packs change. Chunk meshes
@@ -528,34 +615,40 @@ impl Renderer {
     /// if they're big enough, or new ones with room to grow.
     fn rewrite(&self, old: Option<ChunkBuffers>, label: &str, mesh: &Mesh) -> ChunkBuffers {
         let vertices: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        let faces: &[u8] = bytemuck::cast_slice(&mesh.faces);
         let mut indices = Vec::with_capacity(mesh.indices.len() + mesh.translucent.len());
         indices.extend_from_slice(&mesh.indices);
         indices.extend_from_slice(&mesh.translucent);
         let indices: &[u8] = bytemuck::cast_slice(&indices);
         let fits = |buffer: &wgpu::Buffer, bytes: &[u8]| buffer.size() >= bytes.len() as u64;
-        let (vertex_buffer, index_buffer) = match old {
-            Some(old) if fits(&old.vertices, vertices) && fits(&old.indices, indices) => {
-                (old.vertices, old.indices)
+        let buffer = |size: usize, usage| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: (size.next_power_of_two() as u64).max(256),
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let (vertex_buffer, face_buffer, index_buffer) = match old {
+            Some(old)
+                if fits(&old.vertices, vertices)
+                    && fits(&old.faces, faces)
+                    && fits(&old.indices, indices) =>
+            {
+                (old.vertices, old.faces, old.indices)
             }
-            _ => {
-                let buffer = |size: usize, usage| {
-                    self.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some(label),
-                        size: (size.next_power_of_two() as u64).max(256),
-                        usage: usage | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    })
-                };
-                (
-                    buffer(vertices.len(), wgpu::BufferUsages::VERTEX),
-                    buffer(indices.len(), wgpu::BufferUsages::INDEX),
-                )
-            }
+            _ => (
+                buffer(vertices.len(), wgpu::BufferUsages::VERTEX),
+                buffer(faces.len(), wgpu::BufferUsages::VERTEX),
+                buffer(indices.len(), wgpu::BufferUsages::INDEX),
+            ),
         };
         self.queue.write_buffer(&vertex_buffer, 0, vertices);
+        self.queue.write_buffer(&face_buffer, 0, faces);
         self.queue.write_buffer(&index_buffer, 0, indices);
         ChunkBuffers {
             vertices: vertex_buffer,
+            faces: face_buffer,
             indices: index_buffer,
             opaque: mesh.indices.len() as u32,
             translucent: mesh.translucent.len() as u32,
@@ -569,6 +662,14 @@ impl Renderer {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
                 contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        debug_assert_eq!(mesh.faces.len(), mesh.vertices.len());
+        let faces = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(&mesh.faces),
                 usage: wgpu::BufferUsages::VERTEX,
             });
         let all: Vec<u32> = mesh
@@ -586,6 +687,7 @@ impl Renderer {
             });
         ChunkBuffers {
             vertices,
+            faces,
             indices,
             opaque: mesh.indices.len() as u32,
             translucent: mesh.translucent.len() as u32,
@@ -593,8 +695,8 @@ impl Renderer {
         }
     }
 
-    fn draw_clouds(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_pipeline(&self.cloud_pipeline);
+    fn draw_clouds(&self, pass: &mut wgpu::RenderPass<'_>, set: &Pipelines) {
+        pass.set_pipeline(&set.clouds);
         pass.set_bind_group(1, &self.cloud_bind_group, &[]);
         pass.draw(0..6, 0..1);
     }
@@ -858,130 +960,45 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("world"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color(self.config.format)),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
-            pass.set_bind_group(0, &self.globals_bind_group, &[]);
-            pass.set_pipeline(&self.sky_pipeline);
-            pass.set_bind_group(1, &self.sun_bind_group, &[]);
-            pass.set_bind_group(2, &self.moon_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-            pass.set_bind_group(2, &self.glint_bind_group, &[]);
-            // Chunks in view, nearest first: opaque faces draw front to back,
-            // translucent ones back to front.
-            let mut visible: Vec<(f32, &ChunkBuffers)> = self
-                .chunks
-                .iter()
-                .filter_map(|(pos, chunk)| {
-                    let (x, z) = pos.min_block();
-                    let min = Vec3::new(x as f32, crate::config::MIN_Y as f32, z as f32);
-                    let size = Vec3::new(CHUNK_SIZE as f32, WORLD_HEIGHT as f32, CHUNK_SIZE as f32);
-                    let center = min + size / 2.0;
-                    let distance =
-                        Vec2::new(center.x - camera.position.x, center.z - camera.position.z);
-                    frustum
-                        .intersects_box(min, min + size)
-                        .then_some((distance.length_squared(), chunk))
-                })
-                .collect();
-            visible.sort_by(|a, b| a.0.total_cmp(&b.0));
-            self.chunks_drawn = visible.len();
-            let mut bound = self.atlas_generation;
-            for (_, chunk) in &visible {
-                if chunk.atlas != bound {
-                    bound = chunk.atlas;
-                    pass.set_bind_group(1, self.atlas_for(bound), &[]);
-                }
-                draw_range(&mut pass, chunk, 0..chunk.opaque);
-            }
-            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-            if let Some(entities) = &self.entities {
-                draw_range(&mut pass, entities, 0..entities.opaque);
-            }
-            if !self.mobs.is_empty() {
-                pass.set_pipeline(&self.mob_pipeline);
-                for (kind, mesh) in &self.mobs {
-                    // Past the mob textures come other players' skins.
-                    let group = match self.mob_bind_groups.get(*kind) {
-                        Some(group) => group,
-                        None => match self.guest_skins.get(*kind - self.mob_bind_groups.len()) {
-                            Some(group) => group,
-                            None => continue,
-                        },
-                    };
-                    pass.set_bind_group(1, group, &[]);
-                    draw_range(&mut pass, mesh, 0..mesh.opaque);
-                }
-                // Vanilla's water mask: a boat's inside, in depth only, so the
-                // water drawn next stops at its rim.
-                pass.set_pipeline(&self.mask_pipeline);
-                for (kind, mesh) in &self.mobs {
-                    if mesh.translucent == 0 {
-                        continue;
-                    }
-                    if let Some(group) = self.mob_bind_groups.get(*kind) {
-                        pass.set_bind_group(1, group, &[]);
-                        draw_range(&mut pass, mesh, mesh.opaque..mesh.opaque + mesh.translucent);
-                    }
-                }
-                pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-            }
-            if let Some(crack) = &self.crack {
-                pass.set_pipeline(&self.crack_pipeline);
-                draw_range(&mut pass, crack, 0..crack.opaque);
-            }
-            // Clouds and water both blend: draw whichever is farther first.
-            let above_clouds = camera.position.y > environment.cloud_height;
-            if above_clouds && environment.sky && self.clouds {
-                self.draw_clouds(&mut pass);
-            }
-            pass.set_pipeline(&self.translucent_pipeline);
-            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-            // Entities' shadows, under the water drawn next.
-            if let Some(entities) = &self.entities {
-                let translucent = entities.opaque..entities.opaque + entities.translucent;
-                draw_range(&mut pass, entities, translucent);
-            }
-            let mut bound = self.atlas_generation;
-            for (_, chunk) in visible.iter().rev() {
-                if chunk.atlas != bound {
-                    bound = chunk.atlas;
-                    pass.set_bind_group(1, self.atlas_for(bound), &[]);
-                }
-                draw_range(
-                    &mut pass,
-                    chunk,
-                    chunk.opaque..chunk.opaque + chunk.translucent,
-                );
-            }
-            if !above_clouds && environment.sky && self.clouds {
-                self.draw_clouds(&mut pass);
-            }
-            if outline > 0 {
-                self.outline.draw(&mut pass, outline);
-            }
+        // The profiler is taken out while its timestamp writes are borrowed.
+        let mut profiler = self.profiler.take();
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.begin_frame();
         }
+        let trailer = self.visuals.trailer();
+        if trailer {
+            self.trailer_frame
+                .prepare(&self.device, self.config.width, self.config.height);
+        }
+        let set = if trailer {
+            &self.trailer
+        } else {
+            &self.vanilla
+        };
+        // Vanilla draws straight into the frame, as M53 did; Trailer into
+        // its HDR target, then post passes into the frame.
+        let world_view = match (trailer, self.trailer_frame.hdr_view()) {
+            (true, Some(hdr)) => hdr,
+            _ => &view,
+        };
+        let clear = if trailer {
+            let [r, g, b] = SKY_COLOR.map(srgb_to_linear);
+            wgpu::Color { r, g, b, a: 1.0 }
+        } else {
+            clear_color(self.config.format)
+        };
+        let timestamps = profiler.as_mut().and_then(|p| p.pass("world"));
+        self.chunks_drawn = self.draw_world(
+            &mut encoder,
+            world_view,
+            set,
+            clear,
+            timestamps,
+            camera,
+            environment,
+            &frustum,
+            outline,
+        );
 
         if self.hand_arm.is_some() || self.hand_item.is_some() {
             // The hand is drawn over the world with its own 70° projection,
@@ -996,10 +1013,11 @@ impl Renderer {
             let hand = globals(hand_proj, hand_proj, Vec3::ZERO, &hand_env);
             self.queue
                 .write_buffer(&self.hand_globals_buffer, 0, bytemuck::bytes_of(&hand));
+            let timestamps = profiler.as_mut().and_then(|p| p.pass("hand"));
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hand"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: world_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1015,21 +1033,27 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: timestamps,
                 ..Default::default()
             });
             pass.set_bind_group(0, &self.hand_globals_bind_group, &[]);
             pass.set_bind_group(2, &self.glint_bind_group, &[]);
-            pass.set_pipeline(&self.mob_pipeline);
+            pass.set_pipeline(&set.mob);
             if let Some(arm) = &self.hand_arm
                 && let Some(skin) = self.mob_bind_groups.last()
             {
                 pass.set_bind_group(1, skin, &[]);
-                draw_range(&mut pass, arm, 0..arm.opaque);
+                draw_range(&mut pass, arm, 0..arm.opaque, set.faces);
             }
             if let Some(item) = &self.hand_item {
                 pass.set_bind_group(1, &self.atlas_bind_group, &[]);
-                draw_range(&mut pass, item, 0..item.opaque);
+                draw_range(&mut pass, item, 0..item.opaque, set.faces);
             }
+        }
+
+        if trailer {
+            self.trailer_frame
+                .post(&mut encoder, &view, profiler.as_mut());
         }
 
         let screen = egui_wgpu::ScreenDescriptor {
@@ -1044,6 +1068,7 @@ impl Renderer {
             &screen,
         );
         {
+            let timestamps = profiler.as_mut().and_then(|p| p.pass("ui"));
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ui"),
@@ -1056,17 +1081,24 @@ impl Renderer {
                             store: wgpu::StoreOp::Store,
                         },
                     })],
+                    timestamp_writes: timestamps,
                     ..Default::default()
                 })
                 .forget_lifetime();
             self.egui_renderer
                 .render(&mut pass, &ui.primitives, &screen);
         }
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.end_frame(&mut encoder);
+        }
         let readback = capture
             .as_ref()
             .map(|_| self.copy_out(&mut encoder, &target));
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.after_submit();
+        }
         if let (Some(path), Some((buffer, padded))) = (capture, readback) {
             self.save_capture(&buffer, padded, &path)?;
         }
@@ -1078,16 +1110,169 @@ impl Renderer {
                     .context("waiting for an offscreen frame")?;
             }
         }
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.collect(&self.device);
+        }
+        self.profiler = profiler;
         Ok(true)
+    }
+
+    /// The world pass: sky, chunks, items, mobs, the crack, clouds, water
+    /// and glass, the outline, drawn into `view` with `set`'s pipelines.
+    /// Returns the chunks drawn.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_world(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        set: &Pipelines,
+        clear: wgpu::Color,
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+        camera: &Camera,
+        environment: &Environment,
+        frustum: &Frustum,
+        outline: u32,
+    ) -> usize {
+        let faces = set.faces;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("world"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: timestamps,
+            ..Default::default()
+        });
+        pass.set_bind_group(0, &self.globals_bind_group, &[]);
+        pass.set_pipeline(&set.sky);
+        pass.set_bind_group(1, &self.sun_bind_group, &[]);
+        pass.set_bind_group(2, &self.moon_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+        pass.set_pipeline(&set.blocks);
+        pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+        pass.set_bind_group(2, &self.glint_bind_group, &[]);
+        // Chunks in view, nearest first: opaque faces draw front to back,
+        // translucent ones back to front.
+        let mut visible: Vec<(f32, &ChunkBuffers)> = self
+            .chunks
+            .iter()
+            .filter_map(|(pos, chunk)| {
+                let (x, z) = pos.min_block();
+                let min = Vec3::new(x as f32, crate::config::MIN_Y as f32, z as f32);
+                let size = Vec3::new(CHUNK_SIZE as f32, WORLD_HEIGHT as f32, CHUNK_SIZE as f32);
+                let center = min + size / 2.0;
+                let distance =
+                    Vec2::new(center.x - camera.position.x, center.z - camera.position.z);
+                frustum
+                    .intersects_box(min, min + size)
+                    .then_some((distance.length_squared(), chunk))
+            })
+            .collect();
+        visible.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut bound = self.atlas_generation;
+        for (_, chunk) in &visible {
+            if chunk.atlas != bound {
+                bound = chunk.atlas;
+                pass.set_bind_group(1, self.atlas_for(bound), &[]);
+            }
+            draw_range(&mut pass, chunk, 0..chunk.opaque, faces);
+        }
+        pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+        if let Some(entities) = &self.entities {
+            draw_range(&mut pass, entities, 0..entities.opaque, faces);
+        }
+        if !self.mobs.is_empty() {
+            pass.set_pipeline(&set.mob);
+            for (kind, mesh) in &self.mobs {
+                // Past the mob textures come other players' skins.
+                let group = match self.mob_bind_groups.get(*kind) {
+                    Some(group) => group,
+                    None => match self.guest_skins.get(*kind - self.mob_bind_groups.len()) {
+                        Some(group) => group,
+                        None => continue,
+                    },
+                };
+                pass.set_bind_group(1, group, &[]);
+                draw_range(&mut pass, mesh, 0..mesh.opaque, faces);
+            }
+            // Vanilla's water mask: a boat's inside, in depth only, so the
+            // water drawn next stops at its rim.
+            pass.set_pipeline(&set.mask);
+            for (kind, mesh) in &self.mobs {
+                if mesh.translucent == 0 {
+                    continue;
+                }
+                if let Some(group) = self.mob_bind_groups.get(*kind) {
+                    pass.set_bind_group(1, group, &[]);
+                    let range = mesh.opaque..mesh.opaque + mesh.translucent;
+                    draw_range(&mut pass, mesh, range, faces);
+                }
+            }
+            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+        }
+        if let Some(crack) = &self.crack {
+            pass.set_pipeline(&set.crack);
+            draw_range(&mut pass, crack, 0..crack.opaque, faces);
+        }
+        // Clouds and water both blend: draw whichever is farther first.
+        let above_clouds = camera.position.y > environment.cloud_height;
+        if above_clouds && environment.sky && self.clouds {
+            self.draw_clouds(&mut pass, set);
+        }
+        pass.set_pipeline(&set.translucent);
+        pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+        // Entities' shadows, under the water drawn next.
+        if let Some(entities) = &self.entities {
+            let translucent = entities.opaque..entities.opaque + entities.translucent;
+            draw_range(&mut pass, entities, translucent, faces);
+        }
+        let mut bound = self.atlas_generation;
+        for (_, chunk) in visible.iter().rev() {
+            if chunk.atlas != bound {
+                bound = chunk.atlas;
+                pass.set_bind_group(1, self.atlas_for(bound), &[]);
+            }
+            let range = chunk.opaque..chunk.opaque + chunk.translucent;
+            draw_range(&mut pass, chunk, range, faces);
+        }
+        if !above_clouds && environment.sky && self.clouds {
+            self.draw_clouds(&mut pass, set);
+        }
+        if outline > 0 {
+            self.outline.draw(&mut pass, outline, faces);
+        }
+        visible.len()
     }
 }
 
 /// Draws `range` of a mesh's indices, if it isn't empty.
-fn draw_range(pass: &mut wgpu::RenderPass<'_>, mesh: &ChunkBuffers, range: std::ops::Range<u32>) {
+/// With `faces`, the face buffer is bound too (the Trailer pipelines).
+fn draw_range(
+    pass: &mut wgpu::RenderPass<'_>,
+    mesh: &ChunkBuffers,
+    range: std::ops::Range<u32>,
+    faces: bool,
+) {
     if range.is_empty() {
         return;
     }
     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+    if faces {
+        pass.set_vertex_buffer(1, mesh.faces.slice(..));
+    }
     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
     pass.draw_indexed(range, 0, 0..1);
 }
@@ -1122,6 +1307,33 @@ fn globals(
         ],
         lighting: [env.brightness, env.glint[0], env.glint[1], env.min_light],
     }
+}
+
+/// The block pipelines' vertex buffers: the vertices, and for the
+/// Trailer look the face buffer too.
+fn vertex_buffers(faces: bool) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
+    let mut buffers = vec![Some(vertex::Vertex::layout())];
+    if faces {
+        buffers.push(Some(vertex::face_layout()));
+    }
+    buffers
+}
+
+/// The per-frame uniforms.
+fn create_globals_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("globals"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
 }
 
 /// A texture and sampler, for the atlas and the sky images.
@@ -1224,6 +1436,7 @@ fn create_block_pipeline(
     format: wgpu::TextureFormat,
     translucent: bool,
     cull_back: bool,
+    faces: bool,
 ) -> wgpu::RenderPipeline {
     let (label, entry, blend) = if translucent {
         (
@@ -1241,7 +1454,7 @@ fn create_block_pipeline(
             module: shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[Some(vertex::Vertex::layout())],
+            buffers: &vertex_buffers(faces),
         },
         primitive: wgpu::PrimitiveState {
             cull_mode: cull_back.then_some(wgpu::Face::Back),
@@ -1276,6 +1489,7 @@ fn create_mask_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
+    faces: bool,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("water mask"),
@@ -1284,7 +1498,7 @@ fn create_mask_pipeline(
             module: shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[Some(vertex::Vertex::layout())],
+            buffers: &vertex_buffers(faces),
         },
         primitive: Default::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -1318,6 +1532,7 @@ fn create_crack_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
+    faces: bool,
 ) -> wgpu::RenderPipeline {
     let multiply = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::Dst,
@@ -1331,7 +1546,7 @@ fn create_crack_pipeline(
             module: shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
-            buffers: &[Some(vertex::Vertex::layout())],
+            buffers: &vertex_buffers(faces),
         },
         primitive: wgpu::PrimitiveState {
             cull_mode: Some(wgpu::Face::Back),
@@ -1371,21 +1586,20 @@ fn create_crack_pipeline(
 /// not written.
 fn create_cloud_pipeline(
     device: &wgpu::Device,
-    globals_layout: &wgpu::BindGroupLayout,
-    texture_layout: &wgpu::BindGroupLayout,
+    layouts: &Layouts,
+    shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    let shader = world_shader!(device, "clouds.wgsl");
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("clouds"),
-        bind_group_layouts: &[Some(globals_layout), Some(texture_layout)],
+        bind_group_layouts: &[Some(&layouts.globals), Some(&layouts.texture)],
         immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("clouds"),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
-            module: &shader,
+            module: shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
             buffers: &[],
@@ -1400,7 +1614,7 @@ fn create_cloud_pipeline(
         }),
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
-            module: &shader,
+            module: shader,
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
@@ -1417,17 +1631,16 @@ fn create_cloud_pipeline(
 /// Draws the sky behind everything: no depth test or write.
 fn create_sky_pipeline(
     device: &wgpu::Device,
-    globals_layout: &wgpu::BindGroupLayout,
-    texture_layout: &wgpu::BindGroupLayout,
+    layouts: &Layouts,
+    shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    let shader = world_shader!(device, "sky.wgsl");
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky"),
         bind_group_layouts: &[
-            Some(globals_layout),
-            Some(texture_layout),
-            Some(texture_layout),
+            Some(&layouts.globals),
+            Some(&layouts.texture),
+            Some(&layouts.texture),
         ],
         immediate_size: 0,
     });
@@ -1435,7 +1648,7 @@ fn create_sky_pipeline(
         label: Some("sky"),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
-            module: &shader,
+            module: shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
             buffers: &[],
@@ -1450,7 +1663,7 @@ fn create_sky_pipeline(
         }),
         multisample: Default::default(),
         fragment: Some(wgpu::FragmentState {
-            module: &shader,
+            module: shader,
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(format.into())],
@@ -1503,6 +1716,44 @@ fn srgb_to_linear(c: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A device with no window, or None where there's no GPU (CI).
+    pub(crate) fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+        pollster::block_on(adapter.request_device(&Default::default())).ok()
+    }
+
+    /// The Trailer look's pipelines are made at startup (so F12 never
+    /// waits); they must add less than 300 ms. Also checks every world
+    /// shader compiles for both targets.
+    #[test]
+    fn trailer_pipelines_add_under_300_ms_to_startup() {
+        let Some((device, _queue)) = headless_device() else {
+            eprintln!("skipped: no GPU");
+            return;
+        };
+        let layouts = Layouts::new(&device);
+        let shaders = Shaders::new(&device);
+        let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let _vanilla = Pipelines::new(&device, &layouts, &shaders, format, false);
+        let started = std::time::Instant::now();
+        let _trailer = Pipelines::new(
+            &device,
+            &layouts,
+            &shaders,
+            visuals::frame::HDR_FORMAT,
+            true,
+        );
+        let _frame = visuals::frame::TrailerFrame::new(&device, format);
+        let took = started.elapsed();
+        println!(
+            "Trailer pipelines made in {:.1} ms",
+            took.as_secs_f64() * 1000.0
+        );
+        assert!(took < std::time::Duration::from_millis(300), "{took:?}");
+    }
 
     #[test]
     fn srgb_to_linear_endpoints_and_midpoint() {

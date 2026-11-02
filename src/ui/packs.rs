@@ -54,6 +54,8 @@ pub struct PackScreen {
     /// The folder's modification time when last read, and when it was checked.
     scanned: Option<SystemTime>,
     checked: Instant,
+    /// The look whose list this is (each look has its own, v1.4).
+    look: Option<&'static str>,
 }
 
 impl PackScreen {
@@ -66,9 +68,16 @@ impl PackScreen {
             selected: Vec::new(),
             scanned: None,
             checked: Instant::now(),
+            look: None,
         };
         screen.rescan(enabled);
         screen
+    }
+
+    /// Says which look's list is being edited.
+    pub fn for_look(mut self, look: &'static str) -> Self {
+        self.look = Some(look);
+        self
     }
 
     /// Reads the folder again, keeping the current selection and order.
@@ -139,6 +148,12 @@ impl PackScreen {
                 .color(Color32::WHITE),
         );
         ui.label(RichText::new("Packs on top override the ones below them").color(GRAY));
+        if let Some(look) = self.look {
+            ui.label(
+                RichText::new(format!("For the {look} look (each look has its own list)"))
+                    .color(GRAY),
+            );
+        }
         ui.add_space(12.0);
         let list_height = (ui.available_height() - 110.0).max(120.0);
         let mut click = None;

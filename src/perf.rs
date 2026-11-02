@@ -190,9 +190,100 @@ pub fn run_many(bench: &Bench, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// The looks `--all-looks` measures: (--visuals, --quality, label suffix).
+pub const ALL_LOOKS: [(&str, &str, &str); 4] = [
+    ("vanilla", "medium", ""),
+    ("trailer", "low", "-trailer-low"),
+    ("trailer", "medium", "-trailer-medium"),
+    ("trailer", "high", "-trailer-high"),
+];
+
+/// `--perf-test --all-looks`: runs the perf test (with its `--runs`) once
+/// per look in child processes, writes `docs/perf/<label>[-trailer-<q>].json`
+/// for each, adds each Trailer row's extra GPU time over Vanilla's
+/// (`gpu_extra_ms`, and `gpu_world_extra_ms` for the world pass), and
+/// writes all four tables into `docs/perf/<label>.md`.
+pub fn run_all_looks(args: &[String]) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    // This command line minus --all-looks, --visuals, --quality, --row
+    // and --label.
+    let mut rest = Vec::new();
+    let mut label = None;
+    let mut words = args.iter().skip(1);
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--all-looks" => {}
+            "--visuals" | "--quality" | "--row" => {
+                words.next();
+            }
+            "--label" => label = words.next().cloned(),
+            _ => rest.push(word.clone()),
+        }
+    }
+    let label = label.unwrap_or_else(|| format!("m{}", bench::PERF_MILESTONE));
+    let mut all = Vec::new();
+    for (look, quality, suffix) in ALL_LOOKS {
+        let name = format!("{label}{suffix}");
+        println!("perf: {look} {quality} ({name})");
+        let status = Command::new(&exe)
+            .args(&rest)
+            .args(["--visuals", look, "--quality", quality, "--label", &name])
+            .status()?;
+        if !status.success() {
+            bail!("{look} {quality} failed: {status}");
+        }
+        let path = format!("docs/perf/{name}.json");
+        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+        all.push((path, serde_json::from_str::<Results>(&text)?));
+    }
+    let vanilla = all[0].1.measures.clone();
+    for (path, results) in all.iter_mut().skip(1) {
+        add_extra(&mut results.measures, &vanilla);
+        results.write(Path::new(path))?;
+    }
+    let mut md = format!("# {label} performance, every look\n\n");
+    for (_, results) in &all {
+        md += &results.markdown().replacen("# ", "## ", 1);
+        md += "\n";
+    }
+    let md_path = format!("docs/perf/{label}.md");
+    std::fs::write(&md_path, &md)?;
+    println!("{md}\nwrote {md_path}");
+    Ok(())
+}
+
+/// A Trailer row's extra GPU time per frame over Vanilla's, measured on
+/// the same flight: the whole frame's, and the world pass's.
+pub fn add_extra(trailer: &mut BTreeMap<String, f64>, vanilla: &BTreeMap<String, f64>) {
+    for (key, extra) in [
+        ("gpu_total_ms", "gpu_extra_ms"),
+        ("gpu_world_ms", "gpu_world_extra_ms"),
+    ] {
+        if let (Some(t), Some(v)) = (trailer.get(key), vanilla.get(key)) {
+            let difference = (t - v).max(0.0);
+            trailer.insert(extra.to_owned(), difference);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_gpu_time_is_over_vanillas() {
+        let vanilla = BTreeMap::from([
+            ("gpu_total_ms".to_owned(), 5.0),
+            ("gpu_world_ms".to_owned(), 4.0),
+        ]);
+        let mut trailer = BTreeMap::from([
+            ("gpu_total_ms".to_owned(), 7.5),
+            ("gpu_world_ms".to_owned(), 4.5),
+        ]);
+        add_extra(&mut trailer, &vanilla);
+        assert_eq!(trailer["gpu_extra_ms"], 2.5);
+        assert_eq!(trailer["gpu_world_extra_ms"], 0.5);
+    }
 
     #[test]
     fn median_and_spread_of_three_runs() {
