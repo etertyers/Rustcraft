@@ -1,0 +1,287 @@
+{
+    "1/end/0,0": (
+        blocks: "70f948d00b935ff4",
+        light: "8a68dec3e186f59f",
+        mesh: "f658815eb8db6888",
+    ),
+    "1/end/0,1": (
+        blocks: "b4b831647def4909",
+        light: "4e18035b811e63cf",
+        mesh: "24479afba4f3690a",
+    ),
+    "1/end/1,0": (
+        blocks: "0a19f4c558cb7687",
+        light: "e806cc3b65df2305",
+        mesh: "4606b6ae7b31fbff",
+    ),
+    "1/end/1,1": (
+        blocks: "ed0350fe43edcea7",
+        light: "8cd0706d628f231e",
+        mesh: "7b25396dc98e35f8",
+    ),
+    "1/nether/0,0": (
+        blocks: "eada424cd688b32e",
+        light: "2d3f9a6319463e8d",
+        mesh: "27a0442051b925bb",
+    ),
+    "1/nether/0,1": (
+        blocks: "74679f2c4e6b2fb1",
+        light: "ded3c1887b7b4386",
+        mesh: "38da369d88e794d4",
+    ),
+    "1/nether/1,0": (
+        blocks: "6ef819cdffb24477",
+        light: "9d49bd2fce0bfa76",
+        mesh: "0abac99cdd69ecbf",
+    ),
+    "1/nether/1,1": (
+        blocks: "4d54dfd7e21f66de",
+        light: "7f3ce770497685a9",
+        mesh: "2bbbbcddf3b2ac10",
+    ),
+    "1/overworld/-1,-1": (
+        blocks: "642a9a7ad1c9d2c5",
+        light: "c25be3711819cc12",
+        mesh: "c7996ee2c753360e",
+    ),
+    "1/overworld/-1,0": (
+        blocks: "2cd4a4f3db909dbe",
+        light: "6010711b70f2dc5a",
+        mesh: "92eda489b6483782",
+    ),
+    "1/overworld/-1,1": (
+        blocks: "59d5eeab15da5b0c",
+        light: "68a52da5b74ba9f3",
+        mesh: "0f934277ad2116c0",
+    ),
+    "1/overworld/-300,250": (
+        blocks: "347dd61b6e1c8f51",
+        light: "d48b22860cf458cc",
+        mesh: "984332efba14e923",
+    ),
+    "1/overworld/0,-1": (
+        blocks: "3269fc97b01d03db",
+        light: "a5c9be2fc3c50aee",
+        mesh: "4b1de3d248ef3bf4",
+    ),
+    "1/overworld/0,0": (
+        blocks: "e201a0830d5fe18c",
+        light: "fb3b81d4d9732bf6",
+        mesh: "656821e89d8dc84f",
+    ),
+    "1/overworld/0,1": (
+        blocks: "7751ae65cca30c85",
+        light: "8e8a6f5c9d1230d2",
+        mesh: "0b205471863a6e1c",
+    ),
+    "1/overworld/1,-1": (
+        blocks: "cc96f3a3f27c510b",
+        light: "9943fcb28e117779",
+        mesh: "1b28d698a4e349fe",
+    ),
+    "1/overworld/1,0": (
+        blocks: "d72ba0daabb5325f",
+        light: "ff543aae204f2da4",
+        mesh: "7109097118ff5489",
+    ),
+    "1/overworld/1,1": (
+        blocks: "4cbdc8a2974a752f",
+        light: "46086198df7c28f7",
+        mesh: "e4cc553aec82ae55",
+    ),
+    "1/overworld/100,-40": (
+        blocks: "8c0b2abe793e55ae",
+        light: "89a776e4be4e437e",
+        mesh: "8aaf33d87f44b1e0",
+    ),
+    "12345/end/0,0": (
+        blocks: "3b540015bd6d05c4",
+        light: "00d9b702920d22a1",
+        mesh: "b9e1f3c55e052f5e",
+    ),
+    "12345/end/0,1": (
+        blocks: "c246e0559344e411",
+        light: "9d2eee7d4242860f",
+        mesh: "395d4c1c23a14e9b",
+    ),
+    "12345/end/1,0": (
+        blocks: "24e619e073dfc5f1",
+        light: "4934ab02be2b216a",
+        mesh: "44076246aa19ffd8",
+    ),
+    "12345/end/1,1": (
+        blocks: "06b1c589d1ef0cf5",
+        light: "628a15c7ac6ad111",
+        mesh: "d27bdb1372ba2c94",
+    ),
+    "12345/nether/0,0": (
+        blocks: "71bf2f56954a2f66",
+        light: "abfb0bb9ad92138c",
+        mesh: "e618baac541ac962",
+    ),
+    "12345/nether/0,1": (
+        blocks: "d87bbc22b3be9585",
+        light: "f5bdf9fd1af2cc66",
+        mesh: "c8c1d3f29ea040b7",
+    ),
+    "12345/nether/1,0": (
+        blocks: "0aaaa1fee4b50ef2",
+        light: "979b9743bf8bc718",
+        mesh: "a3c76495655e33ac",
+    ),
+    "12345/nether/1,1": (
+        blocks: "a8e532fb8379604a",
+        light: "d5bcd60d95d4caa7",
+        mesh: "99509bb57a739c41",
+    ),
+    "12345/overworld/-1,-1": (
+        blocks: "0b08265642be1d3f",
+        light: "17bf7a2bce80f9d5",
+        mesh: "65e7df7ee1474a11",
+    ),
+    "12345/overworld/-1,0": (
+        blocks: "db7deeed29cc5bc0",
+        light: "444291796dd28bac",
+        mesh: "adb185b100f701ac",
+    ),
+    "12345/overworld/-1,1": (
+        blocks: "85a46f1722b2881e",
+        light: "f5aec3125309c030",
+        mesh: "a72edb5b64bb0bcc",
+    ),
+    "12345/overworld/-300,250": (
+        blocks: "002566af2669a963",
+        light: "08d30d3aa40a9000",
+        mesh: "7bc603ffaeb1899e",
+    ),
+    "12345/overworld/0,-1": (
+        blocks: "b02975be97a06b78",
+        light: "91641508a3a4e8a3",
+        mesh: "0aa739f8f0365ac6",
+    ),
+    "12345/overworld/0,0": (
+        blocks: "35e61b4de222cfe6",
+        light: "cbe77cf0e25cae5c",
+        mesh: "2b17fe3a73911a54",
+    ),
+    "12345/overworld/0,1": (
+        blocks: "f9780f8dd5204aad",
+        light: "db16bc9c53fad044",
+        mesh: "43ae0d88bf3e6859",
+    ),
+    "12345/overworld/1,-1": (
+        blocks: "6b050c75b0fda024",
+        light: "7578b335b330c6ac",
+        mesh: "e6052080ff4a4f28",
+    ),
+    "12345/overworld/1,0": (
+        blocks: "784c9c0177a7ad2d",
+        light: "1b4496dd7d2eab3a",
+        mesh: "e3ad002df6a94835",
+    ),
+    "12345/overworld/1,1": (
+        blocks: "bc6b6ffa56d54465",
+        light: "b7eb637217ada9e2",
+        mesh: "0c1e40af083f207e",
+    ),
+    "12345/overworld/100,-40": (
+        blocks: "54e2f2f86bc950b4",
+        light: "67375d2d26544682",
+        mesh: "590d547941ad2afc",
+    ),
+    "20111118/end/0,0": (
+        blocks: "8a5cb788efcf4c16",
+        light: "982a27a287cea1ab",
+        mesh: "bcd5fb9a7e7053d3",
+    ),
+    "20111118/end/0,1": (
+        blocks: "4a10976846150e23",
+        light: "a6670864b5da7c24",
+        mesh: "62f01996fc1e5bee",
+    ),
+    "20111118/end/1,0": (
+        blocks: "4531662ab42f0b57",
+        light: "0e106e09e0bc6f05",
+        mesh: "3c5a8f4ead697e2b",
+    ),
+    "20111118/end/1,1": (
+        blocks: "46e2e1d0b1f39761",
+        light: "4cd21caa9d4ed7b7",
+        mesh: "bef5a677fd7ed499",
+    ),
+    "20111118/nether/0,0": (
+        blocks: "edb3f018269a5402",
+        light: "76895f512df595a8",
+        mesh: "bedb9b4a9d596c21",
+    ),
+    "20111118/nether/0,1": (
+        blocks: "46a12dea46e9d337",
+        light: "ed6ecf97d9d777e5",
+        mesh: "1385981118e0e3e5",
+    ),
+    "20111118/nether/1,0": (
+        blocks: "5c95a594c3230c7b",
+        light: "f03efc7396fa2224",
+        mesh: "06a070b6c0beb825",
+    ),
+    "20111118/nether/1,1": (
+        blocks: "4fcbd87b99ec52c9",
+        light: "ea8e0f4bbb6fad40",
+        mesh: "788d77c4592989f3",
+    ),
+    "20111118/overworld/-1,-1": (
+        blocks: "e806f6b5a8c8bcaf",
+        light: "eab876a49aef9c39",
+        mesh: "1058fdca2cedba54",
+    ),
+    "20111118/overworld/-1,0": (
+        blocks: "464d1de3d2177a8e",
+        light: "072e72b08e2cbbf3",
+        mesh: "07373fde8a10681c",
+    ),
+    "20111118/overworld/-1,1": (
+        blocks: "d0bc4c20995577c7",
+        light: "0e3b24583f00a995",
+        mesh: "eec3bf6a6a4677e1",
+    ),
+    "20111118/overworld/-300,250": (
+        blocks: "71d72623d76706bc",
+        light: "4368858a801b9f69",
+        mesh: "02f0b176afae60ad",
+    ),
+    "20111118/overworld/0,-1": (
+        blocks: "8734eb04d23219d4",
+        light: "81d32237e986caaa",
+        mesh: "925d6bfe2e984b9a",
+    ),
+    "20111118/overworld/0,0": (
+        blocks: "59955c8ac25d5fbf",
+        light: "47912f95db9e0613",
+        mesh: "02ec813ec71bdfaf",
+    ),
+    "20111118/overworld/0,1": (
+        blocks: "d1f147880b77d5d4",
+        light: "882b96330df5af1d",
+        mesh: "785c429b4c80e896",
+    ),
+    "20111118/overworld/1,-1": (
+        blocks: "e5d61e1387933716",
+        light: "fe9622658d65dac3",
+        mesh: "93f02031ba67c07a",
+    ),
+    "20111118/overworld/1,0": (
+        blocks: "a9df6fc762c6dd9b",
+        light: "41b6a03571823747",
+        mesh: "4d62d17c4506d1cb",
+    ),
+    "20111118/overworld/1,1": (
+        blocks: "484377e8035b2051",
+        light: "e2ecd74a81750664",
+        mesh: "8526b93903534ea8",
+    ),
+    "20111118/overworld/100,-40": (
+        blocks: "142e423e8249713a",
+        light: "e2cbc229b390c552",
+        mesh: "0b3f87ca6a7f19fa",
+    ),
+}

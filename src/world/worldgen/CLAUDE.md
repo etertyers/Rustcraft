@@ -18,3 +18,4 @@ Nested file: only rules that also appear in the root CLAUDE.md or in a milestone
 - Unit-test worldgen logic without a GPU: the reference-evaluator comparison against the JSON, noise value factors and standard deviations, the carver tunnel-count test, structure placement rules.
 - Tools: `--cave-test`, `--cave-openings`, `--cave-slice`, `--nether-map`, `--structure-test`, `--spawn-test`, `--flower-test` (usage in `--help`).
 - Chunk generation must not get slower (perf gate, root §7). Never lower render distance or world height to pass it.
+- Golden hashes (`tests/golden.rs`) cover generated chunks; update them only as root §7 says.
