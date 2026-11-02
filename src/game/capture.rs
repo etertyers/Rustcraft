@@ -15,8 +15,6 @@ use crate::world::structure::template::{Sketch, write};
 
 /// The biggest region one capture may hold, each way.
 const MAX_SIZE: i32 = 64;
-/// Ticks a message stays on screen.
-const MESSAGE_TICKS: u32 = 100;
 
 impl Game {
     /// Marks corner `which` (0 or 1) at the block under the crosshair.
@@ -25,13 +23,16 @@ impl Game {
             return;
         }
         let Some(hit) = self.player.target.as_ref().map(|hit| hit.block) else {
-            self.player.message = Some(("Look at a block to mark a corner".into(), MESSAGE_TICKS));
+            self.player.show("Look at a block to mark a corner");
             return;
         };
         self.player.capture[which] = Some(hit);
-        self.player.message = Some((
-            format!("Corner {} at {} {} {}", which + 1, hit.x, hit.y, hit.z),
-            MESSAGE_TICKS,
+        self.player.show(format!(
+            "Corner {} at {} {} {}",
+            which + 1,
+            hit.x,
+            hit.y,
+            hit.z
         ));
     }
 
@@ -45,7 +46,7 @@ impl Game {
             Err(err) => format!("Couldn't save: {err}"),
         };
         log::info!("{text}");
-        self.player.message = Some((text, MESSAGE_TICKS));
+        self.player.show(text);
     }
 
     /// The marked region as a template, its corner at the origin.

@@ -194,11 +194,19 @@ pub trait Host {
     fn loot(&mut self, table: &str) -> Result<Vec<(String, u32)>, String>;
 }
 
+/// The line id the overlay message uses, so a new one replaces the old.
+pub const ACTIONBAR: &str = "\u{0}actionbar";
+
 /// The client as a mod may touch it.
 pub trait ClientHost {
-    /// Text above the hotbar. `seconds` of `None` keeps it until it is
-    /// set to `None` text.
+    /// Text above the hotbar for `seconds` (3 if `None`) at full opacity,
+    /// then fading out over 1 more; `None` text clears the line.
     fn hud_text(&mut self, id: &str, text: Option<String>, seconds: Option<f32>);
+    /// The overlay message (action bar): `ticks` at full opacity, then a
+    /// fade, replacing the one before.
+    fn actionbar(&mut self, text: String, ticks: u32) {
+        self.hud_text(ACTIONBAR, Some(text), Some(ticks as f32 / 20.0));
+    }
     /// Lights every block at least this much (0–15); `None` is off.
     fn brightness_override(&mut self, level: Option<u8>);
 }
@@ -1148,6 +1156,14 @@ fn install_client_api<'scope, 'env>(
                 Ok(())
             },
         )?,
+    )?;
+    client.set(
+        "show_actionbar",
+        scope.create_function(move |_, (text, ticks): (String, Option<u32>)| {
+            host.borrow_mut()
+                .actionbar(text, ticks.unwrap_or(crate::game::overlay::SHOW_TICKS));
+            Ok(())
+        })?,
     )?;
     client.set(
         "set_brightness_override",

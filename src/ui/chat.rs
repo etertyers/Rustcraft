@@ -149,8 +149,6 @@ pub struct Chat {
     /// put in.
     completions: Vec<String>,
     completed: Option<usize>,
-    /// The key that opened chat types itself the same frame; skip it.
-    skip_typed: bool,
     /// Seconds on the UI clock at the last frame (new lines are stamped
     /// with it).
     now: f64,
@@ -195,7 +193,6 @@ impl Chat {
         self.scroll = 0;
         self.completions.clear();
         self.completed = None;
-        self.skip_typed = true;
     }
 
     pub fn close(&mut self) {
@@ -262,10 +259,6 @@ impl Chat {
         let mut action = None;
         let mut typing = Vec::new();
         for event in events {
-            if self.skip_typed && matches!(event, Event::Text(_)) {
-                self.skip_typed = false;
-                continue;
-            }
             // Vanilla doesn't let `§` into chat (it would be formatting).
             if let Event::Text(typed) | Event::Paste(typed) = event {
                 typing.push(Event::Text(typed.replace('§', "")));
@@ -304,7 +297,6 @@ impl Chat {
                 _ => typing.push(event.clone()),
             }
         }
-        self.skip_typed = false;
         if self.input.edit(&typing) {
             self.completions.clear();
             self.completed = None;

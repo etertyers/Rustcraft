@@ -111,8 +111,6 @@ pub enum WorldKind {
 /// Mobs farther than this from the camera aren't drawn (1.0.0's
 /// `isInRangeToRenderDist` for a mob about a block across).
 const MOB_DRAW_DISTANCE: f64 = 64.0;
-/// How long "Local game hosted on port …" shows.
-const LAN_MESSAGE_TICKS: u32 = 100;
 /// Name tags show for players this near (vanilla's 64 blocks).
 const NAME_TAG_DISTANCE: f32 = 64.0;
 /// How long joining a LAN world waits for the host to answer.
@@ -173,6 +171,13 @@ pub struct App {
     book_ghost: Option<usize>,
     /// The tab the creative inventory opens on: the last one used.
     creative_tab: CreativeTab,
+    /// A key press just opened a screen (or moved to a box), so the
+    /// character it types is dropped (vanilla's `ignoreTextInput`).
+    swallow_text: bool,
+    /// An input-method commit now would be for the key that opened a screen.
+    ime_commit_dropped: bool,
+    /// Whether the window's input method is on.
+    ime_on: bool,
     /// The screens open over the game; the one place that decides whether
     /// the camera has the mouse.
     stack: ScreenStack,
@@ -290,6 +295,9 @@ impl App {
             book_tab_icons: Vec::new(),
             book_ghost: None,
             creative_tab: CreativeTab::Items(0),
+            swallow_text: false,
+            ime_commit_dropped: false,
+            ime_on: true,
             stack: ScreenStack::default(),
             last_frame: Instant::now(),
             occluded: false,
@@ -534,7 +542,7 @@ impl App {
                 format!("Couldn't open to LAN: {err}")
             }
         };
-        server.game.player.message = Some((text, LAN_MESSAGE_TICKS));
+        server.game.player.show(text);
         self.resume();
     }
 
@@ -982,7 +990,41 @@ impl App {
             return;
         };
         let pressed = event.state == ElementState::Pressed;
-        self.on_input(Input::Key(key), pressed, event.repeat);
+        if self.input_drops_text(Input::Key(key), pressed, event.repeat) {
+            // egui queued the character with the key press, before the
+            // screen existed.
+            if let Some(debug_ui) = self.debug_ui.as_mut() {
+                debug_ui.drop_queued_text();
+            }
+        }
+    }
+
+    /// Plays a key press or release and says whether it opened a screen
+    /// or moved to a text box, in which case the character typed by the
+    /// same key press is not for the box (vanilla `ignoreTextInput`). The
+    /// one place that decides this, so no screen needs its own rule.
+    fn input_drops_text(&mut self, input: Input, pressed: bool, repeat: bool) -> bool {
+        let depth = self.stack.depth();
+        self.swallow_text = false;
+        self.on_input(input, pressed, repeat);
+        let dropped = pressed && !repeat && (self.stack.depth() > depth || self.swallow_text);
+        self.swallow_text = false;
+        // An input-method commit for this press arrives after it; the
+        // next key event (the release) ends the wait.
+        self.ime_commit_dropped = dropped;
+        dropped
+    }
+
+    /// Turns the window's input method on only while a text box has the
+    /// keyboard, so no commit arrives for a key that isn't typing.
+    fn update_ime(&mut self) {
+        let want = self.types_into_a_box() || self.chat.is_open() || self.command_block.is_some();
+        if want != self.ime_on {
+            self.ime_on = want;
+            if let Some(window) = &self.window {
+                window.set_ime_allowed(want);
+            }
+        }
     }
 
     /// A key press or release, or a mouse button's while the camera has
@@ -1077,6 +1119,18 @@ impl App {
             }
         } else if escape && press && self.game.is_some() {
             self.pause_game();
+        } else if is(Action::Chat)
+            && press
+            && let Some(Screen::Creative { tab, scroll }) = self.screen.as_mut()
+            && *tab != CreativeTab::Search
+        {
+            // The chat key opens Search on the other tabs (the "t" itself
+            // is dropped).
+            (*tab, *scroll) = (CreativeTab::Search, 0.0);
+            self.swallow_text = true;
+            if let Some(debug_ui) = self.debug_ui.as_ref() {
+                crate::ui::creative::reset_search(debug_ui.context());
+            }
         } else if self.types_into_a_box() && !is(Action::DebugOverlay) {
             // The anvil's name box or the creative search box has the
             // keyboard (E and the digits are letters).
@@ -1461,10 +1515,7 @@ impl App {
         renderer.capture_next_frame(dir.join(&name));
         info!("saving screenshot {name}");
         if let Some(game) = self.game.as_mut() {
-            game.player.message = Some((
-                format!("Saved screenshot as {name}"),
-                SCREENSHOT_MESSAGE_TICKS,
-            ));
+            game.player.show(format!("Saved screenshot as {name}"));
         }
     }
 
@@ -2329,7 +2380,11 @@ impl App {
                 format!("Player {}", source.death_message())
             }),
             sleep: game.sleep_fade(),
-            message: game.player.message.as_ref().map(|(text, _)| text.clone()),
+            message: game
+                .player
+                .message
+                .as_ref()
+                .map(|(text, left)| (text.clone(), crate::game::overlay::alpha(*left as f32))),
             mod_lines: self.client_mods.lines(),
             portal: game.portal_swirl(),
             loading: game.is_arriving(),
@@ -2648,8 +2703,13 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        if let (Some(window), Some(debug_ui)) = (&self.window, self.debug_ui.as_mut()) {
+        let dropping = matches!(event, WindowEvent::Ime(_)) && self.ime_commit_dropped;
+        if !dropping && let (Some(window), Some(debug_ui)) = (&self.window, self.debug_ui.as_mut())
+        {
             debug_ui.on_window_event(window, &event);
+        }
+        if matches!(event, WindowEvent::KeyboardInput { .. }) {
+            self.ime_commit_dropped = false;
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -2678,7 +2738,10 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } if self.stack.reaches_game() => {
                 self.recenter_cursor(position);
             }
-            WindowEvent::KeyboardInput { event, .. } => self.on_key(&event),
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.on_key(&event);
+                self.update_ime();
+            }
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
@@ -2723,9 +2786,6 @@ impl ApplicationHandler for App {
         self.window = None;
     }
 }
-
-/// How long "Saved screenshot as ..." shows.
-const SCREENSHOT_MESSAGE_TICKS: u32 = 60;
 
 /// Vanilla's screenshot name for a moment, `2026-10-25_16.25.42`.
 fn screenshot_stamp(at: std::time::SystemTime) -> String {
@@ -3093,6 +3153,150 @@ mod tests {
         app.options.keys.reset_all();
         app.on_input(Input::Key(KeyCode::KeyE), true, false);
         assert!(app.screen.is_some(), "E opens the inventory again");
+    }
+
+    /// A creative app in a world, with a link to a server that isn't there
+    /// (so the chat keys open chat).
+    fn creative_app() -> App {
+        let mut app = app_in_a_world();
+        app.game = Some(flat_game(GameMode::Creative));
+        let (_server_end, client_end) = crate::net::transport::local_pair();
+        let settings = app.player_settings();
+        app.link = Some(crate::client::Client::join(
+            Box::new(client_end),
+            "Kenzo",
+            settings,
+        ));
+        app
+    }
+
+    /// What egui-winit hands egui for a key press that types `text`, run
+    /// through the app's key pipeline: the bindings and the screen stack
+    /// decide whether the text is dropped, as `on_key` does.
+    fn press(app: &mut App, key: KeyCode, text: &str) -> Vec<egui::Event> {
+        let mut events = vec![egui::Event::Text(text.to_owned())];
+        if app.input_drops_text(Input::Key(key), true, false) {
+            crate::ui::strip_text(&mut events);
+        }
+        app.input_drops_text(Input::Key(key), false, false);
+        events
+    }
+
+    fn search_box(app: &App, events: &[egui::Event]) -> String {
+        let mut text = String::new();
+        crate::ui::creative::edit(&mut text, events);
+        let _ = app;
+        text
+    }
+
+    #[test]
+    fn e_opens_the_creative_inventory_on_search_with_an_empty_box_then_types_an_e() {
+        use winit::keyboard::KeyCode;
+        let mut app = creative_app();
+        app.creative_tab = CreativeTab::Search;
+        let events = press(&mut app, KeyCode::KeyE, "e");
+        assert!(matches!(
+            app.screen,
+            Some(Screen::Creative {
+                tab: CreativeTab::Search,
+                ..
+            })
+        ));
+        assert_eq!(
+            search_box(&app, &events),
+            "",
+            "the e that opened it is dropped"
+        );
+        // With the box focused, E types an e (and doesn't close the screen).
+        let events = press(&mut app, KeyCode::KeyE, "e");
+        assert!(app.screen.is_some());
+        assert_eq!(search_box(&app, &events), "e");
+        // Escape closes it, and it reopens on the tab it was left on.
+        app.on_input(Input::Key(KeyCode::Escape), true, false);
+        assert!(app.screen.is_none());
+        press(&mut app, KeyCode::KeyE, "e");
+        assert!(matches!(
+            app.screen,
+            Some(Screen::Creative {
+                tab: CreativeTab::Search,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn on_other_tabs_letters_do_their_jobs_and_t_alone_switches_to_search() {
+        use winit::keyboard::KeyCode;
+        let mut app = creative_app();
+        app.creative_tab = CreativeTab::Items(2);
+        press(&mut app, KeyCode::KeyE, "e");
+        assert!(matches!(
+            app.screen,
+            Some(Screen::Creative {
+                tab: CreativeTab::Items(2),
+                ..
+            })
+        ));
+        // Other letters change nothing.
+        let events = press(&mut app, KeyCode::KeyX, "x");
+        assert!(matches!(
+            app.screen,
+            Some(Screen::Creative {
+                tab: CreativeTab::Items(2),
+                ..
+            })
+        ));
+        assert_eq!(
+            search_box(&app, &events),
+            "x",
+            "egui text isn't the box's here"
+        );
+        // T goes to Search with nothing typed.
+        let events = press(&mut app, KeyCode::KeyT, "t");
+        assert!(matches!(
+            app.screen,
+            Some(Screen::Creative {
+                tab: CreativeTab::Search,
+                ..
+            })
+        ));
+        assert_eq!(search_box(&app, &events), "");
+        // Back on another tab, E closes the inventory.
+        app.screen = Some(Screen::Creative {
+            tab: CreativeTab::Items(0),
+            scroll: 0.0,
+        });
+        press(&mut app, KeyCode::KeyE, "e");
+        assert!(app.screen.is_none());
+    }
+
+    #[test]
+    fn the_command_key_opens_chat_with_exactly_one_slash_and_t_with_nothing() {
+        use winit::keyboard::KeyCode;
+        let ctx = egui::Context::default();
+        let settings = crate::ui::chat::ChatSettings::default();
+        let typed = |app: &mut App, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                let _ = app.chat.show(ui.ctx(), &settings);
+            });
+            output.textures_delta.clear();
+            app.chat.input().to_owned()
+        };
+        let mut app = creative_app();
+        let events = press(&mut app, KeyCode::Slash, "/");
+        assert!(app.chat.is_open());
+        assert_eq!(typed(&mut app, events), "/");
+        let mut app = creative_app();
+        let events = press(&mut app, KeyCode::KeyT, "t");
+        assert!(app.chat.is_open());
+        assert_eq!(typed(&mut app, events), "");
+        // Keys typed after it opened are the box's.
+        let events = press(&mut app, KeyCode::KeyA, "a");
+        assert_eq!(typed(&mut app, events), "a");
     }
 
     #[test]

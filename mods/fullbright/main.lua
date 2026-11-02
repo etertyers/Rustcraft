@@ -11,11 +11,7 @@ rc.register_key("toggle", {
         on = not on
         -- 15 is the brightest light level; nil puts the real light back.
         rc.client.set_brightness_override(on and 15 or nil)
-        if on then
-            rc.client.hud_text("fullbright", "Fullbright: ON")
-        else
-            -- "OFF" shows for two seconds; "ON" stays while it is on.
-            rc.client.hud_text("fullbright", "Fullbright: OFF", 2)
-        end
+        -- The overlay message above the hotbar: 3 seconds, then it fades.
+        rc.client.show_actionbar(on and "Fullbright: ON" or "Fullbright: OFF")
     end,
 })

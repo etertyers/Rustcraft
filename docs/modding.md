@@ -107,7 +107,8 @@ Handlers can't cancel the event; they run after it happened. Players are numbere
 
 | Call | |
 |---|---|
-| `rc.client.hud_text(id, text [, seconds])` | a line above the hotbar; no `seconds` keeps it until `hud_text(id, nil)` |
+| `rc.client.show_actionbar(text [, ticks])` | the overlay message above the hotbar: full opacity for `ticks` (default 60, 3 s), then a 20-tick fade; a new one replaces the old |
+| `rc.client.hud_text(id, text [, seconds])` | a line above the hotbar that fades like the overlay message; no `seconds` is 3 s (60 ticks), and `hud_text(id, nil)` clears it early |
 | `rc.client.set_brightness_override(level)` | light every block at least this much (0–15); `nil` is off |
 
 ### Sandbox
@@ -121,4 +122,6 @@ Only `table`, `string`, `math`, `utf8` and `coroutine` exist: no `os`, `io`, `de
 
 ## Fullbright
 
-`mods/fullbright/` is an ordinary client-side mod, on by default. **G** (rebindable under Key Binds > Mods) lights everything at full brightness and shows "Fullbright: ON" above the hotbar; G again turns it off. It works in single player and on LAN.
+`mods/fullbright/` is an ordinary client-side mod, on by default. **G** (rebindable under Key Binds > Mods) lights everything at full brightness and shows "Fullbright: ON" above the hotbar for 3 seconds, and it fades; G again turns it off ("Fullbright: OFF", the same way). It works in single player and on LAN.
+
+A copy of a bundled mod left in the `mods/` folder beside `saves/` is replaced by the bundled one when the bundled `version` in `mod.ron` is newer (whether it is enabled stays as set). Raise `version` when you change a bundled mod.

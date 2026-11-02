@@ -65,6 +65,11 @@ impl ScreenStack {
         self.layers.last().copied()
     }
 
+    /// How many screens are open.
+    pub fn depth(&self) -> usize {
+        self.layers.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
     }

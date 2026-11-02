@@ -1638,6 +1638,151 @@ mod tests {
         });
     }
 
+    #[test]
+    fn a_rowing_players_view_turns_with_the_boat_and_both_clients_see_the_same_facing() {
+        use std::cell::Cell;
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2
+                && c.iter().all(|(client, game)| {
+                    client.welcomed && block_at(game, IVec3::new(3, 63, 3)).is_some()
+                })
+        });
+        let mut water = Vec::new();
+        for x in -12..=12 {
+            for z in 4..=30 {
+                water.push((
+                    IVec3::new(x, 63, z),
+                    crate::world::block::BlockState::of(blocks::WATER),
+                ));
+            }
+        }
+        server.game.set_blocks(&water);
+        server.game.with_player(0, |game| {
+            game.fly_to(DVec3::new(0.5, 64.0, 1.5));
+            game.player.mode = GameMode::Survival;
+            let boat = ItemStack::new(items::by_name("oak_boat").unwrap(), 1);
+            game.player
+                .inventory
+                .set(game.player.inventory.selected, Some(boat));
+        });
+        clients[0].1.player.camera.yaw = std::f32::consts::PI;
+        clients[0].1.player.camera.pitch = -0.6;
+        let tap = |client: &mut Client| {
+            for pressed in [true, false] {
+                client.send(ClientMsg::Action {
+                    action: Action::Use,
+                    pressed,
+                    repeat: false,
+                    grabbed: true,
+                });
+            }
+        };
+        // Put the boat on the water, then get in it.
+        tap(&mut clients[0].0);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.boats.len() == 1 && c.iter().all(|(_, game)| game.boats.len() == 1)
+        });
+        tap(&mut clients[0].0);
+        run_until(&mut server, &mut clients, |s, _| {
+            s.game.boats[0].passengers.len() == 1
+        });
+        let wrap = |a: f32| {
+            (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+        };
+        let facing_off = |boat: &crate::entity::boat::Boat, yaw: f32| wrap(yaw - boat.yaw);
+        // Steer right until the boat has gone all the way round.
+        clients[0].1.player.keys.set_key(Action::Right, true);
+        let turned = Cell::new(0.0f32);
+        let last = Cell::new(server.game.boats[0].yaw);
+        let client_start = clients[0].1.player.camera.yaw;
+        let client_turned = Cell::new(0.0f32);
+        let client_last = Cell::new(client_start);
+        run_until(&mut server, &mut clients, |s, c| {
+            let yaw = s.game.boats[0].yaw;
+            turned.set(turned.get() + wrap(yaw - last.get()));
+            last.set(yaw);
+            let view = c[0].1.player.camera.yaw;
+            client_turned.set(client_turned.get() + wrap(view - client_last.get()));
+            client_last.set(view);
+            turned.get().abs() >= std::f32::consts::TAU
+        });
+        // Let the last snapshots land.
+        run_until(&mut server, &mut clients, |s, c| {
+            let yaw = s.game.boats[0].yaw;
+            turned.set(turned.get() + wrap(yaw - last.get()));
+            last.set(yaw);
+            let view = c[0].1.player.camera.yaw;
+            client_turned.set(client_turned.get() + wrap(view - client_last.get()));
+            client_last.set(view);
+            c[0].1
+                .boats
+                .first()
+                .is_some_and(|b| (b.yaw - yaw).abs() < 1e-4)
+        });
+        clients[0].1.player.keys.set_key(Action::Right, false);
+        let boat = server.game.boats[0].clone();
+        assert!(
+            turned.get().abs() >= std::f32::consts::TAU,
+            "the boat went round: {}",
+            turned.get().to_degrees()
+        );
+        // The rider's own view went round with it, on the client.
+        assert!(
+            (client_turned.get() - turned.get()).abs() < 0.2,
+            "client view turned {}° while the boat turned {}°",
+            client_turned.get().to_degrees(),
+            turned.get().to_degrees()
+        );
+        // Both clients and the server agree where the rider faces: within
+        // a tick of the boat's turn rate of the boat's front.
+        let off_server = facing_off(&boat, server.game.player_at(0).camera.yaw);
+        let off_client = facing_off(&boat, clients[0].1.player.camera.yaw);
+        assert!(
+            off_server.abs() < 0.3 && off_client.abs() < 0.3,
+            "{off_server} {off_client}"
+        );
+        let seen_by_bob = clients[1]
+            .1
+            .remote_players
+            .iter()
+            .find(|p| p.name == "Alice")
+            .map(|p| p.yaw)
+            .expect("Bob sees Alice");
+        assert!(
+            wrap(seen_by_bob - boat.yaw).abs() < 0.3,
+            "Bob sees Alice's body facing the boat's front: {seen_by_bob} vs {}",
+            boat.yaw
+        );
+        // The mouse can't take the view further than 105° from the front.
+        for _ in 0..40 {
+            clients[0].1.look(400.0, 0.0);
+        }
+        run_until(&mut server, &mut clients, |_, _| true);
+        for _ in 0..5 {
+            let boat = server.game.boats[0].clone();
+            let off = facing_off(&boat, clients[0].1.player.camera.yaw);
+            assert!(
+                off.abs() <= 105f32.to_radians() + 1e-3,
+                "the client's view is {}° off",
+                off.to_degrees()
+            );
+            let off = facing_off(&boat, server.game.player_at(0).camera.yaw);
+            assert!(
+                off.abs() <= 105f32.to_radians() + 1e-3,
+                "server {}°",
+                off.to_degrees()
+            );
+            let t0 = server.game.time();
+            run_until(&mut server, &mut clients, |s, _| s.game.time() > t0 + 2);
+        }
+        let mine = facing_off(&server.game.boats[0], clients[0].1.player.camera.yaw);
+        assert!(
+            mine.abs() > 100f32.to_radians(),
+            "the mouse did take it round to the clamp: {mine}"
+        );
+    }
+
     /// Flies Bob (a spectator, with the wheel at `scale`) east through
     /// water, mobs and terrain for `ticks` ticks, holding `sprint`: the
     /// client's and server's speeds in blocks a second each tick (from how

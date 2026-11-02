@@ -311,6 +311,11 @@ impl ViewState {
         }
     }
 
+    /// Turns the body to face `yaw` at once (a rider in a boat).
+    pub fn face(&mut self, yaw: f32) {
+        self.body_yaw = yaw;
+    }
+
     /// How far the player walked in the last tick (vanilla's walk
     /// distance, 0.6 a block) and the walking speed it is compared with
     /// (the movement speed attribute, 0.1).

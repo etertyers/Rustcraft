@@ -52,6 +52,7 @@ pub mod nbt;
 mod nether_mobs;
 #[cfg(test)]
 mod offhand;
+pub mod overlay;
 mod portals;
 mod potions;
 pub mod predicate;
@@ -185,6 +186,10 @@ pub struct PlayerState {
     /// How many times the world has turned the player to face a new way
     /// (teleports), so a client takes the new look instead of its own.
     turned: u32,
+    /// How far the boat has turned this player's view in all (radians,
+    /// wrapped), so a client can add the turns it hasn't seen yet to the
+    /// look it keeps for itself.
+    boat_turn: f32,
     /// Look direction comes from the mouse; position follows `body` each frame.
     pub camera: Camera,
     /// How the player looks to the camera: swinging, bobbing, F5.
@@ -319,6 +324,11 @@ pub struct PlayerState {
 }
 
 impl PlayerState {
+    /// Shows `text` above the hotbar, replacing any notice there.
+    pub fn show(&mut self, text: impl Into<String>) {
+        self.message = Some((text.into(), overlay::TOTAL_TICKS));
+    }
+
     /// A player standing at `feet`, looking along `yaw` and `pitch`, with
     /// nothing in their inventory.
     pub fn new(feet: DVec3, yaw: f32, pitch: f32) -> Self {
@@ -327,6 +337,7 @@ impl PlayerState {
         Self {
             name: crate::options::DEFAULT_NAME.to_owned(),
             turned: 0,
+            boat_turn: 0.0,
             seen_credits: false,
             spawn_point: None,
             death_told: false,
@@ -1101,6 +1112,7 @@ impl Game {
         let s = config::MOUSE_SENSITIVITY * self.player.sensitivity;
         let dy = if self.player.invert_y { -dy } else { dy };
         self.player.camera.rotate(dx as f32 * s, -dy as f32 * s);
+        self.clamp_boat_look();
     }
 
     /// Scrolling down moves right along the hotbar, like Minecraft.
@@ -1423,6 +1435,7 @@ impl Game {
             self.tick_gateway();
         }
         self.tick_view();
+        self.face_boat();
         if self.eye_in() == Some(crate::world::block::Fluid::Water) {
             self.player.water_vision =
                 (self.player.water_vision + 1).min(environment::WATER_VISION_TICKS);

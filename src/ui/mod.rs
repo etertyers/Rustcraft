@@ -107,9 +107,9 @@ pub struct Hud {
     /// Set while in bed: how far asleep, 0–1.
     pub sleep: Option<f32>,
     /// A notice shown above the hotbar.
-    pub message: Option<String>,
+    pub message: Option<(String, f32)>,
     /// Lines mods draw above the hotbar, centered (Fullbright's "ON").
-    pub mod_lines: Vec<String>,
+    pub mod_lines: Vec<(String, f32)>,
     /// How strongly a portal's swirl covers the screen, 0–1.
     pub portal: f32,
     /// Set while the chunks around a player who changed dimension load.
@@ -254,6 +254,12 @@ impl DebugUi {
         let _ = self.state.on_window_event(window, event);
     }
 
+    /// Forgets the text egui has queued (and any input-method commit): the
+    /// character that came with a key press that opened a screen.
+    pub fn drop_queued_text(&mut self) {
+        strip_text(&mut self.state.egui_input_mut().events);
+    }
+
     /// Moves egui's pointer to `pos` (in points), for when the real cursor
     /// was put there without a mouse event.
     pub fn point_at(&mut self, pos: egui::Pos2) {
@@ -378,8 +384,8 @@ impl DebugUi {
             if let Some(names) = &hud.player_list {
                 paint_player_list(ui.painter(), full, names);
             }
-            if let Some(message) = &hud.message {
-                paint_message(ui.painter(), full, message);
+            if let Some((message, alpha)) = &hud.message {
+                paint_message(ui.painter(), full, message, *alpha);
             }
             if !hud.mod_lines.is_empty() && !hud.hidden {
                 paint_mod_lines(ui.painter(), full, &hud.mod_lines);
@@ -1072,27 +1078,33 @@ fn paint_name_tags(painter: &egui::Painter, full: egui::Rect, tags: &[NameTag]) 
     }
 }
 
-fn paint_message(painter: &egui::Painter, full: egui::Rect, text: &str) {
+/// The overlay message, centered above the hotbar, at `alpha` (0–1).
+fn paint_message(painter: &egui::Painter, full: egui::Rect, text: &str, alpha: f32) {
     let scale = gui::gui_scale(full);
     let font = egui::FontId::proportional(8.0 * scale);
-    let galley = painter.layout_no_wrap(text.to_owned(), font, Color32::WHITE);
-    let at = egui::pos2(full.left() + 2.0 * scale, full.bottom() - 48.0 * scale);
+    let white = Color32::from_white_alpha((alpha * 255.0) as u8);
+    let galley = painter.layout_no_wrap(text.to_owned(), font, white);
+    let at = egui::pos2(
+        full.center().x - galley.size().x / 2.0,
+        full.bottom() - 60.0 * scale,
+    );
     let rect = egui::Rect::from_min_size(at, galley.size()).expand(scale);
-    painter.rect_filled(rect, 0.0, Color32::from_black_alpha(128));
-    painter.galley(at, galley, Color32::WHITE);
+    painter.rect_filled(rect, 0.0, Color32::from_black_alpha((alpha * 128.0) as u8));
+    painter.galley(at, galley, white);
 }
 
 /// What mods write above the hotbar: centered, the newest nearest it.
-fn paint_mod_lines(painter: &egui::Painter, full: egui::Rect, lines: &[String]) {
+fn paint_mod_lines(painter: &egui::Painter, full: egui::Rect, lines: &[(String, f32)]) {
     let scale = gui::gui_scale(full);
     let font = egui::FontId::proportional(8.0 * scale);
-    for (i, line) in lines.iter().rev().enumerate() {
-        let galley = painter.layout_no_wrap(line.clone(), font.clone(), Color32::WHITE);
+    for (i, (line, alpha)) in lines.iter().rev().enumerate() {
+        let white = Color32::from_white_alpha((alpha * 255.0) as u8);
+        let galley = painter.layout_no_wrap(line.clone(), font.clone(), white);
         let y = full.bottom() - (72.0 + 11.0 * i as f32) * scale;
         let at = egui::pos2(full.center().x - galley.size().x / 2.0, y);
         let rect = egui::Rect::from_min_size(at, galley.size()).expand(scale);
-        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(128));
-        painter.galley(at, galley, Color32::WHITE);
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha((alpha * 128.0) as u8));
+        painter.galley(at, galley, white);
     }
 }
 
@@ -1108,6 +1120,11 @@ fn show_overlay(ctx: &egui::Context, text: &str) {
                     ui.label(RichText::new(text).monospace().color(Color32::WHITE));
                 });
         });
+}
+
+/// `events` without typed text or input-method events.
+pub fn strip_text(events: &mut Vec<egui::Event>) {
+    events.retain(|e| !matches!(e, egui::Event::Text(_) | egui::Event::Ime(_)));
 }
 
 #[cfg(test)]
