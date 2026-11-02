@@ -27,13 +27,43 @@ pub fn hdr_format(features: wgpu::Features) -> wgpu::TextureFormat {
 /// One texture the post passes read and write.
 struct Target {
     view: wgpu::TextureView,
-    /// Reads it in the next pass.
+    /// Reads it (and the post uniform) in the next pass.
     bind_group: wgpu::BindGroup,
+}
+
+/// Mirrors `Post` in post.wgsl.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct PostParams {
+    /// x: saturation; y: where the tone curve's shoulder starts; z: the
+    /// strength of the sunrise tint.
+    pub params: [f32; 4],
+    /// The sunrise and sunset tint.
+    pub tint: [f32; 4],
+}
+
+impl PostParams {
+    /// The tone curve and saturation, and a warm tint of `sunrise`
+    /// strength (0–1) at sunrise and sunset. With `fullbright` (a mod's
+    /// brightness override) the curve is the identity and there's no tint,
+    /// so nothing is darker than in Vanilla.
+    pub fn new(sunrise: f32, fullbright: bool) -> Self {
+        let (shoulder, sunrise) = if fullbright {
+            (1.0, 0.0)
+        } else {
+            (super::sun::SHOULDER, sunrise.clamp(0.0, 1.0))
+        };
+        Self {
+            params: [super::sun::SATURATION, shoulder, sunrise, 0.0],
+            tint: [1.05, 0.97, 0.86, 1.0],
+        }
+    }
 }
 
 pub struct TrailerFrame {
     /// Reads one texture with `textureLoad`.
     input_layout: wgpu::BindGroupLayout,
+    post_uniform: wgpu::Buffer,
     post: wgpu::RenderPipeline,
     /// The HDR target, at the frame's size; made on first use.
     hdr: Option<Target>,
@@ -47,16 +77,34 @@ impl TrailerFrame {
         let hdr_format = hdr_format(device.features());
         let input_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("post input"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let post_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("post"),
+            size: std::mem::size_of::<PostParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("post.wgsl"));
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -67,6 +115,7 @@ impl TrailerFrame {
         let post = fullscreen_pipeline(device, &layout, &shader, "post", format);
         Self {
             input_layout,
+            post_uniform,
             post,
             hdr: None,
             hdr_format,
@@ -98,10 +147,16 @@ impl TrailerFrame {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hdr input"),
             layout: &self.input_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.post_uniform.as_entire_binding(),
+                },
+            ],
         });
         self.hdr = Some(Target { view, bind_group });
     }
@@ -119,13 +174,16 @@ impl TrailerFrame {
     /// The post passes, from the HDR target into `frame`.
     pub fn post(
         &self,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         frame: &wgpu::TextureView,
+        params: &PostParams,
         profiler: Option<&mut GpuProfiler>,
     ) {
         let Some(hdr) = &self.hdr else {
             return;
         };
+        queue.write_buffer(&self.post_uniform, 0, bytemuck::bytes_of(params));
         let timestamps = profiler.and_then(|p| p.pass("post"));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("post"),

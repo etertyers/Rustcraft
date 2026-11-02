@@ -675,6 +675,17 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m55-forest-9am",
+        about: "the forest of forest-noon at 9 am, looking west with the morning sun behind: shadows of the trees on the grass and light falling through the leaves (use --compare)",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([-58.5, 81.0, 297.5], -std::f32::consts::FRAC_PI_2, -0.18)),
+        // 9 am: vanilla's day starts at 6 am with tick 0.
+        time: Some(3000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "lake-sunset",
         about: "a river on seed 12345 at sunset, looking west across the water to the shore and the setting sun",
         world: Some(WorldKind::Generated { seed: 12345 }),

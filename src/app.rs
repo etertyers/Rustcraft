@@ -1968,6 +1968,23 @@ impl App {
                     }
                 }
                 Some(frames) if frames >= SHOT_SETTLE_FRAMES && game.chunks.settled(center) => {
+                    // Where the light is along the view, for checking the
+                    // Trailer look's sun against the levels (M55 Step 0).
+                    let eye = game.player.camera.position;
+                    let forward = game.player.camera.forward();
+                    let samples: Vec<String> = [2.0, 5.0, 10.0, 20.0, 40.0]
+                        .iter()
+                        .map(|d| {
+                            let at = (eye + forward * *d).floor().as_ivec3();
+                            match game.chunks.light_at(at.x, at.y, at.z) {
+                                Some((sky, block)) => {
+                                    format!("{d} blocks: sky {sky} block {block}")
+                                }
+                                None => format!("{d} blocks: not loaded"),
+                            }
+                        })
+                        .collect();
+                    info!("light along the view: {}", samples.join("; "));
                     renderer.capture_next_frame(run.out.clone());
                     capturing = true;
                 }
@@ -2381,12 +2398,13 @@ impl App {
             dimension: game.dimension(),
             look: visuals_label(&self.options.visuals),
             gpu: match self.options.visuals.look {
-                crate::render::visuals::LookKind::Trailer => crate::ui::GpuTimes::from_averages(
-                    &renderer
-                        .profiler()
-                        .map(|p| p.averages())
-                        .unwrap_or_default(),
-                ),
+                crate::render::visuals::LookKind::Trailer => {
+                    let profiler = renderer.profiler();
+                    crate::ui::GpuTimes::from_averages(
+                        &profiler.as_ref().map(|p| p.averages()).unwrap_or_default(),
+                        profiler.as_ref().map_or(0.0, |p| p.span_average()),
+                    )
+                }
                 crate::render::visuals::LookKind::Vanilla => Default::default(),
             },
         };
