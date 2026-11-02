@@ -71,6 +71,7 @@ pub mod text;
 mod updates;
 pub mod view;
 mod villagers;
+pub mod water_report;
 pub mod weather;
 
 use std::{path::Path, sync::Arc};
@@ -324,6 +325,11 @@ pub struct PlayerState {
 }
 
 impl PlayerState {
+    /// Ticks the eyes have been under water (`environment::water_vision`).
+    pub fn water_vision_ticks(&self) -> u32 {
+        self.water_vision
+    }
+
     /// Shows `text` above the hotbar, replacing any notice there.
     pub fn show(&mut self, text: impl Into<String>) {
         self.message = Some((text.into(), overlay::TOTAL_TICKS));
@@ -1436,7 +1442,7 @@ impl Game {
         }
         self.tick_view();
         self.face_boat();
-        if self.eye_in() == Some(crate::world::block::Fluid::Water) {
+        if self.eyes_in() == Some(crate::world::block::Fluid::Water) {
             self.player.water_vision =
                 (self.player.water_vision + 1).min(environment::WATER_VISION_TICKS);
         } else {

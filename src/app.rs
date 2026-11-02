@@ -2387,6 +2387,7 @@ impl App {
                 .map(|(text, left)| (text.clone(), crate::game::overlay::alpha(*left as f32))),
             mod_lines: self.client_mods.lines(),
             portal: game.portal_swirl(),
+            underwater: game.underwater_overlay(self.client_mods.min_light()),
             loading: game.is_arriving(),
             boss: game.dragon_bar(),
             credits: game.credits_ticks(),
@@ -2520,9 +2521,8 @@ impl App {
             self.command_block.as_mut(),
         );
         game.difficulty = difficulty;
-        let mut environment = game.environment();
+        let mut environment = game.environment_with(self.client_mods.min_light());
         environment.brightness = self.options.brightness;
-        environment.min_light = self.client_mods.min_light();
         environment.glint = crate::ui::glint::glint_scale().into();
         let result = renderer.render(&game.view_camera(), &environment, ui);
         if capturing && let Some(run) = self.shot.as_mut() {

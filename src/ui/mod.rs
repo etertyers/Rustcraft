@@ -112,6 +112,9 @@ pub struct Hud {
     pub mod_lines: Vec<(String, f32)>,
     /// How strongly a portal's swirl covers the screen, 0–1.
     pub portal: f32,
+    /// The overlay over the screen with the eyes in water: its opacity and
+    /// where the texture sits (turns of the texture), `None` out of water.
+    pub underwater: Option<(f32, [f32; 2])>,
     /// Set while the chunks around a player who changed dimension load.
     pub loading: bool,
     /// The player's status effects (M26).
@@ -355,6 +358,9 @@ impl DebugUi {
             if let Some((screen, view)) = &mut screen {
                 actions = screens::show(ui.ctx(), screen, view, textures);
             }
+            if let (Some((alpha, offset)), Some(tex)) = (hud.underwater, &textures.underwater) {
+                paint_underwater(ui.ctx(), tex, alpha, offset);
+            }
             if hud.portal > 0.0 {
                 paint_portal(ui.ctx(), hud.portal);
             }
@@ -574,6 +580,19 @@ fn paint_effects(
             Color32::WHITE,
         );
     }
+}
+
+/// `misc/underwater` tiled four times across the screen, sliding with where
+/// the head turns, at `alpha` (modern `ScreenEffectRenderer.renderWater`).
+fn paint_underwater(ctx: &egui::Context, tex: &egui::TextureHandle, alpha: f32, offset: [f32; 2]) {
+    let full = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::unique("underwater"),
+    ));
+    let uv = egui::Rect::from_min_size(egui::pos2(offset[0], offset[1]), egui::vec2(4.0, 4.0));
+    let tint = Color32::from_white_alpha((alpha.clamp(0.0, 1.0) * 255.0).round() as u8);
+    painter.image(tex.id(), full, uv, tint);
 }
 
 /// The swirl over the screen while standing in a Nether portal: modern

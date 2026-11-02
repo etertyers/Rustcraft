@@ -64,7 +64,7 @@ cargo clippy -- -D warnings    # must pass before every commit
 cargo fmt                      # must be applied before every commit
 RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
-cargo run --release -- --perf-test [--nether|--end]   # the performance gate: writes docs/perf/m<N>.md (§7.2)
+cargo run --release -- --perf-test [--nether|--end|--underwater]   # the performance gate: writes docs/perf/m<N>.md (§7.2)
 cargo bench                    # chunk generation, lighting, meshing and fluid benchmarks
 cargo run --release -- --end         # an unsaved test world in the End, dragon circling (also --nether)
 cargo run --release -- --creative    # a new creative world "Creative test", opened without the menu

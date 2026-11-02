@@ -44,10 +44,32 @@ pub fn water_vision(ticks: u32) -> f32 {
     early * 0.6 + late * 0.4
 }
 
-/// Fog under water in `biome` (modern `FogRenderer` for `FogType.WATER`):
-/// the biome's water fog color, brightened toward its own full strength
-/// as the eyes adjust, and how far it reaches within `view`.
-pub fn water_fog(biome: Biome, vision: f32, view: f32) -> (Vec3, f32) {
+/// How far underwater fog reaches in `biome` once the eyes have been
+/// `ticks` under water (modern `FogRenderer`, `FogType.WATER`): 96 blocks
+/// times the water vision (at least a quarter), 15% less in swamps. Only
+/// the render distance cuts it short, never light or time of day.
+pub fn water_fog_end(biome: Biome, ticks: u32) -> f32 {
+    let swamp = matches!(biome, Biome::Swamp | Biome::MangroveSwamp);
+    WATER_FOG_END * water_vision(ticks).max(0.25) * if swamp { 0.85 } else { 1.0 }
+}
+
+/// How bright the light at the eyes is, 0–1: the brighter of the sky light
+/// (dimmed by the sun) and the block light, or a mod's brightness override
+/// (Fullbright) if brighter, as a share of full light.
+pub fn eye_brightness(sky: u8, block: u8, sun: f32, min_light: f32) -> f32 {
+    (f32::from(sky) * sun)
+        .max(f32::from(block))
+        .max(min_light)
+        .clamp(0.0, 15.0)
+        / 15.0
+}
+
+/// The color of fog under water in `biome`: the biome's water fog color
+/// scaled by the light at the eyes (`brightness`), and lifted toward its
+/// full strength by `lift` (0–1): Night Vision's scale or the water vision
+/// as the eyes adjust, whichever is more, as vanilla does. Time of day and
+/// depth reach the fog only through this color, never its distance.
+pub fn water_fog_color(biome: Biome, brightness: f32, lift: f32) -> Vec3 {
     let c = biome.water_fog_color();
     let color = Vec3::new(
         (c >> 16 & 0xFF) as f32,
@@ -55,15 +77,47 @@ pub fn water_fog(biome: Biome, vision: f32, view: f32) -> (Vec3, f32) {
         (c & 0xFF) as f32,
     ) / 255.0;
     let boost = 1.0 / color.max_element().max(1.0 / 255.0);
-    let color = color * (1.0 - vision) + color * boost * vision;
-    let end = (WATER_FOG_END * vision.max(0.25)).min(view);
-    (color, end)
+    let color = color * brightness.clamp(0.0, 1.0);
+    color * (1.0 - lift) + color * boost * lift
+}
+
+/// How opaque the full-screen underwater overlay (`misc/underwater.png`)
+/// is: vanilla's 0.1 times the light at the eyes (0–1).
+pub fn underwater_overlay_alpha(brightness: f32) -> f32 {
+    0.1 * brightness.clamp(0.0, 1.0)
 }
 
 impl Game {
-    /// The liquid the camera is in, if any.
+    /// The liquid the camera is in, if any (what the client draws).
     pub fn eye_in(&self) -> Option<Fluid> {
         self.fluid_at(self.player.camera.position.as_dvec3())
+    }
+
+    /// The overlay over the screen under water: its opacity (0.1 times the
+    /// light at the eyes) and where the texture sits, sliding with where the
+    /// head turns; `None` with the eyes out of water.
+    pub fn underwater_overlay(&self, min_light: f32) -> Option<(f32, [f32; 2])> {
+        if self.eye_in() != Some(Fluid::Water) {
+            return None;
+        }
+        let eye = self.player.camera.position.floor().as_ivec3();
+        let (sky, block) = self.chunks.light_at(eye.x, eye.y, eye.z).unwrap_or((15, 0));
+        let sun = self.environment_with(min_light).sun_brightness;
+        let alpha = underwater_overlay_alpha(eye_brightness(sky, block, sun, min_light));
+        let camera = &self.player.camera;
+        let offset = [
+            -camera.yaw.to_degrees() / 64.0,
+            camera.pitch.to_degrees() / 64.0,
+        ];
+        Some((alpha, offset))
+    }
+
+    /// The liquid the player's eyes are in, from where their body is: the
+    /// server has no camera for a player (it stays where they spawned), so
+    /// anything it decides must use this.
+    pub fn eyes_in(&self) -> Option<Fluid> {
+        let body = &self.player.body;
+        self.fluid_at(body.position() + glam::DVec3::Y * body.eye_height())
     }
 
     /// The sound event music is taken from where the player is: the credits'
@@ -95,6 +149,12 @@ impl Game {
     }
 
     pub fn environment(&self) -> Environment {
+        self.environment_with(0.0)
+    }
+
+    /// The environment to draw, with a mod's brightness override of
+    /// `min_light` (Fullbright) lighting the fog as well as the blocks.
+    pub fn environment_with(&self, min_light: f32) -> Environment {
         let p = self.player.camera.position.floor().as_ivec3();
         let biome = self.chunks.world().biome_at(p.x, p.z).unwrap_or_default();
         let view = (self.chunks.radius() * CHUNK_SIZE as i32) as f32;
@@ -114,30 +174,40 @@ impl Game {
             ),
             Dimension::Overworld => self.overworld_environment(biome, view),
         };
-        if self.eye_in() == Some(Fluid::Water) {
-            let (color, end) = water_fog(biome, water_vision(self.player.water_vision), view);
-            environment.fog_color = color;
-            environment.sky_color = color;
-            environment.fog_density = 0.0;
-            environment.fog_start = WATER_FOG_START;
-            environment.fog_end = end;
-            environment.sky = false;
-        }
         // Night vision lights everything, flickering in its last 10 s
         // (modern `GameRenderer.getNightVisionScale`).
-        if let Some(active) = self
+        let night_vision = self
             .player
             .stats
             .effects
             .get(crate::player::effects::Effect::NightVision)
-        {
-            let d = active.duration as f32;
-            let strength = if d > 200.0 {
-                1.0
-            } else {
-                0.7 + 0.3 * (d * std::f32::consts::PI * 0.2).sin()
-            };
-            environment.ambient = environment.ambient.max(strength);
+            .map_or(0.0, |active| {
+                let d = active.duration as f32;
+                if d > 200.0 {
+                    1.0
+                } else {
+                    0.7 + 0.3 * (d * std::f32::consts::PI * 0.2).sin()
+                }
+            });
+        environment.ambient = environment.ambient.max(night_vision);
+        environment.min_light = min_light;
+        if self.eye_in() == Some(Fluid::Water) {
+            let eye = self.player.camera.position.floor().as_ivec3();
+            let (sky, block) = self.chunks.light_at(eye.x, eye.y, eye.z).unwrap_or((15, 0));
+            let brightness = eye_brightness(
+                sky,
+                block,
+                environment.sun_brightness,
+                environment.min_light,
+            );
+            let lift = night_vision.max(water_vision(self.player.water_vision));
+            let color = water_fog_color(biome, brightness, lift);
+            environment.fog_color = color;
+            environment.sky_color = color;
+            environment.fog_density = 0.0;
+            environment.fog_start = WATER_FOG_START;
+            environment.fog_end = water_fog_end(biome, self.player.water_vision).min(view);
+            environment.sky = false;
         }
         environment
     }
@@ -306,28 +376,95 @@ mod tests {
     }
 
     #[test]
-    fn under_water_the_fog_is_blue_and_clears_as_the_eyes_adjust() {
+    fn under_water_the_fog_reaches_24_blocks_at_first_then_58_then_96_and_swamps_15_percent_less() {
         assert_eq!(water_vision(0), 0.0);
         assert!((water_vision(100) - 0.6).abs() < 1e-6);
-        assert!((water_vision(599) - 1.0).abs() < 0.01);
         assert_eq!(water_vision(600), 1.0);
-        // Just under: a quarter of 96 blocks, vanilla's dark blue.
-        let (color, end) = water_fog(Biome::Ocean, 0.0, 144.0);
-        assert_eq!(end, 24.0);
-        assert!((color - Vec3::new(5.0, 5.0, 51.0) / 255.0).length() < 1e-6);
-        // Used to it: 96 blocks, the blue at full strength.
-        let (color, end) = water_fog(Biome::Ocean, 1.0, 144.0);
-        assert_eq!(end, 96.0);
-        assert!((color.z - 1.0).abs() < 1e-6 && color.x < 0.11);
-        assert_eq!(
-            water_fog(Biome::Ocean, 1.0, 64.0).1,
-            64.0,
-            "within the view"
-        );
-        let (swamp, _) = water_fog(Biome::Swamp, 0.0, 144.0);
+        assert_eq!(water_fog_end(Biome::Ocean, 0), 24.0);
+        assert!((water_fog_end(Biome::Ocean, 100) - 57.6).abs() < 1e-4);
+        assert_eq!(water_fog_end(Biome::Ocean, 600), 96.0);
+        assert_eq!(water_fog_end(Biome::Ocean, 5000), 96.0);
+        assert!((water_fog_end(Biome::Swamp, 600) - 81.6).abs() < 1e-4);
+        assert!((water_fog_end(Biome::MangroveSwamp, 600) - 81.6).abs() < 1e-4);
+        assert!((water_fog_end(Biome::Swamp, 0) - 20.4).abs() < 1e-4);
+        // The color is the biome's own, scaled only by the light at the eyes.
+        let full = water_fog_color(Biome::Ocean, 1.0, 0.0);
+        assert!((full - Vec3::new(5.0, 5.0, 51.0) / 255.0).length() < 1e-6);
+        let dim = water_fog_color(Biome::Ocean, 0.25, 0.0);
+        assert!((dim - full * 0.25).length() < 1e-6);
+        assert_eq!(water_fog_color(Biome::Ocean, 0.0, 0.0), Vec3::ZERO);
+        // Night Vision lifts it toward full strength.
+        let lit = water_fog_color(Biome::Ocean, 1.0, 1.0);
+        assert!((lit.z - 1.0).abs() < 1e-6 && lit.x < 0.11);
+        let (swamp, _) = (water_fog_color(Biome::Swamp, 1.0, 0.0), ());
         assert!(swamp.x > swamp.z, "swamps are murky green-brown");
         let lava = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, Some(Fluid::Lava));
         assert_eq!(lava.fog_density, 2.0);
+    }
+
+    #[test]
+    fn the_eye_brightness_follows_the_light_level_and_fullbright_lights_it_fully() {
+        assert_eq!(eye_brightness(15, 0, 1.0, 0.0), 1.0);
+        assert_eq!(eye_brightness(0, 0, 1.0, 0.0), 0.0);
+        assert!((eye_brightness(10, 0, 1.0, 0.0) - 10.0 / 15.0).abs() < 1e-6);
+        assert!(eye_brightness(15, 0, 0.2, 0.0) < eye_brightness(15, 0, 1.0, 0.0));
+        assert_eq!(eye_brightness(0, 0, 1.0, 15.0), 1.0, "Fullbright");
+        assert_eq!(
+            eye_brightness(0, 12, 1.0, 0.0),
+            eye_brightness(12, 0, 1.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn the_underwater_overlay_is_at_most_a_tenth_opaque_and_scales_with_the_light() {
+        for brightness in [0.0, 0.25, 0.5, 1.0, 3.0] {
+            assert!(underwater_overlay_alpha(brightness) <= 0.1 + 1e-6);
+        }
+        assert_eq!(underwater_overlay_alpha(1.0), 0.1);
+        assert_eq!(underwater_overlay_alpha(0.0), 0.0);
+        assert!((underwater_overlay_alpha(0.5) - 0.05).abs() < 1e-6);
+    }
+
+    #[test]
+    fn time_of_day_and_depth_change_the_fog_color_but_never_how_far_it_reaches() {
+        use crate::game::tests::flat_game;
+        use crate::player::mode::GameMode;
+        let mut game = flat_game(GameMode::Creative);
+        let water: Vec<_> = (-3..=3)
+            .flat_map(|x| {
+                (-3..=3).flat_map(move |z| {
+                    (50..=70).map(move |y| {
+                        (
+                            glam::IVec3::new(x, y, z),
+                            crate::world::block::BlockState::of(crate::world::blocks::WATER),
+                        )
+                    })
+                })
+            })
+            .collect();
+        game.chunks.set_blocks(&water);
+        game.chunks
+            .load_now(crate::world::chunk::ChunkPos::new(0, 0));
+        game.player.water_vision = 300;
+        game.chunks.set_radius(9);
+        let reach = |game: &mut Game, time: u64, y: f64| {
+            game.time = time;
+            game.teleport(glam::DVec3::new(0.5, y, 0.5), 0.0, 0.0);
+            let env = game.environment_with(0.0);
+            (env.fog_end, env.fog_color)
+        };
+        let noon = reach(&mut game, 6000, 60.0);
+        let midnight = reach(&mut game, 18000, 60.0);
+        let deep = reach(&mut game, 6000, 52.0);
+        assert!(noon.0 > 24.0 && noon.0 <= 96.0);
+        assert_eq!(noon.0, midnight.0, "midnight reaches as far as noon");
+        assert_eq!(noon.0, deep.0, "depth doesn't change how far");
+        assert!(
+            midnight.1.length() <= noon.1.length(),
+            "the color is what darkens"
+        );
+        let fullbright = game.environment_with(15.0);
+        assert_eq!(fullbright.fog_end, noon.0);
     }
 
     #[test]

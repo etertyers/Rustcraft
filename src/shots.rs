@@ -523,6 +523,16 @@ pub static SHOTS: &[Shot] = &[
         stage: torches_in_cavern,
     },
     Shot {
+        name: "m51-underwater",
+        about: "underwater in a deep ocean on seed 12345 at noon, 5 blocks down, looking along the floor after 30 s under water: the floor is visible for dozens of blocks",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([1248.5, 56.4, 1248.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: crate::game::water_report::stage,
+    },
+    Shot {
         name: "m49-soul-sand-valley",
         about: "a soul sand valley in the Nether on seed 12345 with a basalt pillar hanging from the ceiling to the floor 35 blocks below, few and thin like vanilla's",
         world: Some(WorldKind::Nether { seed: 12345 }),
