@@ -58,7 +58,9 @@ cargo fmt                      # must be applied before every commit
 git config core.hooksPath .githooks   # once per clone: the pre-commit hook runs fmt --check and clippy
 RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
-cargo run --release -- --perf-test [--nether|--end|--underwater]   # the performance gate: writes docs/perf/m<N>.md
+cargo run --release -- --perf-test [--runs <n>] [--label <name>] [--row <name>] [--nether|--end|--underwater]   # writes docs/perf/<label>.md and .json
+scripts/add_bench.py docs/perf/m<N>.json   # adds cargo bench's medians to the results
+scripts/perf_gate.py docs/perf/m<N>.json    # compares with docs/perf/baseline.json; the exit code is the gate
 UPDATE_GOLDEN=1 cargo test --test golden   # rewrite tests/golden/hashes.ron (only per the golden rule in §7)
 cargo bench                    # chunk generation, lighting, meshing and fluid benchmarks
 cargo run --release -- --end         # an unsaved test world in the End, dragon circling (also --nether)
@@ -182,7 +184,7 @@ The rules in force. Where the old rules conflicted, the newer won (v1.2 over v1.
 9. **Kenzo does the visual checks.** Each PR lists the in-game checks for Kenzo, one line each.
 10. **Multiplayer-ready from M36 on.** Every new feature runs on the server and syncs to clients, and includes at least one test with a server and two in-process clients that checks they agree.
 11. **Vanilla values are written into each milestone** where they matter. Use them rather than fetching the wiki. If a value isn't given, use the best-known modern Java value, record it in `docs/DECISIONS.md` (one line: date, decision, reason) and keep it as a named constant in `config.rs`.
-12. **Performance:** 60+ FPS at render distance 9 on the M-series Mac mini, with FPS, position, biome, chunk count and facing in the F3 overlay. At the end of every milestone run `cargo bench` and `--perf-test`, save the results to `docs/perf/m<N>.md`, and put the FPS numbers in the PR. If average FPS drops below 60, the 1% low below 40, or any benchmark is more than 15% slower than the previous milestone, fix it before moving on, or stop and ask.
+12. **Performance:** 60+ FPS at render distance 9 on the M-series Mac mini, with FPS, position, biome, chunk count and facing in the F3 overlay. At the end of every milestone run `cargo bench` and `cargo run --release -- --perf-test --runs 3`, add the benchmarks with `scripts/add_bench.py docs/perf/m<N>.json`, then run `scripts/perf_gate.py docs/perf/m<N>.json`. The script's exit code decides, against the fixed `docs/perf/baseline.json` (not the previous milestone). Paste its table into the PR and `docs/perf/m<N>.md`. If it fails, fix it before moving on, or stop and ask. Only use `--update-baseline --accept "<reason>"` when Kenzo agreed in the milestone entry or in chat.
 13. **Update this file** when a convention changes, and mark the milestone checkbox when its acceptance criteria are met.
 14. **Golden hashes** (`tests/golden.rs`, `tests/golden/hashes.ron`) cover blocks, light and mesh of fixed chunks in all three dimensions. Only update them when the milestone's entry says that output is meant to change, and say in the PR which hashes changed and why.
 15. **Model recommendation:** at the end of each milestone, recommend Sonnet or Opus for the next one. Opus only for world generation, structures, or complex systems like the Ender Dragon fight; otherwise Sonnet.

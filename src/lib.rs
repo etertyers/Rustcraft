@@ -23,6 +23,7 @@ pub mod mods;
 pub mod net;
 pub mod options;
 pub mod pack;
+pub mod perf;
 pub mod placeholders;
 pub mod player;
 pub mod render;

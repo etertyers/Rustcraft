@@ -1,3 +1,5 @@
+> **Replaced by `baseline.json`** (foundation, from the M53 code), which `scripts/perf_gate.py` compares against. This file is kept as history of the M14 numbers.
+
 # Performance baseline (end of M14)
 
 Later milestones compare against these (CLAUDE.md §7.2): average FPS must

@@ -1,0 +1,57 @@
+{
+  "machine": "Macmini9,1",
+  "rows": {
+    "vanilla": {
+      "commit": "885cbf3af17b36806c7c01e5105e8364ce86980b-dirty",
+      "recorded": "2026-11-02",
+      "runs": 9,
+      "measures": {
+        "average_fps": 132.10516357421875,
+        "chunk_generation_ms": 8.252440687912088,
+        "chunks_generated": 1365.0,
+        "chunks_meshed": 1630.0,
+        "frames": 7927.0,
+        "frames_over_33ms": 0.0,
+        "frames_over_50ms": 0.0,
+        "light_mesh_ms": 9.606623113496934,
+        "memory_mib": 665.296875,
+        "one_percent_low_fps": 59.15000915527344,
+        "worst_frame_ms": 29.263456344604492
+      },
+      "spread_pct": {
+        "average_fps": 19.98533896750663,
+        "chunk_generation_ms": 24.211951995576044,
+        "chunks_generated": 0.7326007326007326,
+        "chunks_meshed": 13.006134969325153,
+        "frames": 20.373407341995712,
+        "frames_over_33ms": 0.0,
+        "frames_over_50ms": 0.0,
+        "light_mesh_ms": 14.235546441818062,
+        "memory_mib": 43.35940252237018,
+        "one_percent_low_fps": 42.35992678877996,
+        "worst_frame_ms": 3395.3894478200036
+      },
+      "benchmarks": {
+        "100 ticks of redstone lines": 2.8606053,
+        "100 ticks of spreading water": 3.5191420927109975,
+        "generate a chunk": 2.7571268916666667,
+        "generate a nether chunk": 1.3922588179012345,
+        "generate an end chunk": 0.035116396601382494,
+        "generate an end city chunk": 0.7221479668493446,
+        "light a chunk": 1.173782858974359,
+        "mesh a chunk": 2.134339479166667
+      },
+      "thresholds": {
+        "average_fps": {
+          "min_ratio": 0.79,
+          "reason": "Measured noise: three launches of --perf-test --runs 3 on this Mac mini gave medians spread 10.5% (max-min over the median); threshold widened to twice that. See docs/perf/noise/."
+        },
+        "one_percent_low_fps": {
+          "min_ratio": 0.46,
+          "reason": "Measured noise: three launches of --perf-test --runs 3 on this Mac mini gave medians spread 27.0% (max-min over the median); threshold widened to twice that. See docs/perf/noise/."
+        }
+      }
+    }
+  },
+  "note": "Fixed baseline from M53 (branch foundation): median of 9 flights (3 launches x --runs 3) and cargo bench. Replaces docs/perf/baseline.md. Update only with scripts/perf_gate.py --update-baseline."
+}

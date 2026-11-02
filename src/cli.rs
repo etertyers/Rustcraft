@@ -40,7 +40,10 @@ Usage: cargo run --release -- [flags]
   --view first|back|front   the view to start in (F5 cycles it)
   --pack <name>         play with this resource pack once (repeatable)
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
-  --perf-test           the performance gate (writes docs/perf/m<N>.md); --underwater flies in the sea
+  --perf-test           the performance gate (writes docs/perf/<label>.md and .json); --underwater flies in the sea
+    --runs <n>            ...n flights in one launch; the report has each measure's median and spread
+    --label <name>        ...name the results <name> (default m<N>, with -nether, -end or -underwater)
+    --row <name>          ...which baseline row the results are for (default vanilla)
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
   --name <player>       play as this name this time (Options keeps yours)
   --join <ip:port>      join a world open to LAN
@@ -100,6 +103,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let mut nether = false;
     let mut underwater = false;
     let mut end = false;
+    let (mut runs, mut label, mut row, mut perf_out) = (1u32, None, None, None);
     let mut view = ViewMode::First;
     let (mut name, mut join, mut lan) = (None, None, None);
     fn value(
@@ -194,6 +198,17 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             "--pack" => {
                 value(&mut args, "--pack", "a resource pack's name")?;
             }
+            "--runs" => {
+                let text = value(&mut args, "--runs", "a number")?;
+                runs = text
+                    .parse()
+                    .ok()
+                    .filter(|&n| n >= 1)
+                    .ok_or_else(|| CliError::wrong(format!("bad number of runs {text:?}")))?;
+            }
+            "--label" => label = Some(value(&mut args, "--label", "a name")?),
+            "--row" => row = Some(value(&mut args, "--row", "a name")?),
+            "--perf-out" => perf_out = Some(value(&mut args, "--perf-out", "a file")?.into()),
             "--flat" => test_world = Some(WorldKind::Flat),
             "--nether" => nether = true,
             "--underwater" => underwater = true,
@@ -237,17 +252,14 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         };
         bench.dimension = dimension;
         bench.underwater = underwater && dimension == Dimension::Overworld;
+        bench.runs = runs;
+        bench.label = label;
+        bench.row = row.unwrap_or(bench.row.clone());
+        bench.run_out = perf_out;
         // Each dimension's report has its own file.
+        let name = bench.perf_label();
         if let Some(path) = bench.perf_report.as_mut() {
-            let suffix = match dimension {
-                Dimension::Overworld if underwater => "-underwater",
-                Dimension::Overworld => "",
-                Dimension::Nether => "-nether",
-                Dimension::End => "-end",
-            };
-            if !suffix.is_empty() {
-                *path = format!("docs/perf/m{}{suffix}.md", bench::PERF_MILESTONE).into();
-            }
+            *path = format!("docs/perf/{name}.md").into();
         }
         kind
     });
@@ -296,6 +308,30 @@ mod tests {
 
     fn parse_words(words: &[&str]) -> Result<Cli, CliError> {
         parse(words.iter().map(|w| w.to_string()))
+    }
+
+    #[test]
+    fn perf_test_takes_runs_a_label_and_a_row() {
+        let cli = parse_words(&[
+            "--perf-test",
+            "--runs",
+            "3",
+            "--label",
+            "x",
+            "--row",
+            "trailer",
+        ])
+        .unwrap();
+        let bench = cli.bench.unwrap();
+        assert_eq!((bench.runs, bench.row.as_str()), (3, "trailer"));
+        assert_eq!(bench.perf_report.unwrap().to_str(), Some("docs/perf/x.md"));
+        let plain = parse_words(&["--perf-test", "--nether"])
+            .unwrap()
+            .bench
+            .unwrap();
+        assert_eq!((plain.runs, plain.row.as_str()), (1, "vanilla"));
+        assert_eq!(plain.perf_label(), "m53-nether");
+        assert!(parse_words(&["--perf-test", "--runs", "0"]).is_err());
     }
 
     #[test]

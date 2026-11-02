@@ -2567,13 +2567,27 @@ impl App {
                         memory_mib: bench::resident_memory_mib(),
                     };
                     let about = format!("Measured on {}; {place}.", bench::machine());
-                    let text = bench.perf_markdown(render_distance, run, &about);
-                    if let Err(err) = std::fs::create_dir_all(path.parent().unwrap_or(&path))
-                        .and_then(|_| std::fs::write(&path, &text))
-                    {
-                        error!("writing {}: {err}", path.display());
-                    } else {
-                        println!("wrote {}", path.display());
+                    if let Some(measures) = bench.perf_measures(run) {
+                        let results = crate::perf::Results::new(bench, render_distance, measures);
+                        // One of `--runs`' flights hands its numbers to the parent.
+                        let json = bench
+                            .run_out
+                            .clone()
+                            .unwrap_or_else(|| format!("docs/perf/{}.json", results.label).into());
+                        match results.write(&json) {
+                            Ok(()) => println!("wrote {}", json.display()),
+                            Err(err) => error!("{err:#}"),
+                        }
+                    }
+                    if bench.run_out.is_none() {
+                        let text = bench.perf_markdown(render_distance, run, &about);
+                        if let Err(err) = std::fs::create_dir_all(path.parent().unwrap_or(&path))
+                            .and_then(|_| std::fs::write(&path, &text))
+                        {
+                            error!("writing {}: {err}", path.display());
+                        } else {
+                            println!("wrote {}", path.display());
+                        }
                     }
                 }
                 event_loop.exit();
