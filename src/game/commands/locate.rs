@@ -143,6 +143,20 @@ const TAGS: &[(&str, &[&str])] = &[
     ("on_trial_chambers_maps", &["trial_chambers"]),
 ];
 
+/// Short Rustcraft-only names for vanilla ids; Tab completion offers only
+/// the vanilla ids, and the answer names the vanilla id.
+const ALIASES: &[(&str, &str)] = &[("bastion", "bastion_remnant")];
+
+/// The vanilla id `name` stands for (an alias is mapped; a `#tag` or an
+/// id is left as it is, without any `minecraft:`).
+pub fn resolve(name: &str) -> &str {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name, |(_, id)| id)
+}
+
 /// Every id and `#tag` Tab offers after `/locate structure`.
 pub fn structure_names() -> Vec<String> {
     let mut names: Vec<String> = IDS.iter().map(|(id, ..)| (*id).to_owned()).collect();
@@ -156,7 +170,7 @@ pub fn structure_names() -> Vec<String> {
 /// The kinds of ours that `name` (an id or a `#tag`) means in `dim`, or an
 /// error for a name vanilla doesn't have at all.
 pub fn kinds_for(name: &str, dim: Dimension) -> Result<Vec<Kind>, String> {
-    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    let name = resolve(name);
     let ids: Vec<&str> = match name.strip_prefix('#') {
         Some(tag) => {
             let tag = tag.strip_prefix("minecraft:").unwrap_or(tag);
@@ -189,6 +203,9 @@ pub fn kinds_for(name: &str, dim: Dimension) -> Result<Vec<Kind>, String> {
 /// `dim` by the generator's own rule.
 fn starts(seed: u64, dim: Dimension, kind: Kind, center: ChunkPos) -> Vec<ChunkPos> {
     match dim {
+        // Strongholds stand on rings round the world's center, all known
+        // at once, so there is no search radius (modern's too).
+        Dimension::Overworld if kind == Kind::Stronghold => structure::stronghold::positions(seed),
         Dimension::Overworld => {
             // `starts_near` knows the chunks within a kind's reach of one:
             // walk a lattice of probes that tiles the square.
@@ -253,6 +270,7 @@ pub(super) fn locate_structure(
     name: &str,
 ) -> Result<Vec<Reply>, String> {
     let kinds = kinds_for(name, caller.dim)?;
+    let name = resolve(name);
     let seed = game
         .chunks
         .seed()

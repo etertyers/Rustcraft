@@ -4,7 +4,7 @@
 
 use glam::DVec3;
 
-/// Ticks it flies before it drops or breaks.
+/// Ticks it flies before it drops or breaks (M52: exactly 80).
 pub const LIFE: u32 = 80;
 /// How far toward the stronghold one throw goes at most, and how high
 /// above the thrower it climbs when the stronghold is farther than that.
@@ -89,7 +89,7 @@ impl EyeOfEnder {
             heading.sin() * speed,
         );
         self.age += 1;
-        (self.age > LIFE).then_some(if self.survives {
+        (self.age >= LIFE).then_some(if self.survives {
             Landing::Dropped(self.position)
         } else {
             Landing::Broke(self.position)
@@ -123,7 +123,7 @@ mod tests {
         assert!(at.x > 9.0 && at.x < 13.0, "{at}");
         assert!(at.z.abs() < 0.01);
         assert!(top > from.y + 4.0, "rose {}", top - from.y);
-        assert_eq!(eye.age, LIFE + 1);
+        assert_eq!(eye.age, LIFE);
     }
 
     #[test]
@@ -138,5 +138,25 @@ mod tests {
     fn it_breaks_instead_of_dropping_when_it_doesnt_survive() {
         let (_, landing, _) = fly(EyeOfEnder::throw(DVec3::ZERO, (50.0, 50.0), false));
         assert!(matches!(landing, Landing::Broke(_)));
+    }
+
+    #[test]
+    fn an_eye_thrown_toward_a_stronghold_500_blocks_off_heads_there_and_resolves_in_80_ticks() {
+        let from = DVec3::new(100.5, 70.0, -40.5);
+        let toward = (from.x + 300.0, from.z + 400.0);
+        let mut eye = EyeOfEnder::throw(from, toward, true);
+        let mut ticks = 0;
+        let landing = loop {
+            ticks += 1;
+            if let Some(landing) = eye.tick() {
+                break landing;
+            }
+        };
+        assert_eq!(ticks, 80);
+        assert!(matches!(landing, Landing::Dropped(_)));
+        let moved = eye.position - from;
+        let want = DVec3::new(300.0, 0.0, 400.0).normalize();
+        assert!(DVec3::new(moved.x, 0.0, moved.z).normalize().dot(want) > 0.999);
+        assert!(moved.y > 1.0, "it rose");
     }
 }

@@ -533,6 +533,16 @@ pub static SHOTS: &[Shot] = &[
         stage: crate::game::water_report::stage,
     },
     Shot {
+        name: "m52-stronghold-portal",
+        about: "a stronghold's portal room on seed 12345 (the third first-ring stronghold), seen from the top of its stairs: the platform with its twelve end portal frames round a pool of lava, torch-lit, the silverfish spawner on the stairs",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([1276.5, 29.0, -1317.5], -std::f32::consts::FRAC_PI_2, -0.3)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m49-soul-sand-valley",
         about: "a soul sand valley in the Nether on seed 12345 with a basalt pillar hanging from the ceiling to the floor 35 blocks below, few and thin like vanilla's",
         world: Some(WorldKind::Nether { seed: 12345 }),

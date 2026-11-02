@@ -33,6 +33,7 @@ mod fluids;
 mod gateways;
 mod gear;
 mod hands;
+pub mod infested;
 pub mod jukebox;
 mod logistics;
 #[cfg(test)]
@@ -1479,6 +1480,7 @@ impl Game {
         self.tick_end();
         self.swirl_effects();
         self.tick_mobs();
+        self.tick_silverfish_calls();
         self.tick_spawners();
         self.tick_fluids();
         self.tick_fires();

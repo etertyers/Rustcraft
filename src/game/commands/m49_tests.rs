@@ -155,7 +155,7 @@ fn the_nearest_is_the_nearest() {
     }
 }
 
-fn terrain_game() -> crate::game::Game {
+pub(super) fn terrain_game() -> crate::game::Game {
     use std::time::{Duration, Instant};
 
     use crate::world::manager::{ChunkManager, ChunkSource};

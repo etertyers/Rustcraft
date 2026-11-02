@@ -1846,6 +1846,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_thrown_eye_flies_toward_the_nearest_stronghold_in_both_clients_and_resolves() {
+        use crate::world::worldgen::terrain::Terrain;
+        let (mut server, mut clients) = world_on(
+            ChunkSource::Terrain(Box::new(Terrain::new(12345))),
+            &["Alice", "Bob"],
+        );
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        server.game.with_player(0, |game| {
+            game.player.mode = GameMode::Survival;
+            game.player
+                .inventory
+                .set(0, Some(ItemStack::new(items::ENDER_EYE, 2)));
+            game.player.inventory.selected = 0;
+        });
+        for pressed in [true, false] {
+            clients[0].0.send(ClientMsg::Action {
+                action: Action::Use,
+                pressed,
+                repeat: false,
+                grabbed: true,
+            });
+        }
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.eyes.len() == 1 && c.iter().all(|(_, game)| game.eyes.len() == 1)
+        });
+        // Both clients see it where the server has it, after it has risen.
+        let t0 = server.game.time();
+        run_until(&mut server, &mut clients, |s, _| s.game.time() > t0 + 30);
+        let on_server = server.game.eyes[0].position;
+        for (_, game) in &clients {
+            assert!(
+                game.eyes[0].position.distance(on_server) < 3.0,
+                "{:?}",
+                game.eyes[0].position
+            );
+        }
+        let from = server.game.player_at(0).body_state().position();
+        let (stronghold, _) = (server.game.nearest_stronghold_for_test(from).unwrap(), 0);
+        let want = DVec3::new(stronghold.0 - from.x, 0.0, stronghold.1 - from.z).normalize();
+        let moved = on_server - from;
+        assert!(DVec3::new(moved.x, 0.0, moved.z).normalize().dot(want) > 0.98);
+        assert!(moved.y > 1.0, "it rose: {moved}");
+        // Within 80 ticks of its throw it is over, and one eye is gone from the hand.
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.eyes.is_empty() && c.iter().all(|(_, game)| game.eyes.is_empty())
+        });
+        assert_eq!(server.game.player_at(0).inventory.slot(0).unwrap().count, 1);
+    }
+
     /// Flies Bob (a spectator, with the wheel at `scale`) east through
     /// water, mobs and terrain for `ticks` ticks, holding `sprint`: the
     /// client's and server's speeds in blocks a second each tick (from how
