@@ -448,6 +448,12 @@ impl App {
             None => attrs.with_inner_size(LogicalSize::new(width, height)),
         };
         let window = Arc::new(event_loop.create_window(attrs)?);
+        info!(
+            "window {}x{} pixels, scale factor {}",
+            window.inner_size().width,
+            window.inner_size().height,
+            window.scale_factor()
+        );
         let assets = assets::dir();
         let blocks = block::registry();
         info!(

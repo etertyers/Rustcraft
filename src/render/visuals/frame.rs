@@ -1,11 +1,28 @@
 //! The Trailer look's frame (M54): the world is drawn into an HDR target
-//! (`HDR_FORMAT`) with the same depth buffer, then post passes draw it into
+//! (`hdr_format`) with the same depth buffer, then post passes draw it into
 //! the window's frame, and the UI goes on top, untouched, as in Vanilla.
 
 use super::profiler::GpuProfiler;
 
-/// The Trailer look's world target.
-pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The Trailer look's world target when the GPU can't render to the
+/// small format: 16-bit floats a channel (8 bytes a pixel).
+pub const HDR_FORMAT_WIDE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Preferred: 11/11/10-bit floats in 4 bytes a pixel. Half the memory
+/// traffic of `HDR_FORMAT_WIDE` on a tile GPU, and enough range and
+/// precision for the shading (no alpha is needed).
+pub const HDR_FORMAT_SMALL: wgpu::TextureFormat = wgpu::TextureFormat::Rg11b10Ufloat;
+
+/// The features to ask the device for to use the small format.
+pub const HDR_FEATURE: wgpu::Features = wgpu::Features::RG11B10UFLOAT_RENDERABLE;
+
+/// The HDR format a device with `features` draws the Trailer look in.
+pub fn hdr_format(features: wgpu::Features) -> wgpu::TextureFormat {
+    if features.contains(HDR_FEATURE) {
+        HDR_FORMAT_SMALL
+    } else {
+        HDR_FORMAT_WIDE
+    }
+}
 
 /// One texture the post passes read and write.
 struct Target {
@@ -20,12 +37,14 @@ pub struct TrailerFrame {
     post: wgpu::RenderPipeline,
     /// The HDR target, at the frame's size; made on first use.
     hdr: Option<Target>,
+    hdr_format: wgpu::TextureFormat,
     size: (u32, u32),
 }
 
 impl TrailerFrame {
     /// `format`: the window's frame.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let hdr_format = hdr_format(device.features());
         let input_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("post input"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -50,6 +69,7 @@ impl TrailerFrame {
             input_layout,
             post,
             hdr: None,
+            hdr_format,
             size: (0, 0),
         }
     }
@@ -70,7 +90,7 @@ impl TrailerFrame {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
+            format: self.hdr_format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -84,6 +104,11 @@ impl TrailerFrame {
             }],
         });
         self.hdr = Some(Target { view, bind_group });
+    }
+
+    /// The format of the world target.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.hdr_format
     }
 
     /// Where the world is drawn, once `prepare` has run.

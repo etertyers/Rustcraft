@@ -52,13 +52,29 @@ fn render(scene: &str, folder: &Path, out: &Path) -> Result<(), String> {
         ])
         .arg(out)
         .env("RUSTCRAFT_SAVES", folder.join("saves"))
+        .env("RUST_LOG", "rustcraft=info")
         .output()
         .map_err(|err| err.to_string())?;
+    let log = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        return Err(log.into_owned());
+    }
+    // The window's scale factor sets the GUI's size, and the references
+    // were rendered at 2 (a Retina display). Another display can't match.
+    let scale = log
+        .lines()
+        .find_map(|l| l.split("scale factor ").nth(1))
+        .and_then(|n| n.trim().parse::<f64>().ok());
+    if scale != Some(REFERENCE_SCALE) {
+        return Err(format!("{WRONG_DISPLAY}{scale:?}"));
     }
     Ok(())
 }
+
+/// The window scale factor the reference images were rendered at.
+const REFERENCE_SCALE: f64 = 2.0;
+/// Starts the message of a run on a display of another scale.
+const WRONG_DISPLAY: &str = "skipped: the display's scale factor isn't 2: ";
 
 /// Renders `scene` and compares it with its reference.
 fn check(root: &Path, work: &Path, scene: &str) -> Result<(), String> {
@@ -91,6 +107,7 @@ fn vanilla_look_matches_the_m53_reference_images() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let work: PathBuf = std::env::temp_dir().join(format!("rustcraft-ref-{}", std::process::id()));
     let mut failures = Vec::new();
+    let mut skipped = 0;
     for scene in SCENES {
         // A scene that fails or differs is rendered once more, and says
         // why (a game run can fail when the window server is busy).
@@ -99,11 +116,21 @@ fn vanilla_look_matches_the_m53_reference_images() {
             println!("{scene}: retrying after: {first}");
             result = check(root, &work, scene);
         }
-        if let Err(err) = result {
-            failures.push(err);
+        match result {
+            Err(err) if err.contains(WRONG_DISPLAY) => {
+                eprintln!("{scene}: {err}");
+                skipped += 1;
+            }
+            Err(err) => failures.push(err),
+            Ok(()) => {}
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    if skipped > 0 {
+        eprintln!(
+            "{skipped} scenes skipped: this display isn't the Retina scale the references need"
+        );
+    }
     let _ = std::fs::remove_dir_all(&work);
 }
 

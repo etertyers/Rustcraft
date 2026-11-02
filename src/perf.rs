@@ -83,7 +83,8 @@ impl Results {
             self.row
         );
         for (key, value) in &self.measures {
-            text += &format!("| {key} | {value:.2} | {:.1}% |\n", self.spread_pct[key]);
+            let spread = self.spread_pct.get(key).copied().unwrap_or(0.0);
+            text += &format!("| {key} | {value:.2} | {spread:.1}% |\n");
         }
         text
     }

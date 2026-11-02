@@ -326,7 +326,8 @@ impl Renderer {
         }))?;
         log::info!("GPU adapter: {:?}", adapter.get_info());
         // Timestamps for the GPU profiler, where the GPU has them.
-        let features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+        let features =
+            adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | visuals::frame::HDR_FEATURE);
         log::info!(
             "GPU timestamp queries: {}",
             if features.is_empty() {
@@ -399,6 +400,8 @@ impl Renderer {
         let glint_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "glint", &sky.glint);
         let shaders = Shaders::new(&device);
+        let hdr_format = visuals::frame::hdr_format(device.features());
+        log::info!("Trailer look draws in {hdr_format:?}");
         let vanilla = Pipelines::new(&device, &layouts, &shaders, config.format, false);
         // The Trailer look's pipelines are made now too, so F12 never waits
         // for them; this is what they add to startup.
@@ -407,7 +410,7 @@ impl Renderer {
             &device,
             &layouts,
             &shaders,
-            visuals::frame::HDR_FORMAT,
+            visuals::frame::hdr_format(device.features()),
             true,
         );
         let trailer_frame = visuals::frame::TrailerFrame::new(&device, config.format);
@@ -425,7 +428,7 @@ impl Renderer {
         let outline = Outline::new(
             &device,
             globals_layout,
-            [config.format, visuals::frame::HDR_FORMAT],
+            [config.format, hdr_format],
             DEPTH_FORMAT,
         );
         let egui_renderer = egui_wgpu::Renderer::new(
@@ -1722,7 +1725,11 @@ mod tests {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-        pollster::block_on(adapter.request_device(&Default::default())).ok()
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: adapter.features() & visuals::frame::HDR_FEATURE,
+            ..Default::default()
+        }))
+        .ok()
     }
 
     /// The Trailer look's pipelines are made at startup (so F12 never
@@ -1743,7 +1750,7 @@ mod tests {
             &device,
             &layouts,
             &shaders,
-            visuals::frame::HDR_FORMAT,
+            visuals::frame::hdr_format(device.features()),
             true,
         );
         let _frame = visuals::frame::TrailerFrame::new(&device, format);
