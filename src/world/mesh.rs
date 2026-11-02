@@ -552,23 +552,30 @@ impl Mesh {
         indices.extend(order.map(|i| base + i));
     }
 
-    /// The packed face attribute of a quad's four corners.
+    /// The packed face attribute of a quad's four corners: packed once
+    /// (the octahedral encoding takes any length), with the top flag
+    /// added for the corners in the upper half of the block.
     fn add_faces(&mut self, corners: &[[f32; 3]; 4]) {
         use crate::render::vertex::{FLAG_STILL_WATER_TOP, FLAG_TOP, pack_face};
         let [a, b, c, _] = corners.map(glam::Vec3::from);
-        let normal = (b - a).cross(c - a).normalize_or(glam::Vec3::Y);
+        let normal = (b - a).cross(c - a);
         let mut flags = self.material_flags;
         if self.still_water
-            && normal.y > 0.99
+            && normal.y > 0.0
+            && normal.x.abs() + normal.z.abs() < 1e-3 * normal.y
             && corners.iter().all(|p| (p[1] - corners[0][1]).abs() < 1e-4)
         {
             flags |= FLAG_STILL_WATER_TOP;
         }
+        let packed = pack_face(normal.to_array(), self.material, flags);
+        let top = u32::from(FLAG_TOP) << 24;
         let middle = self.block_bottom + 0.5;
         for corner in corners {
-            let top = if corner[1] > middle { FLAG_TOP } else { 0 };
-            self.faces
-                .push(pack_face(normal.to_array(), self.material, flags | top));
+            self.faces.push(if corner[1] > middle {
+                packed | top
+            } else {
+                packed
+            });
         }
     }
 

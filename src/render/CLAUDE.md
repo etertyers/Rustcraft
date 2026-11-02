@@ -9,6 +9,10 @@ Nested file: only rules that also appear in the root CLAUDE.md or in a milestone
 - `lightmap.rs` is a tested copy of the shader's lightmap formula.
 - Underwater fog follows vanilla's 96-block fog with water vision, and water colors stay vanilla (M47, M51).
 
+## The two looks (v1.4)
+- `visuals/`: Vanilla is M53's passes and shaders into the surface and must stay pixel-identical (`tests/vanilla_reference.rs`); Trailer draws into an HDR target with `trailer.wgsl`, shadow maps (`visuals/shadow.rs`, `sun.rs`) and a tone-mapping post pass. `Vertex` stays as M53 had it: the Trailer look's per-face data is a second vertex buffer (`Mesh::faces`).
+- Never change `shader.wgsl`, `sky.wgsl`, `clouds.wgsl` or the Vanilla pipelines for a Trailer effect. Budgets and shares: `docs/milestones/v1.4.md`.
+
 ## Textures
 - Textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/` over the vanilla fallback in `assets/vanilla/`. Older names are in `assets/data/texture_names.ron`.
 - `look::Look` builds everything texture-derived (atlas, models, icons) and is rebuilt when the packs change.
