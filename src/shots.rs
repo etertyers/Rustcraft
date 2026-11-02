@@ -543,6 +543,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m53-surface",
+        about: "a high aerial view over hills and plains on seed 12345: mostly unbroken ground, the occasional cave opening or ravine",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([0.5, 130.0, 0.5], std::f32::consts::PI, -0.55)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m49-soul-sand-valley",
         about: "a soul sand valley in the Nether on seed 12345 with a basalt pillar hanging from the ceiling to the floor 35 blocks below, few and thin like vanilla's",
         world: Some(WorldKind::Nether { seed: 12345 }),

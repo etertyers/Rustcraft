@@ -12,7 +12,7 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::{
     biome_source,
-    caves::{Aquifer, CARVER_REACH, Caves, Fill, squeeze, worms_of},
+    caves::{Aquifer, CARVER_REACH, Caves, Fill, worms_of},
     climate::{Climate, ClimateNoise, Lay, noise_offset, noise_seed},
     rng::{Rng, mix},
     terrain_shape::Shaper,
@@ -57,10 +57,6 @@ pub const DEEPSLATE_LEVEL: i32 = 0;
 const DEEPSLATE_BLEND: i32 = 8;
 /// Lowest height a cave biome reaches.
 const CAVE_BIOME_FLOOR: i32 = MIN_Y + 4;
-/// A cave entrance opens the top of the ground where `5 × entrances` falls
-/// under the land's density there, which is a little over zero at the
-/// surface block: columns with entrances under this keep no plants.
-const ENTRANCE_REACH: f64 = 0.15;
 /// Most waterfalls and lavafalls a chunk's aquifers start flowing as it loads.
 const FALL_STARTS: usize = 4;
 /// The ragged bedrock floor: always at the bottom, thinning out over the
@@ -281,6 +277,37 @@ impl Terrain {
         (levels, shape.offset)
     }
 
+    /// The climate at a corner and its `corner`, remembered per thread: the
+    /// areas of neighboring chunks, the cells and the entrance flags all
+    /// ask for the same corners.
+    fn corner_memo(&self, gx: i32, gz: i32) -> (Levels, f64, Climate) {
+        type Memo = (u64, HashMap<(i32, i32), (Levels, f64, Climate)>);
+        thread_local! {
+            static MEMO: std::cell::RefCell<Memo> = std::cell::RefCell::new((0, HashMap::new()));
+        }
+        let hit = MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.0 != self.seed {
+                *memo = (self.seed, HashMap::new());
+            }
+            memo.1.get(&(gx, gz)).copied()
+        });
+        if let Some(found) = hit {
+            return found;
+        }
+        let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
+        let (levels, offset) = self.corner(gx, gz, &c);
+        let found = (levels, offset, c);
+        MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.1.len() > 32768 {
+                memo.1.clear();
+            }
+            memo.1.insert((gx, gz), found);
+        });
+        found
+    }
+
     /// The corners covering blocks `x0..=x1`, `z0..=z1`.
     fn corners(&self, x0: i32, z0: i32, x1: i32, z1: i32) -> Corners {
         let (gx0, gz0) = (x0.div_euclid(CELL_XZ), z0.div_euclid(CELL_XZ));
@@ -291,8 +318,7 @@ impl Terrain {
         let mut climates = Vec::with_capacity(levels.capacity());
         for gz in gz0..=gz1 {
             for gx in gx0..=gx1 {
-                let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
-                let (l, o) = self.corner(gx, gz, &c);
+                let (l, o, c) = self.corner_memo(gx, gz);
                 levels.push(l);
                 offsets.push(o);
                 climates.push(c);
@@ -320,8 +346,7 @@ impl Terrain {
     /// The surface height and biome at the corner column of grid point
     /// (gx, gz) (block x = gx × 4), for maps.
     pub fn corner_surface(&self, gx: i32, gz: i32) -> (i32, Biome) {
-        let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
-        let (levels, _) = self.corner(gx, gz, &c);
+        let (levels, _, c) = self.corner_memo(gx, gz);
         (top_of(&levels), biome_source::surface(&c))
     }
 
@@ -356,7 +381,13 @@ impl Terrain {
     pub fn column(&self, x: i32, z: i32) -> Column {
         let around = [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(dx, dz)| self.height(x + dx, z + dz));
         let quart = self.climate.quart(x, z);
-        self.column_with(x, z, quart, self.lay(x, z), around)
+        let mut column = self.column_with(x, z, quart, self.lay(x, z), around);
+        if !column.entrance {
+            let mut one = [column];
+            self.mark_worm_openings(&mut one, x, z, 1);
+            column = one[0];
+        }
+        column
     }
 
     /// The column at (x, z) with its quart's climate `quart` (which picks
@@ -369,7 +400,7 @@ impl Terrain {
             .max()
             .unwrap_or(0);
         let top = self.top(x, z, biome, lay.height, slope);
-        let entrance = self.entrance_at(x, z, lay.offset.round() as i32);
+        let entrance = self.entrance_at(x, z, lay.height);
         // The cave biome under the quart, at any depth in its range.
         let cave = biome_source::cave(&quart, biome_source::CAVE_DEPTH.0);
         Column {
@@ -383,41 +414,11 @@ impl Terrain {
         }
     }
 
-    /// Whether caves break through the surface at (x, z): a cave entrance
-    /// (a spaghetti tunnel or an entrance blob) reaches the top of the
-    /// ground at the column's 4 × 4 quart (`NoiseRouterData.entrances`).
+    /// Whether the density carves the top block at (x, z) away: a cave
+    /// entrance (or any cave) breaks through the surface there. Plants and
+    /// trees keep off such columns.
     fn entrance_at(&self, x: i32, z: i32, height: i32) -> bool {
-        type Memo = (u64, HashMap<(i32, i32, i32), bool>);
-        thread_local! {
-            static MEMO: std::cell::RefCell<Memo> = std::cell::RefCell::new((0, HashMap::new()));
-        }
-        let (qx, qz) = (
-            x.div_euclid(CELL_XZ) * CELL_XZ,
-            z.div_euclid(CELL_XZ) * CELL_XZ,
-        );
-        let key = (qx, qz, height);
-        let hit = MEMO.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            if memo.0 != self.seed {
-                *memo = (self.seed, HashMap::new());
-            }
-            memo.1.get(&key).copied()
-        });
-        if let Some(hit) = hit {
-            return hit;
-        }
-        let open = self
-            .caves
-            .entrances(f64::from(qx), f64::from(height), f64::from(qz))
-            < ENTRANCE_REACH;
-        MEMO.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            if memo.1.len() > 16384 {
-                memo.1.clear();
-            }
-            memo.1.insert(key, open);
-        });
-        open
+        self.density_at(x, height, z) <= 0.0 && self.land_density_at(x, height, z) > 0.0
     }
 
     /// The block on top of a column: modern's surface rules, in order.
@@ -523,6 +524,7 @@ impl Terrain {
                 columns.push(self.column_with(wx, wz, quart, lays[i], around));
             }
         }
+        self.mark_worm_openings(&mut columns, min_x, min_z, Area::SIDE);
         Area {
             min_x,
             min_z,
@@ -531,10 +533,59 @@ impl Terrain {
         }
     }
 
+    /// Flags the columns whose top block a carver (a cave tunnel, a room or
+    /// a ravine) cuts away, so plants and trees keep off them as they do
+    /// off the entrances the density makes.
+    fn mark_worm_openings(&self, columns: &mut [Column], min_x: i32, min_z: i32, side: i32) {
+        let side = side.max(1);
+        let (max_x, max_z) = (min_x + side, min_z + side);
+        let center = ChunkPos::of_block(min_x + side / 2, min_z + side / 2);
+        let reach = CARVER_REACH + side / 32 + 1;
+        for sz in center.z - reach..=center.z + reach {
+            for sx in center.x - reach..=center.x + reach {
+                for worm in worms_of(self.seed, sx, sz).iter() {
+                    for &([px, py, pz], across, up) in &worm.steps {
+                        if px + across < min_x as f64
+                            || px - across >= max_x as f64
+                            || pz + across < min_z as f64
+                            || pz - across >= max_z as f64
+                        {
+                            continue;
+                        }
+                        let x0 = ((px - across).floor() as i32).max(min_x);
+                        let x1 = ((px + across).ceil() as i32).min(max_x - 1);
+                        let z0 = ((pz - across).floor() as i32).max(min_z);
+                        let z1 = ((pz + across).ceil() as i32).min(max_z - 1);
+                        for wz in z0..=z1 {
+                            for wx in x0..=x1 {
+                                let column =
+                                    &mut columns[((wz - min_z) * side + (wx - min_x)) as usize];
+                                // Only the starts within range of the column's own
+                                // chunk carve it, whichever chunk the area is of.
+                                if column.entrance
+                                    || (wx.div_euclid(16) - sx).abs() > CARVER_REACH
+                                    || (wz.div_euclid(16) - sz).abs() > CARVER_REACH
+                                {
+                                    continue;
+                                }
+                                let dx = (wx as f64 + 0.5 - px) / across;
+                                let dz = (wz as f64 + 0.5 - pz) / across;
+                                let dy = (column.height as f64 + 0.5 - py) / up;
+                                if worm.carves(dx, dy, dz, column.height) {
+                                    column.entrance = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The final density at the corners of the cell holding (x, y, z)
     /// (x, z on the 4-block grid, y on the 8-block one), cached per thread.
-    fn cell_corners(&self, gx: i32, gz: i32, k: usize) -> [f64; 8] {
-        type Cells = (u64, HashMap<(i32, i32, usize), [f64; 8]>);
+    fn cell_corners(&self, gx: i32, gz: i32, k: usize) -> [[f64; 2]; 8] {
+        type Cells = (u64, HashMap<(i32, i32, usize), [[f64; 2]; 8]>);
         thread_local! {
             static CELLS: std::cell::RefCell<Cells> = std::cell::RefCell::new((0, HashMap::new()));
         }
@@ -553,22 +604,14 @@ impl Terrain {
             [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dz)| (gx + dx, gz + dz));
         let levels: Vec<Levels> = columns
             .iter()
-            .map(|&(cx, cz)| {
-                let c = self.climate.sample(cx * CELL_XZ, cz * CELL_XZ);
-                self.corner(cx, cz, &c).0
-            })
+            .map(|&(cx, cz)| self.corner_memo(cx, cz).0)
             .collect();
-        let mut corners = [0.0; 8];
+        let mut corners = [[0.0; 2]; 8];
         for (i, corner) in corners.iter_mut().enumerate() {
             let (up, which) = (i / 4, i % 4);
             let (cx, cz) = columns[which];
             let kk = (k + up).min(LEVELS - 1);
-            *corner = self.caves.final_density(
-                levels[which][kk],
-                cx * CELL_XZ,
-                level_y(kk),
-                cz * CELL_XZ,
-            );
+            *corner = self.corner_pair(levels[which][kk], cx * CELL_XZ, level_y(kk), cz * CELL_XZ);
         }
         CELLS.with(|cells| {
             let mut cells = cells.borrow_mut();
@@ -578,6 +621,67 @@ impl Terrain {
             cells.1.insert(key, corners);
         });
         corners
+    }
+
+    /// The density at (x, y, z) with no cave and no noodle: what the land
+    /// alone makes of it (for `--cave-openings`).
+    pub fn land_density_at(&self, x: i32, y: i32, z: i32) -> f64 {
+        let (gx, gz) = (x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ));
+        let up = y - MIN_Y;
+        let k = (up / CELL_Y) as usize;
+        if k + 1 >= LEVELS {
+            return -1.0;
+        }
+        let at = |dx: i32, dz: i32, level: usize| {
+            let (cx, cz) = (gx + dx, gz + dz);
+            let levels = self.corner_memo(cx, cz).0;
+            Caves::land_inner_density(levels[level], level_y(level))
+        };
+        let cube = |level: usize| {
+            [
+                [at(0, 0, level), at(1, 0, level)],
+                [at(0, 1, level), at(1, 1, level)],
+            ]
+        };
+        let t = (
+            f64::from(x - gx * CELL_XZ) / f64::from(CELL_XZ),
+            f64::from(up % CELL_Y) / f64::from(CELL_Y),
+            f64::from(z - gz * CELL_XZ) / f64::from(CELL_XZ),
+        );
+        Caves::combine(trilinear(&[cube(k), cube(k + 1)], t), 64.0)
+    }
+
+    /// What a corner holds: the part of the final density vanilla
+    /// interpolates (`inner_density`) and the noodle, which it interpolates
+    /// on its own; a block's density is `Caves::combine` of the two blended.
+    fn corner_pair(&self, sloped: f64, x: i32, y: i32, z: i32) -> [f64; 2] {
+        type Memo = (u64, HashMap<(i32, i32, i32), [f64; 2]>);
+        thread_local! {
+            static MEMO: std::cell::RefCell<Memo> = std::cell::RefCell::new((0, HashMap::new()));
+        }
+        // The same corner serves the cells and chunks round it.
+        let hit = MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.0 != self.seed {
+                *memo = (self.seed, HashMap::new());
+            }
+            memo.1.get(&(x, y, z)).copied()
+        });
+        if let Some(found) = hit {
+            return found;
+        }
+        let found = [
+            self.caves.inner_density(sloped, x, y, z),
+            self.caves.noodle(f64::from(x), f64::from(y), f64::from(z)),
+        ];
+        MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.1.len() > 262_144 {
+                memo.1.clear();
+            }
+            memo.1.insert((x, y, z), found);
+        });
+        found
     }
 
     /// The final density at (x, y, z), blended between the corners of its
@@ -598,10 +702,16 @@ impl Terrain {
             (up % CELL_Y) as f64 / CELL_Y as f64,
             (z - gz * CELL_XZ) as f64 / CELL_XZ as f64,
         );
-        trilinear(
-            &[[[c[0], c[1]], [c[2], c[3]]], [[c[4], c[5]], [c[6], c[7]]]],
-            t,
-        )
+        let part = |i: usize| {
+            trilinear(
+                &[
+                    [[c[0][i], c[1][i]], [c[2][i], c[3][i]]],
+                    [[c[4][i], c[5][i]], [c[6][i], c[7][i]]],
+                ],
+                t,
+            )
+        };
+        Caves::combine(part(0), part(1))
     }
 
     /// Whether a cave runs through (x, y, z): the final density there is
@@ -613,7 +723,21 @@ impl Terrain {
     /// Which of `points` a worm tunnel or ravine runs through (ignoring
     /// how high a column lets caves reach and what fills them).
     pub fn in_worms(&self, points: &[glam::IVec3]) -> Vec<bool> {
-        let mut hit = vec![false; points.len()];
+        self.worm_kinds(points)
+            .into_iter()
+            .map(|k| k != 0)
+            .collect()
+    }
+
+    /// The cave caves' noise terms (`Caves::terms`).
+    pub fn caves(&self) -> &Caves {
+        &self.caves
+    }
+
+    /// Which carvers run through each of `points`: bit 1 a cave tunnel, bit
+    /// 2 a ravine.
+    pub fn worm_kinds(&self, points: &[glam::IVec3]) -> Vec<u8> {
+        let mut hit = vec![0u8; points.len()];
         let Some(first) = points.first() else {
             return hit;
         };
@@ -629,8 +753,8 @@ impl Terrain {
                             || px - across > hi.x as f64 + 1.0
                             || pz + across < lo.z as f64
                             || pz - across > hi.z as f64 + 1.0
-                            || py + up < lo.y as f64
-                            || py - up > hi.y as f64 + 1.0
+                            || py + worm.vertical_reach(up) < lo.y as f64
+                            || py - worm.vertical_reach(up) > hi.y as f64 + 1.0
                         {
                             continue;
                         }
@@ -638,8 +762,8 @@ impl Terrain {
                             let dx = (p.x as f64 + 0.5 - px) / across;
                             let dy = (p.y as f64 + 0.5 - py) / up;
                             let dz = (p.z as f64 + 0.5 - pz) / across;
-                            if dy >= -0.7 && dx * dx + dy * dy + dz * dz < 1.0 {
-                                hit[i] = true;
+                            if worm.carves(dx, dy, dz, p.y) {
+                                hit[i] |= if worm.ravine { 2 } else { 1 };
                             }
                         }
                     }
@@ -709,8 +833,8 @@ impl Terrain {
                         let x1 = ((px + across).ceil() as i32).min(max_x - 1);
                         let z0 = ((pz - across).floor() as i32).max(min_z);
                         let z1 = ((pz + across).ceil() as i32).min(max_z - 1);
-                        let y0 = ((py - up).floor() as i32).max(MIN_Y + 1);
-                        let y1 = (py + up).ceil() as i32;
+                        let y0 = ((py - worm.vertical_reach(up)).floor() as i32).max(MIN_Y + 1);
+                        let y1 = (py + worm.vertical_reach(up)).ceil() as i32;
                         for wz in z0..=z1 {
                             for wx in x0..=x1 {
                                 let column = area.get(wx, wz);
@@ -720,16 +844,9 @@ impl Terrain {
                                 if dx * dx + dz * dz >= 1.0 {
                                     continue;
                                 }
-                                // The top block stays unless the column is an entrance.
-                                let top = if column.entrance {
-                                    top
-                                } else {
-                                    top.min(column.height - 1)
-                                };
                                 for y in y0..=top {
                                     let dy = (y as f64 + 0.5 - py) / up;
-                                    // A flatter floor, as modern carvers have.
-                                    if dy < -0.7 || dx * dx + dy * dy + dz * dz >= 1.0 {
+                                    if !worm.carves(dx, dy, dz, y) {
                                         continue;
                                     }
                                     let (lx, lz) = ((wx - min_x) as usize, (wz - min_z) as usize);
@@ -789,10 +906,10 @@ impl Terrain {
     /// The final density at the corners of the chunk's 4 × 8 × 4 cells:
     /// 5 × 5 columns up to `top` (and one level more), indexed
     /// `(level * 5 + z) * 5 + x`.
-    fn density_grid(&self, area: &Area, min_x: i32, min_z: i32, top: i32) -> Vec<f64> {
+    fn density_grid(&self, area: &Area, min_x: i32, min_z: i32, top: i32) -> Vec<[f64; 2]> {
         const SIDE: usize = CHUNK_SIZE / CELL_XZ as usize + 1;
         let levels_up = (((top - MIN_Y) / CELL_Y) as usize + 2).min(LEVELS);
-        let mut grid = vec![-1.0; levels_up * SIDE * SIDE];
+        let mut grid = vec![[-1.0, 64.0]; levels_up * SIDE * SIDE];
         for iz in 0..SIDE {
             for ix in 0..SIDE {
                 let (wx, wz) = (min_x + (ix as i32) * CELL_XZ, min_z + (iz as i32) * CELL_XZ);
@@ -801,7 +918,7 @@ impl Terrain {
                     .index(wx.div_euclid(CELL_XZ), wz.div_euclid(CELL_XZ))];
                 for (k, &sloped) in corner.iter().enumerate().take(levels_up) {
                     grid[(k * SIDE + iz) * SIDE + ix] =
-                        self.caves.final_density(sloped, wx, level_y(k), wz);
+                        self.corner_pair(sloped, wx, level_y(k), wz);
                 }
             }
         }
@@ -863,32 +980,41 @@ impl Terrain {
                     (z % CELL_XZ as usize) as f64 / CELL_XZ as f64,
                 );
                 // The density at each corner level of this column.
-                let mut sides = [0.0; LEVELS];
+                let mut sides = [[0.0; 2]; LEVELS];
                 let levels = grid.len() / (SIDE * SIDE);
                 for (k, side) in sides.iter_mut().enumerate().take(levels) {
-                    let at = |dx: usize, dz: usize| grid[(k * SIDE + iz + dz) * SIDE + ix + dx];
-                    *side = lerp(
-                        lerp(at(0, 0), at(1, 0), tx),
-                        lerp(at(0, 1), at(1, 1), tx),
-                        tz,
-                    );
+                    for (part, value) in side.iter_mut().enumerate() {
+                        let at = |dx: usize, dz: usize| {
+                            grid[(k * SIDE + iz + dz) * SIDE + ix + dx][part]
+                        };
+                        *value = lerp(
+                            lerp(at(0, 0), at(1, 0), tx),
+                            lerp(at(0, 1), at(1, 1), tx),
+                            tz,
+                        );
+                    }
                 }
                 for y in MIN_Y + 1..=column.height {
                     let up = y - MIN_Y;
                     let k = (up / CELL_Y) as usize;
                     let ty = (up % CELL_Y) as f64 / CELL_Y as f64;
-                    let mut d = lerp(sides[k], sides[k + 1], ty);
-                    // The top block is only carved where a cave entrance
-                    // opens the column (plants and trees stand on it).
-                    if y == column.height && !column.entrance {
-                        d = d.max(f64::MIN_POSITIVE);
+                    let mut d = Caves::combine(
+                        lerp(sides[k][0], sides[k + 1][0], ty),
+                        lerp(sides[k][1], sides[k + 1][1], ty),
+                    );
+                    // The surface layers hang from the heightmap. Where the
+                    // land's own density is open at the top block (its noise
+                    // and the heightmap disagree by a block) that block
+                    // stays; where only a cave opens it, it is carved.
+                    if d <= 0.0 && y == column.height && self.land_density_at(wx, y, wz) <= 0.0 {
+                        d = f64::MIN_POSITIVE;
                     }
                     if d > 0.0 {
                         let block = self.layer(&column, wx, y, wz, depth, &mut rng);
                         chunk.set(x, y, z, block);
                         continue;
                     }
-                    match aquifer.substance(wx, y, wz, squeeze(d)) {
+                    match aquifer.substance(wx, y, wz, d) {
                         Fill::Rock => {
                             let block = self.layer(&column, wx, y, wz, depth, &mut rng);
                             chunk.set(x, y, z, block);

@@ -6,7 +6,6 @@
 use super::{climate::noise_seed, rng::Rng};
 
 /// Octaves with a smaller weight than this are left out.
-const MIN_WEIGHT: f64 = 0.01;
 /// The second stack's coordinates are scaled by this.
 const INPUT_FACTOR: f64 = 1.018_126_888_217_522_7;
 /// Vanilla's `ImprovedNoise`: Perlin's improved gradient noise over a
@@ -104,11 +103,6 @@ impl Octaves {
                 continue;
             }
             let weight = amplitude * lowest_value / 2f64.powi(i as i32);
-            // An octave this faint (under 1% of a unit) is finer than the
-            // 4-block grid the density is sampled on: it only aliases.
-            if weight < MIN_WEIGHT {
-                continue;
-            }
             layers.push((
                 Improved::new(noise_seed(seed, stream * 64 + i as u64)),
                 lowest_input * 2f64.powi(i as i32),
@@ -135,13 +129,10 @@ pub struct NormalNoise {
 }
 
 impl NormalNoise {
-    /// Noise number `index` of the world `seed`, with vanilla's first
-    /// octave (`-7` is wavelengths from 128 blocks) and amplitudes.
-    pub fn new(seed: u64, index: u64, first_octave: i32, amplitudes: &[f64]) -> Self {
-        let first = Octaves::new(seed, index * 2, first_octave, amplitudes);
-        let second = Octaves::new(seed, index * 2 + 1, first_octave, amplitudes);
-        // `NormalNoise.valueFactor`: 1/6 over the expected deviation of the
-        // octaves' span.
+    /// `NormalNoise.valueFactor`: 1/6 over the expected deviation of the
+    /// octaves' span (`k`, last minus first nonzero amplitude's index):
+    /// `(1/6) / (0.1 × (1 + 1/(k + 1)))`.
+    pub fn value_factor(amplitudes: &[f64]) -> f64 {
         let used: Vec<usize> = amplitudes
             .iter()
             .enumerate()
@@ -149,11 +140,34 @@ impl NormalNoise {
             .map(|(i, _)| i)
             .collect();
         let span = used.last().zip(used.first()).map_or(0, |(hi, lo)| hi - lo);
-        let expected = 0.1 * (1.0 + 1.0 / (span as f64 + 1.0));
+        (1.0 / 6.0) / (0.1 * (1.0 + 1.0 / (span as f64 + 1.0)))
+    }
+
+    /// The deviation this noise has, in units of one improved-Perlin
+    /// octave's: the octaves of both sets, each at its weight, are
+    /// independent, so their variances add.
+    pub fn deviation_in_octaves(&self) -> f64 {
+        let energy: f64 = self
+            .first
+            .layers
+            .iter()
+            .chain(&self.second.layers)
+            .map(|(_, _, w)| w * w)
+            .sum();
+        self.factor * energy.sqrt()
+    }
+
+    /// Noise number `index` of the world `seed`, with vanilla's first
+    /// octave (`-7` is wavelengths from 128 blocks) and amplitudes.
+    pub fn new(seed: u64, index: u64, first_octave: i32, amplitudes: &[f64]) -> Self {
+        let first = Octaves::new(seed, index * 2, first_octave, amplitudes);
+        let second = Octaves::new(seed, index * 2 + 1, first_octave, amplitudes);
+        // `NormalNoise.valueFactor`: 1/6 over the expected deviation of the
+        // octaves' span.
         Self {
             first,
             second,
-            factor: (1.0 / 6.0) / expected,
+            factor: Self::value_factor(amplitudes),
         }
     }
 

@@ -1,0 +1,31 @@
+    Finished `release` profile [optimized] target(s) in 0.14s
+     Running `target/release/rustcraft --cave-test --seed 12345 --chunks 400`
+cave test: 400 chunks in 25 windows of 4×4 chunks
+(a,b,f) per 16-block band: cave air %, water %, lava %
+  Y  -64.. -49: air   0.7%  water  0.01%  lava  0.66%   stone  0.0% deepslate 92.9% tuff  7.1%
+  Y  -48.. -33: air   6.6%  water  0.27%  lava  0.01%   stone  0.0% deepslate 92.7% tuff  7.3%
+  Y  -32.. -17: air   9.9%  water  0.35%  lava  0.04%   stone  0.0% deepslate 91.3% tuff  8.7%
+  Y  -16..  -1: air  10.2%  water  0.17%  lava  0.01%   stone  0.0% deepslate 91.5% tuff  8.5%
+  Y    0..  15: air   9.5%  water  1.68%  lava  0.02%   stone 70.6% deepslate 28.5% tuff  0.9%
+  Y   16..  31: air   7.1%  water  1.82%  lava  0.02%
+  Y   32..  47: air   6.4%  water  1.54%  lava  0.02%
+  Y   48..  63: air   4.7%  water  3.89%  lava  0.01%
+  Y   64..  79: air  11.8%  water  0.00%  lava  0.01%
+  Y   80..  95: air   6.6%  water  0.00%  lava  0.00%
+  Y   96.. 111: air   6.1%  water  0.00%  lava  0.00%
+  Y  112.. 127: air   3.9%  water  0.00%  lava  0.00%
+(b) cave water/lava bodies: 70 judged, 0 boxes (flat walls on chunk borders over half their sides), 2 with a fifth or more; 18 water bodies above Y 30 not reaching the sea
+(c) columns with cave air: 73.8% (11.6% within 40 blocks of the surface), median depth to first cave air: 100 blocks; chunks open to the sky: 64.0%; 256×256 areas with an opening: 25/25 (15/15 of the mostly-land ones)
+(d) windows where one system holds over half the cave air: 14/25 (average share 64%)
+(e) ore blocks per chunk (stone + deepslate), exposed per chunk:
+  coal      125.90 (125.26 stone,  0.64 deepslate)   exposed  2.16
+  iron       70.96 (49.63 stone, 21.32 deepslate)   exposed  2.69
+  copper     86.58 (80.52 stone,  6.07 deepslate)   exposed  3.05
+  gold       25.04 ( 3.90 stone, 21.14 deepslate)   exposed  0.48
+  redstone   32.60 ( 2.70 stone, 29.90 deepslate)   exposed  0.72
+  diamond    21.32 ( 0.31 stone, 21.01 deepslate)   exposed  0.20
+  lapis      18.05 ( 7.34 stone, 10.71 deepslate)   exposed  0.33
+  emerald     1.51 ( 1.51 stone,  0.00 deepslate)   exposed  0.05
+  solid blocks beside cave air: 3.34%
+  stone ores below Y -8: 0, deepslate ores above Y 8: 0, chunks with diamond exposed or one block in (below Y -48): 9.8%
+

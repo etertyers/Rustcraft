@@ -1,0 +1,13 @@
+    Finished `release` profile [optimized] target(s) in 0.16s
+     Running `target/release/rustcraft --cave-openings --seed 12345 --side 63`
+surface openings: 1161 in 1016064 blocks² of land and sea = 1142.6 per 1,000 × 1,000 blocks
+open surface columns: 55336 of 795456 land columns = 6.957%
+by main source (per 1,000 × 1,000), and openings each source has a hand in:
+  entrance noise                       224.4   touches   296.2
+  spaghetti_3d (in the entrances)      502.9   touches   625.9
+  cheese breaking through               14.8   touches    94.5
+  spaghetti_2d                           0.0   touches     0.0
+  noodle                               148.6   touches   376.9
+  cave carver                           50.2   touches    74.8
+  canyon carver                          3.0   touches     3.9
+
