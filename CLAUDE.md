@@ -55,6 +55,7 @@ cargo run                      # debug build
 cargo test                     # all tests
 cargo clippy --all-targets -- -D warnings    # must pass before every commit
 cargo fmt                      # must be applied before every commit
+git config core.hooksPath .githooks   # once per clone: the pre-commit hook runs fmt --check and clippy
 RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
 cargo run --release -- --perf-test [--nether|--end|--underwater]   # the performance gate: writes docs/perf/m<N>.md
