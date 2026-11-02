@@ -155,7 +155,8 @@ fn main() -> Result<()> {
     let mut app = app::App::new(cli.world)
         .with_bench(cli.bench)
         .with_view(cli.view)
-        .with_lan(cli.name, cli.join, cli.lan);
+        .with_lan(cli.name, cli.join, cli.lan)
+        .with_size(cli.size);
     // `--pack <file or folder>` (repeatable): play or shoot with these
     // resource packs instead of the chosen ones, leaving options.ron be.
     let packs: Vec<String> = args

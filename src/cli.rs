@@ -20,6 +20,8 @@ pub struct Cli {
     pub name: Option<String>,
     pub join: Option<String>,
     pub lan: Option<u16>,
+    /// `--size <w>x<h>`: the window's size in pixels (for `--shot`).
+    pub size: Option<(u32, u32)>,
 }
 
 /// The world `--creative` makes when no `--world` names one.
@@ -45,6 +47,7 @@ Usage: cargo run --release -- [flags]
     --label <name>        ...name the results <name> (default m<N>, with -nether, -end or -underwater)
     --row <name>          ...which baseline row the results are for (default vanilla)
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
+    --size <w>x<h>        ...at this size in pixels (default 1280x720)
   --name <player>       play as this name this time (Options keeps yours)
   --join <ip:port>      join a world open to LAN
   --lan [port]          open the world to LAN as soon as it's up
@@ -106,6 +109,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let (mut runs, mut label, mut row, mut perf_out) = (1u32, None, None, None);
     let mut view = ViewMode::First;
     let (mut name, mut join, mut lan) = (None, None, None);
+    let mut size = None;
     fn value(
         args: &mut impl Iterator<Item = String>,
         flag: &str,
@@ -130,6 +134,13 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                 })?);
             }
             "--out" => out = Some(value(&mut args, "--out", "a file")?.into()),
+            "--size" => {
+                let text = value(&mut args, "--size", "a size like 640x360")?;
+                size =
+                    Some(parse_size(&text).ok_or_else(|| {
+                        CliError::wrong(format!("bad size {text:?} (like 640x360)"))
+                    })?);
+            }
             "--bench" => {
                 let seconds = match args.next_if(|next| !next.starts_with("--")) {
                     Some(text) => text
@@ -272,6 +283,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             name,
             join: None,
             lan: None,
+            size: None,
         });
     }
     let world = match (world, seed) {
@@ -299,7 +311,15 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         name,
         join,
         lan,
+        size,
     })
+}
+
+/// `640x360` as (640, 360).
+fn parse_size(text: &str) -> Option<(u32, u32)> {
+    let (w, h) = text.split_once('x')?;
+    let size = (w.parse().ok()?, h.parse().ok()?);
+    (size.0 > 0 && size.1 > 0).then_some(size)
 }
 
 #[cfg(test)]

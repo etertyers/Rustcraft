@@ -192,6 +192,8 @@ pub struct App {
     bench: Option<Bench>,
     /// `--shot`: the scene being captured.
     shot: Option<ShotRun>,
+    /// `--size`: the window's size in pixels.
+    window_size: Option<(u32, u32)>,
     /// Hide GUI (F1) is on.
     hide_gui: bool,
     /// List Players (Tab) is held.
@@ -305,6 +307,7 @@ impl App {
             error: None,
             bench: None,
             shot: None,
+            window_size: None,
         }
     }
 
@@ -321,6 +324,12 @@ impl App {
             staged: None,
             captured: false,
         });
+        self
+    }
+
+    /// Opens the window at this size in pixels (`--size`).
+    pub fn with_size(mut self, size: Option<(u32, u32)>) -> Self {
+        self.window_size = size;
         self
     }
 
@@ -373,9 +382,11 @@ impl App {
             Some(_) => bench::WINDOW_SIZE,
             None => (config::WINDOW_WIDTH, config::WINDOW_HEIGHT),
         };
-        let attrs = Window::default_attributes()
-            .with_title(config::WINDOW_TITLE)
-            .with_inner_size(LogicalSize::new(width, height));
+        let attrs = Window::default_attributes().with_title(config::WINDOW_TITLE);
+        let attrs = match self.window_size {
+            Some((w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+            None => attrs.with_inner_size(LogicalSize::new(width, height)),
+        };
         let window = Arc::new(event_loop.create_window(attrs)?);
         let assets = assets::dir();
         let blocks = block::registry();

@@ -662,7 +662,106 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: end_credits,
     },
+    // v1.4 (M54): the reference scenes the Vanilla look is checked
+    // against, all on seed 12345 (tests/reference/vanilla/).
+    Shot {
+        name: "forest-noon",
+        about: "under the trees of a forest on seed 12345 at noon, looking across the forest floor",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([-58.5, 81.0, 297.5], -0.5, -0.12)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
+        name: "lake-sunset",
+        about: "a river on seed 12345 at sunset, looking west across the water to the shore and the setting sun",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([-70.5, 66.0, -35.5], -std::f32::consts::FRAC_PI_2, -0.12)),
+        time: Some(12500),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
+        name: "cave-torches",
+        about: "a closed room carved out at Y -32 on seed 12345 at noon, lit only by torches on its floor",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([1.5, -31.0, 14.5], 2.4, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: torch_room,
+    },
+    Shot {
+        name: "nether-wastes",
+        about: "nether wastes on seed 12345: netherrack, lava and the warm fog",
+        world: Some(WorldKind::Nether { seed: 12345 }),
+        view: Some(([-150.5, 47.0, 150.5], -2.356, -0.1)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
+        name: "end-island",
+        about: "the End's main island on seed 12345: end stone, the obsidian pillars and their crystals (the dragon is sent out of view: its wings flap with the frame's timing)",
+        world: Some(WorldKind::End { seed: 12345 }),
+        view: Some(([0.5, 64.0, 12.5], 0.0, 0.3)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: dragon_away,
+    },
+    Shot {
+        name: "underwater-ocean",
+        about: "under water in a deep ocean on seed 12345 at noon, 5 blocks down, after 30 s under water",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([1248.5, 56.4, 1248.5], 0.0, 0.0)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: crate::game::water_report::stage,
+    },
 ];
+
+/// The dragon far behind the camera, high up, so it isn't in the frame.
+fn dragon_away(game: &mut Game) {
+    if let Some(dragon) = game.dragon.as_mut() {
+        let spot = glam::DVec3::new(0.5, 200.0, 150.0);
+        dragon.position = spot;
+        dragon.prev_position = spot;
+    }
+    game.run_ticks(2);
+}
+
+/// A closed 15 × 5 × 15 room carved out of the stone at Y −32 to −28
+/// round (1, 7), with torches every 5 blocks on its floor: no sky light
+/// gets in.
+fn torch_room(game: &mut Game) {
+    let mut edits = Vec::new();
+    for x in -6..=8 {
+        for z in 0..=14 {
+            for y in -33..=-27 {
+                let wall = x == -6 || x == 8 || z == 0 || z == 14 || y == -33 || y == -27;
+                let block = if wall {
+                    BlockState::of(STONE)
+                } else {
+                    BlockState::AIR
+                };
+                edits.push((at(x, y, z), block));
+            }
+        }
+    }
+    for x in (-4..=6).step_by(5) {
+        for z in (2..=12).step_by(5) {
+            edits.push((at(x, -32, z), BlockState::of(TORCH)));
+        }
+    }
+    game.set_blocks(&edits);
+    game.run_ticks(5);
+}
 
 /// Puts `item` in the hotbar's first slot and selects it, settling the
 /// hand's equip dip.
