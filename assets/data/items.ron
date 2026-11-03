@@ -234,6 +234,7 @@
     (name: "beetroot", texture: "beetroot", food: (hunger: 1, saturation: 1.2)),
     (name: "beetroot_seeds", texture: "beetroot_seeds", places: "beetroots"),
     (name: "sweet_berries", texture: "sweet_berries", food: (hunger: 2, saturation: 0.1), places: "sweet_berry_bush"),
+    (name: "tropical_fish", texture: "tropical_fish", food: (hunger: 1, saturation: 0.1)),
     // What an item of a mod that isn't installed reads as in a loaded save (M39).
     (name: "unknown_item", texture: "knowledge_book"),
 ]

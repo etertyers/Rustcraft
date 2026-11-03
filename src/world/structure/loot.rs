@@ -140,6 +140,47 @@ pub fn table(name: &str) -> Option<Vec<Pool>> {
 
 fn builtin_table(name: &str) -> Option<Vec<Pool>> {
     Some(match name {
+        // Fishing (M41): one pick from each of the three, chosen by the
+        // bobber with the fish, junk and treasure rates.
+        "fishing_fish" => vec![pool(
+            1,
+            1,
+            vec![
+                e("cod", 60, 1, 1),
+                e("salmon", 25, 1, 1),
+                e("pufferfish", 13, 1, 1),
+                e("tropical_fish", 2, 1, 1),
+            ],
+        )],
+        "fishing_junk" => vec![pool(
+            1,
+            1,
+            vec![
+                e("lily_pad", 17, 1, 1),
+                e("bowl", 10, 1, 1),
+                e("fishing_rod", 2, 1, 1),
+                e("leather", 10, 1, 1),
+                e("leather_boots", 10, 1, 1),
+                e("rotten_flesh", 10, 1, 1),
+                e("stick", 5, 1, 1),
+                e("string", 5, 1, 1),
+                e("bone", 10, 1, 1),
+                e("ink_sac", 1, 10, 10),
+                e("tripwire_hook", 10, 1, 1),
+            ],
+        )],
+        "fishing_treasure" => vec![pool(
+            1,
+            1,
+            vec![
+                ench("bow", 1, 30),
+                ench("book", 1, 30),
+                ench("fishing_rod", 1, 30),
+                e("name_tag", 1, 1, 1),
+                e("nautilus_shell", 1, 1, 1),
+                e("saddle", 1, 1, 1),
+            ],
+        )],
         "simple_dungeon" => vec![
             pool(
                 1,

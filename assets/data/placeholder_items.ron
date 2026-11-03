@@ -254,7 +254,6 @@
     (name: "totem_of_undying", placeholder: true, display: "Totem of Undying", texture: "totem_of_undying", max_stack: 1),
     (name: "trial_key", placeholder: true, display: "Trial Key", texture: "trial_key", max_stack: 64),
     (name: "trident", placeholder: true, display: "Trident", texture: "trident", max_stack: 1),
-    (name: "tropical_fish", placeholder: true, display: "Tropical Fish", texture: "tropical_fish", max_stack: 64),
     (name: "tropical_fish_bucket", placeholder: true, display: "Bucket of Tropical Fish", texture: "tropical_fish_bucket", max_stack: 1),
     (name: "turtle_helmet", placeholder: true, display: "Turtle Shell", texture: "turtle_helmet", max_stack: 1),
     (name: "turtle_scute", placeholder: true, display: "Turtle Scute", texture: "turtle_scute", max_stack: 64),

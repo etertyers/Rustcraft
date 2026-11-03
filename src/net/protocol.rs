@@ -172,6 +172,7 @@ pub struct Entities {
     pub particles: Vec<crate::entity::particle::Particle>,
     pub effects: Vec<crate::entity::effects::Effect>,
     pub arrows: Vec<crate::entity::arrow::Arrow>,
+    pub bobbers: Vec<crate::entity::bobber::Bobber>,
     pub fireballs: Vec<crate::entity::fireball::Fireball>,
     pub bullets: Vec<crate::entity::bullet::ShulkerBullet>,
     pub thrown: Vec<crate::entity::thrown::ThrownPotion>,

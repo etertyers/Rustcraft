@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod arrow;
 pub mod boat;
+pub mod bobber;
 pub mod breath;
 pub mod bullet;
 pub mod crystal;

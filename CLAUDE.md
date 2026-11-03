@@ -148,6 +148,7 @@ src/
   server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat)
+  entity/bobber.rs, game/fishing.rs   # the bobber's physics, bites and the loot roll (tables in world/structure/loot.rs), casting and reeling in
   game/farming.rs   # crops on random ticks (vanilla's growth formula), farmland, hoes, bone meal, the composter, saplings, mushrooms; breeding is in game/animals.rs
   mods/{mod,lua,client}.rs, game/{modding,random_ticks}.rs, ui/mods.rs, mods/ examples/mods/   # mod folders and the set chosen at startup, the sandboxed Lua runtime and its API, the client's Lua (keys, HUD text, brightness), the server's mod host and events, random ticks, the Mods screen, the bundled Fullbright and the Ruby example (docs/modding.md)
   ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
@@ -614,7 +615,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Everything ticks on the server and syncs on LAN.
 - **Done when:** a hydrated wheat farm grows and replants, bone meal works, each listed animal breeds with its food and the baby grows up, and farmer villagers keep a village farm going. One screenshot: a wheat farm at different growth stages.
 
-### - [ ] M41 — Fishing
+### - [x] M41 — Fishing
 - **Fishing rod:** crafted (3 sticks + 2 string), cast with right-click (bobber thrown with vanilla physics, floats and bobs in water), right-click again to reel in. Durability: 1 per catch, more for reeling in entities.
 - **Bite timing:** wait 5–30 s (100–600 ticks), minus 5 s per level of Lure; rain makes bites a little more frequent. Particles approach the bobber, then it dips with a splash sound; reel within about 1 s to catch.
 - **Loot (vanilla tables):** fish 85%, junk 10%, treasure 5% with no Luck of the Sea; each level of Luck of the Sea lowers junk by about 2% and raises treasure by about 2%. Fish: cod 60%, salmon 25%, pufferfish 13%, tropical fish 2%. Treasure (bows and fishing rods with enchantments, enchanted books, name tags, saddles, nautilus shells) only comes when the bobber is in **open water** (a 5×4×5 area of only water, air or lily pads); otherwise it's rerolled as junk. 1–6 XP per catch.

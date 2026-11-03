@@ -21,6 +21,7 @@ pub mod environment;
 mod experience;
 mod explosion;
 pub mod farming;
+mod fishing;
 mod fluids;
 mod gateways;
 mod gear;
@@ -389,6 +390,8 @@ pub struct Game {
     pub chat_out: Vec<String>,
     /// Lines for one player's chat only (a mod's `rc.say`), by index.
     pub chat_to: Vec<(usize, String)>,
+    /// Fishing bobbers in the air or the water (M41).
+    pub bobbers: Vec<crate::entity::bobber::Bobber>,
     /// Composters filling up: the tick they're ready on, and where.
     farm_due: Vec<(u64, glam::IVec3)>,
     /// The world's mods (M39).
@@ -512,6 +515,7 @@ impl Game {
             chat_out: Vec::new(),
             chat_to: Vec::new(),
             farm_due: Vec::new(),
+            bobbers: Vec::new(),
             mods: Default::default(),
             entities: Vec::new(),
             orbs: Vec::new(),
@@ -1228,6 +1232,9 @@ impl Game {
         self.tick_brewing();
         self.tick_random_blocks();
         self.tick_farm_due();
+        if self.role == sync::Role::Server {
+            self.tick_bobbers();
+        }
     }
 
     /// After the world's tick: advancements, the player's sounds and what

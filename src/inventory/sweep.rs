@@ -17,6 +17,7 @@ const NOT_CRAFTED: &[&str] = &[
     "beetroot",
     "beetroot_seeds",
     "sweet_berries",
+    "tropical_fish",
     // Smithing, not crafting.
     "netherite_sword",
     "netherite_shovel",
