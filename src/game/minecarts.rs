@@ -53,10 +53,8 @@ impl Game {
     /// Opens the command editor for a command block minecart.
     pub(super) fn open_cart_command(&mut self, index: usize) {
         if !self.may_edit_command_blocks() {
-            self.player.message = Some((
-                "§cOnly operators in creative mode can edit command blocks".to_owned(),
-                80,
-            ));
+            self.player
+                .show("§cOnly operators in creative mode can edit command blocks");
             return;
         }
         let Some(cart) = self.carts.get(index) else {

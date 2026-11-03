@@ -26,8 +26,6 @@ pub const SLEEP_TICKS: u32 = 100;
 const MONSTER_REACH: DVec3 = DVec3::new(8.0, 5.0, 8.0);
 /// How far from the bed's head the player may be to lie down.
 const BED_REACH: DVec3 = DVec3::new(3.0, 2.0, 3.0);
-/// Ticks a notice stays on screen (1.0.0's chat lines last 10 seconds).
-const MESSAGE_TICKS: u32 = 200;
 /// A lying player's eyes above the bed's cell.
 const LYING_EYE: f64 = 11.0 / 16.0;
 /// A bed used outside the Overworld blows up this hard, setting fires.
@@ -54,7 +52,7 @@ impl Game {
 
     /// Shows a notice for a while, in place of 1.0.0's chat line.
     pub(super) fn say(&mut self, text: &str) {
-        self.player.message = Some((text.to_owned(), MESSAGE_TICKS));
+        self.player.show(text);
     }
 
     /// Right-click on either half of the bed at `cell`.

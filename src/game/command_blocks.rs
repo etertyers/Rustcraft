@@ -128,10 +128,8 @@ impl Game {
     /// The editor for the block at `cell`, for `self.player`.
     pub(super) fn open_command_block(&mut self, cell: IVec3) {
         if !self.may_edit_command_blocks() {
-            self.player.message = Some((
-                "§cOnly operators in creative mode can edit command blocks".to_owned(),
-                80,
-            ));
+            self.player
+                .show("§cOnly operators in creative mode can edit command blocks");
             return;
         }
         let Some(state) = self.chunks.world().block(cell.x, cell.y, cell.z) else {

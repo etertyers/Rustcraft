@@ -162,21 +162,6 @@ pub struct Out {
     pub inside: bool,
 }
 
-/// The text typed since the last frame, if some of it is a letter: that
-/// is what starts a search from any tab.
-pub fn letters_typed(events: &[Event]) -> Option<String> {
-    let text: String = events
-        .iter()
-        .filter_map(|e| match e {
-            Event::Text(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .flat_map(str::chars)
-        .filter(|c| !c.is_control())
-        .collect();
-    text.chars().any(char::is_alphabetic).then_some(text)
-}
-
 /// `text` after this frame's typing and backspaces.
 pub fn edit(text: &mut String, events: &[Event]) {
     for event in events {
@@ -299,15 +284,10 @@ pub fn show(
     let mut out = Out::default();
     let pointer = input.pointer;
 
-    // Typing starts a search from any tab, and goes into the box on Search.
+    // Typing goes into the box on Search only; on the other tabs letters
+    // keep their normal jobs (the chat key switches to Search, see `app`).
     let mut text = search_text(ctx);
-    if *tab != CreativeTab::Search
-        && let Some(typed) = letters_typed(&input.events)
-    {
-        *tab = CreativeTab::Search;
-        *scroll = 0.0;
-        text = typed;
-    } else if *tab == CreativeTab::Search {
+    if *tab == CreativeTab::Search {
         edit(&mut text, &input.events);
     }
     ctx.data_mut(|d| d.insert_temp(search_id(), text.clone()));
@@ -551,18 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn letters_start_a_search_but_digits_and_controls_do_not() {
-        assert_eq!(letters_typed(&[typed("a")]).as_deref(), Some("a"));
-        assert_eq!(letters_typed(&[typed("4")]), None);
-        assert_eq!(letters_typed(&[typed("\r")]), None);
-        assert_eq!(
-            letters_typed(&[typed("o"), typed("k")]).as_deref(),
-            Some("ok")
-        );
-        assert_eq!(letters_typed(&[]), None);
-    }
-
-    #[test]
     fn the_grid_scrolls_by_rows_and_the_slots_of_each_tab_are_where_the_sheets_draw_them() {
         assert_eq!(scroll_rows(45), 0);
         assert_eq!(scroll_rows(46), 1);
@@ -702,15 +670,18 @@ mod tests {
     }
 
     #[test]
-    fn typing_anywhere_switches_to_search_and_the_grid_filters_as_you_type() {
+    fn letters_on_other_tabs_do_nothing_and_the_search_grid_filters_as_you_type() {
         let mut rig = Rig::new();
         let mut screen = creative(CreativeTab::Items(0));
         rig.frame(&mut screen, vec![typed("o")]);
         assert_eq!(
             screen,
-            creative(CreativeTab::Search),
-            "a letter opens Search"
+            creative(CreativeTab::Items(0)),
+            "a letter stays put"
         );
+        assert_eq!(search_text(&rig.ctx), "");
+        screen = creative(CreativeTab::Search);
+        rig.frame(&mut screen, vec![typed("o")]);
         rig.frame(&mut screen, vec![typed("a"), typed("k")]);
         assert_eq!(search_text(&rig.ctx), "oak");
         // The grid now lists only names with a word starting "oak"; clicking

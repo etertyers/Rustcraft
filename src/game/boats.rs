@@ -361,9 +361,14 @@ impl Game {
                             let p = &mut game.player;
                             p.body.set_position(feet);
                             p.body.velocity = DVec3::ZERO;
-                            p.camera.yaw += boat.yaw - boat.prev_yaw;
-                            let off = wrap(p.camera.yaw - boat.yaw);
-                            p.camera.yaw = boat.yaw + off.clamp(-LOOK_LIMIT, LOOK_LIMIT);
+                            // The boat's turn carries the view round with it
+                            // (modern `Boat.positionRider`); `boat_turn` tells
+                            // the rider's client how much.
+                            let turn = wrap(boat.yaw - boat.prev_yaw);
+                            p.camera.yaw += turn;
+                            p.boat_turn = wrap(p.boat_turn + turn);
+                            game.clamp_boat_look();
+                            game.face_boat();
                         });
                     }
                     Passenger::Mob(id) => {
@@ -374,6 +379,29 @@ impl Game {
                     }
                 }
             }
+        }
+    }
+
+    /// Keeps the rider's view within 105° of the boat's front (modern
+    /// `Boat.clampRotation`), on the server and in the client's mouse look.
+    pub(super) fn clamp_boat_look(&mut self) {
+        let Some(id) = self.player.boat else {
+            return;
+        };
+        let Some(boat) = self.boats.iter().find(|b| b.id == id) else {
+            return;
+        };
+        let off = wrap(self.player.camera.yaw - boat.yaw);
+        self.player.camera.yaw = boat.yaw + off.clamp(-LOOK_LIMIT, LOOK_LIMIT);
+    }
+
+    /// The rider's body faces the boat's front, whichever way they look.
+    pub(super) fn face_boat(&mut self) {
+        let Some(id) = self.player.boat else {
+            return;
+        };
+        if let Some(boat) = self.boats.iter().find(|b| b.id == id) {
+            self.player.view.face(boat.yaw);
         }
     }
 
@@ -394,7 +422,7 @@ impl Game {
 }
 
 /// An angle brought into −π..π.
-fn wrap(angle: f32) -> f32 {
+pub(super) fn wrap(angle: f32) -> f32 {
     use std::f32::consts::{PI, TAU};
     (angle + PI).rem_euclid(TAU) - PI
 }
@@ -510,6 +538,57 @@ mod tests {
                 .distance(game.boats[index].position)
                 < 1.0
         );
+    }
+
+    #[test]
+    fn the_riders_view_goes_round_with_the_boat_and_the_mouse_stops_105_degrees_from_its_front() {
+        let mut game = pool();
+        let water: Vec<_> = (-30..30)
+            .flat_map(|x| {
+                (-40..10).map(move |z| (IVec3::new(x, 63, z), BlockState::of(blocks::WATER)))
+            })
+            .collect();
+        game.chunks.set_blocks(&water);
+        let index = put_boat(&mut game, "oak_boat");
+        game.use_boat(index);
+        game.player.keys.right = true;
+        let (mut boat_turn, mut view_turn) = (0.0f32, 0.0f32);
+        let mut last = (game.boats[index].yaw, game.player.camera.yaw);
+        for _ in 0..400 {
+            game.tick();
+            let now = (game.boats[index].yaw, game.player.camera.yaw);
+            boat_turn += wrap(now.0 - last.0);
+            view_turn += wrap(now.1 - last.1);
+            last = now;
+            if boat_turn >= std::f32::consts::TAU {
+                break;
+            }
+        }
+        assert!(
+            boat_turn >= std::f32::consts::TAU,
+            "steered all the way round"
+        );
+        assert!(
+            (view_turn - boat_turn).abs() < 1e-3,
+            "the view turned {view_turn} with the boat's {boat_turn}"
+        );
+        // Mouse look works but is held to the front ±105°, both ways.
+        game.player.keys.right = false;
+        for dx in [5000.0, -5000.0] {
+            for _ in 0..50 {
+                game.look(dx / 50.0, 0.0);
+            }
+            let off = wrap(game.player.camera.yaw - game.boats[index].yaw);
+            assert!(
+                (off.abs() - LOOK_LIMIT).abs() < 1e-4,
+                "{}°",
+                off.to_degrees()
+            );
+        }
+        // The body faces the boat's front whichever way the head looks.
+        game.tick();
+        let body = game.player.view.body_yaw(1.0);
+        assert!(wrap(body - game.boats[index].yaw).abs() < 1e-3);
     }
 
     #[test]

@@ -246,7 +246,28 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                 Ok(m) => (m.id.clone(), Some(m), None),
                 Err(err) => (file_name, None, Some(format!("{err:#}"))),
             };
-            if found.iter().any(|f| f.id == id) {
+            if let Some(have) = found.iter_mut().find(|f| f.id == id) {
+                // A copy left in the user's mods folder doesn't hide a newer
+                // bundled one (the config keeps the mod's enabled state,
+                // which is keyed by id).
+                let newer =
+                    bundled
+                        && !have.bundled
+                        && have.manifest.as_ref().zip(manifest.as_ref()).is_some_and(
+                            |(old, new)| {
+                                new.version != old.version
+                                    && version_at_least(&new.version, &old.version)
+                            },
+                        );
+                if newer {
+                    *have = Found {
+                        id,
+                        manifest,
+                        source,
+                        bundled,
+                        problem,
+                    };
+                }
                 continue;
             }
             found.push(Found {
@@ -975,6 +996,37 @@ mod tests {
         edited.set(1, 70, 2, BlockState::AIR);
         let saved = lz4_flex::decompress_size_prepended(&encode_chunk(&edited)).unwrap();
         assert!(!saved.windows(b"gone:".len()).any(|w| w == b"gone:"));
+    }
+
+    #[test]
+    fn a_newer_bundled_mod_replaces_an_older_copy_in_the_users_folder() {
+        let root = std::env::temp_dir().join(format!("rc-bundled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |dir: &str, version: &str| {
+            let path = root.join(dir).join("fullbright");
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(
+                path.join("mod.ron"),
+                format!(
+                    "(id: \"fullbright\", name: \"Fullbright\", version: \"{version}\", \
+                     authors: [], description: \"\", rustcraft: \"1.1\", client_only: true)"
+                ),
+            )
+            .unwrap();
+        };
+        write("user", "1.0.0");
+        write("shipped", "1.0.1");
+        let dirs = [root.join("user"), root.join("shipped")];
+        let found = discover(&dirs, Some(&dirs[1]));
+        assert_eq!(found.len(), 1);
+        assert!(found[0].bundled, "the newer bundled copy wins");
+        assert_eq!(found[0].manifest.as_ref().unwrap().version, "1.0.1");
+        // A user's newer copy (or one with the same version) stays.
+        write("user", "1.0.2");
+        let found = discover(&dirs, Some(&dirs[1]));
+        assert!(!found[0].bundled);
+        assert_eq!(found[0].manifest.as_ref().unwrap().version, "1.0.2");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -162,6 +162,11 @@ impl Game {
         if player.turned != local.turned {
             (player.camera.yaw, player.camera.pitch) = (yaw, pitch);
         }
+        // Add the boat's turns the client hasn't seen to its own look.
+        let turned_by_boat = super::boats::wrap(player.boat_turn - local.boat_turn);
+        if player.turned == local.turned {
+            player.camera.yaw += turned_by_boat;
+        }
         player.keys = local.keys;
         player.target = local.target;
         player.view.mode = local.view.mode;
@@ -190,6 +195,7 @@ impl Game {
         self.falling = e.falling;
         self.carts = e.carts;
         self.boats = e.boats;
+        self.clamp_boat_look();
         self.primed = e.primed;
         self.eyes = e.eyes;
         self.dragon = e.dragon;

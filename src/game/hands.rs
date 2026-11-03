@@ -1102,10 +1102,8 @@ impl Game {
         };
         // Command blocks are for operators in creative.
         if super::command_blocks::Mode::of(block).is_some() && !self.may_edit_command_blocks() {
-            self.player.message = Some((
-                "§cOnly operators in creative mode can place command blocks".to_owned(),
-                80,
-            ));
+            self.player
+                .show("§cOnly operators in creative mode can place command blocks");
             return;
         }
         let world = self.chunks.world();
