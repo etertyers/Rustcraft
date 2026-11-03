@@ -102,6 +102,7 @@ world/               # blocks, chunks, light, meshing, fluids, saves, redstone, 
   save.rs            # region files
   worldgen/          # climate and biomes, terrain, caves, ores, features, the Nether and the End (nested CLAUDE.md)
   structure/         # placement, templates (RON), jigsaw joining, loot, villages, fortresses, strongholds, End cities
+cem/                 # OptiFine custom entity models (.jem) and their animation expressions (M58)
 render/              # wgpu pipelines, atlas, camera, shaders (*.wgsl), models, hand, sky (nested CLAUDE.md)
 look.rs, figure.rs   # everything texture-derived (rebuilt on pack change); the player as drawn
 pack/                # resource packs: layers, animations, block and item models
@@ -166,7 +167,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.1 | M14–M30 | A–D | `docs/milestones/v1.1.md` | released (`v1.1.0`) |
 | 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | built: M31–M38 tagged, PRs #45–#48 (M39–M42) await Kenzo; `v1.2.0` not tagged |
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | built: PRs #49–#59 open, stacked |
-| 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | in progress: the trailer look |
+| 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | built: PRs #61–#65 (M54–M58, stacked) await Kenzo; Low/High miss budgets by a few percent |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`.
 

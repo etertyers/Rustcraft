@@ -130,6 +130,9 @@ pub struct Look {
     /// the dragon's, the crystal's, the elytra's, the armor sheet and last
     /// the player's skin.
     pub mob_textures: Vec<RgbaImage>,
+    /// The packs' custom entity models, made the active ones when this
+    /// look is installed.
+    pub cem: crate::cem::Registry,
     /// Whether the skin has slim (3 pixel) arms.
     pub skin_slim: bool,
     /// Atlas rects of the mining crack's stages.
@@ -282,6 +285,18 @@ impl Look {
                 Some((128, 128)),
             ));
         }
+        // Custom entity models (a pack's `optifine/cem`, M58) bring their
+        // own texture, worn in the plain variant's place.
+        let mob_names: Vec<&str> = mobs.iter().map(|(_, def)| def.name.as_str()).collect();
+        let cem = crate::cem::Registry::load(&|path| res.bytes(path), &mob_names);
+        for (name, model) in &cem.models {
+            let (Some(kind), Some(path)) = (mobs.find(name), &model.texture) else {
+                continue;
+            };
+            if let Some(image) = cem_texture(&res, path) {
+                mob_textures[mobs.texture_slot(kind, 0)] = image;
+            }
+        }
         mob_textures.push(armor_sheet(&res));
         mob_textures.push(skin);
         info!(
@@ -295,6 +310,7 @@ impl Look {
             started.elapsed().as_millis()
         );
         Ok(Self {
+            cem,
             res,
             atlas,
             models,
@@ -386,6 +402,17 @@ pub fn mob_texture(res: &Resources, name: &str, size: Option<(u32, u32)>) -> Opt
 /// `mob_texture`, or the checkerboard.
 fn mob_image(res: &Resources, name: &str, size: Option<(u32, u32)>) -> RgbaImage {
     mob_texture(res, name, size).unwrap_or_else(missing_image)
+}
+
+/// A custom model's texture: `path` as the `.jem` says it, in the
+/// models' folder or as a resource location.
+fn cem_texture(res: &Resources, path: &str) -> Option<RgbaImage> {
+    let path = path.trim_start_matches("./");
+    let bytes = res
+        .bytes(&format!("optifine/cem/{path}"))
+        .or_else(|| res.bytes(path))
+        .or_else(|| res.bytes(&format!("textures/{path}")))?;
+    image::load_from_memory(&bytes).ok().map(|i| i.to_rgba8())
 }
 
 /// A small magenta and black checkerboard for a missing mob texture.

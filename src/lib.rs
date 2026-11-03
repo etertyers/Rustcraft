@@ -8,6 +8,7 @@ pub mod assets;
 pub mod audio;
 pub mod bench;
 pub mod bindings;
+pub mod cem;
 pub mod cli;
 pub mod client;
 pub mod config;

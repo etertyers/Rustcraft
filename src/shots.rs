@@ -697,6 +697,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m58-village",
+        about: "the village nearest the origin on seed 12345 at noon with villagers, a cow and a chicken in front of the camera (use --compare: Vanilla left, Trailer with Fresh Animations right)",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([232.5, 112.0, -280.5], 0.0, -0.32)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: village_animals,
+    },
+    Shot {
         name: "lake-sunset",
         about: "a river on seed 12345 at sunset, looking west across the water to the shore and the setting sun",
         world: Some(WorldKind::Generated { seed: 12345 }),
@@ -747,6 +757,36 @@ pub static SHOTS: &[Shot] = &[
         stage: crate::game::water_report::stage,
     },
 ];
+
+/// Two villagers, a cow and a chicken standing on the ground in front of
+/// the camera, in the village at (232, -296).
+fn village_animals(game: &mut Game) {
+    let ground = |game: &Game, x: i32, z: i32| {
+        (60..160)
+            .rev()
+            .find(|&y| {
+                game.chunks
+                    .world()
+                    .block(x, y, z)
+                    .is_some_and(|b| b.def().solid)
+            })
+            .unwrap_or(64)
+    };
+    for (name, x, z) in [
+        ("villager", 230, -288),
+        ("villager", 234, -290),
+        ("cow", 228, -285),
+        ("chicken", 236, -286),
+    ] {
+        let y = ground(game, x, z) + 1;
+        game.summon(
+            name,
+            glam::DVec3::new(f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5),
+            0.0,
+        );
+    }
+    game.run_ticks(5);
+}
 
 /// The dragon far behind the camera, high up, so it isn't in the frame.
 fn dragon_away(game: &mut Game) {

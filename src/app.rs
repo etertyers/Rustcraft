@@ -1501,6 +1501,7 @@ impl App {
             warn!("can't encode the skin: {err}");
         }
         self.skin_png = png;
+        crate::cem::install(look.cem);
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
         self.crack_uvs = look.crack_uvs;
@@ -2330,6 +2331,11 @@ impl App {
                 Some(crate::game::modes::Spectated::Mob(id)) => Some(*id),
                 _ => None,
             };
+            crate::cem::begin_frame(
+                game.time() as f32 + alpha,
+                alpha,
+                game.player.camera.position.as_dvec3(),
+            );
             for mob in game
                 .mobs
                 .iter()
