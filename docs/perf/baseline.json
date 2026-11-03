@@ -2,44 +2,52 @@
   "machine": "Macmini9,1",
   "rows": {
     "vanilla": {
-      "commit": "885cbf3af17b36806c7c01e5105e8364ce86980b-dirty",
+      "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
       "recorded": "2026-11-02",
-      "runs": 9,
+      "runs": 3,
       "measures": {
-        "average_fps": 132.10516357421875,
-        "chunk_generation_ms": 8.252440687912088,
+        "average_fps": 123.7996826171875,
+        "chunk_generation_ms": 8.073461569963369,
         "chunks_generated": 1365.0,
-        "chunks_meshed": 1630.0,
-        "frames": 7927.0,
+        "chunks_meshed": 1657.0,
+        "frames": 7429.0,
         "frames_over_33ms": 0.0,
         "frames_over_50ms": 0.0,
-        "light_mesh_ms": 9.606623113496934,
-        "memory_mib": 665.296875,
-        "one_percent_low_fps": 59.15000915527344,
-        "worst_frame_ms": 29.263456344604492
+        "gpu_hand_ms": 1.41171209962305,
+        "gpu_total_ms": 3.9294797716864234,
+        "gpu_ui_ms": 1.357855755788908,
+        "gpu_world_ms": 3.8670654880183153,
+        "light_mesh_ms": 9.07559953621424,
+        "memory_mib": 678.34375,
+        "one_percent_low_fps": 61.76572799682617,
+        "worst_frame_ms": 28.618499755859375
       },
       "spread_pct": {
-        "average_fps": 19.98533896750663,
-        "chunk_generation_ms": 24.211951995576044,
-        "chunks_generated": 0.7326007326007326,
-        "chunks_meshed": 13.006134969325153,
-        "frames": 20.373407341995712,
+        "average_fps": 0.09165773487009535,
+        "chunk_generation_ms": 1.7369324291192332,
+        "chunks_generated": 0.0,
+        "chunks_meshed": 11.104405552202776,
+        "frames": 0.0942253331538565,
         "frames_over_33ms": 0.0,
         "frames_over_50ms": 0.0,
-        "light_mesh_ms": 14.235546441818062,
-        "memory_mib": 43.35940252237018,
-        "one_percent_low_fps": 42.35992678877996,
-        "worst_frame_ms": 3395.3894478200036
+        "gpu_hand_ms": 0.7255878714716536,
+        "gpu_total_ms": 0.39118880754558877,
+        "gpu_ui_ms": 0.747878966335836,
+        "gpu_world_ms": 0.25554312594612816,
+        "light_mesh_ms": 6.489051777700948,
+        "memory_mib": 0.36163449578476986,
+        "one_percent_low_fps": 9.173107025500702,
+        "worst_frame_ms": 36.56710300275867
       },
       "benchmarks": {
-        "100 ticks of redstone lines": 2.8606053,
-        "100 ticks of spreading water": 3.5191420927109975,
-        "generate a chunk": 2.7571268916666667,
-        "generate a nether chunk": 1.3922588179012345,
-        "generate an end chunk": 0.035116396601382494,
-        "generate an end city chunk": 0.7221479668493446,
-        "light a chunk": 1.173782858974359,
-        "mesh a chunk": 2.134339479166667
+        "100 ticks of redstone lines": 2.796993986111111,
+        "100 ticks of spreading water": 3.1830459897875816,
+        "generate a chunk": 2.7270313166666664,
+        "generate a nether chunk": 1.3903146657848326,
+        "generate an end chunk": 0.03500708879256644,
+        "generate an end city chunk": 0.7224513068783069,
+        "light a chunk": 1.1682791123903509,
+        "mesh a chunk": 2.142793078125
       },
       "thresholds": {
         "average_fps": {
@@ -55,10 +63,71 @@
         "one_percent_low_fps": {
           "min": 40
         }
-      }
+      },
+      "accepted": [
+        {
+          "reason": "Kenzo approved the v1.4.0 merge; chunk_generation_ms drift since M54",
+          "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+          "date": "2026-11-02"
+        }
+      ]
     },
     "trailer-low": {
-      "note": "Absolute budgets from docs/milestones/v1.4.md (Trailer look). gpu_extra_ms is this row's GPU time per frame over the Vanilla row's, measured in the same --all-looks run.",
+      "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+      "recorded": "2026-11-02",
+      "runs": 3,
+      "measures": {
+        "average_fps": 93.36190032958984,
+        "chunk_generation_ms": 7.899795923076923,
+        "chunks_generated": 1365.0,
+        "chunks_meshed": 1718.0,
+        "frames": 5602.0,
+        "frames_over_33ms": 0.0,
+        "frames_over_50ms": 0.0,
+        "gpu_bloom_ms": 10.908854601580506,
+        "gpu_extra_ms": 2.2045686057161356,
+        "gpu_hand_ms": 2.817731272808429,
+        "gpu_post_ms": 2.9835638387787937,
+        "gpu_shadow_ms": 0.11488039385150808,
+        "gpu_total_ms": 6.134048377402559,
+        "gpu_ui_ms": 2.97856262453133,
+        "gpu_world_extra_ms": 1.8066055973235797,
+        "gpu_world_ms": 5.673671085341895,
+        "light_mesh_ms": 9.02414906402794,
+        "memory_mib": 605.03125,
+        "one_percent_low_fps": 57.35740280151367,
+        "worst_frame_ms": 26.978458404541016
+      },
+      "spread_pct": {
+        "average_fps": 1.514415429564362,
+        "chunk_generation_ms": 1.684279304610234,
+        "chunks_generated": 0.0,
+        "chunks_meshed": 8.556461001164143,
+        "frames": 1.4994644769725098,
+        "frames_over_33ms": 0.0,
+        "frames_over_50ms": 0.0,
+        "gpu_bloom_ms": 0.49026284859793784,
+        "gpu_hand_ms": 1.086462573438837,
+        "gpu_post_ms": 1.089933621752971,
+        "gpu_shadow_ms": 4.3581848909619225,
+        "gpu_total_ms": 0.9177236597879408,
+        "gpu_ui_ms": 1.1249340152514604,
+        "gpu_world_ms": 0.7728291433862585,
+        "light_mesh_ms": 4.328101818771307,
+        "memory_mib": 11.613553018955631,
+        "one_percent_low_fps": 1.710207018549406,
+        "worst_frame_ms": 14.822013276979671
+      },
+      "benchmarks": {
+        "100 ticks of redstone lines": 2.796993986111111,
+        "100 ticks of spreading water": 3.1830459897875816,
+        "generate a chunk": 2.7270313166666664,
+        "generate a nether chunk": 1.3903146657848326,
+        "generate an end chunk": 0.03500708879256644,
+        "generate an end city chunk": 0.7224513068783069,
+        "light a chunk": 1.1682791123903509,
+        "mesh a chunk": 2.142793078125
+      },
       "budgets": {
         "average_fps": {
           "min": 100
@@ -72,10 +141,77 @@
         "frames_over_50ms": {
           "max": 0
         }
-      }
+      },
+      "accepted": [
+        {
+          "reason": "Kenzo approved the v1.4.0 merge; chunk_generation_ms drift since M54",
+          "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+          "date": "2026-11-02"
+        }
+      ]
     },
     "trailer-medium": {
-      "note": "Absolute budgets from docs/milestones/v1.4.md (Trailer look). gpu_extra_ms is this row's GPU time per frame over the Vanilla row's, measured in the same --all-looks run. Per-effect shares of the 4.5 ms are measured as each pass's time over a fixed per-pass floor of about 1.1 ms on the M1; the gate checks the total.",
+      "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+      "recorded": "2026-11-02",
+      "runs": 3,
+      "measures": {
+        "average_fps": 77.64359283447266,
+        "chunk_generation_ms": 7.905911452014652,
+        "chunks_generated": 1365.0,
+        "chunks_meshed": 1665.0,
+        "frames": 4660.0,
+        "frames_over_33ms": 1.0,
+        "frames_over_50ms": 0.0,
+        "gpu_bloom_ms": 21.914829422093025,
+        "gpu_extra_ms": 4.189261477937961,
+        "gpu_fxaa_ms": 5.052176818415974,
+        "gpu_hand_ms": 4.552337274093137,
+        "gpu_post_ms": 4.88916001137582,
+        "gpu_shadow_ms": 0.30403857780639554,
+        "gpu_shafts_ms": 9.384505402232254,
+        "gpu_total_ms": 8.118741249624385,
+        "gpu_ui_ms": 5.045718576733205,
+        "gpu_water_ms": 5.290332370465763,
+        "gpu_world_extra_ms": 0.0,
+        "gpu_world_ms": 3.3698129570723294,
+        "light_mesh_ms": 8.651453513513513,
+        "memory_mib": 579.5,
+        "one_percent_low_fps": 47.66558074951172,
+        "worst_frame_ms": 44.29100036621094
+      },
+      "spread_pct": {
+        "average_fps": 3.457142798185813,
+        "chunk_generation_ms": 2.2551009128096577,
+        "chunks_generated": 0.8791208791208791,
+        "chunks_meshed": 10.75075075075075,
+        "frames": 3.454935622317597,
+        "frames_over_33ms": 100.0,
+        "frames_over_50ms": 0.0,
+        "gpu_bloom_ms": 1.155650883406719,
+        "gpu_fxaa_ms": 2.362569883084966,
+        "gpu_hand_ms": 2.3837071529916867,
+        "gpu_post_ms": 2.420393399589041,
+        "gpu_shadow_ms": 2.1375253827626066,
+        "gpu_shafts_ms": 2.4229069102423275,
+        "gpu_total_ms": 2.069213030934292,
+        "gpu_ui_ms": 2.37536637133438,
+        "gpu_water_ms": 2.107353289980195,
+        "gpu_world_ms": 1.379816799489842,
+        "light_mesh_ms": 6.216778298419237,
+        "memory_mib": 24.568593615185502,
+        "one_percent_low_fps": 2.3384173468853677,
+        "worst_frame_ms": 37.36360332178643
+      },
+      "benchmarks": {
+        "100 ticks of redstone lines": 2.796993986111111,
+        "100 ticks of spreading water": 3.1830459897875816,
+        "generate a chunk": 2.7270313166666664,
+        "generate a nether chunk": 1.3903146657848326,
+        "generate an end chunk": 0.03500708879256644,
+        "generate an end city chunk": 0.7224513068783069,
+        "light a chunk": 1.1682791123903509,
+        "mesh a chunk": 2.142793078125
+      },
       "budgets": {
         "average_fps": {
           "min": 75
@@ -89,10 +225,77 @@
         "frames_over_50ms": {
           "max": 0
         }
-      }
+      },
+      "accepted": [
+        {
+          "reason": "Kenzo approved the v1.4.0 merge; chunk_generation_ms drift since M54",
+          "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+          "date": "2026-11-02"
+        }
+      ]
     },
     "trailer-high": {
-      "note": "Absolute budgets from docs/milestones/v1.4.md (Trailer look). gpu_extra_ms is this row's GPU time per frame over the Vanilla row's, measured in the same --all-looks run.",
+      "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+      "recorded": "2026-11-02",
+      "runs": 3,
+      "measures": {
+        "average_fps": 59.840309143066406,
+        "chunk_generation_ms": 8.203081144649447,
+        "chunks_generated": 1357.0,
+        "chunks_meshed": 1604.0,
+        "frames": 3591.0,
+        "frames_over_33ms": 0.0,
+        "frames_over_50ms": 0.0,
+        "gpu_bloom_ms": 33.220747481851696,
+        "gpu_extra_ms": 7.0598742631325155,
+        "gpu_fxaa_ms": 7.771246846796678,
+        "gpu_hand_ms": 6.6343725521008405,
+        "gpu_post_ms": 7.62536443314761,
+        "gpu_shadow_ms": 0.6987048255425717,
+        "gpu_shafts_ms": 14.904317480672328,
+        "gpu_total_ms": 10.98935403481894,
+        "gpu_ui_ms": 7.763531923398319,
+        "gpu_water_ms": 7.427057964623944,
+        "gpu_world_extra_ms": 0.46239411699561517,
+        "gpu_world_ms": 4.3294596050139305,
+        "light_mesh_ms": 8.278576937032419,
+        "memory_mib": 680.015625,
+        "one_percent_low_fps": 39.27350616455078,
+        "worst_frame_ms": 32.60466766357422
+      },
+      "spread_pct": {
+        "average_fps": 0.6500697593858981,
+        "chunk_generation_ms": 2.190030185759448,
+        "chunks_generated": 0.7369196757553427,
+        "chunks_meshed": 0.24937655860349128,
+        "frames": 0.6683375104427736,
+        "frames_over_33ms": 0.0,
+        "frames_over_50ms": 0.0,
+        "gpu_bloom_ms": 0.20399728154908517,
+        "gpu_fxaa_ms": 0.17964685527772475,
+        "gpu_hand_ms": 0.17786950218394998,
+        "gpu_post_ms": 0.16502068153663807,
+        "gpu_shadow_ms": 3.064693246287061,
+        "gpu_shafts_ms": 0.17557580977809106,
+        "gpu_total_ms": 0.6956036839867024,
+        "gpu_ui_ms": 0.20243804767568024,
+        "gpu_water_ms": 0.22178559149172988,
+        "gpu_world_ms": 1.069225633793796,
+        "light_mesh_ms": 0.5009966433432476,
+        "memory_mib": 2.302336802922727,
+        "one_percent_low_fps": 2.856600585470244,
+        "worst_frame_ms": 11.58640257452863
+      },
+      "benchmarks": {
+        "100 ticks of redstone lines": 2.796993986111111,
+        "100 ticks of spreading water": 3.1830459897875816,
+        "generate a chunk": 2.7270313166666664,
+        "generate a nether chunk": 1.3903146657848326,
+        "generate an end chunk": 0.03500708879256644,
+        "generate an end city chunk": 0.7224513068783069,
+        "light a chunk": 1.1682791123903509,
+        "mesh a chunk": 2.142793078125
+      },
       "budgets": {
         "average_fps": {
           "min": 60
@@ -106,7 +309,14 @@
         "frames_over_50ms": {
           "max": 0
         }
-      }
+      },
+      "accepted": [
+        {
+          "reason": "Kenzo approved the v1.4.0 merge; chunk_generation_ms drift since M54",
+          "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
+          "date": "2026-11-02"
+        }
+      ]
     }
   },
   "note": "Fixed baseline from M53 (branch foundation): median of 9 flights (3 launches x --runs 3) and cargo bench. Replaces docs/perf/baseline.md. Update only with scripts/perf_gate.py --update-baseline."
