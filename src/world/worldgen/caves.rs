@@ -1,20 +1,25 @@
-//! Modern (1.18+) caves, from Y −64 up under the land:
+//! Modern (1.18+) caves, built from vanilla's own formulas:
 //!
-//! - noise caves: **cheese** caverns (big open rooms, with stone pillars
-//!   standing in them), **spaghetti** tunnels (long, a few blocks wide)
-//!   and **noodles** (very thin and winding);
-//! - carved caves: the older **worm** tunnels and **ravines**, which a
-//!   chunk replays from the chunks around it;
-//! - **aquifers**: cells of the underground that are flooded to a level of
-//!   their own, kept apart from dry ones by walls of stone, and lava below
-//!   Y −55.
+//! - the **final density** (`NoiseRouterData.overworld`): the land's
+//!   sloped density below 1.5625 is cut only by cave **entrances** (a
+//!   spaghetti-3D tunnel or an entrance blob); deeper it is the
+//!   **underground** (cheese caverns with cave layers, thin 3D and 2D
+//!   spaghetti, and pillars), and **noodles** cut through all of it;
+//! - the **aquifers** (`Aquifer.NoiseBasedAquifer`): centers on a jittered
+//!   grid each give their blocks a fluid level, so water and lava stand in
+//!   caves at levels of their own, kept apart by irregular rock walls,
+//!   joining the sea where the surface is under it, and lava below Y −54;
+//! - the older **worm** carvers (caves and canyons) a chunk replays from
+//!   the chunks around it.
 //!
 //! Everything is a pure function of the seed and coordinates.
 
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
+use std::collections::HashMap;
+
+use crate::world::fast_hash::FastMap;
 
 use super::{
-    climate::{noise_offset, noise_seed},
+    normal_noise::NormalNoise,
     rng::{Rng, mix},
 };
 use crate::{
@@ -22,26 +27,31 @@ use crate::{
     world::{block::BlockState, blocks},
 };
 
-/// Air carved at or below this height is lava instead (modern's lava
-/// aquifer below −54).
+/// Open blocks at or below this height hold lava when no aquifer says
+/// otherwise (modern's global fluid picker).
 pub const LAVA_LEVEL: i32 = -55;
-/// Aquifer cells: 16 across, 12 high (modern `Aquifer`'s grid).
-const CELL_XZ: i32 = 16;
-const CELL_Y: i32 = 12;
-/// Share of aquifer cells (below the surface's reach) that hold water.
-const FLOODED: u32 = 28;
-/// Cells reaching this high stay dry, so caves near the surface aren't
-/// flooded. A cell is flooded or dry as a whole, whatever the land above
-/// each of its columns, so water never stands beside air in one cell.
-const DRY_ABOVE: i32 = SEA_LEVEL - 8;
+/// The level of an aquifer with no fluid: far below any block (modern's
+/// `WAY_BELOW_MIN_Y`), so pressure against a wet one is large.
+const DRY_LEVEL: i32 = -4096;
+/// Local water in caves never stands above this unless it joins the sea.
+const INLAND_WATER_TOP: i32 = 30;
+/// Above this height `spaghetti_2d`'s thick term (`(|elevation + gradient| +
+/// thickness)³`) is positive for every elevation and thickness.
+const SPAGHETTI_2D_TOP: f64 = 75.0;
+/// The sloped density at which the land stops being "near the surface".
+const NEAR_SURFACE: f64 = 1.5625;
+/// The bottom slide: density blends to solid between the floor and this
+/// many blocks above it (modern `slideOverworld`).
+const SLIDE_HEIGHT: f64 = 24.0;
+const SLIDE_SOLID: f64 = 0.117_187_5;
 
-/// What fills a carved block.
+/// What fills a block that isn't solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fill {
     Air,
     Water,
     Lava,
-    /// Left as rock: a wall between a flooded cell and a dry one.
+    /// Stays rock: a barrier between two aquifers' fluids.
     Rock,
 }
 
@@ -56,143 +66,636 @@ impl Fill {
     }
 }
 
+/// Every cave noise, with vanilla's first octave and amplitudes.
 pub struct Caves {
     seed: u64,
-    shift: [f64; 3],
-    cheese: Fbm<Perlin>,
-    pillars: Perlin,
-    spaghetti_a: Perlin,
-    spaghetti_b: Perlin,
-    spaghetti_width: Perlin,
-    noodle_a: Perlin,
-    noodle_b: Perlin,
-    noodle_toggle: Perlin,
+    cave_layer: NormalNoise,
+    cave_cheese: NormalNoise,
+    cave_entrance: NormalNoise,
+    spaghetti_3d_1: NormalNoise,
+    spaghetti_3d_2: NormalNoise,
+    spaghetti_3d_rarity: NormalNoise,
+    spaghetti_3d_thickness: NormalNoise,
+    spaghetti_2d: NormalNoise,
+    spaghetti_2d_elevation: NormalNoise,
+    spaghetti_2d_modulator: NormalNoise,
+    spaghetti_2d_thickness: NormalNoise,
+    spaghetti_roughness: NormalNoise,
+    spaghetti_roughness_modulator: NormalNoise,
+    noodle: NormalNoise,
+    noodle_thickness: NormalNoise,
+    noodle_ridge_a: NormalNoise,
+    noodle_ridge_b: NormalNoise,
+    pillar: NormalNoise,
+    pillar_rareness: NormalNoise,
+    pillar_thickness: NormalNoise,
+    aquifer_barrier: NormalNoise,
+    aquifer_floodedness: NormalNoise,
+    aquifer_spread: NormalNoise,
+    aquifer_lava: NormalNoise,
 }
 
-/// How much each kind of noise cave opens: the threshold over which
-/// cheese noise carves (lower deep down), the pillars' threshold, and the
-/// spaghetti and noodle widths (squared distance from the noise zero).
-const CHEESE_DEEP: f64 = 0.36;
-const CHEESE_HIGH: f64 = 0.58;
-const PILLAR: f64 = 0.52;
-const SPAGHETTI_MIN: f64 = 0.0025;
-const SPAGHETTI_MAX: f64 = 0.0095;
-const NOODLE_WIDTH: f64 = 0.0016;
-/// Noodles stay within these heights (modern −60..320, mostly low).
-const NOODLE_TOP: i32 = 130;
+/// A value of `noise` in -1..1 mapped to `from`..`to`.
+fn mapped(noise: f64, from: f64, to: f64) -> f64 {
+    from + (to - from) * (noise.clamp(-1.0, 1.0) + 1.0) * 0.5
+}
 
-fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+/// Vanilla's rarity mappers for the spaghetti noises.
+fn rarity_type1(v: f64) -> f64 {
+    if v < -0.5 {
+        0.5
+    } else if v < 0.0 {
+        0.75
+    } else if v < 0.5 {
+        1.0
+    } else if v < 0.75 {
+        2.0
+    } else {
+        3.0
+    }
+}
+
+fn rarity_type2(v: f64) -> f64 {
+    if v < -0.75 {
+        0.5
+    } else if v < -0.5 {
+        0.75
+    } else if v < 0.5 {
+        1.0
+    } else if v < 0.75 {
+        2.0
+    } else {
+        3.0
+    }
+}
+
+/// Vanilla's `weirdScaledSampler`: the noise sampled at a scale the
+/// `rarity` value picks, taken absolute and scaled back up.
+fn weird(rarity: f64, mapper: fn(f64) -> f64, noise: &NormalNoise, x: f64, y: f64, z: f64) -> f64 {
+    let r = mapper(rarity);
+    r * noise.get(x / r, y / r, z / r).abs()
+}
+
+/// A value of `from` at `y0` and `to` at `y1`, held at both ends.
+fn y_gradient(y: f64, y0: f64, y1: f64, from: f64, to: f64) -> f64 {
+    let t = ((y - y0) / (y1 - y0)).clamp(0.0, 1.0);
+    from + (to - from) * t
+}
+
+/// Vanilla's `squeeze` after clamping: the density the aquifer sees.
+pub fn squeeze(density: f64) -> f64 {
+    let c = density.clamp(-1.0, 1.0);
+    c / 2.0 - c * c * c / 24.0
 }
 
 impl Caves {
     pub fn new(seed: u64) -> Self {
-        let fbm = |index, octaves, wavelength: f64| {
-            Fbm::<Perlin>::new(noise_seed(seed, index))
-                .set_octaves(octaves)
-                .set_frequency(1.0 / wavelength)
+        let n = |index: u64, octave: i32, amplitudes: &[f64]| {
+            NormalNoise::new(seed, 100 + index, octave, amplitudes)
         };
-        let perlin = |index| Perlin::new(noise_seed(seed, index));
         Self {
             seed,
-            shift: noise_offset(seed, 3),
-            cheese: fbm(40, 2, 1.0),
-            pillars: perlin(41),
-            spaghetti_a: perlin(42),
-            spaghetti_b: perlin(43),
-            spaghetti_width: perlin(44),
-            noodle_a: perlin(45),
-            noodle_b: perlin(46),
-            noodle_toggle: perlin(47),
+            cave_layer: n(0, -8, &[1.0]),
+            cave_cheese: n(1, -8, &[0.5, 1.0, 2.0, 1.0, 2.0, 1.0, 0.0, 2.0, 0.0]),
+            cave_entrance: n(2, -7, &[0.4, 0.5, 1.0]),
+            spaghetti_3d_1: n(3, -7, &[1.0]),
+            spaghetti_3d_2: n(4, -7, &[1.0]),
+            spaghetti_3d_rarity: n(5, -11, &[1.0]),
+            spaghetti_3d_thickness: n(6, -8, &[1.0]),
+            spaghetti_2d: n(7, -7, &[1.0]),
+            spaghetti_2d_elevation: n(8, -8, &[1.0]),
+            spaghetti_2d_modulator: n(9, -11, &[1.0]),
+            spaghetti_2d_thickness: n(10, -11, &[1.0]),
+            spaghetti_roughness: n(11, -5, &[1.0]),
+            spaghetti_roughness_modulator: n(12, -8, &[1.0]),
+            noodle: n(13, -8, &[1.0]),
+            noodle_thickness: n(14, -8, &[1.0]),
+            noodle_ridge_a: n(15, -7, &[1.0]),
+            noodle_ridge_b: n(16, -7, &[1.0]),
+            pillar: n(17, -7, &[1.0, 1.0]),
+            pillar_rareness: n(18, -8, &[1.0]),
+            pillar_thickness: n(19, -8, &[1.0]),
+            aquifer_barrier: n(20, -3, &[1.0]),
+            aquifer_floodedness: n(21, -7, &[1.0]),
+            aquifer_spread: n(22, -5, &[1.0]),
+            aquifer_lava: n(23, -1, &[1.0]),
         }
     }
 
-    /// Positive where a noise cave opens, the larger the further inside:
-    /// the most open of the cheese, spaghetti and noodle fields.
-    pub fn density(&self, x: i32, y: i32, z: i32) -> f64 {
-        let [sx, sy, sz] = self.shift;
-        let (fx, fy, fz) = (x as f64 + sx, y as f64 + sy, z as f64 + sz);
-        // Cheese: big rooms, commoner deep down, with pillars left in them.
-        let threshold =
-            CHEESE_DEEP + (CHEESE_HIGH - CHEESE_DEEP) * smoothstep(-40.0, 50.0, y as f64);
-        let cheese = self.cheese.get([fx / 110.0, fy / 55.0, fz / 110.0]) - threshold;
-        let pillar = self.pillars.get([fx / 11.0, fy / 40.0, fz / 11.0]) - PILLAR;
-        let cheese = if pillar > 0.0 {
-            cheese - pillar * 3.0
-        } else {
-            cheese
-        };
-        // Spaghetti: where two fields are both near zero, wider here and
-        // narrower there.
-        let p = [fx / 52.0, fy / 26.0, fz / 52.0];
-        let (a, b) = (self.spaghetti_a.get(p), self.spaghetti_b.get(p));
-        let width = SPAGHETTI_MIN
-            + (SPAGHETTI_MAX - SPAGHETTI_MIN)
-                * (self.spaghetti_width.get([fx / 90.0, fy / 90.0, fz / 90.0]) * 0.5 + 0.5);
-        let spaghetti = (width - (a * a + b * b)) * 30.0;
-        // Noodles: thin, winding, in patches, and low.
-        let noodle =
-            if y < NOODLE_TOP && self.noodle_toggle.get([fx / 70.0, fy / 70.0, fz / 70.0]) > 0.15 {
-                let q = [fx / 18.0, fy / 14.0, fz / 18.0];
-                let (a, b) = (self.noodle_a.get(q), self.noodle_b.get(q));
-                (NOODLE_WIDTH - (a * a + b * b)) * 60.0
-            } else {
-                -1.0
-            };
-        cheese.max(spaghetti).max(noodle)
+    /// Cave entrances: negative where a 3D spaghetti tunnel or an
+    /// entrance blob opens (`NoiseRouterData.entrances`).
+    pub fn entrances(&self, x: f64, y: f64, z: f64) -> f64 {
+        let rarity = self.spaghetti_3d_rarity.get(x * 2.0, y, z * 2.0);
+        let thickness = mapped(self.spaghetti_3d_thickness.get(x, y, z), -0.065, -0.088);
+        let a = weird(rarity, rarity_type1, &self.spaghetti_3d_1, x, y, z);
+        let b = weird(rarity, rarity_type1, &self.spaghetti_3d_2, x, y, z);
+        let tunnel = (a.max(b) + thickness).clamp(-1.0, 1.0);
+        let blob = self.cave_entrance.get(x * 0.75, y * 0.5, z * 0.75)
+            + 0.37
+            + y_gradient(y, -10.0, 30.0, 0.3, 0.0);
+        blob.min(tunnel)
     }
 
-    /// What a carved block at (x, y, z) holds: its aquifer cell's water up
-    /// to that cell's level, lava at the bottom of the world, otherwise
-    /// air, and rock where a flooded cell meets a dry one.
-    pub fn fill(&self, x: i32, y: i32, z: i32) -> Fill {
+    /// Flat spaghetti caves at a wavering height (`spaghetti2D`).
+    fn spaghetti_2d(&self, x: f64, y: f64, z: f64) -> f64 {
+        let modulator = self.spaghetti_2d_modulator.get(x * 2.0, y, z * 2.0);
+        let sampler = weird(modulator, rarity_type2, &self.spaghetti_2d, x, y, z);
+        let elevation = mapped(self.spaghetti_2d_elevation.get(x, 0.0, z), -8.0, 8.0);
+        let thickness = mapped(
+            self.spaghetti_2d_thickness.get(x * 2.0, y, z * 2.0),
+            -0.6,
+            -1.3,
+        );
+        let offset = (elevation + y_gradient(y, -64.0, 320.0, 8.0, -40.0)).abs();
+        let thick = (offset + thickness).powi(3);
+        let sampler = sampler + 0.083 * thickness;
+        sampler.max(thick).clamp(-1.0, 1.0)
+    }
+
+    /// Roughens the spaghetti walls (`spaghettiRoughnessFunction`).
+    fn roughness(&self, x: f64, y: f64, z: f64) -> f64 {
+        let modulator = mapped(self.spaghetti_roughness_modulator.get(x, y, z), 0.0, -0.1);
+        modulator * (self.spaghetti_roughness.get(x, y, z).abs() - 0.4)
+    }
+
+    /// Stone pillars in the caverns: solid where this reaches 0.03.
+    fn pillars(&self, x: f64, y: f64, z: f64) -> f64 {
+        let noise = self.pillar.get(x * 25.0, y * 0.3, z * 25.0);
+        let rareness = mapped(self.pillar_rareness.get(x, y, z), 0.0, -2.0);
+        let thickness = mapped(self.pillar_thickness.get(x, y, z), 0.0, 1.1);
+        (noise * 2.0 + rareness) * thickness.powi(3)
+    }
+
+    /// The caves under the near-surface band (`underground`).
+    fn underground(&self, sloped: f64, x: f64, y: f64, z: f64) -> f64 {
+        let layer = self.cave_layer.get(x, y * 8.0, z);
+        let layer = 4.0 * layer * layer;
+        let cheese = (0.27 + self.cave_cheese.get(x, y * 0.666_666_666_666_666_6, z))
+            .clamp(-1.0, 1.0)
+            + (1.5 - 0.64 * sloped).clamp(0.0, 0.5);
+        // The most open of the cheese, the entrances and the thin tunnels;
+        // once it is well under zero nothing can make it solid again, so
+        // the rest isn't worked out (its exact depth only shades where a
+        // wall falls between two cells).
+        let mut caves = layer + cheese;
+        if caves > -1.0 {
+            caves = caves.min(self.entrances(x, y, z));
+        }
+        // The 2D tunnels sit within a few blocks of a sloping plane that
+        // leaves the world's upper half: higher up they can't open.
+        if caves > -1.0 && y < SPAGHETTI_2D_TOP {
+            caves = caves.min(self.spaghetti_2d(x, y, z) + self.roughness(x, y, z));
+        }
+        if caves >= 2.0 {
+            return caves;
+        }
+        let pillars = self.pillars(x, y, z);
+        caves.max(if pillars >= 0.03 { pillars } else { -1.0e6 })
+    }
+
+    /// Noodle caves: very thin and winding, from Y −60 up to 320. Positive
+    /// (solid) wherever there is none.
+    fn noodle(&self, x: f64, y: f64, z: f64) -> f64 {
+        const SOLID: f64 = 64.0;
+        if !(-60.0..320.0).contains(&y) || self.noodle.get(x, y, z) < 0.0 {
+            return SOLID;
+        }
+        let thickness = mapped(self.noodle_thickness.get(x, y, z), -0.05, -0.1);
+        let f = 8.0 / 3.0;
+        let a = self.noodle_ridge_a.get(x * f, y * f, z * f).abs();
+        let b = self.noodle_ridge_b.get(x * f, y * f, z * f).abs();
+        thickness + 1.5 * a.max(b)
+    }
+
+    /// The final density at a point whose land (sloped) density is
+    /// `sloped`: positive is solid. Air above the ground is left as it is;
+    /// near the surface only entrances cut; deeper the underground does;
+    /// noodles cut everywhere; the bottom slide keeps the floor solid.
+    pub fn final_density(&self, sloped: f64, x: i32, y: i32, z: i32) -> f64 {
+        if sloped <= 0.0 {
+            return sloped;
+        }
+        let (fx, fy, fz) = (f64::from(x), f64::from(y), f64::from(z));
+        let combined = if sloped < NEAR_SURFACE {
+            sloped.min(5.0 * self.entrances(fx, fy, fz))
+        } else {
+            self.underground(sloped, fx, fy, fz)
+        };
+        let t = ((fy - f64::from(MIN_Y)) / SLIDE_HEIGHT).clamp(0.0, 1.0);
+        let slid = SLIDE_SOLID + (combined - SLIDE_SOLID) * t;
+        if slid <= 0.0 {
+            return slid;
+        }
+        slid.min(self.noodle(fx, fy, fz))
+    }
+}
+
+/// What an aquifer center holds: the level its fluid stands at and what it
+/// is (`None`: dry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Status {
+    pub level: i32,
+    pub fluid: Fill,
+}
+
+impl Status {
+    /// The fluid at height `y` (air above the level).
+    pub fn at(self, y: i32) -> Fill {
+        if y < self.level {
+            self.fluid
+        } else {
+            Fill::Air
+        }
+    }
+}
+
+/// How much two aquifer centers' fluids press on a block at height `y`
+/// between them (`Aquifer.calculatePressure`, without its barrier noise):
+/// the part of the pressure that the barrier noise is added to, and the
+/// distance of the block from the boundary of the two levels.
+pub fn pressure_terms(s1: Status, s2: Status, y: i32) -> Option<(f64, bool)> {
+    let (b1, b2) = (s1.at(y), s2.at(y));
+    if matches!(
+        (b1, b2),
+        (Fill::Lava, Fill::Water) | (Fill::Water, Fill::Lava)
+    ) {
+        return Some((1.0, false));
+    }
+    let diff = (s1.level - s2.level).abs();
+    if diff == 0 {
+        return None;
+    }
+    let middle = 0.5 * f64::from(s1.level + s2.level);
+    let e = f64::from(y) + 0.5 - middle;
+    let f = f64::from(diff) / 2.0;
+    let q = f - e.abs();
+    let r = if e > 0.0 {
+        let s = q;
+        if s > 0.0 { s / 1.5 } else { s / 2.5 }
+    } else {
+        let s = 3.0 + q;
+        if s > 0.0 { s / 3.0 } else { s / 10.0 }
+    };
+    Some((r, !(-2.0..=2.0).contains(&r)))
+}
+
+/// Blocks whose two nearest centers are this similar (or more) but not
+/// within a barrier's reach get a fluid update when their chunk loads
+/// (`similarity(10², 12²)`).
+const FLOWING_SIMILARITY: f64 = -0.76;
+
+/// Vanilla's closeness of two squared distances: 1 when equal, 0 at 25
+/// apart.
+pub fn similarity(a: f64, b: f64) -> f64 {
+    1.0 - (b - a).abs() / 25.0
+}
+
+/// The aquifers of one chunk: fluid levels at jittered centers, and what
+/// each open block holds.
+pub struct Aquifer<'a, S: FnMut(i32, i32) -> i32> {
+    caves: &'a Caves,
+    surface: S,
+    statuses: FastMap<(i32, i32, i32), (IVec3Like, Status)>,
+    /// The twelve centers round a block's search cell, by that cell.
+    neighborhoods: FastMap<(i32, i32, i32), Hood>,
+    /// The search cell asked about last, since a column's blocks mostly
+    /// stay in one.
+    last_hood: Option<((i32, i32, i32), Hood)>,
+    surfaces: FastMap<(i32, i32), i32>,
+    /// Whether the last `substance` call asked for a fluid update
+    /// (modern `shouldScheduleFluidUpdate`).
+    pub schedule: bool,
+}
+
+/// A center's position.
+type IVec3Like = [i32; 3];
+
+/// The twelve centers round a search cell and their statuses, and the one
+/// status they all share, if they do.
+#[derive(Clone, Copy)]
+struct Hood {
+    centers: [(IVec3Like, Status); 12],
+    uniform: Option<Status>,
+}
+
+impl<'a, S: FnMut(i32, i32) -> i32> Aquifer<'a, S> {
+    /// `surface(x, z)` gives the land's height at a column (its
+    /// preliminary surface).
+    pub fn new(caves: &'a Caves, surface: S) -> Self {
+        Self {
+            caves,
+            surface,
+            statuses: FastMap::default(),
+            neighborhoods: FastMap::default(),
+            last_hood: None,
+            surfaces: FastMap::default(),
+            schedule: false,
+        }
+    }
+
+    fn surface_at(&mut self, x: i32, z: i32) -> i32 {
+        if let Some(&y) = self.surfaces.get(&(x, z)) {
+            return y;
+        }
+        let y = (self.surface)(x, z);
+        self.surfaces.insert((x, z), y);
+        y
+    }
+
+    /// The center of grid cell (gx, gy, gz): 16 across, 12 high, jittered
+    /// by 0–9 blocks across and 0–8 up.
+    fn center(&self, gx: i32, gy: i32, gz: i32) -> IVec3Like {
+        let mut rng = Rng::for_chunk(mix(self.caves.seed ^ 0xA9), gx, gz, gy as u64);
+        [
+            gx * 16 + rng.below(10) as i32,
+            gy * 12 + rng.below(9) as i32,
+            gz * 16 + rng.below(10) as i32,
+        ]
+    }
+
+    fn status_of(&mut self, gx: i32, gy: i32, gz: i32) -> ([i32; 3], Status) {
+        if let Some(&(at, status)) = self.statuses.get(&(gx, gy, gz)) {
+            return (at, status);
+        }
+        let at = self.center(gx, gy, gz);
+        let status = self.compute_fluid(at);
+        self.statuses.insert((gx, gy, gz), (at, status));
+        (at, status)
+    }
+
+    /// Modern's global fluid picker: sea level water, lava below Y −54.
+    fn global(y: i32) -> Status {
+        if y < LAVA_LEVEL + 1 {
+            Status {
+                level: LAVA_LEVEL + 1,
+                fluid: Fill::Lava,
+            }
+        } else {
+            Status {
+                level: SEA_LEVEL,
+                fluid: Fill::Water,
+            }
+        }
+    }
+
+    /// The fluid level and kind at a center (`computeFluid`).
+    fn compute_fluid(&mut self, [x, y, z]: [i32; 3]) -> Status {
+        let global = Self::global(y);
+        let mut min_surface = i32::MAX;
+        let top = y + 12;
+        let bottom = y - 12;
+        let mut near_surface = false;
+        for (ox, oz) in [(0, 0), (-2, -1), (-1, -1), (-3, 0), (-2, 0)] {
+            let (sx, sz) = (x + ox * 16, z + oz * 16);
+            let surface = self.surface_at(sx, sz);
+            let limit = surface + 8;
+            let center = ox == 0 && oz == 0;
+            if center && bottom > limit {
+                return global;
+            }
+            let top_near = top > limit;
+            if top_near || center {
+                // Water at the surface there: the sea, a river or a lake.
+                let wet = Self::global(surface).at(surface) != Fill::Air;
+                if wet {
+                    if center {
+                        near_surface = true;
+                    }
+                    if top_near {
+                        return Self::global(surface);
+                    }
+                }
+            }
+            min_surface = min_surface.min(surface);
+        }
+        let level = self.surface_level(x, y, z, global, min_surface, near_surface);
+        let fluid = match level {
+            None => Fill::Air,
+            Some(level) if level <= -10 && global.fluid != Fill::Lava => {
+                let d = self.caves.aquifer_lava.get(
+                    f64::from(x.div_euclid(64)),
+                    f64::from(y.div_euclid(40)),
+                    f64::from(z.div_euclid(64)),
+                );
+                if d.abs() > 0.3 {
+                    Fill::Lava
+                } else {
+                    global.fluid
+                }
+            }
+            Some(_) => global.fluid,
+        };
+        match level {
+            Some(level) if fluid != Fill::Air => Status { level, fluid },
+            _ => Status {
+                level: DRY_LEVEL,
+                fluid: Fill::Air,
+            },
+        }
+    }
+
+    /// How high the fluid stands at a center, if it holds any
+    /// (`computeSurfaceLevel`).
+    fn surface_level(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        global: Status,
+        min_surface: i32,
+        near_surface: bool,
+    ) -> Option<i32> {
+        let depth = f64::from(min_surface + 8 - y);
+        let f = if near_surface {
+            (1.0 - depth / 64.0).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let g = self
+            .caves
+            .aquifer_floodedness
+            .get(f64::from(x), f64::from(y) * 0.67, f64::from(z))
+            .clamp(-1.0, 1.0);
+        // Mth.map(f, 1, 0, -0.3, 0.8) and Mth.map(f, 1, 0, -0.8, 0.4).
+        let flooded_threshold = 0.8 + (-0.3 - 0.8) * f;
+        let spread_threshold = 0.4 + (-0.8 - 0.4) * f;
+        if g - flooded_threshold > 0.0 {
+            // Flooded to the sea; inland water never stands that high.
+            return Some(if near_surface {
+                global.level
+            } else {
+                global.level.min(INLAND_WATER_TOP)
+            });
+        }
+        if g - spread_threshold > 0.0 {
+            let (i, j, k) = (x.div_euclid(16), y.div_euclid(40), z.div_euclid(16));
+            let spread =
+                self.caves
+                    .aquifer_spread
+                    .get(f64::from(i), f64::from(j) / 1.4, f64::from(k))
+                    * 10.0;
+            let stepped = (spread / 3.0).floor() as i32 * 3;
+            let level = j * 40 + 20 + stepped;
+            return Some(level.min(min_surface).min(INLAND_WATER_TOP));
+        }
+        None
+    }
+
+    /// The twelve aquifer centers (2 × 3 × 2) round search cell
+    /// (x0, y0, z0), with their statuses.
+    fn neighborhood(&mut self, x0: i32, y0: i32, z0: i32) -> Hood {
+        if let Some((key, hood)) = self.last_hood
+            && key == (x0, y0, z0)
+        {
+            return hood;
+        }
+        if let Some(found) = self.neighborhoods.get(&(x0, y0, z0)).copied() {
+            self.last_hood = Some(((x0, y0, z0), found));
+            return found;
+        }
+        let dry = (
+            [0; 3],
+            Status {
+                level: DRY_LEVEL,
+                fluid: Fill::Air,
+            },
+        );
+        let mut found = [dry; 12];
+        let mut i = 0;
+        for dx in 0..2 {
+            for dy in -1..=1 {
+                for dz in 0..2 {
+                    found[i] = self.status_of(x0 + dx, y0 + dy, z0 + dz);
+                    i += 1;
+                }
+            }
+        }
+        let uniform = found
+            .iter()
+            .all(|(_, status)| *status == found[0].1)
+            .then_some(found[0].1);
+        let hood = Hood {
+            centers: found,
+            uniform,
+        };
+        self.neighborhoods.insert((x0, y0, z0), hood);
+        self.last_hood = Some(((x0, y0, z0), hood));
+        hood
+    }
+
+    /// What the open block at (x, y, z) holds, where the final density
+    /// (squeezed) is `density`: its aquifer's fluid, or `Rock` where a
+    /// barrier between two aquifers' fluids keeps it solid
+    /// (`computeSubstance`).
+    pub fn substance(&mut self, x: i32, y: i32, z: i32, density: f64) -> Fill {
+        self.schedule = false;
+        if density > 0.0 {
+            return Fill::Rock;
+        }
         if y <= LAVA_LEVEL {
             return Fill::Lava;
         }
-        let own = self.cell_fill(x, y, z);
-        // A wall a block thick at the faces of cells that disagree.
-        for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)] {
-            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-            if cell(nx, ny, nz) == cell(x, y, z) {
-                continue;
+        let (x0, y0, z0) = (
+            (x - 5).div_euclid(16),
+            (y + 1).div_euclid(12),
+            (z - 5).div_euclid(16),
+        );
+        // The three nearest of the 2 × 3 × 2 centers around.
+        let hood = self.neighborhood(x0, y0, z0);
+        if let Some(status) = hood.uniform {
+            // Every center agrees: no barrier, no edge.
+            return status.at(y);
+        }
+        let dry = Status {
+            level: DRY_LEVEL,
+            fluid: Fill::Air,
+        };
+        let mut best = [(f64::MAX, dry); 3];
+        for (at, status) in hood.centers {
+            let d = f64::from((x - at[0]).pow(2) + (y - at[1]).pow(2) + (z - at[2]).pow(2));
+            if d < best[0].0 {
+                best = [(d, status), best[0], best[1]];
+            } else if d < best[1].0 {
+                best = [best[0], (d, status), best[1]];
+            } else if d < best[2].0 {
+                best[2] = (d, status);
             }
-            let theirs = self.cell_fill(nx, ny, nz);
-            let wet = |f: Fill| f == Fill::Water;
-            // Water beside air, or water over air below it, would pour.
-            if wet(own) != wet(theirs) && (dy == 0 || wet(own)) {
+        }
+        let [(d1, s1), (d2, s2), (d3, s3)] = best;
+        let own = s1.at(y);
+        let sim12 = similarity(d1, d2);
+        if sim12 <= 0.0 {
+            // Close to the edge of its aquifer: its fluid may flow.
+            self.schedule = sim12 >= FLOWING_SIMILARITY;
+            return own;
+        }
+        if own == Fill::Water && Self::global(y - 1).at(y - 1) == Fill::Lava {
+            self.schedule = true;
+            return own;
+        }
+        let mut barrier = f64::NAN;
+        let mut pressed = |s: Status, t: Status, caves: &Caves| -> f64 {
+            let Some((r, outside)) = pressure_terms(s, t, y) else {
+                return 0.0;
+            };
+            let noise = if outside {
+                0.0
+            } else {
+                if barrier.is_nan() {
+                    barrier =
+                        caves
+                            .aquifer_barrier
+                            .get(f64::from(x), f64::from(y) * 0.5, f64::from(z));
+                }
+                barrier
+            };
+            2.0 * (noise + r)
+        };
+        let caves = self.caves;
+        let p12 = pressed(s1, s2, caves);
+        if density + sim12.max(0.0) * p12 > 0.0 {
+            return Fill::Rock;
+        }
+        let sim13 = similarity(d1, d3);
+        if sim13 > 0.0 && s1.at(y) != s3.at(y) {
+            let p13 = pressed(s1, s3, caves);
+            if density + sim13 * p13 > 0.0 {
+                return Fill::Rock;
+            }
+        }
+        let sim23 = similarity(d2, d3);
+        if sim23 > 0.0 && s2.at(y) != s3.at(y) {
+            let p23 = pressed(s2, s3, caves);
+            if density + sim23 * p23 > 0.0 {
                 return Fill::Rock;
             }
         }
         own
     }
 
-    /// The fluid a cell holds at height `y`.
-    fn cell_fill(&self, x: i32, y: i32, z: i32) -> Fill {
-        if y <= LAVA_LEVEL {
-            return Fill::Lava;
+    /// The level and kind of the aquifer a block belongs to (its nearest
+    /// center's), for tests.
+    pub fn status_at(&mut self, x: i32, y: i32, z: i32) -> Status {
+        let (x0, y0, z0) = (
+            (x - 5).div_euclid(16),
+            (y + 1).div_euclid(12),
+            (z - 5).div_euclid(16),
+        );
+        let mut best = (
+            f64::MAX,
+            Status {
+                level: DRY_LEVEL,
+                fluid: Fill::Air,
+            },
+        );
+        for (at, status) in self.neighborhood(x0, y0, z0).centers {
+            let d = f64::from((x - at[0]).pow(2) + (y - at[1]).pow(2) + (z - at[2]).pow(2));
+            if d < best.0 {
+                best = (d, status);
+            }
         }
-        let (cx, cy, cz) = cell(x, y, z);
-        let bottom = cy * CELL_Y;
-        if bottom + CELL_Y >= DRY_ABOVE {
-            return Fill::Air;
-        }
-        let mut rng = Rng::for_chunk(mix(self.seed ^ 0xA9), cx, cz, cy as u64);
-        if rng.below(100) >= FLOODED {
-            return Fill::Air;
-        }
-        let level = bottom + 2 + rng.below(CELL_Y as u32 + 4) as i32;
-        if y <= level { Fill::Water } else { Fill::Air }
+        best.1
     }
-}
-
-/// The aquifer cell holding a block.
-fn cell(x: i32, y: i32, z: i32) -> (i32, i32, i32) {
-    (
-        x.div_euclid(CELL_XZ),
-        y.div_euclid(CELL_Y),
-        z.div_euclid(CELL_XZ),
-    )
 }
 
 /// One carved tunnel's path, step by step: the middle and the radii
@@ -205,9 +708,31 @@ pub struct Worm {
 /// `cave` 0.15 plus `cave_extra_underground` 0.07, and `canyon` 0.01).
 const WORM_CHANCE: f64 = 0.15;
 const DEEP_WORM_CHANCE: f64 = 0.07;
-const RAVINE_CHANCE: f64 = 0.012;
+const RAVINE_CHANCE: f64 = 0.01;
 /// How far (in chunks) a tunnel started elsewhere can reach.
 pub const CARVER_REACH: i32 = 8;
+
+/// The worms chunk (cx, cz) starts, remembered per thread: each chunk's
+/// worms are replayed by every chunk within `CARVER_REACH` of it.
+pub fn worms_of(seed: u64, cx: i32, cz: i32) -> std::rc::Rc<Vec<Worm>> {
+    type Memo = (u64, HashMap<(i32, i32), std::rc::Rc<Vec<Worm>>>);
+    thread_local! {
+        static MEMO: std::cell::RefCell<Memo> = std::cell::RefCell::new((0, HashMap::new()));
+    }
+    MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.0 != seed {
+            *memo = (seed, HashMap::new());
+        }
+        if memo.1.len() > 4096 {
+            memo.1.clear();
+        }
+        memo.1
+            .entry((cx, cz))
+            .or_insert_with(|| std::rc::Rc::new(worms(seed, cx, cz)))
+            .clone()
+    })
+}
 
 /// The worm tunnels and ravines chunk (cx, cz) starts.
 pub fn worms(seed: u64, cx: i32, cz: i32) -> Vec<Worm> {
@@ -285,62 +810,120 @@ fn worm(rng: &mut Rng, at: [f64; 3], ravine: bool) -> Worm {
 mod tests {
     use super::*;
 
-    /// Share of blocks a noise cave opens between `low` and `high`.
-    fn open_share(caves: &Caves, low: i32, high: i32) -> f64 {
-        let mut open = 0;
-        let mut all = 0;
-        for x in (0..512).step_by(3) {
-            for z in (0..512).step_by(7) {
-                for y in (low..high).step_by(2) {
-                    all += 1;
-                    open += usize::from(caves.density(x, y, z) > 0.0);
-                }
-            }
+    fn open_aquifer(caves: &Caves) -> Aquifer<'_, impl FnMut(i32, i32) -> i32> {
+        // Land at Y 90 everywhere: nothing near the sea.
+        Aquifer::new(caves, |_, _| 90)
+    }
+
+    #[test]
+    fn the_final_density_is_the_same_at_fixed_points_for_a_seed() {
+        // A regression anchor: the router's numbers at fixed points (the
+        // sloped density `s` standing for how deep the land is there).
+        let caves = Caves::new(12345);
+        let points = [
+            (10, -30, 20, 6.0),
+            (-200, -10, 90, 4.0),
+            (333, 40, -75, 3.0),
+            (0, 62, 0, 1.0),
+            (50, -62, 50, 9.0),
+        ];
+        let again = Caves::new(12345);
+        for (x, y, z, s) in points {
+            let a = caves.final_density(s, x, y, z);
+            assert_eq!(a, again.final_density(s, x, y, z));
+            assert!(a.is_finite() && a.abs() < 1.0e7, "{a}");
         }
-        open as f64 / all as f64
+        // Air above the land stays as it is.
+        assert_eq!(caves.final_density(-0.5, 3, 90, 3), -0.5);
+        // The same point under another seed differs somewhere.
+        let other = Caves::new(54321);
+        assert!(points.iter().any(|&(x, y, z, s)| {
+            (caves.final_density(s, x, y, z) - other.final_density(s, x, y, z)).abs() > 1e-9
+        }));
     }
 
     #[test]
-    fn caves_open_more_of_the_deep_than_near_the_surface() {
-        let caves = Caves::new(20111118);
-        let deep = open_share(&caves, -56, 0);
-        let middle = open_share(&caves, 0, 40);
-        let high = open_share(&caves, 60, 100);
-        assert!((0.05..0.3).contains(&deep), "deep {deep}");
-        assert!(middle > 0.02 && middle < deep, "middle {middle}");
-        assert!(high < middle, "high {high}");
-    }
-
-    #[test]
-    fn the_bottom_is_lava_and_flooded_cells_are_walled_off() {
+    fn noodles_never_cut_below_minus_60_and_the_floor_stays_solid() {
         let caves = Caves::new(7);
-        assert_eq!(caves.fill(3, -58, 3), Fill::Lava);
-        // Above the dry line nothing floods.
-        assert_eq!(caves.fill(3, SEA_LEVEL, 3), Fill::Air);
-        // Some cells hold water; next to a dry cell at the same height the
-        // edge block stays rock.
-        let mut water = 0;
-        let mut walls = 0;
-        for x in 0..256 {
-            for y in -40..40 {
-                match caves.fill(x, y, 5) {
-                    Fill::Water => water += 1,
-                    Fill::Rock => walls += 1,
-                    _ => {}
-                }
+        for i in 0..4000 {
+            let (x, z) = (f64::from(i) * 5.3, f64::from(i) * 3.1 - 700.0);
+            for y in [-64.0, -63.0, -62.0, -61.0] {
+                assert!(caves.noodle(x, y, z) >= 64.0, "noodle at {y}");
+            }
+            // The bottom slide: Y −64 to −61 stay solid whatever the caves.
+            for y in -64..=-61 {
+                let d = caves.final_density(8.0, (x as i32) * 2, y, z as i32);
+                assert!(d > 0.0, "open at {y}: {d}");
             }
         }
-        assert!(water > 500, "{water} water");
-        assert!(walls > 0);
-        for x in 0..256 {
-            for y in -40..40 {
-                if caves.fill(x, y, 5) == Fill::Water {
-                    for (dx, dy) in [(1, 0), (-1, 0), (0, -1)] {
-                        assert_ne!(caves.fill(x + dx, y + dy, 5), Fill::Air, "{x} {y}");
+        // Noodles do exist above −60.
+        let found =
+            (0..20_000).any(|i| caves.noodle(f64::from(i) * 7.1, 20.0, f64::from(i) * 3.3) < 0.0);
+        assert!(found, "no noodle cave found");
+    }
+
+    #[test]
+    fn two_aquifers_at_different_levels_get_a_wall_between_them() {
+        let wet = Status {
+            level: 10,
+            fluid: Fill::Water,
+        };
+        let low = Status {
+            level: -20,
+            fluid: Fill::Water,
+        };
+        // Halfway between the two levels the pressure is high: an open
+        // block (density −5, squeezed) next to the boundary stays rock.
+        let (r, outside) = pressure_terms(wet, low, -5).expect("levels differ");
+        assert!(outside && r > 2.0, "{r}");
+        let pressure = 2.0 * r;
+        assert!(squeeze(-5.0) + similarity(100.0, 101.0) * pressure > 0.0);
+        // Far from the boundary (similarity 0) nothing walls it.
+        assert!(squeeze(-5.0) + similarity(0.0, 40.0).max(0.0) * pressure <= 0.0);
+        // Equal levels never wall.
+        assert_eq!(pressure_terms(wet, wet, -5), None);
+        // Water against lava always presses.
+        let lava = Status {
+            level: -40,
+            fluid: Fill::Lava,
+        };
+        assert_eq!(pressure_terms(wet, lava, -50), Some((1.0, false)));
+    }
+
+    #[test]
+    fn open_blocks_hold_water_only_below_their_aquifers_level_and_lava_below_minus_55() {
+        let caves = Caves::new(99);
+        let mut aquifer = open_aquifer(&caves);
+        let (mut water, mut lava, mut rock) = (0, 0, 0);
+        for x in (0..400).step_by(3) {
+            for z in (0..400).step_by(5) {
+                for y in -64..60 {
+                    let fill = aquifer.substance(x, y, z, -0.2);
+                    if y <= LAVA_LEVEL {
+                        assert_eq!(fill, Fill::Lava, "{x} {y} {z}");
+                        lava += 1;
+                        continue;
+                    }
+                    match fill {
+                        Fill::Water => {
+                            let level = aquifer.status_at(x, y, z).level;
+                            assert!(y < level, "water at {y} in an aquifer of {level}");
+                            // Inland, water never stands above Y 30.
+                            assert!(y < INLAND_WATER_TOP, "inland water at {y}");
+                            water += 1;
+                        }
+                        Fill::Rock => rock += 1,
+                        Fill::Lava => {
+                            assert!(aquifer.status_at(x, y, z).level > y);
+                            lava += 1;
+                        }
+                        Fill::Air => {}
                     }
                 }
             }
         }
+        assert!(water > 1000 && lava > 1000, "water {water}, lava {lava}");
+        assert!(rock > 0, "barriers exist");
     }
 
     #[test]

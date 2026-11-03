@@ -315,6 +315,17 @@ impl Game {
                 .into_iter()
                 .map(|[x, y, z]| IVec3::new(min_x + x as i32, y as i32, min_z + z as i32))
                 .collect();
+            // Fluid at an aquifer's edge starts flowing.
+            for &at in &cells {
+                if self
+                    .chunks
+                    .world()
+                    .block(at.x, at.y, at.z)
+                    .is_some_and(|b| b.def().fluid.is_some())
+                {
+                    self.fluids.changed(at);
+                }
+            }
             let world = self.chunks.world();
             let edits: Vec<(IVec3, BlockState)> = cells
                 .iter()

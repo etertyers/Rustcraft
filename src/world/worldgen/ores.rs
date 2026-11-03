@@ -141,7 +141,8 @@ pub fn kinds() -> Vec<VeinKind> {
     let diamond = (of(blocks::DIAMOND_ORE), of(blocks::DEEPSLATE_DIAMOND_ORE));
     let lapis = (of(blocks::LAPIS_ORE), of(blocks::DEEPSLATE_LAPIS_ORE));
     let copper = (of(blocks::COPPER_ORE), of(blocks::DEEPSLATE_COPPER_ORE));
-    let emerald = (of(blocks::EMERALD_ORE), of(blocks::DEEPSLATE_EMERALD_ORE));
+    // Emeralds are placed in stone only (modern's mountains' ore).
+    let emerald = (of(blocks::EMERALD_ORE), BlockState::AIR);
     let same = |b: BlockState| (b, b);
     vec![
         vein("dirt", DIRT, DIRT, 7.0, 33, u(0, 160), 0.0, any),
@@ -328,6 +329,16 @@ pub fn kinds() -> Vec<VeinKind> {
             any,
         ),
         vein(
+            "diamond (medium)",
+            diamond.0,
+            diamond.1,
+            2.0,
+            8,
+            u(-64, -4),
+            0.5,
+            any,
+        ),
+        vein(
             "diamond (buried)",
             diamond.0,
             diamond.1,
@@ -500,7 +511,8 @@ fn vein(rng: &mut Rng, source: ChunkPos, kind: &VeinKind, area: &Area, chunk: &m
                         continue;
                     };
                     let block = if deep { kind.deep } else { kind.block };
-                    if block == here {
+                    // `AIR` as the deepslate form: this ore doesn't grow there.
+                    if block == here || block.is_air() {
                         continue;
                     }
                     if kind.air_discard > 0.0
@@ -549,6 +561,131 @@ pub fn is_stone(block: BlockState) -> bool {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn each_ores_heights_peak_where_modern_puts_them() {
+        for kind in kinds() {
+            let (low, high) = kind.spread.range();
+            let mut rng = Rng::new(5);
+            let mut buckets = vec![0u32; ((high - low) / 8 + 1) as usize];
+            for _ in 0..60_000 {
+                let y = kind.spread.sample(&mut rng);
+                assert!((low..=high).contains(&y), "{}: {y}", kind.name);
+                buckets[((y - low) / 8) as usize] += 1;
+            }
+            let top = buckets
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, n)| **n)
+                .unwrap()
+                .0 as i32;
+            let mode = low + top * 8 + 4;
+            match kind.spread {
+                Spread::Triangle { peak, .. } => assert!(
+                    (mode - peak).abs() <= (high - low) / 4 + 8,
+                    "{}: peaks at {mode}, not {peak}",
+                    kind.name
+                ),
+                Spread::Uniform { .. } => {
+                    // Flat: no bucket (but the last, partial one) is far from another.
+                    let full = &buckets[..buckets.len() - 1];
+                    let (lo, hi) = (full.iter().min().unwrap(), full.iter().max().unwrap());
+                    assert!(*hi < *lo * 2 + 200, "{}: {lo}..{hi}", kind.name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn veins_that_discard_everything_exposed_never_touch_air() {
+        let terrain = Terrain::new(8);
+        let pos = ChunkPos::new(1, 1);
+        let area = terrain.area(pos);
+        let mut chunk = terrain.generate(pos);
+        // A stand-in for the buried diamonds (discard 1.0) in a block
+        // nothing else makes.
+        let kind = VeinKind {
+            name: "test",
+            block: of(blocks::EMERALD_BLOCK),
+            deep: of(blocks::EMERALD_BLOCK),
+            count: 1.0,
+            size: 8,
+            spread: Spread::uniform(-60, 60),
+            air_discard: 1.0,
+            place: Place::Anywhere,
+        };
+        let mut rng = Rng::new(3);
+        for _ in 0..3000 {
+            let mut vein_rng = Rng::new(rng.next_u64());
+            vein(&mut vein_rng, pos, &kind, &area, &mut chunk);
+        }
+        let mut placed = 0;
+        for y in -60..60 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    if chunk.get(x, y, z) == of(blocks::EMERALD_BLOCK) {
+                        placed += 1;
+                        assert!(!touches_air(&chunk, x, y, z), "{x} {y} {z} touches air");
+                    }
+                }
+            }
+        }
+        assert!(placed > 100, "{placed} blocks placed");
+    }
+
+    #[test]
+    fn deepslate_ores_grow_in_deepslate_and_stone_ores_in_stone_over_a_sample() {
+        let stats = crate::world::worldgen::cave_stats::measure(12345, 16);
+        assert_eq!(stats.stone_ore_below, 0, "stone ore deep down");
+        assert_eq!(stats.deep_ore_above, 0, "deepslate ore up high");
+        let deep: u64 = stats.ores.iter().map(|(_, t, _)| t[1]).sum();
+        let stone: u64 = stats.ores.iter().map(|(_, t, _)| t[0]).sum();
+        assert!(deep > 100 && stone > 100, "{deep} deep, {stone} stone");
+    }
+
+    /// Expected blocks of redstone and lapis per chunk from the table alone
+    /// (count × size × the share of the range inside the world × how much
+    /// of a vein is distinct blocks), against what a sample finds.
+    #[test]
+    fn ore_counts_are_near_the_tables_expectation() {
+        use crate::world::worldgen::cave_stats::{expected_ore_blocks, measure};
+        let stats = measure(12345, 64);
+        let expect = |names: &[&str]| -> f64 {
+            kinds()
+                .iter()
+                .filter(|k| names.contains(&k.name))
+                .map(|k| {
+                    let (low, high) = k.spread.range();
+                    expected_ore_blocks(
+                        f64::from(k.count),
+                        f64::from(k.size),
+                        low,
+                        high,
+                        crate::config::MIN_Y,
+                        crate::config::MAX_Y,
+                    )
+                })
+                .sum()
+        };
+        let found = |name: &str| -> f64 {
+            stats
+                .ores
+                .iter()
+                .find(|(n, ..)| *n == name)
+                .map(|(_, t, _)| (t[0] + t[1]) as f64 / stats.chunks as f64)
+                .unwrap()
+        };
+        for (name, kinds_of) in [
+            ("redstone", &["redstone", "redstone (lower)"][..]),
+            ("lapis", &["lapis", "lapis (buried)"][..]),
+        ] {
+            let (want, got) = (expect(kinds_of), found(name));
+            assert!(
+                got > want * 0.75 && got < want * 1.25,
+                "{name}: {got:.1} blocks a chunk, table says {want:.1}"
+            );
+        }
+    }
 
     #[test]
     fn heights_are_modern_ones() {

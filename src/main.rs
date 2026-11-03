@@ -47,6 +47,40 @@ fn main() -> Result<()> {
         rustcraft::world::worldgen::flower_stats::print_stats(seed, 400);
         return Ok(());
     }
+    // `--cave-test [--seed <n>] [--chunks <n>]` and `--cave-slice --seed <n>
+    // --x <x> --z <z> --size 256 --out <file>`: the underground in numbers
+    // and in a picture.
+    let number = |flag: &str, default: i64| -> Result<i64> {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|i| args.get(i + 1))
+            .map_or(Ok(default), |s| s.parse())
+            .with_context(|| format!("{flag} needs a number"))
+    };
+    if args.iter().any(|arg| arg == "--cave-test") {
+        let seed = number("--seed", 12345)? as u64;
+        rustcraft::world::worldgen::cave_stats::print_stats(
+            seed,
+            number("--chunks", 400)? as usize,
+        );
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--cave-slice") {
+        let out = args
+            .iter()
+            .position(|arg| arg == "--out")
+            .and_then(|i| args.get(i + 1))
+            .context("--out needs a file")?;
+        rustcraft::world::worldgen::cave_stats::write_slice(
+            number("--seed", 12345)? as u64,
+            number("--x", 0)? as i32,
+            number("--z", 0)? as i32,
+            number("--size", 256)? as u32,
+            std::path::Path::new(out),
+        )?;
+        println!("wrote {out}");
+        return Ok(());
+    }
     if let Some(i) = args.iter().position(|arg| arg == "--lan-test") {
         let bots = args
             .get(i + 1)

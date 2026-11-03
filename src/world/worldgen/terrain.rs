@@ -12,7 +12,7 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use super::{
     biome_source,
-    caves::{CARVER_REACH, Caves, worms},
+    caves::{Aquifer, CARVER_REACH, Caves, Fill, squeeze, worms_of},
     climate::{Climate, ClimateNoise, Lay, noise_offset, noise_seed},
     rng::{Rng, mix},
     terrain_shape::Shaper,
@@ -51,20 +51,18 @@ pub const ICE: BlockState = BlockState::of(blocks::ICE);
 /// A rise of this many blocks to a neighbor bares the stone.
 const STEEP: i32 = 4;
 
-/// Caves stay this far below the floor of any water.
-const CAVE_WATER_MARGIN: i32 = 4;
-/// Caves stop this far under the surface, except at cave entrances.
-const CAVE_ROOF: i32 = 3;
-/// Cave noise is sampled every `CAVE_CELL_XZ` blocks across and
-/// `CAVE_CELL_Y` up, and blended in between.
-const CAVE_CELL_XZ: i32 = 4;
-const CAVE_CELL_Y: i32 = 4;
 /// Deepslate replaces stone below Y 0, blending into it over the eight
 /// blocks above (modern `deepslate` vertical gradient).
 pub const DEEPSLATE_LEVEL: i32 = 0;
 const DEEPSLATE_BLEND: i32 = 8;
 /// Lowest height a cave biome reaches.
 const CAVE_BIOME_FLOOR: i32 = MIN_Y + 4;
+/// A cave entrance opens the top of the ground where `5 × entrances` falls
+/// under the land's density there, which is a little over zero at the
+/// surface block: columns with entrances under this keep no plants.
+const ENTRANCE_REACH: f64 = 0.15;
+/// Most waterfalls and lavafalls a chunk's aquifers start flowing as it loads.
+const FALL_STARTS: usize = 4;
 /// The ragged bedrock floor: always at the bottom, thinning out over the
 /// four blocks above (modern −64 to −60).
 const BEDROCK_RAGGED: i32 = 4;
@@ -107,7 +105,6 @@ pub struct Terrain {
     jagged: Perlin,
     /// Varies surface layer depth and beach/gravel patches.
     surface: Perlin,
-    entrances: Perlin,
     caves: Caves,
     /// Badlands terracotta bands, by height.
     bands: [BlockState; BAND_COUNT],
@@ -126,9 +123,15 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 /// between (modern `NoiseChunk`).
 const CELL_XZ: i32 = 4;
 const CELL_Y: i32 = 8;
-/// Corners up a column, every 8 blocks from Y 0 to 256; the land's shape
-/// lives up there, and everything below Y 0 is solid.
-const LEVELS: usize = 256 / CELL_Y as usize + 1;
+/// Corners up a column, every 8 blocks from the world's floor (Y −64) to
+/// 256; the land's shape lives up there, and the caves cut into what is
+/// below it.
+const LEVELS: usize = ((256 - MIN_Y) / CELL_Y) as usize + 1;
+
+/// The height of the corner level `k`.
+const fn level_y(k: usize) -> i32 {
+    MIN_Y + k as i32 * CELL_Y
+}
 /// The most the 3D noise moves density; it fades out from `NOISE_FADE`
 /// up to `NOISE_TOP`, so nothing floats up there.
 const NOISE_AMPLITUDE: f64 = 0.6;
@@ -183,14 +186,15 @@ impl Corners {
 
 /// The density at height `y` from a column's levels.
 fn density(levels: &Levels, y: i32) -> f64 {
-    let k = (y / CELL_Y) as usize;
+    let up = y - MIN_Y;
+    let k = (up / CELL_Y) as usize;
     if k + 1 >= LEVELS {
         return levels[LEVELS - 1];
     }
     lerp(
         levels[k],
         levels[k + 1],
-        (y % CELL_Y) as f64 / CELL_Y as f64,
+        (up % CELL_Y) as f64 / CELL_Y as f64,
     )
 }
 
@@ -200,7 +204,7 @@ fn top_of(levels: &Levels) -> i32 {
         if levels[k].max(levels[k + 1]) <= 0.0 {
             continue;
         }
-        for y in (k as i32 * CELL_Y..(k as i32 + 1) * CELL_Y).rev() {
+        for y in (level_y(k)..level_y(k + 1)).rev() {
             if density(levels, y) > 0.0 {
                 return y;
             }
@@ -226,7 +230,6 @@ impl Terrain {
             base: fbm(4, 3, 90.0),
             jagged: Perlin::new(noise_seed(seed, 14)),
             surface: Perlin::new(noise_seed(seed, 5)),
-            entrances: Perlin::new(noise_seed(seed, 16)),
             caves: Caves::new(seed),
             bands: badlands_bands(seed),
         }
@@ -258,7 +261,7 @@ impl Terrain {
                 .abs();
         let target = (shape.offset + shape.jaggedness * ridge * ridge).min(MAX_TARGET);
         let levels = std::array::from_fn(|k| {
-            let y = k as i32 * CELL_Y;
+            let y = level_y(k);
             if y >= CAP {
                 return -1.0;
             }
@@ -366,10 +369,7 @@ impl Terrain {
             .max()
             .unwrap_or(0);
         let top = self.top(x, z, biome, lay.height, slope);
-        let entrance = self.entrances.get([
-            (x as f64 + self.shift[0]) / 23.0,
-            (z as f64 + self.shift[2]) / 23.0,
-        ]) > 0.55;
+        let entrance = self.entrance_at(x, z, lay.offset.round() as i32);
         // The cave biome under the quart, at any depth in its range.
         let cave = biome_source::cave(&quart, biome_source::CAVE_DEPTH.0);
         Column {
@@ -381,6 +381,43 @@ impl Terrain {
             slope,
             offset: lay.offset,
         }
+    }
+
+    /// Whether caves break through the surface at (x, z): a cave entrance
+    /// (a spaghetti tunnel or an entrance blob) reaches the top of the
+    /// ground at the column's 4 × 4 quart (`NoiseRouterData.entrances`).
+    fn entrance_at(&self, x: i32, z: i32, height: i32) -> bool {
+        type Memo = (u64, HashMap<(i32, i32, i32), bool>);
+        thread_local! {
+            static MEMO: std::cell::RefCell<Memo> = std::cell::RefCell::new((0, HashMap::new()));
+        }
+        let (qx, qz) = (
+            x.div_euclid(CELL_XZ) * CELL_XZ,
+            z.div_euclid(CELL_XZ) * CELL_XZ,
+        );
+        let key = (qx, qz, height);
+        let hit = MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.0 != self.seed {
+                *memo = (self.seed, HashMap::new());
+            }
+            memo.1.get(&key).copied()
+        });
+        if let Some(hit) = hit {
+            return hit;
+        }
+        let open = self
+            .caves
+            .entrances(f64::from(qx), f64::from(height), f64::from(qz))
+            < ENTRANCE_REACH;
+        MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.1.len() > 16384 {
+                memo.1.clear();
+            }
+            memo.1.insert(key, open);
+        });
+        open
     }
 
     /// The block on top of a column: modern's surface rules, in order.
@@ -494,46 +531,83 @@ impl Terrain {
         }
     }
 
-    /// The noise caves' field at a point (carves where positive).
-    fn cave_noise(&self, x: i32, y: i32, z: i32) -> f64 {
-        self.caves.density(x, y, z)
+    /// The final density at the corners of the cell holding (x, y, z)
+    /// (x, z on the 4-block grid, y on the 8-block one), cached per thread.
+    fn cell_corners(&self, gx: i32, gz: i32, k: usize) -> [f64; 8] {
+        type Cells = (u64, HashMap<(i32, i32, usize), [f64; 8]>);
+        thread_local! {
+            static CELLS: std::cell::RefCell<Cells> = std::cell::RefCell::new((0, HashMap::new()));
+        }
+        let key = (gx, gz, k);
+        let seed = self.seed;
+        if let Some(found) = CELLS.with(|cells| {
+            let mut cells = cells.borrow_mut();
+            if cells.0 != seed {
+                *cells = (seed, HashMap::new());
+            }
+            cells.1.get(&key).copied()
+        }) {
+            return found;
+        }
+        let columns: [(i32, i32); 4] =
+            [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dz)| (gx + dx, gz + dz));
+        let levels: Vec<Levels> = columns
+            .iter()
+            .map(|&(cx, cz)| {
+                let c = self.climate.sample(cx * CELL_XZ, cz * CELL_XZ);
+                self.corner(cx, cz, &c).0
+            })
+            .collect();
+        let mut corners = [0.0; 8];
+        for (i, corner) in corners.iter_mut().enumerate() {
+            let (up, which) = (i / 4, i % 4);
+            let (cx, cz) = columns[which];
+            let kk = (k + up).min(LEVELS - 1);
+            *corner = self.caves.final_density(
+                levels[which][kk],
+                cx * CELL_XZ,
+                level_y(kk),
+                cz * CELL_XZ,
+            );
+        }
+        CELLS.with(|cells| {
+            let mut cells = cells.borrow_mut();
+            if cells.1.len() > 8192 {
+                cells.1.clear();
+            }
+            cells.1.insert(key, corners);
+        });
+        corners
     }
 
-    /// Whether a cave runs through (x, y, z), ignoring what block is there.
-    /// Cave noise is blended between samples on a coarse grid, exactly as
-    /// `carve_caves` does.
-    pub fn is_cave(&self, x: i32, y: i32, z: i32) -> bool {
-        if y <= MIN_Y + BEDROCK_RAGGED {
-            return false;
+    /// The final density at (x, y, z), blended between the corners of its
+    /// 4 × 8 × 4 cell as the chunk fill does (positive is solid).
+    pub fn density_at(&self, x: i32, y: i32, z: i32) -> f64 {
+        if y < MIN_Y {
+            return 1.0;
         }
-        let (cx, cy, cz) = (
-            x.div_euclid(CAVE_CELL_XZ) * CAVE_CELL_XZ,
-            y.div_euclid(CAVE_CELL_Y) * CAVE_CELL_Y,
-            z.div_euclid(CAVE_CELL_XZ) * CAVE_CELL_XZ,
-        );
-        let corner = |dx: i32, dy: i32, dz: i32| {
-            self.cave_noise(
-                cx + dx * CAVE_CELL_XZ,
-                cy + dy * CAVE_CELL_Y,
-                cz + dz * CAVE_CELL_XZ,
-            )
-        };
-        let c = [
-            [
-                [corner(0, 0, 0), corner(1, 0, 0)],
-                [corner(0, 0, 1), corner(1, 0, 1)],
-            ],
-            [
-                [corner(0, 1, 0), corner(1, 1, 0)],
-                [corner(0, 1, 1), corner(1, 1, 1)],
-            ],
-        ];
+        let (gx, gz) = (x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ));
+        let up = y - MIN_Y;
+        let k = (up / CELL_Y) as usize;
+        if k + 1 >= LEVELS {
+            return -1.0;
+        }
+        let c = self.cell_corners(gx, gz, k);
         let t = (
-            (x - cx) as f64 / CAVE_CELL_XZ as f64,
-            (y - cy) as f64 / CAVE_CELL_Y as f64,
-            (z - cz) as f64 / CAVE_CELL_XZ as f64,
+            (x - gx * CELL_XZ) as f64 / CELL_XZ as f64,
+            (up % CELL_Y) as f64 / CELL_Y as f64,
+            (z - gz * CELL_XZ) as f64 / CELL_XZ as f64,
         );
-        trilinear(&c, t) > 0.0
+        trilinear(
+            &[[[c[0], c[1]], [c[2], c[3]]], [[c[4], c[5]], [c[6], c[7]]]],
+            t,
+        )
+    }
+
+    /// Whether a cave runs through (x, y, z): the final density there is
+    /// open, ignoring what block is there and what fills it.
+    pub fn is_cave(&self, x: i32, y: i32, z: i32) -> bool {
+        y > MIN_Y + BEDROCK_RAGGED && self.density_at(x, y, z) <= 0.0
     }
 
     /// Which of `points` a worm tunnel or ravine runs through (ignoring
@@ -549,7 +623,7 @@ impl Terrain {
         let center = ChunkPos::of_block((lo.x + hi.x) / 2, (lo.z + hi.z) / 2);
         for sz in center.z - CARVER_REACH..=center.z + CARVER_REACH {
             for sx in center.x - CARVER_REACH..=center.x + CARVER_REACH {
-                for worm in worms(self.seed, sx, sz) {
+                for worm in worms_of(self.seed, sx, sz).iter() {
                     for &([px, py, pz], across, up) in &worm.steps {
                         if px + across < lo.x as f64
                             || px - across > hi.x as f64 + 1.0
@@ -575,103 +649,54 @@ impl Terrain {
         hit
     }
 
-    /// The highest block caves may carve in a column.
-    fn cave_top(column: &Column) -> i32 {
-        if column.height < SEA_LEVEL {
-            column.height - CAVE_WATER_MARGIN
-        } else if column.entrance {
-            column.height
-        } else {
-            column.height - CAVE_ROOF
-        }
+    /// The fluid pickers of a chunk: its aquifers, with the land's height
+    /// from the area's columns where it has them.
+    fn aquifer<'a>(&'a self, area: &'a Area) -> Aquifer<'a, impl FnMut(i32, i32) -> i32 + 'a> {
+        Aquifer::new(&self.caves, move |x, z| {
+            area.try_get(x, z)
+                .map_or_else(|| self.lay(x, z).height, |column| column.height)
+        })
     }
 
-    /// Carves caves into a filled chunk: the noise caves, then the worm
-    /// tunnels and ravines of the chunks around. Each carved block takes
-    /// what its aquifer holds; bedrock and the ground just under water are
-    /// left alone.
-    fn carve_caves(&self, chunk: &mut Chunk, area: &Area) {
-        let (min_x, min_z) = chunk.pos.min_block();
-        let top = (0..CHUNK_SIZE * CHUNK_SIZE)
-            .map(|i| {
-                let column = area.get(min_x + (i % 16) as i32, min_z + (i / 16) as i32);
-                Self::cave_top(column)
-            })
-            .max()
-            .unwrap_or(MIN_Y)
-            .max(MIN_Y + 1);
-        // Noise on a coarse grid over the chunk, from the bottom of the
-        // world up to the highest top.
-        let nx = CHUNK_SIZE as i32 / CAVE_CELL_XZ + 1;
-        let ny = (top - MIN_Y) / CAVE_CELL_Y + 2;
-        let mut grid = vec![0.0; (nx * nx * ny) as usize];
-        let index = |i: i32, j: i32, k: i32| ((j * nx + k) * nx + i) as usize;
-        for j in 0..ny {
-            for k in 0..nx {
-                for i in 0..nx {
-                    grid[index(i, j, k)] = self.cave_noise(
-                        min_x + i * CAVE_CELL_XZ,
-                        MIN_Y + j * CAVE_CELL_Y,
-                        min_z + k * CAVE_CELL_XZ,
-                    );
-                }
-            }
+    /// Carves one block of a worm cave, if it isn't bedrock or part of the
+    /// sea's floor, with what the aquifer holds there.
+    fn carve(
+        &self,
+        chunk: &mut Chunk,
+        aquifer: &mut Aquifer<'_, impl FnMut(i32, i32) -> i32>,
+        x: usize,
+        y: i32,
+        z: usize,
+    ) {
+        let block = chunk.get(x, y, z);
+        if block == BEDROCK || block.id() == blocks::WATER || block.id() == blocks::LAVA {
+            return;
         }
-        for z in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let column = area.get(min_x + x as i32, min_z + z as i32);
-                let (i, k) = (x as i32 / CAVE_CELL_XZ, z as i32 / CAVE_CELL_XZ);
-                let tx = (x as i32 % CAVE_CELL_XZ) as f64 / CAVE_CELL_XZ as f64;
-                let tz = (z as i32 % CAVE_CELL_XZ) as f64 / CAVE_CELL_XZ as f64;
-                for y in MIN_Y + 1..=Self::cave_top(column) {
-                    let up = y - MIN_Y;
-                    let j = up / CAVE_CELL_Y;
-                    let ty = (up % CAVE_CELL_Y) as f64 / CAVE_CELL_Y as f64;
-                    let c = [
-                        [
-                            [grid[index(i, j, k)], grid[index(i + 1, j, k)]],
-                            [grid[index(i, j, k + 1)], grid[index(i + 1, j, k + 1)]],
-                        ],
-                        [
-                            [grid[index(i, j + 1, k)], grid[index(i + 1, j + 1, k)]],
-                            [
-                                grid[index(i, j + 1, k + 1)],
-                                grid[index(i + 1, j + 1, k + 1)],
-                            ],
-                        ],
-                    ];
-                    if trilinear(&c, (tx, ty, tz)) <= 0.0 {
-                        continue;
-                    }
-                    self.carve(chunk, x, y, z);
-                }
-            }
-        }
-        self.carve_worms(chunk, area);
-    }
-
-    /// Carves one block of a cave, if it isn't bedrock, with what the
-    /// aquifer holds there.
-    fn carve(&self, chunk: &mut Chunk, x: usize, y: i32, z: usize) {
-        if chunk.get(x, y, z) == BEDROCK {
+        // Never into the floor of water: that would drain the sea.
+        if y < MAX_Y && chunk.get(x, y + 1, z).id() == blocks::WATER {
             return;
         }
         let (min_x, min_z) = chunk.pos.min_block();
         let (wx, wz) = (min_x + x as i32, min_z + z as i32);
-        if let Some(block) = self.caves.fill(wx, y, wz).block() {
+        if let Some(block) = aquifer.substance(wx, y, wz, 0.0).block() {
             chunk.set(x, y, z, block);
         }
     }
 
     /// The worm tunnels and ravines that reach this chunk, from every
     /// chunk within `CARVER_REACH`.
-    fn carve_worms(&self, chunk: &mut Chunk, area: &Area) {
+    fn carve_worms(
+        &self,
+        chunk: &mut Chunk,
+        area: &Area,
+        aquifer: &mut Aquifer<'_, impl FnMut(i32, i32) -> i32>,
+    ) {
         let pos = chunk.pos;
         let (min_x, min_z) = pos.min_block();
         let (max_x, max_z) = (min_x + 16, min_z + 16);
         for sz in pos.z - CARVER_REACH..=pos.z + CARVER_REACH {
             for sx in pos.x - CARVER_REACH..=pos.x + CARVER_REACH {
-                for worm in worms(self.seed, sx, sz) {
+                for worm in worms_of(self.seed, sx, sz).iter() {
                     for &([px, py, pz], across, up) in &worm.steps {
                         if px + across < min_x as f64
                             || px - across >= max_x as f64
@@ -689,12 +714,18 @@ impl Terrain {
                         for wz in z0..=z1 {
                             for wx in x0..=x1 {
                                 let column = area.get(wx, wz);
-                                let top = Self::cave_top(column).min(y1);
+                                let top = column.height.min(y1);
                                 let dx = (wx as f64 + 0.5 - px) / across;
                                 let dz = (wz as f64 + 0.5 - pz) / across;
                                 if dx * dx + dz * dz >= 1.0 {
                                     continue;
                                 }
+                                // The top block stays unless the column is an entrance.
+                                let top = if column.entrance {
+                                    top
+                                } else {
+                                    top.min(column.height - 1)
+                                };
                                 for y in y0..=top {
                                     let dy = (y as f64 + 0.5 - py) / up;
                                     // A flatter floor, as modern carvers have.
@@ -702,7 +733,7 @@ impl Terrain {
                                         continue;
                                     }
                                     let (lx, lz) = ((wx - min_x) as usize, (wz - min_z) as usize);
-                                    self.carve(chunk, lx, y, lz);
+                                    self.carve(chunk, aquifer, lx, y, lz);
                                 }
                             }
                         }
@@ -755,9 +786,52 @@ impl Terrain {
         self.fill_from(chunk, &area);
     }
 
+    /// The final density at the corners of the chunk's 4 × 8 × 4 cells:
+    /// 5 × 5 columns up to `top` (and one level more), indexed
+    /// `(level * 5 + z) * 5 + x`.
+    fn density_grid(&self, area: &Area, min_x: i32, min_z: i32, top: i32) -> Vec<f64> {
+        const SIDE: usize = CHUNK_SIZE / CELL_XZ as usize + 1;
+        let levels_up = (((top - MIN_Y) / CELL_Y) as usize + 2).min(LEVELS);
+        let mut grid = vec![-1.0; levels_up * SIDE * SIDE];
+        for iz in 0..SIDE {
+            for ix in 0..SIDE {
+                let (wx, wz) = (min_x + (ix as i32) * CELL_XZ, min_z + (iz as i32) * CELL_XZ);
+                let corner = &area.corners.levels[area
+                    .corners
+                    .index(wx.div_euclid(CELL_XZ), wz.div_euclid(CELL_XZ))];
+                for (k, &sloped) in corner.iter().enumerate().take(levels_up) {
+                    grid[(k * SIDE + iz) * SIDE + ix] =
+                        self.caves.final_density(sloped, wx, level_y(k), wz);
+                }
+            }
+        }
+        grid
+    }
+
     fn fill_from(&self, chunk: &mut Chunk, area: &Area) {
+        let mut aquifer = self.aquifer(area);
+        self.fill_with(chunk, area, &mut aquifer);
+    }
+
+    /// Fills the chunk from the density, asking `aquifer` what each open
+    /// block holds.
+    fn fill_with(
+        &self,
+        chunk: &mut Chunk,
+        area: &Area,
+        aquifer: &mut Aquifer<'_, impl FnMut(i32, i32) -> i32>,
+    ) {
+        const SIDE: usize = CHUNK_SIZE / CELL_XZ as usize + 1;
         let (min_x, min_z) = chunk.pos.min_block();
         let mut rng = Rng::for_chunk(self.seed, chunk.pos.x, chunk.pos.z, 0xBED);
+        let top = (0..CHUNK_SIZE * CHUNK_SIZE)
+            .map(|i| {
+                area.get(min_x + (i % 16) as i32, min_z + (i / 16) as i32)
+                    .height
+            })
+            .max()
+            .unwrap_or(0);
+        let grid = self.density_grid(area, min_x, min_z, top);
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
                 let (wx, wz) = (min_x + x as i32, min_z + z as i32);
@@ -779,14 +853,66 @@ impl Terrain {
                     }
                 }
                 let depth = 3 + (self.surface_noise(wx, wz, 8.0, 7.3) * 1.5 + 1.5) as i32;
-                // Solid wherever the blended density is above zero; the
-                // surface layers follow the topmost solid block, and
-                // overhangs leave air under them.
-                let levels = area.corners.levels(wx, wz);
+                // Solid wherever the density, blended between the corners
+                // of its cell, is above zero; the surface layers follow the
+                // topmost solid block of the land, overhangs and caves leave
+                // air (or what the aquifer holds) under them.
+                let (ix, iz) = (x / CELL_XZ as usize, z / CELL_XZ as usize);
+                let (tx, tz) = (
+                    (x % CELL_XZ as usize) as f64 / CELL_XZ as f64,
+                    (z % CELL_XZ as usize) as f64 / CELL_XZ as f64,
+                );
+                // The density at each corner level of this column.
+                let mut sides = [0.0; LEVELS];
+                let levels = grid.len() / (SIDE * SIDE);
+                for (k, side) in sides.iter_mut().enumerate().take(levels) {
+                    let at = |dx: usize, dz: usize| grid[(k * SIDE + iz + dz) * SIDE + ix + dx];
+                    *side = lerp(
+                        lerp(at(0, 0), at(1, 0), tx),
+                        lerp(at(0, 1), at(1, 1), tx),
+                        tz,
+                    );
+                }
                 for y in MIN_Y + 1..=column.height {
-                    if y < 0 || density(&levels, y) > 0.0 {
+                    let up = y - MIN_Y;
+                    let k = (up / CELL_Y) as usize;
+                    let ty = (up % CELL_Y) as f64 / CELL_Y as f64;
+                    let mut d = lerp(sides[k], sides[k + 1], ty);
+                    // The top block is only carved where a cave entrance
+                    // opens the column (plants and trees stand on it).
+                    if y == column.height && !column.entrance {
+                        d = d.max(f64::MIN_POSITIVE);
+                    }
+                    if d > 0.0 {
                         let block = self.layer(&column, wx, y, wz, depth, &mut rng);
                         chunk.set(x, y, z, block);
+                        continue;
+                    }
+                    match aquifer.substance(wx, y, wz, squeeze(d)) {
+                        Fill::Rock => {
+                            let block = self.layer(&column, wx, y, wz, depth, &mut rng);
+                            chunk.set(x, y, z, block);
+                        }
+                        // The top of a sea or river bed is the sea's: an
+                        // opening there is flooded, never a hole under water.
+                        Fill::Air if column.height < SEA_LEVEL && y > column.height - 3 => {
+                            chunk.set(x, y, z, WATER);
+                        }
+                        Fill::Air => {}
+                        fluid => {
+                            if let Some(block) = fluid.block() {
+                                chunk.set(x, y, z, block);
+                                // Only water or lava with air under it (a waterfall
+                                // or a lavafall in the making) starts flowing, a few
+                                // to a chunk.
+                                if aquifer.schedule
+                                    && chunk.get(x, y - 1, z).is_air()
+                                    && chunk.post_process.len() < FALL_STARTS
+                                {
+                                    chunk.post_process.push([x as i16, y as i16, z as i16]);
+                                }
+                            }
+                        }
                     }
                 }
                 for y in column.height + 1..=SEA_LEVEL {
@@ -894,8 +1020,9 @@ impl Terrain {
     pub fn generate(&self, pos: ChunkPos) -> Chunk {
         let area = self.area(pos);
         let mut chunk = Chunk::new(pos);
-        self.fill_from(&mut chunk, &area);
-        self.carve_caves(&mut chunk, &area);
+        let mut aquifer = self.aquifer(&area);
+        self.fill_with(&mut chunk, &area, &mut aquifer);
+        self.carve_worms(&mut chunk, &area, &mut aquifer);
         super::ores::populate(self, &area, &mut chunk);
         super::underground::populate(self, &area, &mut chunk);
         let keep_out = crate::world::structure::place(self, &mut chunk);
@@ -1004,6 +1131,35 @@ pub(crate) mod tests {
                 })
             })
             .find(|&(x, z)| pick(&terrain.column(x, z)))
+            .unwrap_or_else(|| panic!("no {what} found"))
+    }
+
+    /// Like `find`, but the column's surface block must be there once the
+    /// chunk is generated (no cave entrance has carved it away).
+    pub(crate) fn find_intact(
+        terrain: &Terrain,
+        what: &str,
+        pick: impl Fn(&Column) -> bool,
+    ) -> (i32, i32) {
+        (0..4000)
+            .flat_map(|r: i32| {
+                let n = r.max(1) * 8;
+                (0..n).map(move |k| {
+                    let a = k as f64 / n as f64 * std::f64::consts::TAU;
+                    (
+                        (a.cos() * r as f64 * 24.0) as i32,
+                        (a.sin() * r as f64 * 24.0) as i32,
+                    )
+                })
+            })
+            .find(|&(x, z)| {
+                let column = terrain.column(x, z);
+                pick(&column) && {
+                    let chunk = terrain.generate(ChunkPos::of_block(x, z));
+                    let (lx, lz) = local(x, z);
+                    chunk.get(lx, column.height, lz).id() == column.top.id()
+                }
+            })
             .unwrap_or_else(|| panic!("no {what} found"))
     }
 
@@ -1154,20 +1310,21 @@ pub(crate) mod tests {
         let mut high = 0;
         for j in -6..6 {
             for i in -6..6 {
-                // The terrain alone (trees overhang, caves are carved).
-                let mut chunk = Chunk::new(ChunkPos::new(i * 7, j * 7));
-                terrain.fill(&mut chunk);
-                for z in 0..16 {
-                    for x in 0..16 {
+                // The land's own density (trees overhang, caves cut it).
+                let area = terrain.area(ChunkPos::new(i * 7, j * 7));
+                let (min_x, min_z) = ChunkPos::new(i * 7, j * 7).min_block();
+                for z in min_z..min_z + 16 {
+                    for x in min_x..min_x + 16 {
                         // From 200 up, every column is solid from 200 to its
                         // top: no air under solid ground.
-                        let solid = |y: i32| chunk.get(x, y, z).def().solid;
-                        let top = (200..crate::config::MAX_Y).rev().find(|&y| solid(y));
+                        let levels = area.corners.levels(x, z);
+                        let top = (200..crate::config::MAX_Y)
+                            .rev()
+                            .find(|&y| density(&levels, y) > 0.0);
                         if let Some(top) = top {
                             high += 1;
                             for y in 200..top {
-                                let b = chunk.get(x, y, z);
-                                assert!(!b.is_air(), "a gap at {y} under {top}");
+                                assert!(density(&levels, y) > 0.0, "a gap at {y} under {top}");
                             }
                         }
                     }
@@ -1205,7 +1362,7 @@ pub(crate) mod tests {
     #[test]
     fn oceans_are_water_down_to_the_floor() {
         let terrain = Terrain::new(5);
-        let (x, z) = find(&terrain, "ocean", |c| {
+        let (x, z) = find_intact(&terrain, "ocean", |c| {
             c.biome.is_ocean() && c.height < SEA_LEVEL - 5
         });
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
@@ -1336,7 +1493,7 @@ pub(crate) mod tests {
 
     /// An open column (no cave entrance) of `biome`, not on a slope.
     fn open(terrain: &Terrain, biome: Biome) -> (i32, i32, Column) {
-        let (x, z) = find(terrain, biome.name(), |c| {
+        let (x, z) = find_intact(terrain, biome.name(), |c| {
             c.biome == biome && !c.entrance && c.slope <= 1 && c.height > SEA_LEVEL
         });
         (x, z, terrain.column(x, z))
@@ -1505,6 +1662,50 @@ mod timing {
     /// `cargo test --release timing -- --ignored --nocapture`
     #[test]
     #[ignore]
+    fn grid_time() {
+        let terrain = Terrain::new(20111118);
+        let (mut t_grid, mut t_area) = (0.0, 0.0);
+        for i in 0..200 {
+            let pos = ChunkPos::new(i % 20 + 40, i / 20 + 40);
+            let s = Instant::now();
+            let area = terrain.area(pos);
+            t_area += s.elapsed().as_secs_f64();
+            let (min_x, min_z) = pos.min_block();
+            let top = (0..256)
+                .map(|i| area.get(min_x + i % 16, min_z + i / 16).height)
+                .max()
+                .unwrap();
+            let s = Instant::now();
+            let _ = terrain.density_grid(&area, min_x, min_z, top);
+            t_grid += s.elapsed().as_secs_f64();
+        }
+        eprintln!(
+            "GRIDTIME area {:.3} grid {:.3} ms",
+            t_area * 5.0,
+            t_grid * 5.0
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn total_generate() {
+        let terrain = Terrain::new(20111118);
+        let s = Instant::now();
+        let n: i32 = std::env::var("GEN_N")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200);
+        for i in 0..n {
+            let _ = terrain.generate(ChunkPos::new(i % 20 + 40, i / 20 + 40));
+        }
+        eprintln!(
+            "GENERATE {:.3} ms per chunk",
+            s.elapsed().as_secs_f64() * 1000.0 / f64::from(n)
+        );
+    }
+
+    #[test]
+    #[ignore]
     fn stages() {
         let terrain = Terrain::new(20111118);
         let n = 300;
@@ -1519,7 +1720,8 @@ mod timing {
             terrain.fill_from(&mut chunk, &area);
             t[1] += s.elapsed().as_secs_f64();
             let s = Instant::now();
-            terrain.carve_caves(&mut chunk, &area);
+            let mut aquifer = terrain.aquifer(&area);
+            terrain.carve_worms(&mut chunk, &area, &mut aquifer);
             t[2] += s.elapsed().as_secs_f64();
             let s = Instant::now();
             super::super::ores::populate(&terrain, &area, &mut chunk);
@@ -1566,7 +1768,7 @@ mod timing {
     }
 
     #[test]
-    fn caves_open_to_the_surface_only_rarely() {
+    fn caves_open_to_the_surface_at_vanillas_rate() {
         let (mut open, mut land) = (0, 0);
         for seed in [15, 3, 20111118] {
             let (o, l) = openings(seed);
@@ -1575,6 +1777,7 @@ mod timing {
             land += l;
         }
         assert!(open > 0, "no cave reaches the surface");
-        assert!(open * 100 < land, "{open} of {land} columns open");
+        // Entrances follow vanilla's noise with no extra suppression.
+        assert!(open * 100 < land * 15, "{open} of {land} columns open");
     }
 }
