@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// Ticks a hit makes a mob flash red (1.0.0's `maxHurtTime`).
-const HURT_FLASH: u32 = 10;
+pub const HURT_FLASH: u32 = 10;
 /// Ticks a dead mob lies on its side before it's removed.
 pub const DEATH_TICKS: u32 = 20;
 /// 1.0.0's `knockBack` strength.

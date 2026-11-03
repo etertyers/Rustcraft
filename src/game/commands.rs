@@ -2105,6 +2105,8 @@ mod m45_blocks_tests;
 mod m45_tests;
 #[cfg(test)]
 mod m49_tests;
+#[cfg(test)]
+mod m52_tests;
 
 #[cfg(test)]
 mod tests {

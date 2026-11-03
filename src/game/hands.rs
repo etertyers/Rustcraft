@@ -4,7 +4,7 @@
 
 use glam::{DVec3, IVec3};
 
-use super::{BenchKind, Game};
+use super::{BenchKind, Game, infested};
 use crate::inventory::item::ToolKind;
 use crate::{
     entity::{
@@ -589,6 +589,13 @@ impl Game {
                 let points = if silk { 0 } else { self.ore_xp(block) };
                 self.spawn_xp(points, cell.as_dvec3() + DVec3::splat(0.5));
             }
+        }
+        // An infested block lets its silverfish out unless it is taken whole
+        // with Silk Touch.
+        if broken_state.is_some_and(infested::is_infested)
+            && self.held_level(Enchantment::SilkTouch) == 0
+        {
+            self.release_silverfish(cell);
         }
         // A chest or furnace spills what it held, in every game mode (1.0.0).
         for &(at, _) in &edits {

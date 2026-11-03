@@ -20,7 +20,7 @@ use crate::{
     player::raycast::Hit,
     world::{
         block::BlockState, blocks, chunk::ChunkPos, dimension::Dimension, end_portal, props::Prop,
-        structure::stronghold, worldgen::end,
+        worldgen::end,
     },
 };
 
@@ -76,14 +76,20 @@ impl Game {
     /// finds it (the start of its first piece).
     pub(super) fn nearest_stronghold(&self, from: DVec3) -> Option<(f64, f64)> {
         let seed = self.chunks.seed()?;
-        stronghold::positions(seed)
-            .into_iter()
-            .map(|chunk| (f64::from(chunk.x * 16 + 8), f64::from(chunk.z * 16 + 8)))
-            .min_by(|a, b| {
-                let da = (a.0 - from.x).hypot(a.1 - from.z);
-                let db = (b.0 - from.x).hypot(b.1 - from.z);
-                da.total_cmp(&db)
-            })
+        // The same search `/locate structure stronghold` makes.
+        let (_, start) = crate::game::commands::locate::nearest(
+            seed,
+            Dimension::Overworld,
+            &[crate::world::structure::Kind::Stronghold],
+            from,
+        )?;
+        Some((f64::from(start.x * 16 + 8), f64::from(start.z * 16 + 8)))
+    }
+
+    /// `nearest_stronghold`, for tests outside the game module.
+    #[cfg(test)]
+    pub fn nearest_stronghold_for_test(&self, from: DVec3) -> Option<(f64, f64)> {
+        self.nearest_stronghold(from)
     }
 
     /// Throws the held eye toward the nearest stronghold. In another
