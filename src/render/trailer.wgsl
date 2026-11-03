@@ -9,34 +9,6 @@
 @group(2) @binding(0) var glint_texture: texture_2d<f32>;
 @group(2) @binding(1) var glint_sampler: sampler;
 
-// Mirrors `TrailerUniform` in render/visuals/shadow.rs.
-struct Trailer {
-    cascade_vp: array<mat4x4<f32>, 3>,
-    // Blocks each cascade reaches.
-    reach: vec4<f32>,
-    // A shadow texel in blocks per cascade; w: the map's size in texels.
-    texel: vec4<f32>,
-    // The depth range of each cascade's box in blocks.
-    range: vec4<f32>,
-    // xyz: toward the light; w: 1 where there's a sun or moon.
-    sun_dir: vec4<f32>,
-    // rgb: the light's color times its strength.
-    sun_color: vec4<f32>,
-    // x: cascades (0: no shadows); y: PCF taps; z: pixel-locked; w: hide
-    // the entity shadow blobs.
-    params: vec4<f32>,
-    // x: sunlight through leaves; y: soft edges widening with distance;
-    // z: ambient scale in the sun; w: direct scale.
-    flags: vec4<f32>,
-    // The dimension's ambient tint.
-    tint: vec4<f32>,
-    // The sky's tint on ambient light under the open sky.
-    sky_tint: vec4<f32>,
-};
-@group(3) @binding(0) var<uniform> trailer: Trailer;
-@group(3) @binding(1) var shadow_map: texture_depth_2d_array;
-@group(3) @binding(2) var shadow_sampler: sampler_comparison;
-
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
@@ -57,11 +29,16 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = globals.view_proj * vec4<f32>(in.position, 1.0);
+    var position = in.position;
+    // The flat top of still water rises and falls a little (face flag 2).
+    if ((in.face >> 24u) & 2u) != 0u {
+        position.y = position.y + wave_height(position.x, position.z, globals.camera.w);
+    }
+    out.clip_position = globals.view_proj * vec4<f32>(position, 1.0);
     out.uv = in.uv;
     out.color = in.color;
     out.light = in.light;
-    out.world = in.position;
+    out.world = position;
     out.face = in.face;
     return out;
 }
@@ -132,6 +109,10 @@ fn face_class(face: u32) -> u32 {
     return (face >> 16u) & 255u;
 }
 
+fn face_material(face: u32) -> u32 {
+    return (face >> 16u) & 255u;
+}
+
 fn face_solid(face: u32) -> bool {
     return ((face >> 24u) & 4u) != 0u;
 }
@@ -152,9 +133,6 @@ const DISC = array<vec2<f32>, 16>(
     vec2<f32>(0.10, -0.62),
 );
 
-fn hash2(p: vec3<f32>) -> f32 {
-    return fract(sin(dot(p, vec3<f32>(12.9898, 78.233, 37.719))) * 43758.5453);
-}
 
 // How lit `world` is (1 in light, 0 in shadow) by the cascade that covers
 // it, fading out at the end of the last one.
@@ -245,10 +223,14 @@ fn face_lighting(
     face: u32,
     sky: f32,
     vanilla: vec3<f32>,
+    receive_shadows: bool,
 ) -> vec3<f32> {
-    // No sun or moon here (the Nether, the End, under water, the hand):
-    // Vanilla's light with the dimension's tint.
-    if trailer.sun_dir.w < 0.5 || globals.extra.z > 0.5 {
+    // No sun or moon here (the Nether, the End, the hand, under water
+    // without caustics): Vanilla's light with the dimension's tint. The
+    // hand is drawn with a fog start no real fog has.
+    let is_hand = globals.fog_color.w > 100000.0;
+    let underwater = trailer.water.z > 0.5;
+    if trailer.sun_dir.w < 0.5 || is_hand || (globals.extra.z > 0.5 && !underwater) {
         return vanilla * trailer.tint.rgb;
     }
     var n = face_normal(face);
@@ -268,13 +250,26 @@ fn face_lighting(
         n_dot_l = max(n_dot_l, 0.0);
     }
     var shadow = 1.0;
-    if n_dot_l > 0.0 {
+    // Water, ice and glass don't take shadows: the lookups would only
+    // cost, over a whole sea.
+    if n_dot_l > 0.0 && receive_shadows {
         shadow = shadow_at(world, n);
+        // Clouds' soft shadows: the cloud layer along the way to the sun.
+        if trailer.extras.y > 0.5 && trailer.scene.w > 0.5 && world.y < trailer.scene.z {
+            let t = (trailer.scene.z - world.y) / max(l.y, 0.05);
+            shadow = shadow * (1.0 - 0.55 * cloud_alpha(world.xz + l.xz * t));
+        }
     }
     let sky_factor = smoothstep(0.0, 15.0, clamp(sky, 0.0, 15.0));
     let sky_tint = mix(vec3<f32>(1.0), trailer.sky_tint.rgb, sky_factor);
     let ambient = vanilla * sky_tint * trailer.flags.z;
-    let direct = trailer.sun_color.rgb * (n_dot_l * shadow * sky_factor * trailer.flags.w);
+    var sun_color = trailer.sun_color.rgb;
+    if underwater {
+        // Sunlight through the water: blue-green, in moving patterns.
+        let veins = caustic(world.xz * 0.9 + world.y * 0.3, globals.camera.w / 20.0);
+        sun_color = sun_color * vec3<f32>(0.45, 0.85, 1.0) * (0.3 + 2.4 * veins);
+    }
+    let direct = sun_color * (n_dot_l * shadow * sky_factor * trailer.flags.w);
     var lit = ambient + direct;
     if globals.lighting.w > 0.0 {
         // A mod's brightness override: nothing darker than in Vanilla.
@@ -300,8 +295,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         light.x -= GLINT_FLAG;
         shine = glint(in.world);
     }
-    let lit = face_lighting(in.world, in.face, light.x, lightmap(light));
-    let color = linear_to_srgb(texel.rgb) * in.color * lit + shine;
+    let lit = face_lighting(in.world, in.face, light.x, lightmap(light), true);
+    var color = linear_to_srgb(texel.rgb) * in.color * lit + shine;
+    // Metal shines a little at High: the sky's color in its sheen at a
+    // glancing angle (cheap: no sky lookup in the block shader).
+    if trailer.extras.z > 0.5 && face_material(in.face) == 10u {
+        let view = normalize(in.world - globals.camera.xyz);
+        let n = face_normal(in.face);
+        let sheen = fresnel(abs(dot(view, n)), 0.08) * reflection_sky_weight(light.x);
+        color = mix(color, globals.sky_color.rgb * lit, sheen * 0.6);
+    }
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));
     let fogged = mix(globals.fog_color.rgb, color, visible);
     return vec4<f32>(srgb_to_linear(fogged), 1.0);
@@ -317,6 +320,78 @@ fn fs_crack(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(shade, 1.0);
 }
 
+// Water seen from above: the sky and the shore reflected by Fresnel, the
+// scene under it seen through the waves (bent, and tinted by depth), the
+// sun's glint. Returns linear color and alpha.
+fn water_above(in: VertexOutput, texel: vec4<f32>, lit: vec3<f32>) -> vec4<f32> {
+    let eye = globals.camera.xyz;
+    let to_surface = in.world - eye;
+    let distance_to = length(to_surface);
+    let view = to_surface / distance_to;
+    let slope = wave_slope(in.world.x, in.world.z, globals.camera.w);
+    let n = normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
+    let cos_theta = max(dot(-view, n), 0.0);
+    let f = fresnel(cos_theta, WATER_F0) * reflection_sky_weight(in.light.x);
+    let reflected = reflect(view, n);
+    // The water's own color: its texture and the biome's tint, lit.
+    let body = srgb_to_linear(linear_to_srgb(texel.rgb) * in.color * lit);
+    var reflection = srgb_to_linear(sky_reflection(in.world, reflected)) * reflection_sky_weight(in.light.x);
+    var ssr_weight = 0.0;
+    let pixel = in.clip_position.xy;
+    if trailer.water.x > 0.5 {
+        let jitter = hash2(vec3<f32>(pixel, globals.camera.w));
+        let hit = screen_reflection(in.world, reflected, u32(trailer.water.x), jitter);
+        ssr_weight = hit.w;
+        reflection = mix(reflection, hit.rgb, hit.w);
+    }
+    // What's under the surface.
+    var under = body;
+    var alpha = max(texel.a, f);
+    if trailer.water.y > 0.5 {
+        var uv = pixel / trailer.scene.xy;
+        let bend = n.xz * 0.35 / (1.0 + distance_to * 0.04);
+        var shifted = clamp(uv + bend * 0.05, vec2<f32>(0.001), vec2<f32>(0.999));
+        var d = textureLoad(scene_depth, vec2<i32>(shifted * trailer.scene.xy), 0);
+        // Something in front of the water (a boat, a mob): don't bend.
+        if d < in.clip_position.z {
+            shifted = uv;
+            d = textureLoad(scene_depth, vec2<i32>(uv * trailer.scene.xy), 0);
+        }
+        var thickness = 40.0;
+        if d < 1.0 {
+            thickness = max(distance(world_from_depth(shifted, d), eye) - distance_to, 0.0);
+        }
+        let scene = textureSampleLevel(scene_color, scene_sampler, shifted, 0.0).rgb;
+        let deep = body * vec3<f32>(0.55, 0.7, 0.85);
+        under = mix(scene, deep, depth_tint(thickness * 0.8));
+        alpha = 1.0;
+    }
+    var color = mix(under, reflection, f);
+    // The sun's glint on the waves.
+    if trailer.sun_dir.w > 0.5 {
+        let glint = sun_glint(reflected, trailer.sun_dir.xyz);
+        color = color + trailer.sun_color.rgb * glint * reflection_sky_weight(in.light.x);
+    }
+    return vec4<f32>(color, alpha);
+}
+
+// Water seen from under the surface (High): a window onto the sky inside
+// the critical angle, the dim water outside it.
+fn water_below(in: VertexOutput, lit: vec3<f32>) -> vec4<f32> {
+    let view = normalize(in.world - globals.camera.xyz);
+    let cos_theta = abs(view.y);
+    let fog = srgb_to_linear(globals.fog_color.rgb);
+    let sin_in = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+    let sin_out = sin_in * WATER_IOR;
+    if sin_out < 1.0 {
+        let out_dir = normalize(vec3<f32>(view.x * WATER_IOR, sqrt(1.0 - sin_out * sin_out), view.z * WATER_IOR));
+        let sky = srgb_to_linear(sky_gradient(out_dir));
+        return vec4<f32>(mix(sky * 0.9, fog, 0.25), 1.0);
+    }
+    // Total internal reflection: the water's own dimness.
+    return vec4<f32>(fog * 0.7, 1.0);
+}
+
 @fragment
 fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
@@ -330,9 +405,85 @@ fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
         }
         return vec4<f32>(texel.rgb, texel.a * in.color.r);
     }
-    let lit = face_lighting(in.world, in.face, in.light.x, lightmap(in.light));
-    let color = linear_to_srgb(texel.rgb) * in.color * lit;
+    let lit = face_lighting(in.world, in.face, in.light.x, lightmap(in.light), false);
+    let material = face_material(in.face);
+    let n = face_normal(in.face);
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));
-    let fogged = mix(globals.fog_color.rgb, color, visible);
-    return vec4<f32>(srgb_to_linear(fogged), texel.a);
+    let fog = srgb_to_linear(globals.fog_color.rgb);
+    // Water's surface (not its sides): reflections, refraction, glints.
+    if material == 5u && abs(n.y) > 0.9 {
+        let underside = n.y < 0.0;
+        if !underside {
+            let water = water_above(in, texel, lit);
+            return vec4<f32>(mix(fog, water.rgb, visible), water.a);
+        }
+        if trailer.water.w > 0.5 {
+            let water = water_below(in, lit);
+            return vec4<f32>(mix(fog, water.rgb, visible), water.a);
+        }
+    }
+    var color = srgb_to_linear(linear_to_srgb(texel.rgb) * in.color * lit);
+    var alpha = texel.a;
+    // Ice and glass catch the sky: a little at the glancing angles, the
+    // sun's glint on ice.
+    if material == 7u || material == 8u {
+        let view = normalize(in.world - globals.camera.xyz);
+        var facing = n;
+        if dot(facing, view) > 0.0 {
+            facing = -facing;
+        }
+        let f = fresnel(dot(-view, facing), GLASS_F0) * reflection_sky_weight(in.light.x);
+        let reflected = reflect(view, facing);
+        var reflection = srgb_to_linear(sky_reflection(in.world, reflected));
+        // Ice reflects what's on screen from Medium; glass from High.
+        if trailer.water.x > 0.5 && (material == 7u || trailer.extras.z > 0.5) {
+            let hit = screen_reflection(in.world, reflected, u32(trailer.water.x), hash2(vec3<f32>(in.clip_position.xy, 1.0)));
+            reflection = mix(reflection, hit.rgb, hit.w);
+        }
+        color = mix(color, reflection, f);
+        alpha = max(alpha, f);
+        if material == 7u && trailer.sun_dir.w > 0.5 {
+            color = color + trailer.sun_color.rgb * sun_glint(reflected, trailer.sun_dir.xyz) * 0.12;
+        }
+    }
+    return vec4<f32>(mix(fog, color, visible), alpha);
+}
+
+// Low: water with no scene copy. Cheap waves (the slow swell's slope), the
+// sky reflected by Fresnel and the sun's glint, over Vanilla's blending.
+@fragment
+fn fs_translucent_low(in: VertexOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    if texel.a < 0.01 {
+        discard;
+    }
+    if in.light.x >= SHADOW_FLAG * 0.5 {
+        if trailer.params.w > 0.5 {
+            discard;
+        }
+        return vec4<f32>(texel.rgb, texel.a * in.color.r);
+    }
+    let lit = face_lighting(in.world, in.face, in.light.x, lightmap(in.light), false);
+    let visible = fog_visibility(distance(in.world, globals.camera.xyz));
+    let fog = srgb_to_linear(globals.fog_color.rgb);
+    var color = srgb_to_linear(linear_to_srgb(texel.rgb) * in.color * lit);
+    var alpha = texel.a;
+    let n = face_normal(in.face);
+    let material = face_material(in.face);
+    if material == 5u && n.y > 0.9 {
+        let view = normalize(in.world - globals.camera.xyz);
+        let t = globals.camera.w / 20.0;
+        let slope = vec2<f32>(cos(in.world.x * 0.9 + in.world.z * 0.4 + t * 1.3), cos(in.world.z * 1.1 - in.world.x * 0.5 - t)) * 0.03;
+        let wave = normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
+        let reflected = reflect(view, wave);
+        let weight = reflection_sky_weight(in.light.x);
+        let f = fresnel(max(dot(-view, wave), 0.0), WATER_F0) * weight;
+        let sky = srgb_to_linear(sky_gradient(reflected));
+        color = mix(color, sky, f);
+        alpha = max(alpha, f);
+        if trailer.sun_dir.w > 0.5 {
+            color = color + trailer.sun_color.rgb * sun_glint(reflected, trailer.sun_dir.xyz) * weight;
+        }
+    }
+    return vec4<f32>(mix(fog, color, visible), alpha);
 }

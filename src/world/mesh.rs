@@ -561,8 +561,9 @@ impl Mesh {
         let normal = (b - a).cross(c - a);
         let mut flags = self.material_flags;
         if self.still_water
-            && normal.y > 0.0
-            && normal.x.abs() + normal.z.abs() < 1e-3 * normal.y
+            && corners[0][1] > self.block_bottom + 0.5
+            && normal.y != 0.0
+            && normal.x.abs() + normal.z.abs() < 1e-3 * normal.y.abs()
             && corners.iter().all(|p| (p[1] - corners[0][1]).abs() < 1e-4)
         {
             flags |= FLAG_STILL_WATER_TOP;
@@ -1615,11 +1616,31 @@ mod tests {
                 assert_eq!(class, Class::Opaque as u8);
             } else {
                 assert_eq!(class, Class::Water as u8);
-                let top = normal[1] > 0.99;
+                // Both sides of the surface move together.
+                let top = normal[1].abs() > 0.99 && v.position[1] > 64.5;
                 assert_eq!(flags & FLAG_STILL_WATER_TOP != 0, top, "{normal:?}");
             }
         }
         assert!(plant_tops > 0);
+    }
+
+    /// Only the flat top of a still water source moves with the waves
+    /// (both its sides); flowing water's slopes and every side face stay.
+    #[test]
+    fn only_still_water_s_flat_top_gets_the_wave_flag() {
+        use crate::render::vertex::{FLAG_STILL_WATER_TOP, unpack_face};
+        let source = BlockState::of(blocks::WATER);
+        let flowing = crate::world::fluid::at_level(crate::world::block::Fluid::Water, 3);
+        let count = |blocks: &[(i32, i32, i32, BlockState)]| {
+            mesh_with(blocks, true)
+                .faces
+                .iter()
+                .filter(|&&f| unpack_face(f).2 & FLAG_STILL_WATER_TOP != 0)
+                .count()
+        };
+        // A lone source: its top and the reversed copy seen from below.
+        assert_eq!(count(&[(5, 64, 5, source)]), 8);
+        assert_eq!(count(&[(5, 64, 5, flowing)]), 0);
     }
 
     fn models() -> BlockModels {

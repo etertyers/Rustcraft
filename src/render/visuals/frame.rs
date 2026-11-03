@@ -26,6 +26,7 @@ pub fn hdr_format(features: wgpu::Features) -> wgpu::TextureFormat {
 
 /// One texture the post passes read and write.
 struct Target {
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
     /// Reads it (and the post uniform) in the next pass.
     bind_group: wgpu::BindGroup,
@@ -68,6 +69,8 @@ pub struct TrailerFrame {
     /// The HDR target, at the frame's size; made on first use.
     hdr: Option<Target>,
     hdr_format: wgpu::TextureFormat,
+    /// The target can be copied from (with the water reading the scene).
+    copyable: bool,
     size: (u32, u32),
 }
 
@@ -119,16 +122,18 @@ impl TrailerFrame {
             post,
             hdr: None,
             hdr_format,
+            copyable: false,
             size: (0, 0),
         }
     }
 
     /// Makes the targets for a frame of `width` × `height`, if they aren't.
-    pub fn prepare(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        if self.hdr.is_some() && self.size == (width, height) {
+    pub fn prepare(&mut self, device: &wgpu::Device, width: u32, height: u32, copy: bool) {
+        if self.hdr.is_some() && self.size == (width, height) && self.copyable == copy {
             return;
         }
         self.size = (width, height);
+        self.copyable = copy;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("hdr"),
             size: wgpu::Extent3d {
@@ -140,7 +145,13 @@ impl TrailerFrame {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.hdr_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: if copy {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+            },
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
@@ -158,12 +169,21 @@ impl TrailerFrame {
                 },
             ],
         });
-        self.hdr = Some(Target { view, bind_group });
+        self.hdr = Some(Target {
+            texture,
+            view,
+            bind_group,
+        });
     }
 
     /// The format of the world target.
     pub fn format(&self) -> wgpu::TextureFormat {
         self.hdr_format
+    }
+
+    /// The HDR target as a texture, to copy the opaque scene out of.
+    pub fn hdr_texture(&self) -> Option<&wgpu::Texture> {
+        self.hdr.as_ref().map(|t| &t.texture)
     }
 
     /// Where the world is drawn, once `prepare` has run.

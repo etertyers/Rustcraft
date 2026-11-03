@@ -27,6 +27,35 @@ pub struct TrailerUniform {
     pub flags: [f32; 4],
     pub tint: [f32; 4],
     pub sky_tint: [f32; 4],
+    pub water: [f32; 4],
+    pub scene: [f32; 4],
+    pub extras: [f32; 4],
+}
+
+/// The water, scene copy and cloud settings of a frame (M56).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WaterFrame {
+    /// Screen-space reflection steps; 0 reflects only the sky.
+    pub ssr_steps: u32,
+    /// Water shows what's under it, bent and tinted by depth.
+    pub refraction: bool,
+    /// The camera is under water and sunlight makes caustics.
+    pub caustics: bool,
+    /// From below, the surface is Snell's window.
+    pub snell: bool,
+    /// The screen's size in pixels.
+    pub screen: [f32; 2],
+    pub cloud_height: f32,
+    /// Clouds are drawn this frame.
+    pub clouds: bool,
+    pub cloud_reflections: bool,
+    pub cloud_shadows: bool,
+    /// Glass and metal reflect (High).
+    pub glass_metal: bool,
+    /// The sun's glow and the clouds' shading.
+    pub sky_effects: bool,
+    /// Rain, 0–1.
+    pub rain: f32,
 }
 
 /// What the Trailer shaders need from the frame's settings.
@@ -42,6 +71,7 @@ pub struct SunFrame {
     pub leaf_light: bool,
     pub dimension_tint: Vec3,
     pub sky_tint: Vec3,
+    pub water: WaterFrame,
 }
 
 impl TrailerUniform {
@@ -74,7 +104,28 @@ impl TrailerUniform {
                 super::sun::DIRECT_SCALE,
             ],
             tint: frame.dimension_tint.extend(1.0).to_array(),
-            sky_tint: frame.sky_tint.extend(1.0).to_array(),
+            sky_tint: frame
+                .sky_tint
+                .extend(f32::from(frame.water.sky_effects))
+                .to_array(),
+            water: [
+                frame.water.ssr_steps as f32,
+                f32::from(frame.water.refraction),
+                f32::from(frame.water.caustics),
+                f32::from(frame.water.snell),
+            ],
+            scene: [
+                frame.water.screen[0],
+                frame.water.screen[1],
+                frame.water.cloud_height,
+                f32::from(frame.water.clouds),
+            ],
+            extras: [
+                f32::from(frame.water.cloud_reflections),
+                f32::from(frame.water.cloud_shadows),
+                f32::from(frame.water.glass_metal),
+                frame.water.rain,
+            ],
         }
     }
 }
@@ -84,8 +135,17 @@ impl TrailerUniform {
 pub struct ShadowPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub cascade_layout: wgpu::BindGroupLayout,
-    /// Group 3 of the Trailer block pipelines.
+    /// Group 3 of the Trailer pipelines.
     pub read_layout: wgpu::BindGroupLayout,
+    cloud_sampler: wgpu::Sampler,
+    scene_sampler: wgpu::Sampler,
+}
+
+/// The textures group 3 holds besides the shadow maps.
+pub struct SceneViews<'a> {
+    pub clouds: &'a wgpu::TextureView,
+    pub color: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
 }
 
 impl ShadowPipeline {
@@ -138,7 +198,66 @@ impl ShadowPipeline {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                // The clouds' picture, and its bilinear sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // The opaque scene's color and depth, copied before the
+                // water is drawn, and a clamping sampler for the color.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
+        });
+        let cloud_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("cloud bilinear"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let scene_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("scene"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -183,6 +302,8 @@ impl ShadowPipeline {
             pipeline,
             cascade_layout,
             read_layout,
+            cloud_sampler,
+            scene_sampler,
         }
     }
 }
@@ -204,13 +325,20 @@ pub struct ShadowMaps {
     cascade_buffer: wgpu::Buffer,
     pub cascade_group: wgpu::BindGroup,
     pub uniform: wgpu::Buffer,
-    /// Group 3 for the Trailer block pipelines.
+    /// Group 3 for the Trailer pipelines.
     pub read_group: wgpu::BindGroup,
     pub drawn: [Option<Drawn>; MAX_CASCADES],
+    array: wgpu::TextureView,
+    compare: wgpu::Sampler,
 }
 
 impl ShadowMaps {
-    pub fn new(device: &wgpu::Device, pipeline: &ShadowPipeline, config: ShadowConfig) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        pipeline: &ShadowPipeline,
+        config: ShadowConfig,
+        views: &SceneViews,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow maps"),
             size: wgpu::Extent3d {
@@ -272,24 +400,7 @@ impl ShadowMaps {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let read_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow read"),
-            layout: &pipeline.read_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&array),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let read_group = read_group(device, pipeline, &uniform, &array, &sampler, views);
         Self {
             config,
             layers,
@@ -298,7 +409,22 @@ impl ShadowMaps {
             uniform,
             read_group,
             drawn: [None; MAX_CASCADES],
+            array,
+            compare: sampler,
         }
+    }
+
+    /// Makes group 3 again, after the clouds' picture or the scene copy
+    /// changed.
+    pub fn rebind(&mut self, device: &wgpu::Device, pipeline: &ShadowPipeline, views: &SceneViews) {
+        self.read_group = read_group(
+            device,
+            pipeline,
+            &self.uniform,
+            &self.array,
+            &self.compare,
+            views,
+        );
     }
 
     /// Writes cascade `i`'s matrix where the shadow pass reads it.
@@ -314,6 +440,31 @@ impl ShadowMaps {
     pub fn matrices(&self) -> [Mat4; MAX_CASCADES] {
         std::array::from_fn(|i| self.drawn[i].map_or(Mat4::IDENTITY, |d| d.matrix))
     }
+}
+
+fn read_group(
+    device: &wgpu::Device,
+    pipeline: &ShadowPipeline,
+    uniform: &wgpu::Buffer,
+    array: &wgpu::TextureView,
+    compare: &wgpu::Sampler,
+    views: &SceneViews,
+) -> wgpu::BindGroup {
+    let entry = |binding, resource| wgpu::BindGroupEntry { binding, resource };
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("shadow read"),
+        layout: &pipeline.read_layout,
+        entries: &[
+            entry(0, uniform.as_entire_binding()),
+            entry(1, wgpu::BindingResource::TextureView(array)),
+            entry(2, wgpu::BindingResource::Sampler(compare)),
+            entry(3, wgpu::BindingResource::TextureView(views.clouds)),
+            entry(4, wgpu::BindingResource::Sampler(&pipeline.cloud_sampler)),
+            entry(5, wgpu::BindingResource::TextureView(views.color)),
+            entry(6, wgpu::BindingResource::TextureView(views.depth)),
+            entry(7, wgpu::BindingResource::Sampler(&pipeline.scene_sampler)),
+        ],
+    })
 }
 
 /// Whether the box `min..max` (world space) can touch a cascade's box:
@@ -345,7 +496,7 @@ mod tests {
     #[test]
     fn the_uniform_is_what_the_shader_expects() {
         // Three matrices and nine vec4s.
-        assert_eq!(std::mem::size_of::<TrailerUniform>(), 3 * 64 + 9 * 16);
+        assert_eq!(std::mem::size_of::<TrailerUniform>(), 3 * 64 + 12 * 16);
         assert_eq!(std::mem::size_of::<TrailerUniform>() % 16, 0);
     }
 
@@ -393,6 +544,7 @@ mod tests {
             leaf_light: true,
             dimension_tint: Vec3::ONE,
             sky_tint: Vec3::ONE,
+            water: WaterFrame::default(),
         };
         let u = TrailerUniform::new(&frame, &[Mat4::IDENTITY; MAX_CASCADES]);
         assert_eq!(u.params[0], 0.0);
