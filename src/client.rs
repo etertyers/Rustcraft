@@ -24,6 +24,9 @@ const MAX_HISTORY: usize = 64;
 
 pub type ClientConnection = Box<dyn Connection<ClientMsg, ServerMsg>>;
 
+/// A chat line's click (action, value) and hover text.
+pub type ChatEvents = (Option<(String, String)>, Option<String>);
+
 pub struct Client {
     conn: ClientConnection,
     /// The last input sent, and the inputs since the server's last word
@@ -43,6 +46,8 @@ pub struct Client {
     /// Chat lines (and whether each answers a command of ours) and Tab's
     /// completions, waiting for the chat screen to take them.
     pub chat: Vec<(String, bool)>,
+    /// The click and hover of lines in `chat` that have them, by text.
+    pub chat_events: std::collections::HashMap<String, ChatEvents>,
     pub completions: Option<Vec<String>>,
 }
 
@@ -64,6 +69,7 @@ impl Client {
             gone: None,
             skins: Vec::new(),
             chat: Vec::new(),
+            chat_events: Default::default(),
             completions: None,
             players: Vec::new(),
         }
@@ -137,6 +143,10 @@ impl Client {
                 ServerMsg::Skin { name, png, slim } => self.skins.push((name, png, slim)),
                 ServerMsg::Players(names) => self.players = names,
                 ServerMsg::Chat { text, command } => self.chat.push((text, command)),
+                ServerMsg::RichChat { text, click, hover } => {
+                    self.chat_events.insert(text.clone(), (click, hover));
+                    self.chat.push((text, false));
+                }
                 ServerMsg::Completions(options) => self.completions = Some(options),
             }
         }

@@ -70,6 +70,8 @@ pub enum ClientMsg {
     Disconnect,
     /// A spectator picked a player in the spectator menu (M43).
     SpectatorTeleport(String),
+    /// ... or a team in its page of the menu: to one of its members.
+    SpectatorTeleportTeam(String),
 }
 
 /// One tick of a player's movement input.
@@ -129,6 +131,12 @@ pub enum ServerMsg {
     /// A line for the chat, with `§` codes; `command` when it answers this
     /// player's own command (shown even with chat set to Commands Only).
     Chat { text: String, command: bool },
+    /// A chat line with a click and hover event (`/tellraw`).
+    RichChat {
+        text: String,
+        click: Option<(String, String)>,
+        hover: Option<String>,
+    },
     /// The answer to a `Complete`: what the last word could be.
     Completions(Vec<String>),
     /// The server is going away, or sent this player off.
@@ -149,6 +157,8 @@ pub struct Snapshot {
     pub entities: Entities,
     /// The other players in sight.
     pub players: Vec<PlayerView>,
+    /// The scoreboard, titles' companions and bossbars this player sees.
+    pub board: crate::game::board::BoardView,
 }
 
 /// Another player as others see them.

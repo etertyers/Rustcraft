@@ -98,10 +98,10 @@ pub(super) fn setblock(
     let (Some(words), Some(block)) = (args.get(0..3), args.get(3)) else {
         return Err("Usage: /setblock <x y z> <block> [replace|keep|destroy]".to_owned());
     };
-    let at = block_position(words, game.feet_of(caller.index))?;
+    let at = block_position(words, caller.pos)?;
     let block = block_state_named(block)?;
     let mode = args.get(4).copied().unwrap_or("replace");
-    game.enter_realm(game.player_at(caller.index).dimension);
+    game.enter_realm(caller.dim);
     let here = loaded(game, at)?;
     match mode {
         "keep" if !here.is_air() => return Err("Could not set the block".to_owned()),
@@ -129,7 +129,7 @@ pub(super) fn fill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Ve
     let (Some(from), Some(to), Some(block)) = (args.get(0..3), args.get(3..6), args.get(6)) else {
         return Err(usage.to_owned());
     };
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let (a, b) = (block_position(from, origin)?, block_position(to, origin)?);
     let (lo, hi) = (a.min(b), a.max(b));
     let size = (hi - lo + 1).as_i64vec3();
@@ -151,7 +151,7 @@ pub(super) fn fill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Ve
         _ => None,
     };
     let filter_has_state = args.get(8).is_some_and(|f| f.contains('['));
-    game.enter_realm(game.player_at(caller.index).dimension);
+    game.enter_realm(caller.dim);
     let air = BlockState::AIR;
     let mut edits = Vec::new();
     let mut broken = Vec::new();
@@ -193,6 +193,7 @@ pub(super) fn fill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Ve
         destroy(game, caller.index, at);
     }
     game.edit(&edits);
+    caller.report(edits.len() as i32);
     Ok(tell(format!(
         "Successfully filled {} block(s)",
         edits.len()
@@ -204,7 +205,7 @@ pub(super) fn clone(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<V
     let (Some(b), Some(e), Some(d)) = (args.get(0..3), args.get(3..6), args.get(6..9)) else {
         return Err(usage.to_owned());
     };
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let (a, c) = (block_position(b, origin)?, block_position(e, origin)?);
     let (lo, hi) = (a.min(c), a.max(c));
     let dest = block_position(d, origin)?;
@@ -252,7 +253,7 @@ pub(super) fn clone(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<V
     if overlaps && how != "force" && how != "move" {
         return Err("The source and destination areas cannot overlap".to_owned());
     }
-    game.enter_realm(game.player_at(caller.index).dimension);
+    game.enter_realm(caller.dim);
     // Read everything first, so an overlap copies what was there.
     let mut moved = Vec::new();
     for y in 0..size.y {
@@ -312,7 +313,7 @@ pub(super) fn fillbiome(
     let (Some(f), Some(t), Some(name)) = (args.get(0..3), args.get(3..6), args.get(6)) else {
         return Err(usage.to_owned());
     };
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let (a, b) = (block_position(f, origin)?, block_position(t, origin)?);
     let (lo, hi) = (a.min(b), a.max(b));
     let id = name.strip_prefix("minecraft:").unwrap_or(name);
@@ -343,7 +344,7 @@ pub(super) fn fillbiome(
             32768 * 4
         ));
     }
-    game.enter_realm(game.player_at(caller.index).dimension);
+    game.enter_realm(caller.dim);
     let mut columns = Vec::new();
     for z in lo.z..=hi.z {
         for x in lo.x..=hi.x {
@@ -383,7 +384,7 @@ pub(super) fn place(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<V
         return Err(usage.to_owned());
     };
     let name = name.strip_prefix("minecraft:").unwrap_or(name);
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let pos_at = |from: usize| -> Result<IVec3, String> {
         match args.get(from..from + 3) {
             Some(words) => block_position(words, origin),
@@ -405,7 +406,7 @@ pub(super) fn place(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<V
                 Some("counterclockwise_90") => 3,
                 Some(other) => return Err(format!("Unknown rotation: {other}")),
             };
-            game.enter_realm(game.player_at(caller.index).dimension);
+            game.enter_realm(caller.dim);
             let piece = template.place(at, turns);
             let edits: Vec<_> = piece.blocks.iter().map(|&(p, s)| (p, s)).collect();
             for (p, _) in &edits {

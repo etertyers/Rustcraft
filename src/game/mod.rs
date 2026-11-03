@@ -7,6 +7,8 @@ pub mod advance;
 mod animals;
 mod armor;
 mod benches;
+pub mod board;
+mod board_hooks;
 mod boats;
 mod capture;
 mod combat;
@@ -37,11 +39,13 @@ pub(crate) mod modding;
 pub mod modes;
 #[cfg(test)]
 mod moves;
+pub mod nbt;
 mod nether_mobs;
 #[cfg(test)]
 mod offhand;
 mod portals;
 mod potions;
+pub mod predicate;
 #[cfg(test)]
 mod progression;
 mod random_ticks;
@@ -53,6 +57,7 @@ mod sounds;
 pub mod spawn_test;
 mod spawners;
 pub mod sync;
+pub mod text;
 mod updates;
 pub mod view;
 mod villagers;
@@ -238,6 +243,9 @@ pub struct PlayerState {
     /// Recipes `/recipe give` unlocked (the book shows them all).
     #[serde(default)]
     pub recipes: std::collections::BTreeSet<String>,
+    /// `/title`'s text on this player's screen.
+    #[serde(default)]
+    pub title: board::TitleState,
     /// `/tag`'s tags on this player (M43).
     #[serde(default)]
     pub tags: Vec<String>,
@@ -352,6 +360,7 @@ impl PlayerState {
             mounted: None,
             spectating: None,
             tags: Vec::new(),
+            title: Default::default(),
             speed_scale: 1.0,
             recipes: Default::default(),
             previous_mode: GameMode::Survival,
@@ -404,6 +413,8 @@ pub struct Game {
     keeps_sounds: bool,
     /// A client's view of the other players in sight.
     pub remote_players: Vec<crate::net::protocol::PlayerView>,
+    /// The scoreboard and bossbars as the server last showed them (a client's).
+    pub board_view: board::BoardView,
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
@@ -411,6 +422,17 @@ pub struct Game {
     pub default_mode: Option<GameMode>,
     /// Operators, bans and the whitelist (a hosted world's).
     pub admin: admin::Admin,
+    /// Objectives, scores, display slots and teams (M44).
+    pub board: board::Scoreboard,
+    /// `/data ... storage`: command storage by id.
+    pub storage: std::collections::BTreeMap<String, nbt::Nbt>,
+    /// Named predicates (data packs, M45); `/execute if predicate` and
+    /// selectors look them up here.
+    pub predicates: std::collections::BTreeMap<String, predicate::Predicate>,
+    /// Loaded command functions by id: their lines (M45's data packs).
+    pub functions: std::collections::BTreeMap<String, Vec<String>>,
+    /// `/bossbar`'s bars by id (not saved).
+    pub bossbars: std::collections::BTreeMap<String, board::Bossbar>,
     pub weather: weather::Weather,
     /// Ticks until the weather changes by itself.
     pub weather_ticks: u32,
@@ -543,11 +565,17 @@ impl Game {
             others: Vec::new(),
             role: sync::Role::Server,
             remote_players: Vec::new(),
+            board_view: Default::default(),
             keeps_sounds: false,
             spawn,
             rules: crate::level::GameRules::default(),
             default_mode: None,
             admin: admin::Admin::default(),
+            board: board::Scoreboard::default(),
+            storage: Default::default(),
+            predicates: Default::default(),
+            functions: Default::default(),
+            bossbars: Default::default(),
             weather: weather::Weather::Clear,
             weather_ticks: weather::DEFAULT_TICKS,
             autosave: true,
@@ -667,6 +695,8 @@ impl Game {
         game.end = level.end.clone();
         game.restore_fight(level.end.dragon);
         game.admin = admin::Admin::load(dir.path());
+        game.board = board::Scoreboard::load(dir.path());
+        game.storage = load_storage(dir.path());
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -850,6 +880,8 @@ impl Game {
         saved.level.boats = boats;
         saved.level.end.crystals = crystals;
         saved.level.end.dragon = dragon;
+        self.board.save(saved.dir.path());
+        save_storage(&self.storage, saved.dir.path());
         saved.dir.save_level(&saved.level)?;
         info!("saved {:?} ({chunks} changed chunks)", saved.level.name);
         Ok(())
@@ -1204,6 +1236,8 @@ impl Game {
     /// Returns false while they wait for chunks or the credits roll.
     fn tick_player(&mut self) -> bool {
         self.player.prev_feet = self.player.body.position();
+        self.track_for_board();
+        self.player.title.tick();
         self.player.stats.exempt = [
             !self.rules.fall_damage,
             !self.rules.fire_damage,
@@ -1333,6 +1367,7 @@ impl Game {
             if self.rules.show_death_messages {
                 self.chat_out.push(line);
             }
+            self.count_deaths(source, attacker.map(str::to_owned));
         }
     }
 
@@ -1559,6 +1594,25 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
     body.levitation = effects
         .get(Effect::Levitation)
         .map(|active| active.amplifier);
+}
+
+/// Command storage as `command_storage.ron`: each compound's text form by id.
+fn load_storage(dir: &std::path::Path) -> std::collections::BTreeMap<String, nbt::Nbt> {
+    let text = std::fs::read_to_string(dir.join("command_storage.ron")).unwrap_or_default();
+    let saved: std::collections::BTreeMap<String, String> =
+        ron::from_str(&text).unwrap_or_default();
+    saved
+        .into_iter()
+        .filter_map(|(k, v)| Some((k, nbt::Nbt::parse(&v).ok()?)))
+        .collect()
+}
+
+fn save_storage(storage: &std::collections::BTreeMap<String, nbt::Nbt>, dir: &std::path::Path) {
+    let text: std::collections::BTreeMap<&String, String> =
+        storage.iter().map(|(k, v)| (k, v.snbt())).collect();
+    if let Ok(out) = ron::ser::to_string_pretty(&text, ron::ser::PrettyConfig::default()) {
+        let _ = std::fs::write(dir.join("command_storage.ron"), out);
+    }
 }
 
 fn one() -> f64 {

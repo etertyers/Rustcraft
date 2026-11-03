@@ -182,7 +182,16 @@ fn selectors_filter_by_type_distance_sort_limit_and_mode() {
     game.summon("pig", DVec3::new(9.5, 64.0, 0.5), 0.0);
     game.summon("cow", DVec3::new(1.5, 64.0, 0.5), 0.0);
     let at = DVec3::new(0.5, 64.0, 0.5);
-    let count = |game: &mut crate::game::Game, sel: &str| game.select(0, at, sel).unwrap().len();
+    let count = |game: &mut crate::game::Game, sel: &str| {
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            sel,
+        )
+        .unwrap()
+        .len()
+    };
     assert_eq!(count(&mut game, "@e[type=pig]"), 2);
     assert_eq!(
         count(&mut game, "@e[type=!pig]"),
@@ -202,10 +211,22 @@ fn selectors_filter_by_type_distance_sort_limit_and_mode() {
         "Alex stands there"
     );
     // @p is the nearest player, @n the nearest entity other than... any.
-    let nearest = game.select(0, at, "@n[type=pig]").unwrap();
+    let nearest = game
+        .select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            "@n[type=pig]",
+        )
+        .unwrap();
     assert_eq!(nearest.len(), 1);
     let far = game
-        .select(0, at, "@e[type=pig,sort=furthest,limit=1]")
+        .select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            "@e[type=pig,sort=furthest,limit=1]",
+        )
         .unwrap();
     assert_ne!(far, nearest);
     assert_eq!(count(&mut game, "@e[dx=2,dy=1,dz=1,type=cow]"), 1);
@@ -221,7 +242,15 @@ fn selectors_filter_by_type_distance_sort_limit_and_mode() {
     assert_eq!(count(&mut game, "@a[tag=!vip]"), 1);
     game.others[0].stats.experience.add(100);
     assert_eq!(count(&mut game, "@a[level=5..]"), 1);
-    assert!(game.select(0, at, "@e[nonsense=1]").is_err());
+    assert!(
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            "@e[nonsense=1]"
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -735,9 +764,39 @@ fn summon_takes_entity_data() {
     assert_eq!(pig.data.tags, ["farm", "tasty"]);
     assert_eq!(pig.stats.health, 5.0);
     let at = DVec3::ZERO;
-    assert_eq!(game.select(0, at, "@e[tag=farm]").unwrap().len(), 1);
-    assert_eq!(game.select(0, at, "@e[name=Bacon]").unwrap().len(), 1);
-    assert_eq!(game.select(0, at, "@e[nbt={Health:5f}]").unwrap().len(), 1);
+    assert_eq!(
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            "@e[tag=farm]"
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+    assert_eq!(
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            "@e[name=Bacon]"
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+    assert_eq!(
+        game.select(
+            crate::game::selector::Target::Player(0),
+            crate::world::dimension::Dimension::Overworld,
+            at,
+            "@e[nbt={Health:5f}]"
+        )
+        .unwrap()
+        .len(),
+        1
+    );
     let count = game.mobs.len();
     assert!(said(&run(&mut game, "summon pig {Bogus:1}")).contains("Unknown entity data"));
     assert_eq!(game.mobs.len(), count, "a bad summon leaves nothing");

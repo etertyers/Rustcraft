@@ -7,8 +7,12 @@
 
 use glam::{DVec3, IVec3};
 
+mod board_cmds;
 mod components;
+mod data_cmds;
+mod execute;
 mod extra;
+mod text_cmds;
 mod world;
 
 use super::{
@@ -47,6 +51,13 @@ pub enum Reply {
     Everyone(String),
     /// Send this player away with this reason (`/kick`).
     Kick(usize, String),
+    /// A chat line with a click and a hover (`/tellraw`).
+    Rich {
+        to: usize,
+        text: String,
+        click: Option<(String, String)>,
+        hover: Option<String>,
+    },
     /// Open the world to LAN on this port (`/publish`; 0 for any).
     Publish(u16),
     /// Close the world (`/stop`).
@@ -59,11 +70,55 @@ const FILL_LIMIT: i64 = 32768;
 const LOCATE_CHUNKS: i32 = 100;
 const LOCATE_BIOME_BLOCKS: i32 = 6400;
 
-/// Who typed a command and what they may do.
+/// Who typed a command, what they may do, and where and as whom it runs
+/// (`/execute` changes the executor, position, look and dimension; the
+/// answers still go to `index`).
 struct Caller {
+    /// The player the answers go to.
     index: usize,
     cheats: bool,
     host: bool,
+    /// The player or mob `@s` is.
+    executor: Target,
+    /// Where `~` is.
+    pos: DVec3,
+    /// Which way `^` and `facing` look: camera yaw and pitch, radians.
+    look: (f32, f32),
+    /// The dimension the command works in.
+    dim: Dimension,
+    /// `anchored eyes`: `^` coordinates start at the eyes, not the feet.
+    eyes: bool,
+    /// What the command achieved, for `/execute store` (set by commands
+    /// that have a number to give; 1 otherwise on success).
+    result: std::cell::Cell<Option<i32>>,
+}
+
+impl Caller {
+    /// Player `index` typing a command.
+    fn new(game: &Game, index: usize, cheats: bool, host: bool) -> Self {
+        let p = game.player_at(index);
+        Caller {
+            index,
+            cheats,
+            host,
+            executor: Target::Player(index),
+            pos: game.feet_of(index),
+            look: (p.camera.yaw, p.camera.pitch),
+            dim: p.dimension,
+            eyes: false,
+            result: std::cell::Cell::new(None),
+        }
+    }
+
+    /// Who is speaking: the executor's name (a player's, or a mob's shown name).
+    fn actor_name(&self, game: &Game) -> String {
+        game.target_name(self.executor)
+    }
+
+    /// Reports the number a command produced (its result for `store`).
+    fn report(&self, n: i32) {
+        self.result.set(Some(n));
+    }
 }
 
 /// What a command's argument is, for Tab completion.
@@ -369,6 +424,193 @@ const COMMANDS: &[Command] = &[
         args: &[Arg::Players, Arg::Free],
         run: kick,
     },
+    cmd!(
+        "execute",
+        [],
+        true,
+        false,
+        "/execute (as|at|positioned|rotated|facing|align|anchored|in|on|summon|if|unless|store|run) ...",
+        [
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab),
+            Arg::After(execute::execute_tab)
+        ],
+        execute::execute
+    ),
+    cmd!(
+        "data",
+        [],
+        true,
+        false,
+        "/data (get|merge|modify|remove) (entity|block|storage) ...",
+        [
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab),
+            Arg::After(data_cmds::data_tab)
+        ],
+        data_cmds::data
+    ),
+    cmd!(
+        "item",
+        [],
+        true,
+        false,
+        "/item (replace|modify) (entity|block) <target> <slot> (with <item> [count] | from <source> <slot> [modifier] | <modifier>)",
+        [
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab),
+            Arg::After(data_cmds::item_tab)
+        ],
+        data_cmds::item
+    ),
+    cmd!(
+        "loot",
+        [],
+        true,
+        false,
+        "/loot (spawn <pos> | give <players> | insert <pos> | replace (entity|block) <target> <slot> [count]) (fish <table> <pos> | loot <table> | kill <entity> | mine <pos> [tool])",
+        [
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab),
+            Arg::After(data_cmds::loot_tab)
+        ],
+        data_cmds::loot
+    ),
+    cmd!(
+        "tellraw",
+        [],
+        true,
+        false,
+        "/tellraw <targets> <message>",
+        [Arg::Players, Arg::Free],
+        text_cmds::tellraw
+    ),
+    cmd!(
+        "title",
+        [],
+        true,
+        false,
+        "/title <targets> (title|subtitle|actionbar|times|clear|reset) ...",
+        [
+            Arg::After(text_cmds::title_tab),
+            Arg::After(text_cmds::title_tab)
+        ],
+        text_cmds::title
+    ),
+    cmd!(
+        "bossbar",
+        [],
+        true,
+        false,
+        "/bossbar (add|remove|list|get|set) ...",
+        [
+            Arg::After(text_cmds::bossbar_tab),
+            Arg::After(text_cmds::bossbar_tab),
+            Arg::After(text_cmds::bossbar_tab),
+            Arg::After(text_cmds::bossbar_tab),
+            Arg::After(text_cmds::bossbar_tab)
+        ],
+        text_cmds::bossbar
+    ),
+    cmd!(
+        "scoreboard",
+        [],
+        true,
+        false,
+        "/scoreboard (objectives (list|add|remove|setdisplay|modify) | players (list|get|set|add|remove|reset|enable|operation)) ...",
+        [
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab),
+            Arg::After(board_cmds::scoreboard_tab)
+        ],
+        board_cmds::scoreboard
+    ),
+    cmd!(
+        "team",
+        [],
+        true,
+        false,
+        "/team (add|remove|empty|join|leave|list|modify) ...",
+        [
+            Arg::After(board_cmds::team_tab),
+            Arg::After(board_cmds::team_tab),
+            Arg::After(board_cmds::team_tab),
+            Arg::After(board_cmds::team_tab),
+            Arg::After(board_cmds::team_tab),
+            Arg::After(board_cmds::team_tab)
+        ],
+        board_cmds::team
+    ),
+    cmd!(
+        "tag",
+        [],
+        true,
+        false,
+        "/tag <targets> (add|remove|list) [name]",
+        [
+            Arg::After(board_cmds::tag_tab),
+            Arg::After(board_cmds::tag_tab),
+            Arg::After(board_cmds::tag_tab)
+        ],
+        board_cmds::tag
+    ),
+    cmd!(
+        "trigger",
+        [],
+        false,
+        false,
+        "/trigger <objective> [add|set <value>]",
+        [
+            Arg::After(board_cmds::trigger_tab),
+            Arg::After(board_cmds::trigger_tab)
+        ],
+        board_cmds::trigger
+    ),
+    cmd!(
+        "teammsg",
+        ["tm"],
+        false,
+        false,
+        "/teammsg <message>",
+        [Arg::Free],
+        board_cmds::teammsg
+    ),
     cmd!(
         "clone",
         [],
@@ -707,32 +949,58 @@ impl Game {
         cheats: bool,
         host: bool,
     ) -> Vec<Reply> {
-        let caller = Caller {
-            index,
-            cheats,
-            host,
-        };
+        let caller = Caller::new(self, index, cheats, host);
+        self.run_as(&caller, line).0
+    }
+
+    /// Runs `line` as `caller` (a player, or `/execute`'s context). Returns
+    /// the replies and the number the command reported, if it succeeded.
+    fn run_as(&mut self, caller: &Caller, line: &str) -> (Vec<Reply>, Option<i32>) {
         let words = tokens(line);
         let Some((&name, args)) = words.split_first() else {
-            return vec![error("Unknown or incomplete command")];
+            return (vec![error("Unknown or incomplete command")], None);
         };
-        let p = self.player_at(index);
-        LOOK.set((p.camera.yaw, p.camera.pitch));
+        LOOK.set((
+            caller.look.0,
+            caller.look.1,
+            if caller.eyes { 1.62 } else { 0.0 },
+        ));
         let name = name.strip_prefix("minecraft:").unwrap_or(name);
         let Some(command) = find(name) else {
-            return self.mod_command_replies(&caller, name, args);
+            let replies = self.mod_command_replies(caller, name, args);
+            let ok = !matches!(replies.first(), Some(Reply::Sender(t)) if t.starts_with("§c"));
+            return (replies, ok.then_some(1));
         };
-        if (command.cheat && !cheats) || (command.host && !host) {
-            return vec![error("You do not have permission to use this command")];
+        if (command.cheat && !caller.cheats && !self.is_free_for_all(command.name))
+            || (command.host && !caller.host)
+        {
+            return (
+                vec![error("You do not have permission to use this command")],
+                None,
+            );
         }
-        match (command.run)(self, &caller, args) {
-            Ok(replies) if !self.rules.send_command_feedback => replies
-                .into_iter()
-                .filter(|r| !matches!(r, Reply::Sender(t) if !t.starts_with("§c")))
-                .collect(),
-            Ok(replies) => replies,
-            Err(why) => vec![error(&why)],
+        caller.result.set(None);
+        match (command.run)(self, caller, args) {
+            Ok(replies) => {
+                let result = caller.result.get().unwrap_or(1);
+                let replies = if self.rules.send_command_feedback {
+                    replies
+                } else {
+                    replies
+                        .into_iter()
+                        .filter(|r| !matches!(r, Reply::Sender(t) if !t.starts_with("§c")))
+                        .collect()
+                };
+                (replies, Some(result))
+            }
+            Err(why) if why.is_empty() => (Vec::new(), None),
+            Err(why) => (vec![error(&why)], None),
         }
+    }
+
+    /// Commands anyone may run, cheats or not (`/trigger` checks its own rules).
+    fn is_free_for_all(&self, name: &str) -> bool {
+        name == "trigger"
     }
 
     /// A mod's command, or the error for an unknown one.
@@ -841,9 +1109,9 @@ impl Game {
 
     /// The players `word` names: a name or a selector for players.
     fn players_named(&mut self, caller: &Caller, word: &str) -> Result<Vec<usize>, String> {
-        let at = self.feet_of(caller.index);
+        let at = caller.pos;
         let chosen: Vec<usize> = self
-            .select(caller.index, at, word)?
+            .select(caller.executor, caller.dim, at, word)?
             .into_iter()
             .filter_map(|t| match t {
                 Target::Player(i) => Some(i),
@@ -862,8 +1130,8 @@ impl Game {
 
     /// The players and mobs `word` names, in the caller's dimension.
     fn targets(&mut self, caller: &Caller, word: &str) -> Result<Vec<Target>, String> {
-        let at = self.feet_of(caller.index);
-        let found = self.select(caller.index, at, word)?;
+        let at = caller.pos;
+        let found = self.select(caller.executor, caller.dim, at, word)?;
         if found.is_empty() {
             return Err(if word.starts_with('@') {
                 "No entity was found".to_owned()
@@ -949,7 +1217,7 @@ fn coordinate(word: &str, origin: f64) -> Result<f64, String> {
 thread_local! {
     /// Where the running command is looking (camera yaw and pitch, radians),
     /// for `^` coordinates; `run_command` sets it for the caller.
-    static LOOK: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((0.0, 0.0)) };
+    static LOOK: std::cell::Cell<(f32, f32, f64)> = const { std::cell::Cell::new((0.0, 0.0, 0.0)) };
 }
 
 /// `x y z` from three words, relative to `origin`: numbers, `~` offsets,
@@ -972,7 +1240,8 @@ fn position(words: &[&str], origin: DVec3) -> Result<DVec3, String> {
             None => unreachable!(),
         };
         let (left, up, forward) = (offset(x)?, offset(y)?, offset(z)?);
-        let (yaw, pitch) = LOOK.with(|l| l.get());
+        let (yaw, pitch, eye) = LOOK.with(|l| l.get());
+        let origin = origin + DVec3::Y * eye;
         let (sy, cy) = f64::from(yaw).sin_cos();
         let (sp, cp) = f64::from(pitch).sin_cos();
         let fwd = DVec3::new(sy * cp, sp, -cy * cp);
@@ -1045,10 +1314,11 @@ fn help(_: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Stri
         .collect())
 }
 
-fn list(game: &mut Game, _: &Caller, _: &[&str]) -> Result<Vec<Reply>, String> {
+fn list(game: &mut Game, caller: &Caller, _: &[&str]) -> Result<Vec<Reply>, String> {
     let names: Vec<String> = (0..game.player_count())
         .map(|i| game.player_at(i).name.clone())
         .collect();
+    caller.report(names.len() as i32);
     Ok(tell(format!(
         "There are {} of a max of {} players online: {}",
         names.len(),
@@ -1062,7 +1332,7 @@ fn msg(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, St
         return Err("Usage: /msg <player> <message>".to_owned());
     };
     let text = rest(args, 1);
-    let from = game.player_at(caller.index).name.clone();
+    let from = caller.actor_name(game);
     let mut replies = Vec::new();
     for to in game.players_named(caller, target)? {
         let name = game.player_at(to).name.clone();
@@ -1079,7 +1349,7 @@ fn me(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Str
     if args.is_empty() {
         return Err("Usage: /me <action>".to_owned());
     }
-    let name = &game.player_at(caller.index).name;
+    let name = caller.actor_name(game);
     Ok(vec![Reply::Everyone(format!("* {name} {}", rest(args, 0)))])
 }
 
@@ -1165,6 +1435,7 @@ fn give(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
             items_display(id)
         )));
     }
+    caller.report((count as usize * replies.len()) as i32);
     Ok(replies)
 }
 
@@ -1187,6 +1458,7 @@ fn clear(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, 
     let wanted = only.as_ref().map(|(id, _)| *id);
     let max: Option<u32> = args.get(2).map(|n| number(n, "count")).transpose()?;
     let mut replies = Vec::new();
+    let mut total = 0i32;
     for index in who {
         if max == Some(0) {
             // A count of 0 only asks how many there are.
@@ -1229,14 +1501,16 @@ fn clear(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, 
         if removed == 0 {
             return Err(format!("No items were found on player {name}"));
         }
+        total += removed as i32;
         replies.push(Reply::Sender(format!(
             "Removed {removed} item(s) from player {name}"
         )));
     }
+    caller.report(total);
     Ok(replies)
 }
 
-fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
+fn time(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
     let named = |word: &str| -> Result<u64, String> {
         Ok(match word {
             "day" => 1000,
@@ -1253,18 +1527,25 @@ fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String
             let now = game.day_time();
             let target = now / 24000 * 24000 + day % 24000;
             game.day_offset += target as i64 - now as i64;
+            caller.report(day as i32);
             Ok(tell(format!("Set the time to {day}")))
         }
         (Some("add"), Some(value)) => {
             let ticks = i64::from(extra::parse_time(value)?);
             game.day_offset += ticks;
+            caller.report((game.day_time() % 24000) as i32);
             Ok(tell(format!("Set the time to {}", game.day_time() % 24000)))
         }
         (Some("query"), Some("daytime")) => {
+            caller.report((game.day_time() % 24000) as i32);
             Ok(tell(format!("The time is {}", game.day_time() % 24000)))
         }
-        (Some("query"), Some("gametime")) => Ok(tell(format!("The time is {}", game.time()))),
+        (Some("query"), Some("gametime")) => {
+            caller.report(game.time() as i32);
+            Ok(tell(format!("The time is {}", game.time())))
+        }
         (Some("query"), Some("day")) => {
+            caller.report((game.day_time() / 24000) as i32);
             Ok(tell(format!("The time is {}", game.day_time() / 24000)))
         }
         _ => Err("Usage: /time <set|add|query> <value>".to_owned()),
@@ -1274,7 +1555,7 @@ fn time(game: &mut Game, _: &Caller, args: &[&str]) -> Result<Vec<Reply>, String
 fn kill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
     let who = match args.first() {
         Some(word) => game.targets(caller, word)?,
-        None => vec![Target::Player(caller.index)],
+        None => vec![caller.executor],
     };
     let mut replies = Vec::new();
     for target in who {
@@ -1294,6 +1575,7 @@ fn kill(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
         }
         replies.push(Reply::Sender(format!("Killed {name}")));
     }
+    caller.report(replies.len() as i32);
     Ok(replies)
 }
 
@@ -1484,13 +1766,20 @@ fn xp(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, Str
                         Ok(format!("Set {amount} experience points on {name}"))
                     }
                 }
-                "query" if levels => Ok(format!("{name} has {} experience levels", xp.level)),
-                "query" => Ok(format!("{name} has {} experience points", xp.points())),
+                "query" if levels => {
+                    caller.report(xp.level as i32);
+                    Ok(format!("{name} has {} experience levels", xp.level))
+                }
+                "query" => {
+                    caller.report(xp.points() as i32);
+                    Ok(format!("{name} has {} experience points", xp.points()))
+                }
                 other => Err(format!("Unknown action: {other}")),
             }
         })?;
         replies.push(Reply::Sender(line));
     }
+    caller.report(replies.len() as i32);
     Ok(replies)
 }
 
@@ -1523,7 +1812,7 @@ fn spawnpoint(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Rep
     let mut replies = Vec::new();
     for index in who {
         let at = match args.get(1..4) {
-            Some(words) => block_position(words, game.feet_of(caller.index))?,
+            Some(words) => block_position(words, caller.pos)?,
             None => game.feet_of(index).floor().as_ivec3(),
         };
         game.with_player(index, |g| g.player.spawn_point = Some(at));
@@ -1541,7 +1830,7 @@ fn spawnpoint(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Rep
 }
 
 fn setworldspawn(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let at = match args.get(0..3) {
         Some(words) => block_position(words, origin)?,
         None => origin.floor().as_ivec3(),
@@ -1561,8 +1850,8 @@ fn locate(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>,
         return Err("Usage: /locate <structure|biome> <name>".to_owned());
     };
     let name = name.strip_prefix("minecraft:").unwrap_or(name);
-    let from = game.feet_of(caller.index);
-    if game.player_at(caller.index).dimension != Dimension::Overworld {
+    let from = caller.pos;
+    if caller.dim != Dimension::Overworld {
         return Err("Only the Overworld can be searched".to_owned());
     }
     if what == "poi" {
@@ -1742,6 +2031,8 @@ fn kick(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
 
 #[cfg(test)]
 mod m43_tests;
+#[cfg(test)]
+mod m44_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1769,6 +2060,7 @@ mod tests {
                 Reply::Sender(t) | Reply::Everyone(t) | Reply::Player(_, t) | Reply::Kick(_, t) => {
                     t.as_str()
                 }
+                Reply::Rich { text, .. } => text.as_str(),
                 Reply::Publish(_) => "<publish>",
                 Reply::Stop => "<stop>",
             })
@@ -1802,11 +2094,7 @@ mod tests {
     #[test]
     fn selectors_find_players_and_mobs() {
         let mut game = world();
-        let me = Caller {
-            index: 0,
-            cheats: true,
-            host: true,
-        };
+        let me = Caller::new(&game, 0, true, true);
         assert_eq!(game.players_named(&me, "@s").unwrap(), [0]);
         assert_eq!(game.players_named(&me, "@a").unwrap(), [0, 1]);
         assert_eq!(game.players_named(&me, "Alex").unwrap(), [1]);
@@ -1815,11 +2103,7 @@ mod tests {
             [0],
             "the nearest is yourself"
         );
-        let alex = Caller {
-            index: 1,
-            cheats: true,
-            host: false,
-        };
+        let alex = Caller::new(&game, 1, true, false);
         assert_eq!(game.players_named(&alex, "@p").unwrap(), [1]);
         assert!(game.players_named(&me, "Nobody").is_err());
         game.summon("zombie", DVec3::new(3.5, 64.0, 3.5), 0.0);

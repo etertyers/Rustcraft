@@ -33,7 +33,7 @@ pub(super) fn say(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec
     if args.is_empty() {
         return Err("Usage: /say <message>".to_owned());
     }
-    let name = &game.player_at(caller.index).name;
+    let name = caller.actor_name(game);
     Ok(vec![Reply::Everyone(format!("[{name}] {}", rest(args, 0)))])
 }
 
@@ -67,11 +67,12 @@ pub(super) fn random(
             }
             let n = lo + i64::from(game.rng.below((hi - lo + 1) as u32));
             if mode == "roll" {
-                let name = game.player_at(caller.index).name.clone();
+                let name = caller.actor_name(game);
                 Ok(vec![Reply::Everyone(format!(
                     "{name} rolled {n} ({lo}..{hi})"
                 ))])
             } else {
+                caller.report(n as i32);
                 Ok(tell(format!("Rolled {n}")))
             }
         }
@@ -204,10 +205,7 @@ pub(super) fn rotate(
                         let eyes = dest.first().and_then(|t| game.target_feet(*t));
                         eyes.ok_or("No entity was found")? + DVec3::Y * 1.62
                     }
-                    _ => position(
-                        args.get(2..5).ok_or("Expected a position")?,
-                        game.feet_of(caller.index),
-                    )?,
+                    _ => position(args.get(2..5).ok_or("Expected a position")?, caller.pos)?,
                 };
                 let from = game.target_feet(target).ok_or("No entity was found")? + DVec3::Y * 1.62;
                 let d = at - from;
@@ -248,7 +246,7 @@ pub(super) fn spreadplayers(
                 .to_owned(),
         );
     }
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let cx = coordinate(args[0], origin.x)?;
     let cz = coordinate(args[1], origin.z)?;
     let spread: f64 = number(args[2], "distance")?;
@@ -295,7 +293,7 @@ pub(super) fn spreadplayers(
             )
         })?);
     }
-    let dimension = game.player_at(caller.index).dimension;
+    let dimension = caller.dim;
     for (target, spot) in who.iter().zip(&spots) {
         match *target {
             Target::Player(i) => {
@@ -383,7 +381,7 @@ pub(super) fn damage(
     let from = match args.get(3).copied() {
         Some("at") => Some(position(
             args.get(4..7).ok_or("Expected a position")?,
-            game.feet_of(caller.index),
+            caller.pos,
         )?),
         Some("by") => {
             let by = game.targets(caller, args.get(4).ok_or("Expected an entity")?)?;
@@ -704,7 +702,7 @@ pub(super) fn particle(
         .iter()
         .find(|(n, _)| *n == name)
         .ok_or_else(|| format!("Unknown particle: {name}"))?;
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let at = match args.get(1..4) {
         Some(words) if args.len() >= 4 => position(words, origin)?,
         _ => origin,
@@ -802,7 +800,7 @@ pub(super) fn playsound(
         return Err("Pitch must be between 0.5 and 2".to_owned());
     }
     let at = match args.get(3..6) {
-        Some(words) if args.len() >= 6 => Some(position(words, game.feet_of(caller.index))?),
+        Some(words) if args.len() >= 6 => Some(position(words, caller.pos)?),
         _ => None,
     };
     let mut replies = Vec::new();
@@ -1086,14 +1084,14 @@ pub(super) fn tp(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<
     if args.is_empty() {
         return Err(usage.to_owned());
     }
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let coordinate_first = args.len() >= 3 && args[..3].iter().all(|w| is_coordinate(w));
     let (who, rest): (Vec<Target>, &[&str]) = if args.len() == 1 || coordinate_first {
-        (vec![Target::Player(caller.index)], args)
+        (vec![caller.executor], args)
     } else {
         (game.targets(caller, args[0])?, &args[1..])
     };
-    let dimension = game.player_at(caller.index).dimension;
+    let dimension = caller.dim;
     let (to, tail): (DVec3, &[&str]) =
         if rest.len() >= 3 && rest[..3].iter().all(|w| is_coordinate(w)) {
             (position(&rest[..3], origin)?, &rest[3..])
@@ -1238,7 +1236,7 @@ pub(super) fn summon(
         return Err("Usage: /summon <entity> [x y z] [data]".to_owned());
     };
     let name = name.strip_prefix("minecraft:").unwrap_or(name);
-    let origin = game.feet_of(caller.index);
+    let origin = caller.pos;
     let (at, data) = match args.get(1..) {
         Some(words) if words.len() >= 3 && words[..3].iter().all(|w| is_coordinate(w)) => {
             (position(&words[..3], origin)?, words.get(3).copied())
@@ -1246,8 +1244,8 @@ pub(super) fn summon(
         Some([data]) if data.starts_with('{') => (origin, Some(*data)),
         _ => (origin, None),
     };
-    game.enter_realm(game.player_at(caller.index).dimension);
-    let yaw = game.player_at(caller.index).camera.yaw;
+    game.enter_realm(caller.dim);
+    let yaw = caller.look.0;
     let id = game
         .summon(name, at, yaw)
         .ok_or_else(|| format!("Unknown entity type: {name}"))?

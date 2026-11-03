@@ -1,5 +1,6 @@
 //! On-screen UI drawn with egui: the main menu, the HUD and the F3 debug overlay.
 
+pub mod board;
 pub mod chat;
 pub mod creative;
 pub mod doll;
@@ -78,7 +79,12 @@ pub struct Hud {
     /// and down), and how far off (nearer drawn bigger).
     pub name_tags: Vec<NameTag>,
     /// Everyone playing, while List Players (Tab) is held.
-    pub player_list: Option<Vec<String>>,
+    pub player_list: Option<Vec<(String, String)>>,
+    /// The scoreboard's sidebar, bossbars and the player's titles.
+    pub board: crate::game::board::BoardView,
+    pub title: crate::game::board::TitleState,
+    /// How opaque the title is now, if one is up.
+    pub title_alpha: Option<f32>,
     /// Shown while the cursor is grabbed for play.
     pub crosshair: bool,
     /// The swing's recharge under the crosshair.
@@ -89,7 +95,7 @@ pub struct Hud {
     /// F3+F4's mode switcher, with the mode chosen.
     pub switcher: Option<usize>,
     /// The spectator menu, with the players it lists.
-    pub spectator_menu: Option<Vec<String>>,
+    pub spectator_menu: Option<(String, Vec<String>)>,
     /// What the off-hand holds.
     pub offhand: Option<SlotView>,
     pub selected: usize,
@@ -123,6 +129,8 @@ pub struct Hud {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NameTag {
     pub name: String,
+    /// The below-name score, if that slot is set.
+    pub below: Option<String>,
     pub at: egui::Pos2,
     pub distance: f32,
 }
@@ -316,8 +324,8 @@ impl DebugUi {
             if let Some(chosen) = hud.switcher {
                 modes::paint_switcher(ui.painter(), full, chosen);
             }
-            if let Some(players) = &hud.spectator_menu {
-                modes::paint_spectator_menu(ui.painter(), full, players);
+            if let Some((title, players)) = &hud.spectator_menu {
+                modes::paint_spectator_menu(ui.painter(), full, title, players);
             }
             if let Some(offhand) = &hud.offhand
                 && !hud.hidden
@@ -347,6 +355,17 @@ impl DebugUi {
             }
             if let Some((chat, settings)) = &mut chat {
                 chat_action = chat.show(ui.ctx(), settings);
+            }
+            if let Some(sidebar) = &hud.board.sidebar
+                && !hud.hidden
+            {
+                board::paint_sidebar(ui.painter(), full, sidebar);
+            }
+            if !hud.board.bars.is_empty() && !hud.hidden {
+                board::paint_bars(ui.painter(), full, &hud.board.bars);
+            }
+            if !hud.hidden {
+                board::paint_titles(ui.painter(), full, &hud.title, hud.title_alpha);
             }
             if let Some(names) = &hud.player_list {
                 paint_player_list(ui.painter(), full, names);
@@ -974,16 +993,25 @@ fn show_sleep_screen(ctx: &egui::Context, asleep: f32) -> bool {
 /// A notice above the hotbar, where 1.0.0's chat shows (bottom left).
 /// The Tab list: everyone playing, in a column at the top middle, on a
 /// dark panel (vanilla's `PlayerTabOverlay`, one column).
-fn paint_player_list(painter: &egui::Painter, full: egui::Rect, names: &[String]) {
+fn paint_player_list(painter: &egui::Painter, full: egui::Rect, names: &[(String, String)]) {
     let scale = gui::gui_scale(full);
-    let font = egui::FontId::proportional(8.0 * scale);
-    let galleys: Vec<_> = names
+    let size = 8.0 * scale;
+    let width_of = |text: &str| {
+        painter
+            .layout_job(font::job(text, size, Color32::WHITE, false))
+            .size()
+            .x
+    };
+    let width = names
         .iter()
-        .map(|name| painter.layout_no_wrap(name.clone(), font.clone(), Color32::WHITE))
-        .collect();
-    let width = galleys
-        .iter()
-        .map(|g| g.size().x)
+        .map(|(n, s)| {
+            width_of(n)
+                + if s.is_empty() {
+                    0.0
+                } else {
+                    4.0 * scale + width_of(s)
+                }
+        })
         .fold(80.0 * scale, f32::max);
     let row = 9.0 * scale;
     let top = full.top() + 10.0 * scale;
@@ -993,14 +1021,31 @@ fn paint_player_list(painter: &egui::Painter, full: egui::Rect, names: &[String]
         egui::vec2(width + 2.0 * scale, row * names.len() as f32 + 2.0 * scale),
     );
     painter.rect_filled(panel, 0.0, Color32::from_black_alpha(128));
-    for (i, galley) in galleys.into_iter().enumerate() {
+    for (i, (name, score)) in names.iter().enumerate() {
         let y = top + row * i as f32;
         painter.rect_filled(
             egui::Rect::from_min_size(egui::pos2(left, y), egui::vec2(width, 8.0 * scale)),
             0.0,
             Color32::from_white_alpha(32),
         );
-        painter.galley(egui::pos2(left, y), galley, Color32::WHITE);
+        font::shadowed(
+            painter,
+            egui::pos2(left, y),
+            egui::Align2::LEFT_TOP,
+            name,
+            Color32::WHITE,
+            size,
+        );
+        if !score.is_empty() {
+            font::shadowed(
+                painter,
+                egui::pos2(left + width, y),
+                egui::Align2::RIGHT_TOP,
+                score,
+                Color32::from_rgb(0xFF, 0x55, 0x55),
+                size,
+            );
+        }
     }
 }
 
@@ -1011,16 +1056,11 @@ fn paint_name_tags(painter: &egui::Painter, full: egui::Rect, tags: &[NameTag]) 
         let size = (8.0 * scale * (8.0 / tag.distance.max(8.0)))
             .max(8.0)
             .round();
-        let font = egui::FontId::proportional(size);
-        let galley = painter.layout_no_wrap(tag.name.clone(), font, Color32::WHITE);
         let center = egui::pos2(
             full.left() + tag.at.x * full.width(),
             full.top() + tag.at.y * full.height(),
         );
-        let at = center - galley.size() / 2.0;
-        let rect = egui::Rect::from_min_size(at, galley.size()).expand(size / 8.0);
-        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(64));
-        painter.galley(at, galley, Color32::WHITE);
+        board::paint_tag(painter, center, &tag.name, tag.below.as_deref(), size);
     }
 }
 

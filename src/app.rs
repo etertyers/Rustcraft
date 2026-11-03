@@ -199,8 +199,9 @@ pub struct App {
     f3_was_visible: bool,
     /// F3+F4's mode switcher: the mode chosen.
     mode_switcher: Option<usize>,
-    /// The spectator menu is open.
+    /// The spectator menu is open, on its players (0) or teams (1) page.
     spectator_menu: bool,
+    spectator_page: u8,
     /// The client's mods (key presses, HUD text, brightness).
     client_mods: crate::mods::client::ClientMods,
     /// The chat lines and the box (M38).
@@ -260,6 +261,7 @@ impl App {
             f3_was_visible: false,
             mode_switcher: None,
             spectator_menu: false,
+            spectator_page: 0,
             client_mods: crate::mods::client::ClientMods::start(),
             chat: Default::default(),
             server: None,
@@ -604,6 +606,22 @@ impl App {
                 if self.spectator_menu {
                     self.spectator_menu = false;
                     let own = game.player.name.clone();
+                    if self.spectator_page == 1 {
+                        let teams: Vec<String> = game
+                            .board_view
+                            .teams
+                            .iter()
+                            .map(|(n, _)| n.clone())
+                            .collect();
+                        if let Some(team) = teams.get(slot) {
+                            self.tell_server(
+                                crate::net::protocol::ClientMsg::SpectatorTeleportTeam(
+                                    team.clone(),
+                                ),
+                            );
+                        }
+                        return;
+                    }
                     let names: Vec<String> = self
                         .link
                         .as_ref()
@@ -615,6 +633,7 @@ impl App {
                         ));
                     }
                 } else {
+                    self.spectator_page = 0;
                     self.spectator_menu = true;
                 }
             }
@@ -974,6 +993,13 @@ impl App {
         if self.f3_combo(input, pressed, repeat) {
             return;
         }
+        if self.spectator_menu
+            && press
+            && matches!(input, Input::Key(KeyCode::ArrowLeft | KeyCode::ArrowRight))
+        {
+            self.spectator_page = 1 - self.spectator_page;
+            return;
+        }
         if escape && press && (self.spectator_menu || self.mode_switcher.is_some()) {
             self.spectator_menu = false;
             self.mode_switcher = None;
@@ -1187,7 +1213,10 @@ impl App {
             return;
         };
         for (text, command) in std::mem::take(&mut link.chat) {
-            self.chat.push(text, command);
+            match link.chat_events.remove(&text) {
+                Some((click, hover)) => self.chat.push_with(text, command, click, hover),
+                None => self.chat.push(text, command),
+            }
         }
         if let Some(options) = link.completions.take() {
             self.chat.completions(options);
@@ -1213,6 +1242,26 @@ impl App {
         match action {
             Some(ChatAction::Send(text)) => self.tell_server(ClientMsg::Chat(text)),
             Some(ChatAction::Complete(line)) => self.tell_server(ClientMsg::Complete(line)),
+            Some(ChatAction::Click(action, value)) => match action.as_str() {
+                "run_command" => {
+                    let line = if value.starts_with('/') {
+                        value
+                    } else {
+                        format!("/{value}")
+                    };
+                    self.tell_server(ClientMsg::Chat(line));
+                }
+                "suggest_command" => self.chat.suggest(&value),
+                "open_url" if value.starts_with("https://") || value.starts_with("http://") => {
+                    let _ = std::process::Command::new("open").arg(&value).spawn();
+                }
+                "copy_to_clipboard" => {
+                    if let Some(debug_ui) = self.debug_ui.as_ref() {
+                        debug_ui.context().copy_text(value);
+                    }
+                }
+                _ => {}
+            },
             None => {}
         }
         // Enter closed it.
@@ -2143,6 +2192,7 @@ impl App {
             .remote_players
             .iter()
             .filter(|view| !view.invisible)
+            .filter(|view| !game.board_view.hidden_tags.contains(&view.name))
             .filter_map(|view| {
                 let head = view.prev_feet.lerp(view.feet, alpha) + DVec3::Y * 2.3;
                 let distance = head.distance(eye) as f32;
@@ -2150,8 +2200,23 @@ impl App {
                     return None;
                 }
                 let clip = view_proj * head.as_vec3().extend(1.0);
+                let dressed = game
+                    .board_view
+                    .dressed
+                    .iter()
+                    .find(|(n, _)| *n == view.name)
+                    .map_or_else(|| view.name.clone(), |(_, d)| d.clone());
+                let below = game
+                    .board_view
+                    .below_name
+                    .as_ref()
+                    .and_then(|(label, scores)| {
+                        let (_, v) = scores.iter().find(|(n, _)| *n == view.name)?;
+                        Some(format!("{v} {label}"))
+                    });
                 (clip.w > 0.0).then(|| crate::ui::NameTag {
-                    name: view.name.clone(),
+                    name: dressed,
+                    below,
                     at: egui::pos2((clip.x / clip.w + 1.0) / 2.0, (1.0 - clip.y / clip.w) / 2.0),
                     distance,
                 })
@@ -2161,17 +2226,54 @@ impl App {
             .link
             .as_ref()
             .filter(|_| self.tab_held && !self.hide_gui)
-            .map(|link| link.players.clone());
+            .map(|link| {
+                link.players
+                    .iter()
+                    .map(|name| {
+                        let dressed = game
+                            .board_view
+                            .dressed
+                            .iter()
+                            .find(|(n, _)| n == name)
+                            .map_or_else(|| name.clone(), |(_, d)| d.clone());
+                        let score = game
+                            .board_view
+                            .list
+                            .iter()
+                            .find(|(n, _)| n == name)
+                            .map(|(_, s)| s.clone())
+                            .unwrap_or_default();
+                        (dressed, score)
+                    })
+                    .collect()
+            });
         let hud = Hud {
+            board: game.board_view.clone(),
+            title_alpha: game.player.title.alpha(game.tick_alpha() as f32),
+            title: game.player.title.clone(),
             hidden: self.hide_gui,
             bars: game.player.mode.shows_hotbar(),
             switcher: self.mode_switcher,
             spectator_menu: (self.spectator_menu && game.player.mode.is_spectator()).then(|| {
-                let own = &game.player.name;
-                self.link
-                    .as_ref()
-                    .map(|l| l.players.iter().filter(|n| *n != own).cloned().collect())
-                    .unwrap_or_default()
+                if self.spectator_page == 1 {
+                    (
+                        "Teleport to Team".to_owned(),
+                        game.board_view
+                            .teams
+                            .iter()
+                            .map(|(n, _)| n.clone())
+                            .collect(),
+                    )
+                } else {
+                    let own = &game.player.name;
+                    (
+                        "Teleport to Player".to_owned(),
+                        self.link
+                            .as_ref()
+                            .map(|l| l.players.iter().filter(|n| *n != own).cloned().collect())
+                            .unwrap_or_default(),
+                    )
+                }
             }),
             name_tags,
             player_list,

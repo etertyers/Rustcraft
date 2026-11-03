@@ -188,7 +188,8 @@ impl Server {
                 name: name.clone(),
                 message: line.to_owned(),
             });
-            self.broadcast(format!("<{name}> {line}"));
+            let shown = self.game.board.dressed(&name);
+            self.broadcast(format!("<{shown}> {line}"));
             return;
         };
         let cheats = self.may_cheat(index);
@@ -199,6 +200,16 @@ impl Server {
                 Reply::Sender(text) => self.tell(index, text, true),
                 Reply::Player(to, text) => self.tell(to, text, false),
                 Reply::Everyone(text) => self.broadcast(text),
+                Reply::Rich {
+                    to,
+                    text,
+                    click,
+                    hover,
+                } => {
+                    if let Some(remote) = self.remotes.get_mut(to) {
+                        remote.conn.send(ServerMsg::RichChat { text, click, hover });
+                    }
+                }
                 Reply::Publish(_) if self.lan.is_some() => self.tell(
                     index,
                     "§cThe world is already published to LAN".to_owned(),
@@ -574,6 +585,9 @@ impl Server {
             ClientMsg::Chat(line) => self.chat(index, &line),
             ClientMsg::SpectatorTeleport(name) => {
                 self.game.spectator_teleport(index, &name);
+            }
+            ClientMsg::SpectatorTeleportTeam(team) => {
+                self.game.spectator_teleport_team(index, &team);
             }
             ClientMsg::Complete(line) => {
                 let cheats = self.may_cheat(index);
@@ -1144,6 +1158,94 @@ mod tests {
             server.advance(0.05);
         }
         assert!((server.game.feet_of(1) - server.game.feet_of(0)).length() > 5.0);
+    }
+
+    #[test]
+    fn scoreboard_teams_titles_bars_and_rich_chat_reach_every_client() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        for line in [
+            "/scoreboard objectives add kills dummy {\"text\":\"Kills\"}",
+            "/scoreboard objectives setdisplay sidebar kills",
+            "/scoreboard objectives setdisplay list kills",
+            "/scoreboard players set Alice kills 3",
+            "/scoreboard players set Bob kills 8",
+            "/team add red",
+            "/team modify red color red",
+            "/team join red Alice",
+            "/bossbar add boss {\"text\":\"Dragon\"}",
+            "/bossbar set boss players @a",
+            "/bossbar set boss max 200",
+            "/bossbar set boss value 50",
+            "/title Bob title {\"text\":\"Hello Bob\"}",
+            "/tellraw Bob {\"text\":\"Click me\",\"clickEvent\":{\"action\":\"run_command\",\"value\":\"/list\"}}",
+        ] {
+            clients[0].0.send(ClientMsg::Chat(line.to_owned()));
+        }
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(_, g)| {
+                let v = &g.board_view;
+                v.sidebar.as_ref().is_some_and(|s| {
+                    s.title == "§rKills"
+                        && s.rows
+                            .first()
+                            .is_some_and(|(n, score)| n == "Bob" && score == "§c8")
+                        && s.rows.iter().any(|(n, _)| n == "§cAlice§r")
+                }) && v.bars.len() == 1
+                    && v.bars[0].value == 50
+                    && v.bars[0].max == 200
+                    && v.dressed
+                        .iter()
+                        .any(|(n, d)| n == "Alice" && d == "§cAlice§r")
+                    && v.list.len() == 2
+            }) && c[1].1.player.title.title == "§rHello Bob"
+                && c[1].0.chat_events.values().any(|(click, _)| {
+                    click
+                        .as_ref()
+                        .is_some_and(|(a, v)| a == "run_command" && v == "/list")
+                })
+        });
+        assert!(
+            clients[0].1.player.title.title.is_empty(),
+            "only Bob got the title"
+        );
+        // Chat shows the team's colored name, to everyone.
+        clients[0].0.send(ClientMsg::Chat("hello".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter()
+                .all(|(client, _)| heard(client, "<§cAlice§r> hello"))
+        });
+        // A team message goes to its members only.
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/teammsg team only".to_owned()));
+        run_until(&mut server, &mut clients, |_, c| {
+            heard(&c[0].0, "-> red <§cAlice§r> team only")
+        });
+        assert!(!c_heard_team(&clients[1].0));
+        // A spectator's menu can go to a team's member.
+        server
+            .game
+            .with_player(0, |game| game.fly_to(DVec3::new(9.5, 70.0, 9.5)));
+        clients[0]
+            .0
+            .send(ClientMsg::Chat("/gamemode spectator Bob".to_owned()));
+        run_until(&mut server, &mut clients, |s, _| {
+            s.game.others[0].mode == GameMode::Spectator
+        });
+        clients[1]
+            .0
+            .send(ClientMsg::SpectatorTeleportTeam("red".to_owned()));
+        run_until(&mut server, &mut clients, |s, _| {
+            (s.game.feet_of(1) - s.game.feet_of(0)).length() < 1.5
+        });
+    }
+
+    fn c_heard_team(client: &Client) -> bool {
+        client.chat.iter().any(|(l, _)| l.contains("team only"))
     }
 
     /// How many of `name` player `inventory` holds (hotbar and main).
