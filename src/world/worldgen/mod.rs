@@ -13,7 +13,10 @@ pub mod gallery;
 pub mod nether;
 pub mod nether_stats;
 pub mod normal_noise;
+pub mod opening_stats;
 pub mod ores;
+#[cfg(test)]
+mod reference;
 pub mod rng;
 pub mod terrain;
 pub mod terrain_shape;

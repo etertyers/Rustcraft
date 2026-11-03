@@ -1959,19 +1959,19 @@ mod tests {
     fn beaches_are_sand_over_sandstone() {
         let terrain = Terrain::new(20111118);
         let (x, z) = crate::world::worldgen::terrain::tests::find(&terrain, "beach", |c| {
-            c.biome == Biome::Beach && c.height >= SEA_LEVEL
+            c.biome == Biome::Beach && c.height >= SEA_LEVEL && !c.entrance
         });
         let chunk = terrain.generate(ChunkPos::of_block(x, z));
+        // Columns a cave cuts into (the caves are vanilla's, and a beach
+        // can have an entrance) keep no sand on top; the rest do.
+        let (x0, z0) = ChunkPos::of_block(x, z).min_block();
         let (mut sand, mut all) = (0, 0);
-        for (b, id) in grounds(&chunk) {
-            if b == Biome::Beach {
+        let mut kinds: HashMap<&str, usize> = HashMap::new();
+        for (i, (b, id)) in grounds(&chunk).into_iter().enumerate() {
+            let column = terrain.column(x0 + (i % 16) as i32, z0 + (i / 16) as i32);
+            if b == Biome::Beach && !column.entrance {
                 all += 1;
                 sand += (id == blocks::SAND) as usize;
-            }
-        }
-        let mut kinds: HashMap<&str, usize> = HashMap::new();
-        for (b, id) in grounds(&chunk) {
-            if b == Biome::Beach {
                 *kinds.entry(id.name()).or_default() += 1;
             }
         }

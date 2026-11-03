@@ -64,6 +64,20 @@ fn main() -> Result<()> {
         rustcraft::world::worldgen::nether_stats::print_stats(seed, number("--chunks", 64)? as i32);
         return Ok(());
     }
+    // `--cave-openings [--seed <n>] [--side <chunks>]`: the surface openings
+    // the caves make, per 1,000 × 1,000 blocks, by source (M53).
+    if args.iter().any(|arg| arg == "--cave-openings") {
+        let seed = number("--seed", 12345)? as u64;
+        if args.iter().any(|arg| arg == "--time") {
+            rustcraft::world::worldgen::opening_stats::time_generation(
+                seed,
+                number("--side", 16)? as i32,
+            );
+            return Ok(());
+        }
+        rustcraft::world::worldgen::opening_stats::print_stats(seed, number("--side", 63)? as i32);
+        return Ok(());
+    }
     if args.iter().any(|arg| arg == "--cave-test") {
         let seed = number("--seed", 12345)? as u64;
         rustcraft::world::worldgen::cave_stats::print_stats(

@@ -35,15 +35,37 @@ pub const LAVA_LEVEL: i32 = -55;
 const DRY_LEVEL: i32 = -4096;
 /// Local water in caves never stands above this unless it joins the sea.
 const INLAND_WATER_TOP: i32 = 30;
-/// Above this height `spaghetti_2d`'s thick term (`(|elevation + gradient| +
-/// thickness)³`) is positive for every elevation and thickness.
-const SPAGHETTI_2D_TOP: f64 = 75.0;
 /// The sloped density at which the land stops being "near the surface".
 const NEAR_SURFACE: f64 = 1.5625;
-/// The bottom slide: density blends to solid between the floor and this
-/// many blocks above it (modern `slideOverworld`).
-const SLIDE_HEIGHT: f64 = 24.0;
 const SLIDE_SOLID: f64 = 0.117_187_5;
+
+/// The names of the cave noises, in the order of their streams.
+pub const NOISE_NAMES: [&str; 24] = [
+    "cave_layer",
+    "cave_cheese",
+    "cave_entrance",
+    "spaghetti_3d_1",
+    "spaghetti_3d_2",
+    "spaghetti_3d_rarity",
+    "spaghetti_3d_thickness",
+    "spaghetti_2d",
+    "spaghetti_2d_elevation",
+    "spaghetti_2d_modulator",
+    "spaghetti_2d_thickness",
+    "spaghetti_roughness",
+    "spaghetti_roughness_modulator",
+    "noodle",
+    "noodle_thickness",
+    "noodle_ridge_a",
+    "noodle_ridge_b",
+    "pillar",
+    "pillar_rareness",
+    "pillar_thickness",
+    "aquifer_barrier",
+    "aquifer_fluid_level_floodedness",
+    "aquifer_fluid_level_spread",
+    "aquifer_lava",
+];
 
 /// What fills a block that isn't solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,23 +117,18 @@ pub struct Caves {
     aquifer_lava: NormalNoise,
 }
 
-/// A value of `noise` in -1..1 mapped to `from`..`to`.
-fn mapped(noise: f64, from: f64, to: f64) -> f64 {
-    from + (to - from) * (noise.clamp(-1.0, 1.0) + 1.0) * 0.5
-}
-
-/// Vanilla's rarity mappers for the spaghetti noises.
+/// Vanilla's rarity mappers: `type_1` (the 3D spaghetti's: scales 0.75, 1,
+/// 1.5 and 2 at −0.5, 0 and 0.5) and `type_2` (the 2D spaghetti's: 0.5,
+/// 0.75, 1, 2 and 3 at −0.75, −0.5, 0.5 and 0.75).
 fn rarity_type1(v: f64) -> f64 {
     if v < -0.5 {
-        0.5
-    } else if v < 0.0 {
         0.75
-    } else if v < 0.5 {
+    } else if v < 0.0 {
         1.0
-    } else if v < 0.75 {
-        2.0
+    } else if v < 0.5 {
+        1.5
     } else {
-        3.0
+        2.0
     }
 }
 
@@ -182,111 +199,179 @@ impl Caves {
         }
     }
 
-    /// Cave entrances: negative where a 3D spaghetti tunnel or an
-    /// entrance blob opens (`NoiseRouterData.entrances`).
-    pub fn entrances(&self, x: f64, y: f64, z: f64) -> f64 {
+    /// The noise called `name` (`NOISE_NAMES`), for the tests.
+    #[cfg(test)]
+    pub fn noise_named(&self, name: &str) -> &NormalNoise {
+        match name {
+            "cave_layer" => &self.cave_layer,
+            "cave_cheese" => &self.cave_cheese,
+            "cave_entrance" => &self.cave_entrance,
+            "spaghetti_3d_1" => &self.spaghetti_3d_1,
+            "spaghetti_3d_2" => &self.spaghetti_3d_2,
+            "spaghetti_3d_rarity" => &self.spaghetti_3d_rarity,
+            "spaghetti_3d_thickness" => &self.spaghetti_3d_thickness,
+            "spaghetti_2d" => &self.spaghetti_2d,
+            "spaghetti_2d_elevation" => &self.spaghetti_2d_elevation,
+            "spaghetti_2d_modulator" => &self.spaghetti_2d_modulator,
+            "spaghetti_2d_thickness" => &self.spaghetti_2d_thickness,
+            "spaghetti_roughness" => &self.spaghetti_roughness,
+            "spaghetti_roughness_modulator" => &self.spaghetti_roughness_modulator,
+            "noodle" => &self.noodle,
+            "noodle_thickness" => &self.noodle_thickness,
+            "noodle_ridge_a" => &self.noodle_ridge_a,
+            "noodle_ridge_b" => &self.noodle_ridge_b,
+            "pillar" => &self.pillar,
+            "pillar_rareness" => &self.pillar_rareness,
+            "pillar_thickness" => &self.pillar_thickness,
+            "aquifer_barrier" => &self.aquifer_barrier,
+            "aquifer_fluid_level_floodedness" => &self.aquifer_floodedness,
+            "aquifer_fluid_level_spread" => &self.aquifer_spread,
+            "aquifer_lava" => &self.aquifer_lava,
+            other => panic!("no cave noise {other}"),
+        }
+    }
+
+    /// The entrance blob: `0.37 + cave_entrance (xz 0.75, y 0.5)` plus a Y
+    /// gradient from 0.3 at Y −10 to 0 at Y 30.
+    fn entrance_blob(&self, x: f64, y: f64, z: f64) -> f64 {
+        0.37 + self.cave_entrance.get(x * 0.75, y * 0.5, z * 0.75)
+            + y_gradient(y, -10.0, 30.0, 0.3, 0.0)
+    }
+
+    /// The 3D spaghetti tunnel inside the entrances: the roughness plus
+    /// `clamp(max(a, b) − 0.0765 − 0.0115 × thickness)`, where `a` and `b`
+    /// are two noises sampled at the scale the rarity noise picks
+    /// (`type_1`).
+    fn entrance_tunnel(&self, x: f64, y: f64, z: f64) -> f64 {
         let rarity = self.spaghetti_3d_rarity.get(x * 2.0, y, z * 2.0);
-        let thickness = mapped(self.spaghetti_3d_thickness.get(x, y, z), -0.065, -0.088);
         let a = weird(rarity, rarity_type1, &self.spaghetti_3d_1, x, y, z);
         let b = weird(rarity, rarity_type1, &self.spaghetti_3d_2, x, y, z);
-        let tunnel = (a.max(b) + thickness).clamp(-1.0, 1.0);
-        let blob = self.cave_entrance.get(x * 0.75, y * 0.5, z * 0.75)
-            + 0.37
-            + y_gradient(y, -10.0, 30.0, 0.3, 0.0);
-        blob.min(tunnel)
+        let thickness = -0.0765 + -0.0115 * self.spaghetti_3d_thickness.get(x, y, z);
+        self.roughness(x, y, z) + (a.max(b) + thickness).clamp(-1.0, 1.0)
     }
 
-    /// Flat spaghetti caves at a wavering height (`spaghetti2D`).
-    fn spaghetti_2d(&self, x: f64, y: f64, z: f64) -> f64 {
+    /// Cave entrances (`overworld/caves/entrances`): negative where an
+    /// entrance blob or a 3D spaghetti tunnel opens.
+    pub fn entrances(&self, x: f64, y: f64, z: f64) -> f64 {
+        self.entrance_blob(x, y, z)
+            .min(self.entrance_tunnel(x, y, z))
+    }
+
+    /// Flat spaghetti caves at a wavering height (`overworld/caves/spaghetti_2d`).
+    pub fn spaghetti_2d(&self, x: f64, y: f64, z: f64) -> f64 {
         let modulator = self.spaghetti_2d_modulator.get(x * 2.0, y, z * 2.0);
         let sampler = weird(modulator, rarity_type2, &self.spaghetti_2d, x, y, z);
-        let elevation = mapped(self.spaghetti_2d_elevation.get(x, 0.0, z), -8.0, 8.0);
-        let thickness = mapped(
-            self.spaghetti_2d_thickness.get(x * 2.0, y, z * 2.0),
-            -0.6,
-            -1.3,
-        );
+        let thickness = -0.95 + -0.35 * self.spaghetti_2d_thickness.get(x * 2.0, y, z * 2.0);
+        let elevation = 8.0 * self.spaghetti_2d_elevation.get(x, 0.0, z);
         let offset = (elevation + y_gradient(y, -64.0, 320.0, 8.0, -40.0)).abs();
-        let thick = (offset + thickness).powi(3);
-        let sampler = sampler + 0.083 * thickness;
-        sampler.max(thick).clamp(-1.0, 1.0)
-    }
-
-    /// Roughens the spaghetti walls (`spaghettiRoughnessFunction`).
-    fn roughness(&self, x: f64, y: f64, z: f64) -> f64 {
-        let modulator = mapped(self.spaghetti_roughness_modulator.get(x, y, z), 0.0, -0.1);
-        modulator * (self.spaghetti_roughness.get(x, y, z).abs() - 0.4)
-    }
-
-    /// Stone pillars in the caverns: solid where this reaches 0.03.
-    fn pillars(&self, x: f64, y: f64, z: f64) -> f64 {
-        let noise = self.pillar.get(x * 25.0, y * 0.3, z * 25.0);
-        let rareness = mapped(self.pillar_rareness.get(x, y, z), 0.0, -2.0);
-        let thickness = mapped(self.pillar_thickness.get(x, y, z), 0.0, 1.1);
-        (noise * 2.0 + rareness) * thickness.powi(3)
-    }
-
-    /// The caves under the near-surface band (`underground`).
-    fn underground(&self, sloped: f64, x: f64, y: f64, z: f64) -> f64 {
-        let layer = self.cave_layer.get(x, y * 8.0, z);
-        let layer = 4.0 * layer * layer;
-        let cheese = (0.27 + self.cave_cheese.get(x, y * 0.666_666_666_666_666_6, z))
+        (sampler + 0.083 * thickness)
+            .max((offset + thickness).powi(3))
             .clamp(-1.0, 1.0)
-            + (1.5 - 0.64 * sloped).clamp(0.0, 0.5);
-        // The most open of the cheese, the entrances and the thin tunnels;
-        // once it is well under zero nothing can make it solid again, so
-        // the rest isn't worked out (its exact depth only shades where a
-        // wall falls between two cells).
-        let mut caves = layer + cheese;
-        if caves > -1.0 {
-            caves = caves.min(self.entrances(x, y, z));
-        }
-        // The 2D tunnels sit within a few blocks of a sloping plane that
-        // leaves the world's upper half: higher up they can't open.
-        if caves > -1.0 && y < SPAGHETTI_2D_TOP {
-            caves = caves.min(self.spaghetti_2d(x, y, z) + self.roughness(x, y, z));
-        }
-        if caves >= 2.0 {
-            return caves;
-        }
-        let pillars = self.pillars(x, y, z);
-        caves.max(if pillars >= 0.03 { pillars } else { -1.0e6 })
     }
 
-    /// Noodle caves: very thin and winding, from Y −60 up to 320. Positive
-    /// (solid) wherever there is none.
-    fn noodle(&self, x: f64, y: f64, z: f64) -> f64 {
+    /// Roughens the spaghetti walls (`overworld/caves/spaghetti_roughness_function`).
+    pub fn roughness(&self, x: f64, y: f64, z: f64) -> f64 {
+        let modulator = -0.05 + -0.05 * self.spaghetti_roughness_modulator.get(x, y, z);
+        modulator * (-0.4 + self.spaghetti_roughness.get(x, y, z).abs())
+    }
+
+    /// Stone pillars in the caverns (`overworld/caves/pillars`): solid where
+    /// this reaches 0.03.
+    pub fn pillars(&self, x: f64, y: f64, z: f64) -> f64 {
+        let noise = self.pillar.get(x * 25.0, y * 0.3, z * 25.0);
+        let rareness = -1.0 - self.pillar_rareness.get(x, y, z);
+        let thickness = 0.55 + 0.55 * self.pillar_thickness.get(x, y, z);
+        (2.0 * noise + rareness) * thickness.powi(3)
+    }
+
+    /// The cheese and layer caves (the first term of `underground`) for the
+    /// land density `sloped`.
+    fn cheese(&self, sloped: f64, x: f64, y: f64, z: f64) -> f64 {
+        let layer = self.cave_layer.get(x, y * 8.0, z);
+        4.0 * layer * layer
+            + ((0.27 + self.cave_cheese.get(x, y * 0.666_666_666_666_666_6, z)).clamp(-1.0, 1.0)
+                + (1.5 + -0.64 * sloped).clamp(0.0, 0.5))
+    }
+
+    /// The caves under the near-surface band (the `when_out_of_range` of
+    /// the final density's range choice).
+    fn underground(&self, sloped: f64, x: f64, y: f64, z: f64) -> f64 {
+        let open = self
+            .cheese(sloped, x, y, z)
+            .min(self.entrances(x, y, z))
+            .min(self.spaghetti_2d(x, y, z) + self.roughness(x, y, z));
+        let pillars = self.pillars(x, y, z);
+        open.max(if pillars < 0.03 { -1.0e6 } else { pillars })
+    }
+
+    /// The parts of the cave density at a point, for `--cave-openings`:
+    /// the entrance blob, the 3D spaghetti tunnel, the cheese and layer
+    /// caves (at the sloped density 2), the 2D spaghetti and the noodle;
+    /// open where each is ≤ 0.
+    pub fn terms(&self, x: f64, y: f64, z: f64) -> [f64; 5] {
+        [
+            self.entrance_blob(x, y, z),
+            self.entrance_tunnel(x, y, z),
+            self.cheese(2.0, x, y, z),
+            self.spaghetti_2d(x, y, z) + self.roughness(x, y, z),
+            self.noodle(x, y, z),
+        ]
+    }
+
+    /// Noodle caves (`overworld/caves/noodle`): very thin and winding, from
+    /// Y −60 to 320. Positive (64, solid) wherever there is none.
+    pub fn noodle(&self, x: f64, y: f64, z: f64) -> f64 {
         const SOLID: f64 = 64.0;
-        if !(-60.0..320.0).contains(&y) || self.noodle.get(x, y, z) < 0.0 {
+        // `range_choice` on Y: [−60, 321).
+        if !(-60.0..321.0).contains(&y) || self.noodle.get(x, y, z) < 0.0 {
             return SOLID;
         }
-        let thickness = mapped(self.noodle_thickness.get(x, y, z), -0.05, -0.1);
+        let thickness = -0.075 + -0.025 * self.noodle_thickness.get(x, y, z);
         let f = 8.0 / 3.0;
         let a = self.noodle_ridge_a.get(x * f, y * f, z * f).abs();
         let b = self.noodle_ridge_b.get(x * f, y * f, z * f).abs();
         thickness + 1.5 * a.max(b)
     }
 
-    /// The final density at a point whose land (sloped) density is
-    /// `sloped`: positive is solid. Air above the ground is left as it is;
-    /// near the surface only entrances cut; deeper the underground does;
-    /// noodles cut everywhere; the bottom slide keeps the floor solid.
-    pub fn final_density(&self, sloped: f64, x: i32, y: i32, z: i32) -> f64 {
-        if sloped <= 0.0 {
-            return sloped;
-        }
+    /// What `interpolated` interpolates in the final density (the density
+    /// before `0.64 ×` and `squeeze`): the land density `sloped`, cut by the
+    /// entrances alone near the surface (`sloped` under 1.5625) and by the
+    /// whole underground below it, under the top slide (Y 240–256 toward
+    /// −0.078125) and the bottom slide (Y −64 to −40 toward 0.1171875).
+    pub fn inner_density(&self, sloped: f64, x: i32, y: i32, z: i32) -> f64 {
         let (fx, fy, fz) = (f64::from(x), f64::from(y), f64::from(z));
-        let combined = if sloped < NEAR_SURFACE {
+        let cut = if sloped < NEAR_SURFACE {
             sloped.min(5.0 * self.entrances(fx, fy, fz))
         } else {
             self.underground(sloped, fx, fy, fz)
         };
-        let t = ((fy - f64::from(MIN_Y)) / SLIDE_HEIGHT).clamp(0.0, 1.0);
-        let slid = SLIDE_SOLID + (combined - SLIDE_SOLID) * t;
-        if slid <= 0.0 {
-            return slid;
-        }
-        slid.min(self.noodle(fx, fy, fz))
+        let top = y_gradient(fy, 240.0, 256.0, 1.0, 0.0) * (0.078_125 + cut);
+        let slid = -0.078_125 + top;
+        SLIDE_SOLID + y_gradient(fy, -64.0, -40.0, 0.0, 1.0) * (-SLIDE_SOLID + slid)
+    }
+
+    /// `inner_density` with no cave at all: the land's own density
+    /// `sloped` under the two slides.
+    pub fn land_inner_density(sloped: f64, y: i32) -> f64 {
+        let fy = f64::from(y);
+        let top = y_gradient(fy, 240.0, 256.0, 1.0, 0.0) * (0.078_125 + sloped);
+        SLIDE_SOLID + y_gradient(fy, -64.0, -40.0, 0.0, 1.0) * (-SLIDE_SOLID + (-0.078_125 + top))
+    }
+
+    /// The density of a block from the interpolated `inner` value and the
+    /// noodle's `noodle` there: `min(squeeze(0.64 × inner), noodle)`.
+    pub fn combine(inner: f64, noodle: f64) -> f64 {
+        squeeze(0.64 * inner).min(noodle)
+    }
+
+    /// The final density at a point whose land density is `sloped`
+    /// (`final_density` of the overworld's noise router), not interpolated:
+    /// positive is solid.
+    pub fn final_density(&self, sloped: f64, x: i32, y: i32, z: i32) -> f64 {
+        Self::combine(
+            self.inner_density(sloped, x, y, z),
+            self.noodle(f64::from(x), f64::from(y), f64::from(z)),
+        )
     }
 }
 
@@ -698,19 +783,49 @@ impl<'a, S: FnMut(i32, i32) -> i32> Aquifer<'a, S> {
     }
 }
 
-/// One carved tunnel's path, step by step: the middle and the radii
-/// across and up.
+/// One carver start's carving, ellipsoid by ellipsoid: the middle and the
+/// radii across and up of each, and the carver's rule for which blocks of
+/// one are left alone.
 pub struct Worm {
     pub steps: Vec<([f64; 3], f64, f64)>,
+    /// A ravine (the canyon carver) rather than cave tunnels and rooms.
+    pub ravine: bool,
+    /// A cave's floor: blocks at or under this (in the ellipsoid's units)
+    /// stay (`CaveWorldCarver.shouldSkip`).
+    pub floor: f64,
+    /// A canyon's width factor at each height (`initWidthFactors`).
+    pub widths: Vec<f64>,
 }
 
-/// Chance a chunk starts worm caves, and starts a ravine (modern
-/// `cave` 0.15 plus `cave_extra_underground` 0.07, and `canyon` 0.01).
-const WORM_CHANCE: f64 = 0.15;
-const DEEP_WORM_CHANCE: f64 = 0.07;
-const RAVINE_CHANCE: f64 = 0.01;
-/// How far (in chunks) a tunnel started elsewhere can reach.
+impl Worm {
+    /// How far above and below an ellipsoid's middle a block can be carved,
+    /// given its vertical radius (a canyon's reaches √6 radii).
+    pub fn vertical_reach(&self, up: f64) -> f64 {
+        if self.ravine { up * 2.5 } else { up }
+    }
+
+    /// Whether the block at height `y` that is (`dx`, `dy`, `dz`) from an
+    /// ellipsoid's middle in units of its radii is carved.
+    pub fn carves(&self, dx: f64, dy: f64, dz: f64, y: i32) -> bool {
+        if self.ravine {
+            // `CanyonWorldCarver.shouldSkip`.
+            let i = (y - MIN_Y - 1).max(0) as usize;
+            let width = self.widths.get(i).copied().unwrap_or(1.0);
+            (dx * dx + dz * dz) * width + dy * dy / 6.0 < 1.0
+        } else {
+            dy > self.floor && dx * dx + dy * dy + dz * dz < 1.0
+        }
+    }
+}
+
+/// How far (in chunks) a tunnel started elsewhere can reach: the carvers'
+/// range of 4 chunks, a tunnel being up to 112 blocks long.
 pub const CARVER_REACH: i32 = 8;
+/// The longest a tunnel goes, in steps (`(range × 2 − 1) × 16`).
+const TUNNEL_STEPS: u32 = 112;
+/// Highest start of the two cave carvers.
+const CAVE_TOP: i32 = 180;
+const EXTRA_CAVE_TOP: i32 = 47;
 
 /// The worms chunk (cx, cz) starts, remembered per thread: each chunk's
 /// worms are replayed by every chunk within `CARVER_REACH` of it.
@@ -734,76 +849,191 @@ pub fn worms_of(seed: u64, cx: i32, cz: i32) -> std::rc::Rc<Vec<Worm>> {
     })
 }
 
-/// The worm tunnels and ravines chunk (cx, cz) starts.
+/// A value uniform in `low..high`.
+fn uniform(rng: &mut Rng, low: f64, high: f64) -> f64 {
+    low + (high - low) * rng.next_f64()
+}
+
+/// The carver starts of chunk (cx, cz) (`WorldCarver`, with the configs of
+/// the cave, cave_extra_underground and canyon carvers): 15%, 7% and 1% of
+/// chunks start one.
 pub fn worms(seed: u64, cx: i32, cz: i32) -> Vec<Worm> {
     let mut rng = Rng::for_chunk(seed, cx, cz, 0xCA5E);
     let mut out = Vec::new();
-    let (x0, z0) = (cx * 16, cz * 16);
-    let start = |rng: &mut Rng, low: i32, high: i32| {
-        [
-            (x0 + rng.below(16) as i32) as f64,
-            (low + rng.below((high - low) as u32) as i32) as f64,
-            (z0 + rng.below(16) as i32) as f64,
-        ]
-    };
-    if rng.next_f64() < WORM_CHANCE {
-        for _ in 0..1 + rng.below(3) {
-            let at = start(&mut rng, MIN_Y + 8, 180);
-            out.push(worm(&mut rng, at, false));
-        }
+    if rng.next_f64() < 0.15 {
+        cave_carver(&mut rng, cx, cz, CAVE_TOP, &mut out);
     }
-    if rng.next_f64() < DEEP_WORM_CHANCE {
-        let at = start(&mut rng, MIN_Y + 8, 47);
-        out.push(worm(&mut rng, at, false));
+    if rng.next_f64() < 0.07 {
+        cave_carver(&mut rng, cx, cz, EXTRA_CAVE_TOP, &mut out);
     }
-    if rng.next_f64() < RAVINE_CHANCE {
-        let at = start(&mut rng, 10, 68);
-        out.push(worm(&mut rng, at, true));
+    if rng.next_f64() < 0.01 {
+        canyon_carver(&mut rng, cx, cz, &mut out);
     }
     out
 }
 
-/// A tunnel wandering from `at` (modern `CaveWorldCarver`): its heading
-/// drifts a little each step, it swells in the middle, and a ravine is
-/// tall and narrow and keeps nearly level.
-fn worm(rng: &mut Rng, at: [f64; 3], ravine: bool) -> Worm {
-    let mut p = at;
-    let mut yaw = rng.next_f64() * std::f64::consts::TAU;
-    let mut pitch = (rng.next_f64() - 0.5) * if ravine { 0.25 } else { 0.5 };
-    let (mut yaw_drift, mut pitch_drift) = (0.0, 0.0);
-    let width = if ravine {
-        1.5 + rng.next_f64() * 2.5
-    } else {
-        0.8 + rng.next_f64() * 2.2
-    };
-    let length = if ravine {
-        90 + rng.below(70)
-    } else {
-        60 + rng.below(60)
-    } as usize;
-    let tall = if ravine {
-        3.0
-    } else {
-        0.9 + rng.next_f64() * 0.4
-    };
-    let mut steps = Vec::with_capacity(length);
-    for step in 0..length {
-        let swell = (step as f64 * std::f64::consts::PI / length as f64).sin();
-        let across = 1.5 + swell * width;
-        steps.push((p, across, across * tall));
-        let (cp, sp) = (pitch.cos(), pitch.sin());
-        p[0] += yaw.cos() * cp;
-        p[1] += sp;
-        p[2] += yaw.sin() * cp;
-        pitch *= if ravine { 0.7 } else { 0.92 };
-        pitch += pitch_drift * 0.1;
-        yaw += yaw_drift * 0.1;
-        pitch_drift *= if ravine { 0.8 } else { 0.9 };
-        yaw_drift *= 0.75;
-        pitch_drift += (rng.next_f64() - rng.next_f64()) * rng.next_f64() * 2.0;
-        yaw_drift += (rng.next_f64() - rng.next_f64()) * rng.next_f64() * 4.0;
+/// How many tunnels a cave carver start makes: `random(random(random(15) +
+/// 1) + 1)` (`CaveWorldCarver.carve`).
+pub fn tunnel_starts(rng: &mut Rng) -> u32 {
+    let a = rng.below(15) + 1;
+    let b = rng.below(a) + 1;
+    rng.below(b)
+}
+
+/// `CaveWorldCarver.carve`: a number of starts in the chunk, each maybe a
+/// room first and then tunnels wandering off, which branch.
+fn cave_carver(rng: &mut Rng, cx: i32, cz: i32, top: i32, out: &mut Vec<Worm>) {
+    let (x0, z0) = (cx * 16, cz * 16);
+    for _ in 0..tunnel_starts(rng) {
+        let x = f64::from(x0 + rng.below(16) as i32);
+        let low = MIN_Y + 8;
+        let y = f64::from(low + rng.below((top - low + 1) as u32) as i32);
+        let z = f64::from(z0 + rng.below(16) as i32);
+        let horizontal = uniform(rng, 0.7, 1.4);
+        let vertical = uniform(rng, 0.8, 1.3);
+        let floor = uniform(rng, -1.0, -0.4);
+        let mut worm = Worm {
+            steps: Vec::new(),
+            ravine: false,
+            floor,
+            widths: Vec::new(),
+        };
+        let mut tunnels = 1;
+        if rng.below(4) == 0 {
+            // A room: one big ellipsoid.
+            let y_scale = uniform(rng, 0.1, 0.9);
+            let radius = 1.0 + rng.next_f64() * 6.0;
+            let across = 1.5 + radius;
+            worm.steps.push((
+                [x + 1.0, y, z],
+                across * horizontal,
+                across * y_scale * vertical,
+            ));
+            tunnels += rng.below(4);
+        }
+        for _ in 0..tunnels {
+            let yaw = rng.next_f64() * std::f64::consts::TAU;
+            let pitch = (rng.next_f64() - 0.5) / 4.0;
+            let mut thickness = rng.next_f64() * 2.0 + rng.next_f64();
+            if rng.below(10) == 0 {
+                thickness *= rng.next_f64() * rng.next_f64() * 3.0 + 1.0;
+            }
+            let length = TUNNEL_STEPS - rng.below(TUNNEL_STEPS / 4);
+            let seed = rng.next_u64();
+            tunnel(
+                &mut worm.steps,
+                seed,
+                [x, y, z],
+                (horizontal, vertical),
+                (thickness, yaw, pitch),
+                (0, length),
+            );
+        }
+        out.push(worm);
     }
-    Worm { steps }
+}
+
+/// `CaveWorldCarver.createTunnel`: a path that swells in the middle, drifts
+/// its heading each step and, if thick enough, splits in two at one step.
+fn tunnel(
+    steps: &mut Vec<([f64; 3], f64, f64)>,
+    seed: u64,
+    mut at: [f64; 3],
+    (horizontal, vertical): (f64, f64),
+    (thickness, mut yaw, mut pitch): (f64, f64, f64),
+    (first, count): (u32, u32),
+) {
+    let mut random = Rng::new(seed);
+    let branch_at = random.below(count / 2) + count / 4;
+    let slow = random.below(6) == 0;
+    let (mut turn, mut climb) = (0.0, 0.0);
+    for j in first..count {
+        let across =
+            1.5 + (std::f64::consts::PI * f64::from(j) / f64::from(count)).sin() * thickness;
+        let flat = pitch.cos();
+        at[0] += yaw.cos() * flat;
+        at[1] += pitch.sin();
+        at[2] += yaw.sin() * flat;
+        pitch *= if slow { 0.92 } else { 0.7 };
+        pitch += climb * 0.1;
+        yaw += turn * 0.1;
+        climb *= 0.9;
+        turn *= 0.75;
+        climb += (random.next_f64() - random.next_f64()) * random.next_f64() * 2.0;
+        turn += (random.next_f64() - random.next_f64()) * random.next_f64() * 4.0;
+        if j == branch_at && thickness > 1.0 {
+            for side in [-1.0, 1.0] {
+                let branch_seed = random.next_u64();
+                let thin = random.next_f64() * 0.5 + 0.5;
+                tunnel(
+                    steps,
+                    branch_seed,
+                    at,
+                    (horizontal, vertical),
+                    (thin, yaw + side * std::f64::consts::FRAC_PI_2, pitch / 3.0),
+                    (j, count),
+                );
+            }
+            return;
+        }
+        if random.below(4) != 0 {
+            steps.push((at, across * horizontal, across * vertical));
+        }
+    }
+}
+
+/// `CanyonWorldCarver.carve`: one long, tall, narrow ravine.
+fn canyon_carver(rng: &mut Rng, cx: i32, cz: i32, out: &mut Vec<Worm>) {
+    let (x0, z0) = (cx * 16, cz * 16);
+    let mut at = [
+        f64::from(x0 + rng.below(16) as i32),
+        f64::from(10 + rng.below(67 - 10 + 1) as i32),
+        f64::from(z0 + rng.below(16) as i32),
+    ];
+    let mut yaw = rng.next_f64() * std::f64::consts::TAU;
+    let mut pitch = uniform(rng, -0.125, 0.125);
+    let y_scale = 3.0;
+    // The trapezoid 0..6 with a plateau of 2.
+    let thickness = rng.next_f64() * 4.0 + rng.next_f64() * 2.0;
+    let count = (f64::from(TUNNEL_STEPS) * uniform(rng, 0.75, 1.0)) as u32;
+    let mut random = Rng::new(rng.next_u64());
+    let mut widths = Vec::with_capacity(crate::config::WORLD_HEIGHT);
+    let mut width = 1.0;
+    for k in 0..crate::config::WORLD_HEIGHT {
+        if k == 0 || random.below(3) == 0 {
+            width = 1.0 + random.next_f64() * random.next_f64();
+        }
+        widths.push(width * width);
+    }
+    let mut steps = Vec::new();
+    let (mut turn, mut climb) = (0.0, 0.0);
+    for j in 0..count {
+        let mut across =
+            1.5 + (f64::from(j) * std::f64::consts::PI / f64::from(count)).sin() * thickness;
+        let mut up = across * y_scale;
+        across *= uniform(&mut random, 0.75, 1.0);
+        up *= uniform(&mut random, 0.75, 1.0);
+        let flat = pitch.cos();
+        at[0] += yaw.cos() * flat;
+        at[1] += pitch.sin();
+        at[2] += yaw.sin() * flat;
+        pitch *= 0.7;
+        pitch += climb * 0.05;
+        yaw += turn * 0.05;
+        climb *= 0.8;
+        turn *= 0.5;
+        climb += (random.next_f64() - random.next_f64()) * random.next_f64() * 2.0;
+        turn += (random.next_f64() - random.next_f64()) * random.next_f64() * 4.0;
+        if random.below(4) != 0 {
+            steps.push((at, across, up));
+        }
+    }
+    out.push(Worm {
+        steps,
+        ravine: true,
+        floor: 0.0,
+        widths,
+    });
 }
 
 #[cfg(test)]
@@ -833,8 +1063,8 @@ mod tests {
             assert_eq!(a, again.final_density(s, x, y, z));
             assert!(a.is_finite() && a.abs() < 1.0e7, "{a}");
         }
-        // Air above the land stays as it is.
-        assert_eq!(caves.final_density(-0.5, 3, 90, 3), -0.5);
+        // Air above the land stays air.
+        assert!(caves.final_density(-0.5, 3, 90, 3) < 0.0);
         // The same point under another seed differs somewhere.
         let other = Caves::new(54321);
         assert!(points.iter().any(|&(x, y, z, s)| {
@@ -942,5 +1172,65 @@ mod tests {
         }
         assert!((250..900).contains(&worms_seen), "{worms_seen} worms");
         assert!((5..50).contains(&ravines), "{ravines} ravines");
+    }
+
+    /// The mean of `random(random(random(15) + 1) + 1)`, worked out exactly
+    /// by going through every outcome.
+    fn expected_tunnel_starts() -> f64 {
+        let mut sum = 0.0;
+        for first in 0..15u32 {
+            let a = first + 1;
+            for second in 0..a {
+                let b = second + 1;
+                for third in 0..b {
+                    sum += f64::from(third) / (15.0 * f64::from(a) * f64::from(b));
+                }
+            }
+        }
+        sum
+    }
+
+    #[test]
+    fn a_cave_carver_start_makes_the_nested_random_number_of_tunnels() {
+        let expected = expected_tunnel_starts();
+        let mut rng = Rng::new(31);
+        let n = 100_000;
+        let total: u64 = (0..n).map(|_| u64::from(tunnel_starts(&mut rng))).sum();
+        let mean = total as f64 / f64::from(n);
+        assert!((mean - expected).abs() < 0.03, "{mean} against {expected}");
+        // Never more than 14.
+        assert!((0..2000).all(|_| tunnel_starts(&mut rng) <= 14));
+    }
+
+    #[test]
+    fn the_carvers_start_in_the_configured_share_of_chunks_and_a_cave_start_carves() {
+        let n = 20_000;
+        let (mut caves, mut ravines, mut any) = (0, 0, 0);
+        for i in 0..n {
+            let started = worms(12345, i % 141 - 70, i / 141 - 70);
+            any += usize::from(!started.is_empty());
+            caves += usize::from(started.iter().any(|w| !w.ravine));
+            ravines += usize::from(started.iter().any(|w| w.ravine));
+        }
+        let share = |k: usize| k as f64 / f64::from(n);
+        // Of 15% + 7% of chunks, those whose number of tunnels is zero start
+        // none (the expected number is under 2 but zero is common).
+        assert!(
+            share(caves) > 0.05 && share(caves) < 0.22,
+            "{}",
+            share(caves)
+        );
+        assert!((share(ravines) - 0.01).abs() < 0.004, "{}", share(ravines));
+        assert!(any > 0);
+        // Ravines are tall and long; their steps lie within Y 10 to 67 at
+        // the start and their rule keeps blocks only inside an ellipse.
+        let ravine = (0..20_000)
+            .flat_map(|i| worms(12345, i % 100, i / 100))
+            .find(|w| w.ravine)
+            .expect("a ravine");
+        assert!(ravine.steps.len() > 40);
+        assert_eq!(ravine.widths.len(), crate::config::WORLD_HEIGHT);
+        assert!(ravine.carves(0.0, 0.0, 0.0, 30));
+        assert!(!ravine.carves(0.99, 0.0, 0.99, 30));
     }
 }
