@@ -45,6 +45,12 @@ pub struct GpuProfiler {
     totals: BTreeMap<&'static str, (f64, u64)>,
     /// The latest frame read back: (pass, ms) in draw order.
     latest: Vec<(&'static str, f64)>,
+    /// The GPU time of each of the last frames from its first pass's start
+    /// to its last pass's end (passes overlap on a tile-based GPU, so the
+    /// passes' own times add up to more than this), and since
+    /// `reset_totals`: their sum and count.
+    spans: VecDeque<f64>,
+    span_total: (f64, u64),
 }
 
 impl GpuProfiler {
@@ -88,6 +94,8 @@ impl GpuProfiler {
             history: BTreeMap::new(),
             totals: BTreeMap::new(),
             latest: Vec::new(),
+            spans: VecDeque::new(),
+            span_total: (0.0, 0),
         })
     }
 
@@ -164,26 +172,47 @@ impl GpuProfiler {
             if self.slots[i].state.load(Ordering::Acquire) != MAPPED {
                 continue;
             }
-            let times = {
+            let (times, span) = {
                 let slot = &self.slots[i];
                 let bytes = slot.names.len() as u64 * 16;
                 let Ok(data) = slot.buffer.slice(..bytes).get_mapped_range() else {
                     continue;
                 };
                 let stamps: &[u64] = bytemuck::cast_slice(&data);
-                slot.names
+                // First start to last end.
+                let first = stamps.iter().step_by(2).copied().min().unwrap_or(0);
+                let last = stamps.iter().skip(1).step_by(2).copied().max().unwrap_or(0);
+                let span = last.saturating_sub(first) as f64 * self.period / 1.0e6;
+                let times = slot
+                    .names
                     .iter()
                     .enumerate()
                     .map(|(n, name)| {
                         let ticks = stamps[n * 2 + 1].saturating_sub(stamps[n * 2]);
                         (*name, ticks as f64 * self.period / 1.0e6)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (times, span)
             };
+            self.record_span(span);
             self.slots[i].buffer.unmap();
             self.slots[i].state.store(IDLE, Ordering::Release);
             self.record(&times);
         }
+    }
+
+    fn record_span(&mut self, ms: f64) {
+        self.spans.push_back(ms);
+        if self.spans.len() > AVERAGE_FRAMES {
+            self.spans.pop_front();
+        }
+        self.span_total.0 += ms;
+        self.span_total.1 += 1;
+    }
+
+    /// The frame's GPU time over the last `AVERAGE_FRAMES` frames, in ms.
+    pub fn span_average(&self) -> f64 {
+        self.spans.iter().sum::<f64>() / self.spans.len().max(1) as f64
     }
 
     fn record(&mut self, times: &[(&'static str, f64)]) {
@@ -226,25 +255,25 @@ impl GpuProfiler {
     /// Forgets the totals (the end of `--perf-test`'s warm-up).
     pub fn reset_totals(&mut self) {
         self.totals.clear();
+        self.span_total = (0.0, 0);
     }
 
-    /// Each pass's mean ms per frame since `reset_totals`, and the sum.
+    /// Each pass's mean ms per frame since `reset_totals`, and the mean
+    /// GPU time of a whole frame (first pass start to last pass end).
     pub fn means(&self) -> (BTreeMap<String, f64>, f64) {
         let means: BTreeMap<String, f64> = self
             .totals
             .iter()
             .map(|(name, (ms, n))| (name.to_string(), ms / (*n).max(1) as f64))
             .collect();
-        let total = means.values().sum();
-        (means, total)
+        (means, self.span_total.0 / self.span_total.1.max(1) as f64)
     }
 }
 
 /// The F3 lines for `averages`.
-pub fn overlay_lines(averages: &[(&'static str, f64)]) -> Vec<String> {
-    let total: f64 = averages.iter().map(|(_, ms)| ms).sum();
+pub fn overlay_lines(averages: &[(&'static str, f64)], frame: f64) -> Vec<String> {
     let mut lines = vec![format!(
-        "GPU {total:.2} ms (avg of {AVERAGE_FRAMES} frames)"
+        "GPU {frame:.2} ms (avg of {AVERAGE_FRAMES} frames)"
     )];
     lines.extend(
         averages
@@ -259,9 +288,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn overlay_lines_sum_the_passes() {
-        let lines = overlay_lines(&[("world", 2.0), ("post", 0.25)]);
-        assert_eq!(lines[0], "GPU 2.25 ms (avg of 60 frames)");
+    fn overlay_shows_the_frame_and_each_pass() {
+        let lines = overlay_lines(&[("world", 2.0), ("post", 0.25)], 2.1);
+        assert_eq!(lines[0], "GPU 2.10 ms (avg of 60 frames)");
         assert_eq!(lines[2], "  post: 0.25 ms");
     }
 }

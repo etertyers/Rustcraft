@@ -108,12 +108,44 @@ static TABLE: LazyLock<Vec<Material>> = LazyLock::new(|| {
     table
 });
 
+/// Blocks whose material doesn't depend on their state (no rule with a
+/// `when` names them), by block id: the common case, one lookup.
+static BY_BLOCK: LazyLock<Vec<Option<Material>>> = LazyLock::new(|| {
+    let blocks = registry();
+    let len = blocks
+        .states()
+        .map(|s| s.id().index() + 1)
+        .max()
+        .unwrap_or(0);
+    let mut by_block = vec![None; len];
+    for state in blocks.states() {
+        let slot = &mut by_block[state.id().index()];
+        let material = TABLE[blocks.state_index(state)];
+        match slot {
+            None => *slot = Some(material),
+            Some(first) if *first != material => *slot = Some(STATE_DEPENDENT),
+            Some(_) => {}
+        }
+    }
+    by_block
+});
+
+/// Marks a block whose states differ (never a real material: its glow is
+/// out of range).
+const STATE_DEPENDENT: Material = Material {
+    class: Class::Opaque,
+    glow: 255,
+};
+
 /// The material of a block state.
 pub fn of(state: BlockState) -> Material {
-    TABLE
-        .get(registry().state_index(state))
-        .copied()
-        .unwrap_or_default()
+    match BY_BLOCK.get(state.id().index()) {
+        Some(Some(material)) if material.glow != 255 => *material,
+        _ => TABLE
+            .get(registry().state_index(state))
+            .copied()
+            .unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]

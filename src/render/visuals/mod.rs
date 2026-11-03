@@ -11,6 +11,8 @@ pub mod compare;
 pub mod frame;
 pub mod packs;
 pub mod profiler;
+pub mod shadow;
+pub mod sun;
 
 use std::collections::BTreeMap;
 

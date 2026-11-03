@@ -81,11 +81,16 @@ pub struct DebugStats {
 pub struct GpuTimes {
     pub passes: [(&'static str, f32); 16],
     pub len: usize,
+    /// The whole frame's GPU time.
+    pub frame: f32,
 }
 
 impl GpuTimes {
-    pub fn from_averages(averages: &[(&'static str, f64)]) -> Self {
-        let mut times = Self::default();
+    pub fn from_averages(averages: &[(&'static str, f64)], frame: f64) -> Self {
+        let mut times = Self {
+            frame: frame as f32,
+            ..Self::default()
+        };
         for (slot, (name, ms)) in times.passes.iter_mut().zip(averages) {
             *slot = (name, *ms as f32);
             times.len += 1;
@@ -543,7 +548,7 @@ fn gpu_text(gpu: &GpuTimes) -> String {
     if passes.is_empty() {
         return String::new();
     }
-    crate::render::visuals::profiler::overlay_lines(&passes)
+    crate::render::visuals::profiler::overlay_lines(&passes, f64::from(gpu.frame))
         .into_iter()
         .map(|line| format!("\n{line}"))
         .collect()
@@ -1209,7 +1214,7 @@ mod tests {
             time: 6000,
             dimension: Default::default(),
             look: "Trailer (Medium)",
-            gpu: GpuTimes::from_averages(&[("world", 3.5), ("post", 0.2)]),
+            gpu: GpuTimes::from_averages(&[("world", 3.5), ("post", 0.2)], 3.7),
         };
         let text = debug_text(59.6, &camera, &stats);
         assert!(text.contains("Visuals: Trailer (Medium)"), "{text}");

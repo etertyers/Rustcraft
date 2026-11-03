@@ -552,23 +552,30 @@ impl Mesh {
         indices.extend(order.map(|i| base + i));
     }
 
-    /// The packed face attribute of a quad's four corners.
+    /// The packed face attribute of a quad's four corners: packed once
+    /// (the octahedral encoding takes any length), with the top flag
+    /// added for the corners in the upper half of the block.
     fn add_faces(&mut self, corners: &[[f32; 3]; 4]) {
         use crate::render::vertex::{FLAG_STILL_WATER_TOP, FLAG_TOP, pack_face};
         let [a, b, c, _] = corners.map(glam::Vec3::from);
-        let normal = (b - a).cross(c - a).normalize_or(glam::Vec3::Y);
+        let normal = (b - a).cross(c - a);
         let mut flags = self.material_flags;
         if self.still_water
-            && normal.y > 0.99
+            && normal.y > 0.0
+            && normal.x.abs() + normal.z.abs() < 1e-3 * normal.y
             && corners.iter().all(|p| (p[1] - corners[0][1]).abs() < 1e-4)
         {
             flags |= FLAG_STILL_WATER_TOP;
         }
+        let packed = pack_face(normal.to_array(), self.material, flags);
+        let top = u32::from(FLAG_TOP) << 24;
         let middle = self.block_bottom + 0.5;
         for corner in corners {
-            let top = if corner[1] > middle { FLAG_TOP } else { 0 };
-            self.faces
-                .push(pack_face(normal.to_array(), self.material, flags | top));
+            self.faces.push(if corner[1] > middle {
+                packed | top
+            } else {
+                packed
+            });
         }
     }
 
@@ -1898,12 +1905,74 @@ mod tests {
         );
     }
 
+    /// A closed 5 × 5 × 5 stone room at noon with a torch in it: no face
+    /// inside has sky light, so the Trailer look's sun adds nothing there
+    /// (whatever the shadow map says), while the torch still lights it.
+    #[test]
+    fn a_closed_room_gets_no_sun_anywhere_inside() {
+        use crate::render::visuals::sun;
+        let mut blocks = Vec::new();
+        for x in 4..=10 {
+            for z in 4..=10 {
+                for y in 64..=70 {
+                    let wall = x == 4 || x == 10 || z == 4 || z == 10 || y == 64 || y == 70;
+                    if wall {
+                        blocks.push((x, y, z, STONE));
+                    }
+                }
+            }
+        }
+        blocks.push((7, 65, 7, TORCH));
+        let mesh = mesh_with(&blocks, true);
+        let noon = sun::light(0.0, 0.0, true);
+        let inside = |v: &Vertex| {
+            v.position
+                .iter()
+                .zip([5.0, 65.0, 5.0].iter().zip([10.0, 70.0, 10.0].iter()))
+                .all(|(p, (lo, hi))| p >= lo && p <= hi)
+        };
+        let mut seen = 0;
+        let mut torchlit = 0;
+        for (v, &face) in mesh.vertices.iter().zip(&mesh.faces) {
+            if !inside(v) {
+                continue;
+            }
+            seen += 1;
+            assert_eq!(v.light[0], 0.0, "sky light inside at {:?}", v.position);
+            torchlit += usize::from(v.light[1] > 0.0);
+            let (normal, _, _) = crate::render::vertex::unpack_face(face);
+            // Facing the sun or not, the sun term is zero.
+            for n_dot_l in [glam::Vec3::from(normal).dot(noon.direction).max(0.0), 1.0] {
+                let lit = sun::face_lighting(
+                    glam::Vec3::splat(0.5),
+                    &noon,
+                    n_dot_l,
+                    1.0,
+                    v.light[0],
+                    false,
+                );
+                assert_eq!(lit, glam::Vec3::splat(0.5) * sun::AMBIENT_SCALE);
+            }
+        }
+        assert!(seen >= 5 * 5 * 6, "{seen} vertices inside");
+        assert!(torchlit > 0, "the torch lights the room");
+    }
+
     #[test]
     fn fast_graphics_draws_leaves_solid_hiding_the_faces_between_them() {
         let pair = [(5, 64, 5, LEAVES), (6, 64, 5, LEAVES)];
         let mesh = mesh_set(&pair, true, |area| area.fast_leaves = true);
         assert_eq!(quads(&mesh), 10);
         assert!(mesh.vertices.iter().all(|v| v.light[1] >= SOLID_FLAG));
+        // The Trailer look's shadow pass reads the face flag: with Fast
+        // graphics the leaves cast solid shadows (no alpha cut-out), and
+        // with Fancy they're cut out by their textures.
+        let solid = |face: &u32| {
+            crate::render::vertex::unpack_face(*face).2 & crate::render::vertex::FLAG_SOLID != 0
+        };
+        assert!(mesh.faces.iter().all(solid));
+        let fancy = mesh_with(&pair, true);
+        assert!(!fancy.faces.iter().any(solid));
         // Leaves still don't hide the faces of what's next to them.
         let mesh = mesh_set(&[(5, 64, 5, LEAVES), (6, 64, 5, STONE)], true, |area| {
             area.fast_leaves = true
