@@ -165,11 +165,11 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 |---|---|---|---|---|
 | 1.0 | M0–M13 | none (reviewed after each) | `docs/milestones/v1.0.md` | released |
 | 1.1 | M14–M30 | A–D | `docs/milestones/v1.1.md` | released (`v1.1.0`) |
-| 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | built: M31–M38 tagged, PRs #45–#48 (M39–M42) await Kenzo; `v1.2.0` not tagged |
-| 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | built: PRs #49–#59 open, stacked |
-| 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | built: PRs #61–#65 (M54–M58, stacked) await Kenzo; Low/High miss budgets by a few percent |
+| 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | released (`v1.2.0`) |
+| 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
+| 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
 
-After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`.
+After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`.
 
 ## 7. Milestone rules
 
