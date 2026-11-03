@@ -5,6 +5,8 @@
 
 struct Cascade {
     view_proj: mat4x4<f32>,
+    // x: game time in ticks; y: wind; z: plants and leaves sway.
+    sway: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cascade: Cascade;
 @group(1) @binding(0) var atlas_texture: texture_2d<f32>;
@@ -25,7 +27,11 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = cascade.view_proj * vec4<f32>(in.position, 1.0);
+    var position = in.position;
+    if cascade.sway.z > 0.5 {
+        position = position + sway_offset(position, in.face, cascade.sway.x, cascade.sway.y);
+    }
+    out.clip_position = cascade.view_proj * vec4<f32>(position, 1.0);
     out.uv = in.uv;
     out.face = in.face;
     return out;

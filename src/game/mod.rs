@@ -8,6 +8,7 @@ mod animals;
 mod armor;
 mod benches;
 pub mod board;
+pub mod splashes;
 pub use minecarts::{CART_EDIT, item_of as minecarts_item_of};
 mod board_hooks;
 mod boats;

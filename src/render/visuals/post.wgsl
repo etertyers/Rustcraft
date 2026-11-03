@@ -8,9 +8,22 @@ struct Post {
     // x: saturation; y: shoulder start; z: sunrise tint strength.
     params: vec4<f32>,
     tint: vec4<f32>,
+    // x: how much bloom is added; y: the fifth level's weight.
+    bloom: vec4<f32>,
+    // The weights of the bloom's first four levels.
+    bloom_weights: vec4<f32>,
+    // rgb: the light shafts' color times strength; w: 1 when drawn.
+    shafts: vec4<f32>,
 };
 @group(0) @binding(0) var hdr: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> post: Post;
+@group(0) @binding(2) var bloom_0: texture_2d<f32>;
+@group(0) @binding(3) var bloom_1: texture_2d<f32>;
+@group(0) @binding(4) var bloom_2: texture_2d<f32>;
+@group(0) @binding(5) var bloom_3: texture_2d<f32>;
+@group(0) @binding(6) var bloom_4: texture_2d<f32>;
+@group(0) @binding(7) var shafts_texture: texture_2d<f32>;
+@group(0) @binding(8) var linear_sampler: sampler;
 
 struct PostOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -43,6 +56,20 @@ fn tone(l: f32) -> f32 {
 @fragment
 fn fs_main(in: PostOutput) -> @location(0) vec4<f32> {
     var color = textureLoad(hdr, vec2<i32>(in.clip_position.xy), 0).rgb;
+    let uv = in.clip_position.xy / vec2<f32>(textureDimensions(hdr));
+    // Glow round what's brighter than white, and the light shafts.
+    if post.bloom.x > 0.0 {
+        // Each level, scaled up by the sampler and weighed.
+        var glow = textureSampleLevel(bloom_0, linear_sampler, uv, 0.0).rgb * post.bloom_weights.x;
+        glow = glow + textureSampleLevel(bloom_1, linear_sampler, uv, 0.0).rgb * post.bloom_weights.y;
+        glow = glow + textureSampleLevel(bloom_2, linear_sampler, uv, 0.0).rgb * post.bloom_weights.z;
+        glow = glow + textureSampleLevel(bloom_3, linear_sampler, uv, 0.0).rgb * post.bloom_weights.w;
+        glow = glow + textureSampleLevel(bloom_4, linear_sampler, uv, 0.0).rgb * post.bloom.y;
+        color = color + glow * post.bloom.x;
+    }
+    if post.shafts.w > 0.5 {
+        color = color + post.shafts.rgb * textureSampleLevel(shafts_texture, linear_sampler, uv, 0.0).r;
+    }
     color = color * mix(vec3<f32>(1.0), post.tint.rgb, post.params.z);
     let l = luminance(color);
     if l > 1e-5 {

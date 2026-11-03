@@ -100,6 +100,17 @@ impl Particle {
         speck
     }
 
+    /// A droplet of white foam thrown from where water lands (M57): a
+    /// small square of `velocity`, falling like any particle.
+    pub fn foam(at: DVec3, velocity: DVec3, random: &mut impl FnMut() -> f32) -> Self {
+        let mut drop = Self::colored(at, 0xF2F8FF, random);
+        drop.velocity = velocity;
+        drop.gravity = GRAVITY;
+        drop.lifetime = 10 + (random() * 12.0) as u32;
+        drop.half_width = 0.035 + random() * 0.025;
+        drop
+    }
+
     /// The burst from breaking `block` at `cell`: 4×4×4 particles flying
     /// out from the middle, showing its bottom texture.
     pub fn burst(cell: IVec3, block: BlockState, random: &mut impl FnMut() -> f32) -> Vec<Self> {

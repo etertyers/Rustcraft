@@ -30,6 +30,32 @@ pub struct TrailerUniform {
     pub water: [f32; 4],
     pub scene: [f32; 4],
     pub extras: [f32; 4],
+    pub atmos: [f32; 4],
+    pub weather: [f32; 4],
+    pub shaft: [f32; 4],
+}
+
+/// The fog, wind, rain and glow settings of a frame (M57).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AtmosFrame {
+    /// Thin fog that thickens low down; 0 is off (and under water).
+    pub height_fog: f32,
+    /// Extra thickness in the morning, 0–1.
+    pub morning: f32,
+    /// The Nether's and the End's thick fog.
+    pub dimension_fog: f32,
+    /// Plants and leaves sway.
+    pub sway: bool,
+    /// Wet ground, 0–1: rain eased over 10 s, none in snow.
+    pub wetness: f32,
+    pub rain_rings: bool,
+    /// Glowing blocks are drawn above 1.0 so they bloom.
+    pub emissive: bool,
+    /// Wind, 0–1.
+    pub wind: f32,
+    /// The shafts: steps, how far they look, scattering per block and the
+    /// size of their picture next to the frame's (0 steps: off).
+    pub shafts: [f32; 4],
 }
 
 /// The water, scene copy and cloud settings of a frame (M56).
@@ -72,6 +98,7 @@ pub struct SunFrame {
     pub dimension_tint: Vec3,
     pub sky_tint: Vec3,
     pub water: WaterFrame,
+    pub atmos: AtmosFrame,
 }
 
 impl TrailerUniform {
@@ -126,6 +153,19 @@ impl TrailerUniform {
                 f32::from(frame.water.glass_metal),
                 frame.water.rain,
             ],
+            atmos: [
+                frame.atmos.height_fog,
+                frame.atmos.morning,
+                frame.atmos.dimension_fog,
+                f32::from(frame.atmos.sway),
+            ],
+            weather: [
+                frame.atmos.wetness,
+                f32::from(frame.atmos.rain_rings),
+                f32::from(frame.atmos.emissive),
+                frame.atmos.wind,
+            ],
+            shaft: frame.atmos.shafts,
         }
     }
 }
@@ -259,7 +299,12 @@ impl ShadowPipeline {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shadow.wgsl"));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(include_str!("../sway.wgsl"), include_str!("shadow.wgsl")).into(),
+            ),
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow"),
             bind_group_layouts: &[Some(&cascade_layout), Some(atlas_layout)],
@@ -316,6 +361,9 @@ pub struct Drawn {
     pub direction: Vec3,
     /// The renderer's mesh revision: changes when any chunk does.
     pub revision: u64,
+    /// Which quarter-second of wind it was drawn in (0 with sway off), so
+    /// moving leaves move their shadows.
+    pub phase: u32,
 }
 
 /// The shadow maps of one quality.
@@ -383,7 +431,7 @@ impl ShadowMaps {
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &cascade_buffer,
                     offset: 0,
-                    size: wgpu::BufferSize::new(64),
+                    size: wgpu::BufferSize::new(80),
                 }),
             }],
         });
@@ -427,13 +475,13 @@ impl ShadowMaps {
         );
     }
 
-    /// Writes cascade `i`'s matrix where the shadow pass reads it.
-    pub fn write_cascade(&self, queue: &wgpu::Queue, i: usize, matrix: &Mat4) {
-        queue.write_buffer(
-            &self.cascade_buffer,
-            CASCADE_STRIDE * i as u64,
-            bytemuck::bytes_of(&matrix.to_cols_array_2d()),
-        );
+    /// Writes cascade `i`'s matrix and sway (time, wind, on) where the
+    /// shadow pass reads them.
+    pub fn write_cascade(&self, queue: &wgpu::Queue, i: usize, matrix: &Mat4, sway: [f32; 4]) {
+        let mut bytes = [0u8; 80];
+        bytes[..64].copy_from_slice(bytemuck::bytes_of(&matrix.to_cols_array_2d()));
+        bytes[64..].copy_from_slice(bytemuck::bytes_of(&sway));
+        queue.write_buffer(&self.cascade_buffer, CASCADE_STRIDE * i as u64, &bytes);
     }
 
     /// The matrices last drawn, identity for a cascade never drawn.
@@ -496,7 +544,7 @@ mod tests {
     #[test]
     fn the_uniform_is_what_the_shader_expects() {
         // Three matrices and nine vec4s.
-        assert_eq!(std::mem::size_of::<TrailerUniform>(), 3 * 64 + 12 * 16);
+        assert_eq!(std::mem::size_of::<TrailerUniform>(), 3 * 64 + 15 * 16);
         assert_eq!(std::mem::size_of::<TrailerUniform>() % 16, 0);
     }
 
@@ -545,6 +593,7 @@ mod tests {
             dimension_tint: Vec3::ONE,
             sky_tint: Vec3::ONE,
             water: WaterFrame::default(),
+            atmos: AtmosFrame::default(),
         };
         let u = TrailerUniform::new(&frame, &[Mat4::IDENTITY; MAX_CASCADES]);
         assert_eq!(u.params[0], 0.0);

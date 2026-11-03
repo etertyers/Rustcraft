@@ -50,6 +50,8 @@ pub struct Light {
     pub strength: f32,
     /// The light's height above the horizon (sine of its elevation).
     pub elevation: f32,
+    /// It's the sun (not the moon) that's up.
+    pub by_day: bool,
 }
 
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
@@ -86,7 +88,22 @@ pub fn light(angle: f32, rain: f32, sunlight: bool) -> Light {
         color,
         strength,
         elevation,
+        by_day,
     }
+}
+
+/// How strong the volumetric light shafts are (0–1.5): none when the sun
+/// is below the horizon, with no sun in the dimension (the Nether, the
+/// End), or by night; strongest at sunrise and sunset, when the sun is
+/// low, and stronger in the mist of rain. `sunlight` is whether the
+/// dimension has a sun.
+pub fn shaft_strength(light: &Light, rain: f32, sunlight: bool) -> f32 {
+    if !sunlight || !light.by_day || light.direction.y <= 0.0 {
+        return 0.0;
+    }
+    let fade = smoothstep(0.0, FADE_ELEVATION, light.elevation);
+    let low = 1.0 - light.elevation;
+    (0.25 + 0.75 * low * low) * fade * (1.0 + 0.6 * rain.clamp(0.0, 1.0))
 }
 
 /// How much of the light reaches a face with `sky` light (0–15): none in
@@ -346,6 +363,28 @@ mod tests {
         let storm = light(0.0, 1.0, true);
         assert!((storm.strength - (1.0 - RAIN_DIM)).abs() < 1e-5);
         assert_eq!(light(0.0, 0.0, false).strength, 0.0);
+    }
+
+    #[test]
+    fn shafts_are_gone_at_night_and_in_the_nether_and_strongest_when_the_sun_is_low() {
+        let strength = |angle: f32, sunlight: bool| {
+            shaft_strength(&light(angle, 0.0, sunlight), 0.0, sunlight)
+        };
+        // Below the horizon (midnight, and just after sunset): none.
+        assert_eq!(strength(0.5, true), 0.0);
+        assert_eq!(strength(0.3, true), 0.0);
+        // No sun in the dimension: none, at any hour.
+        for a in [0.0, 0.1, 0.2, 0.7, 0.9] {
+            assert_eq!(strength(a, false), 0.0, "{a}");
+        }
+        // Noon is weaker than a low sun; and a low sun beats a faded one on
+        // the horizon.
+        let noon = strength(0.0, true);
+        let low = strength(0.2, true);
+        assert!(noon > 0.2 && low > noon * 1.5, "{noon} {low}");
+        assert!(strength(0.249, true) < low, "fades out at the horizon");
+        // Rain mist makes them stronger.
+        assert!(shaft_strength(&light(0.0, 1.0, true), 1.0, true) > noon * 1.3);
     }
 
     #[test]

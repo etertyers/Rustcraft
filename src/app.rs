@@ -158,6 +158,8 @@ pub struct App {
     /// The resource packs the look was built with, highest first.
     applied_packs: Vec<String>,
     /// A look being built with these packs on a background thread.
+    /// Splashes and waterfall foam, Trailer look only.
+    splashes: crate::game::splashes::Splashes,
     pending_look: Option<(Vec<String>, crossbeam_channel::Receiver<Result<Look>>)>,
     /// When texture animations started.
     animation_start: Instant,
@@ -333,6 +335,7 @@ impl App {
             skin_slim: false,
             start_view: Default::default(),
             applied_packs: Vec::new(),
+            splashes: Default::default(),
             pending_look: None,
             animation_start: Instant::now(),
             catalog: Vec::new(),
@@ -1623,6 +1626,55 @@ impl App {
         }
     }
 
+    /// Splashes and waterfall foam (Trailer look, if the Splashes setting
+    /// is on): made from what this client sees, once per game tick.
+    fn tick_splashes(
+        options: &Options,
+        splashes: &mut crate::game::splashes::Splashes,
+        game: &Game,
+    ) {
+        use crate::game::splashes::Body;
+        let on = options.visuals.look == crate::render::visuals::LookKind::Trailer
+            && options
+                .visuals
+                .enabled(crate::render::visuals::Effect::Splashes);
+        if !on {
+            splashes.clear();
+            return;
+        }
+        let water = |feet: glam::DVec3| {
+            let cell = (feet + glam::DVec3::Y * 0.2).floor().as_ivec3();
+            game.chunks
+                .world()
+                .block(cell.x, cell.y, cell.z)
+                .is_some_and(|b| b.is(crate::world::blocks::WATER))
+        };
+        let mut bodies = vec![Body {
+            id: u64::MAX,
+            feet: game.player.body_state().position(),
+            velocity: game.player.body_state().velocity,
+            in_water: game.player.body_state().liquid == Some(crate::world::block::Fluid::Water),
+        }];
+        bodies.extend(game.mobs.iter().map(|mob| Body {
+            id: mob.id,
+            feet: mob.feet(),
+            velocity: mob.body.velocity,
+            in_water: water(mob.feet()),
+        }));
+        let world = game.chunks.world();
+        let collider = crate::player::collision::WorldCollider {
+            world,
+            blocks: game.items().blocks,
+        };
+        splashes.tick(
+            game.time(),
+            game.player.camera.position.as_dvec3(),
+            &bodies,
+            &|x, y, z| world.block(x, y, z),
+            &collider,
+        );
+    }
+
     /// F12: switches between the Vanilla and Trailer looks, each with its
     /// own resource packs, and says which is on.
     fn toggle_visuals(&mut self) {
@@ -1953,6 +2005,7 @@ impl App {
             renderer.remove_chunk(pos);
         }
         let uploaded = Instant::now();
+        Self::tick_splashes(&self.options, &mut self.splashes, game);
         let center = ChunkPos::of_block(x, z);
         let mut capturing = false;
         if let Some(run) = self.shot.as_mut() {
@@ -2096,6 +2149,14 @@ impl App {
                 add_particles(
                     &mut mesh,
                     &game.particles,
+                    models,
+                    &view_camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
+                add_particles(
+                    &mut mesh,
+                    self.splashes.particles(),
                     models,
                     &view_camera,
                     game.tick_alpha(),

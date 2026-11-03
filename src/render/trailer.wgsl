@@ -34,6 +34,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     if ((in.face >> 24u) & 2u) != 0u {
         position.y = position.y + wave_height(position.x, position.z, globals.camera.w);
     }
+    // Leaves, plants and vines move in the wind.
+    if trailer.atmos.w > 0.5 {
+        position = position + sway_offset(position, in.face, globals.camera.w, trailer.weather.w);
+    }
     out.clip_position = globals.view_proj * vec4<f32>(position, 1.0);
     out.uv = in.uv;
     out.color = in.color;
@@ -295,11 +299,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         light.x -= GLINT_FLAG;
         shine = glint(in.world);
     }
-    let lit = face_lighting(in.world, in.face, light.x, lightmap(light), true);
+    var lit = face_lighting(in.world, in.face, light.x, lightmap(light), true);
+    let material = face_material(in.face);
+    // Glowing blocks (lava, fire, glowstone, torches...) shine at any
+    // light level, and above 1.0 so they bloom.
+    var boost = 1.0;
+    if trailer.weather.z > 0.5 && (material == 9u || material == 6u) {
+        let glow = f32((in.face >> 28u) & 15u) / 15.0;
+        lit = mix(lit, vec3<f32>(1.0), glow);
+        boost = 1.0 + 2.2 * glow;
+    }
     var color = linear_to_srgb(texel.rgb) * in.color * lit + shine;
+    // Rain: surfaces open to the sky get darker and a little glossy.
+    if trailer.weather.x > 0.001 {
+        let wet = trailer.weather.x * smoothstep(0.0, 15.0, light.x);
+        let view = normalize(in.world - globals.camera.xyz);
+        let gloss = fresnel(abs(dot(view, face_normal(in.face))), 0.05) * wet * 0.55;
+        color = color * (1.0 - 0.28 * wet) + globals.sky_color.rgb * lit * gloss;
+    }
     // Metal shines a little at High: the sky's color in its sheen at a
     // glancing angle (cheap: no sky lookup in the block shader).
-    if trailer.extras.z > 0.5 && face_material(in.face) == 10u {
+    if trailer.extras.z > 0.5 && material == 10u {
         let view = normalize(in.world - globals.camera.xyz);
         let n = face_normal(in.face);
         let sheen = fresnel(abs(dot(view, n)), 0.08) * reflection_sky_weight(light.x);
@@ -307,7 +327,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let visible = fog_visibility(distance(in.world, globals.camera.xyz));
     let fogged = mix(globals.fog_color.rgb, color, visible);
-    return vec4<f32>(srgb_to_linear(fogged), 1.0);
+    return vec4<f32>(extra_fog(srgb_to_linear(fogged) * boost, in.world), 1.0);
 }
 
 @fragment
@@ -328,7 +348,21 @@ fn water_above(in: VertexOutput, texel: vec4<f32>, lit: vec3<f32>) -> vec4<f32> 
     let to_surface = in.world - eye;
     let distance_to = length(to_surface);
     let view = to_surface / distance_to;
-    let slope = wave_slope(in.world.x, in.world.z, globals.camera.w);
+    var slope = wave_slope(in.world.x, in.world.z, globals.camera.w);
+    // Rain makes rings on the surface.
+    var rings = 0.0;
+    if trailer.weather.y > 0.5 && trailer.weather.x > 0.01 {
+        let p = in.world.xz * 1.3;
+        let cell = floor(p);
+        let t = globals.camera.w / 20.0;
+        let seed = hash2(vec3<f32>(cell, 3.0));
+        let phase = fract(t * 0.85 + seed);
+        let center = cell + vec2<f32>(0.2 + 0.6 * hash2(vec3<f32>(cell, 7.0)), 0.2 + 0.6 * hash2(vec3<f32>(cell, 11.0)));
+        let offset = p - center;
+        let d = length(offset);
+        rings = smoothstep(0.07, 0.0, abs(d - phase * 0.55)) * (1.0 - phase) * trailer.weather.x;
+        slope = slope + offset / max(d, 0.001) * rings * 0.6;
+    }
     let n = normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
     let cos_theta = max(dot(-view, n), 0.0);
     let f = fresnel(cos_theta, WATER_F0) * reflection_sky_weight(in.light.x);
@@ -415,11 +449,11 @@ fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
         let underside = n.y < 0.0;
         if !underside {
             let water = water_above(in, texel, lit);
-            return vec4<f32>(mix(fog, water.rgb, visible), water.a);
+            return vec4<f32>(extra_fog(mix(fog, water.rgb, visible), in.world), water.a);
         }
         if trailer.water.w > 0.5 {
             let water = water_below(in, lit);
-            return vec4<f32>(mix(fog, water.rgb, visible), water.a);
+            return vec4<f32>(extra_fog(mix(fog, water.rgb, visible), in.world), water.a);
         }
     }
     var color = srgb_to_linear(linear_to_srgb(texel.rgb) * in.color * lit);
@@ -446,7 +480,7 @@ fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
             color = color + trailer.sun_color.rgb * sun_glint(reflected, trailer.sun_dir.xyz) * 0.12;
         }
     }
-    return vec4<f32>(mix(fog, color, visible), alpha);
+    return vec4<f32>(extra_fog(mix(fog, color, visible), in.world), alpha);
 }
 
 // Low: water with no scene copy. Cheap waves (the slow swell's slope), the
@@ -485,5 +519,5 @@ fn fs_translucent_low(in: VertexOutput) -> @location(0) vec4<f32> {
             color = color + trailer.sun_color.rgb * sun_glint(reflected, trailer.sun_dir.xyz) * weight;
         }
     }
-    return vec4<f32>(mix(fog, color, visible), alpha);
+    return vec4<f32>(extra_fog(mix(fog, color, visible), in.world), alpha);
 }
