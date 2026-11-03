@@ -52,6 +52,9 @@ pub struct Client {
     /// How many times the server's body disagreed with the predicted one
     /// and replaced it (the rubber band).
     pub corrections: u32,
+    /// Jukebox songs the server started (`Some(disc)`) or stopped, in order
+    /// (the audio engine takes its own copy).
+    pub records: Vec<(glam::IVec3, Option<String>)>,
 }
 
 impl Client {
@@ -76,6 +79,7 @@ impl Client {
             completions: None,
             players: Vec::new(),
             corrections: 0,
+            records: Vec::new(),
         }
     }
 
@@ -145,6 +149,10 @@ impl Client {
                     self.reconcile(game, ack, server, prev);
                 }
                 ServerMsg::Sounds(cues) => cues.into_iter().for_each(audio::requeue),
+                ServerMsg::Record { at, song } => {
+                    audio::record(at, song.clone());
+                    self.records.push((at, song));
+                }
                 ServerMsg::Skin { name, png, slim } => self.skins.push((name, png, slim)),
                 ServerMsg::Players(names) => self.players = names,
                 ServerMsg::Chat { text, command } => self.chat.push((text, command)),

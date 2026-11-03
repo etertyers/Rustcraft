@@ -411,6 +411,14 @@ impl Items {
             return text;
         }
         let mut text = self.name(stack);
+        // A disc's description line: who made the song ("C418 - cat").
+        if let Some(disc) = self
+            .item(stack.id)
+            .and_then(|item| super::discs::of_item(&item.name))
+        {
+            text.push_str("\n§7");
+            text.push_str(disc.title);
+        }
         for &(enchantment, level) in stack.enchantments() {
             text.push('\n');
             text.push_str(enchantment.name());

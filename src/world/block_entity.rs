@@ -43,6 +43,26 @@ pub enum BlockEntity {
     BrewingStand(crate::inventory::brewing::BrewingStand),
     /// A command block's command and state (M45).
     CommandBlock(CommandBlock),
+    /// A jukebox and its disc (M47).
+    Jukebox(Jukebox),
+}
+
+/// A jukebox: one slot for a disc, and the game tick its song ends at
+/// (0 when nothing plays). A song doesn't resume after a reload; the disc
+/// stays in.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Jukebox {
+    pub slots: Vec<Option<ItemStack>>,
+    pub ends: u64,
+}
+
+impl Jukebox {
+    pub fn new() -> Self {
+        Self {
+            slots: vec![None],
+            ends: 0,
+        }
+    }
 }
 
 /// What a command block keeps (its mode is its block, `conditional` is in its state).
@@ -109,6 +129,7 @@ impl BlockEntity {
             Self::Furnace(furnace) => &furnace.slots,
             Self::Hopper(hopper) => &hopper.slots,
             Self::BrewingStand(stand) => &stand.slots,
+            Self::Jukebox(jukebox) => &jukebox.slots,
             Self::Spawner(_) | Self::CommandBlock(_) => &[],
         }
     }
@@ -119,6 +140,7 @@ impl BlockEntity {
             Self::Furnace(furnace) => &mut furnace.slots,
             Self::Hopper(hopper) => &mut hopper.slots,
             Self::BrewingStand(stand) => &mut stand.slots,
+            Self::Jukebox(jukebox) => &mut jukebox.slots,
             Self::Spawner(_) | Self::CommandBlock(_) => &mut [],
         }
     }

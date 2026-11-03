@@ -33,9 +33,12 @@ mod fluids;
 mod gateways;
 mod gear;
 mod hands;
+pub mod jukebox;
 mod logistics;
 #[cfg(test)]
 mod m46_tests;
+#[cfg(test)]
+mod m47_tests;
 mod minecarts;
 mod mob_acts;
 #[cfg(test)]
@@ -497,6 +500,10 @@ pub struct Game {
     pub orbs: Vec<crate::entity::orb::XpOrb>,
     /// Bits of broken and mined blocks.
     pub particles: Vec<Particle>,
+    /// Jukeboxes with a song playing, by dimension and cell (M47).
+    pub(crate) jukeboxes: Vec<(crate::world::dimension::Dimension, glam::IVec3)>,
+    /// Songs that started or stopped since the server last told the clients.
+    pub(crate) record_events: Vec<jukebox::RecordEvent>,
     /// Stars of critical hits and arcs of sweeps.
     pub effects: Vec<crate::entity::effects::Effect>,
     pub arrows: Vec<Arrow>,
@@ -642,6 +649,8 @@ impl Game {
             entities: Vec::new(),
             orbs: Vec::new(),
             particles: Vec::new(),
+            jukeboxes: Vec::new(),
+            record_events: Vec::new(),
             effects: Vec::new(),
             arrows: Vec::new(),
             fireballs: Vec::new(),
@@ -1459,6 +1468,7 @@ impl Game {
         self.tick_carts();
         self.tick_boats();
         self.tick_hoppers();
+        self.tick_jukeboxes();
         self.tick_falling();
         self.post_process();
         self.tick_furnaces();

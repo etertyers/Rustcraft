@@ -794,6 +794,18 @@ impl Game {
             let at_player = target.map(|(_, _, aabb)| aabb);
             let victim = target.map_or(0, |(index, ..)| *index);
             let was_stuck = arrow.stuck;
+            if arrow.hostile && arrow.from_skeleton {
+                arrow.may_hit = self
+                    .mobs
+                    .iter()
+                    .map(|mob| {
+                        matches!(
+                            self.mob_defs.get(mob.kind).ai,
+                            crate::entity::mobs::Ai::Creeper { .. }
+                        )
+                    })
+                    .collect();
+            }
             let event = arrow.tick(block_hit, in_water, &self.mobs, at_player, &mut random);
             if !was_stuck && arrow.stuck {
                 crate::audio::play_at("entity.arrow.hit", arrow.position, 1.0, 1.0);
@@ -806,6 +818,9 @@ impl Game {
                     flame,
                 }) => {
                     self.mobs[index].hurt(damage, Some(from), DamageSource::Arrow);
+                    if arrow.hostile {
+                        self.mobs[index].shot_by_skeleton = arrow.from_skeleton;
+                    }
                     crate::audio::play("entity.arrow.hit", self.mobs[index].feet());
                     if !arrow.hostile {
                         // The archer hears the ding.
@@ -1028,6 +1043,9 @@ impl Game {
                 self.open_dispenser(cell, dropper);
             }
             Activate::Hopper => self.open_hopper(cell),
+            Activate::Jukebox => {
+                self.use_jukebox(cell);
+            }
             Activate::CommandBlock => self.open_command_block(cell),
             Activate::Enchanting => self.open_bench(BenchKind::Enchanting, cell),
             Activate::Anvil => self.open_bench(BenchKind::Anvil, cell),

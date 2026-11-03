@@ -45,9 +45,49 @@ pub fn color(sky: f32, block: f32, sun: f32, ambient: f32, brightness: f32) -> [
     mix(mix(lit, bright, brightness), gray, 0.04).map(|c| c.clamp(0.0, 1.0))
 }
 
+/// The color a water surface is drawn in before its alpha: the texture's
+/// average (0–1 sRGB) times the biome's tint, the top face's full shade
+/// (1.0) and the lightmap for `sky` and `block` light. `world::mesh`
+/// gives a surface the light above it, so the sea at noon is lit by sky
+/// light 15 however deep it is.
+pub fn water_surface(
+    texture: [f32; 3],
+    tint: [f32; 3],
+    (sky, block): (f32, f32),
+    sun: f32,
+    ambient: f32,
+    brightness: f32,
+) -> [f32; 3] {
+    let light = color(sky, block, sun, ambient, brightness);
+    std::array::from_fn(|i| texture[i] * tint[i] * light[i])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_water_surface_at_noon_is_the_same_color_at_any_depth() {
+        // The mesher gives a surface the brighter of its own and the sky's
+        // light, so what differs with depth (the water's own light) never
+        // reaches the color.
+        let surface = |own: u8| {
+            let (sky, block) = crate::world::mesh::fluid_light((own, 0), (15, 0)).into();
+            water_surface(
+                [0.69; 3],
+                [0.247, 0.463, 0.894],
+                (sky, block),
+                1.0,
+                0.0,
+                0.5,
+            )
+        };
+        assert_eq!(surface(14), surface(1));
+        let color = surface(14);
+        // Vanilla's gray texture (0.69) in the default ocean tint.
+        assert!((color[2] - 0.69 * 0.894).abs() < 0.03, "{color:?}");
+        assert!(color[2] > color[1] && color[1] > color[0]);
+    }
 
     #[test]
     fn levels_follow_vanillas_curve() {

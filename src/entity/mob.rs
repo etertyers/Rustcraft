@@ -130,6 +130,10 @@ pub struct Mob {
     /// Ticks left in which a death counts as the player's kill (it
     /// drops experience only then).
     pub player_hit: u32,
+    /// A skeleton's or stray's arrow hurt it last: a creeper that dies so
+    /// drops a music disc.
+    #[serde(default)]
+    pub shot_by_skeleton: bool,
     /// Fire and lava don't hurt it (from its kind).
     pub fire_immune: bool,
     /// Teleports away from projectiles instead of being hit.
@@ -205,6 +209,7 @@ impl Mob {
             aggressive: false,
             ridden: false,
             player_hit: 0,
+            shot_by_skeleton: false,
             fire_immune: def.fire_immune,
             dodges: def.dodges,
             heard: Heard {

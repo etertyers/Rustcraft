@@ -221,7 +221,7 @@ fn builtin_table(name: &str) -> Option<Vec<Pool>> {
                     e("saddle", 20, 1, 1),
                     e("golden_apple", 15, 1, 1),
                     e("music_disc_cat", 15, 1, 1),
-                    e("music_disc_blocks", 15, 1, 1),
+                    e("music_disc_13", 15, 1, 1),
                     ench("book", 10, 30),
                 ],
             ),
@@ -628,6 +628,12 @@ fn builtin_table(name: &str) -> Option<Vec<Pool>> {
                 1,
                 1,
                 vec![e("netherite_upgrade_smithing_template", 1, 1, 1)],
+            ),
+            // Pigstep: about one treasure room in twenty (4.5%).
+            pool(
+                1,
+                1,
+                vec![e("music_disc_pigstep", 9, 1, 1), e("", 191, 1, 1)],
             ),
         ],
         "bastion_other" => vec![

@@ -450,6 +450,8 @@ impl Step<'_> {
             | blocks::OAK_PRESSURE_PLATE
             | blocks::DETECTOR_RAIL => on(state.bool(Prop::Powered)),
             blocks::REDSTONE_BLOCK => 15,
+            // A jukebox gives 15 while a song plays (its Powered).
+            blocks::JUKEBOX => on(state.bool(Prop::Powered)),
             blocks::REPEATER => on(state.bool(Prop::Powered) && state.face(Prop::Facing) == dir),
             _ => 0,
         }

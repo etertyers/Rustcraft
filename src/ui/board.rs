@@ -159,12 +159,20 @@ pub fn paint_titles(painter: &Painter, full: Rect, title: &TitleState, alpha: Op
     }
     if title.actionbar_left > 0 && !title.actionbar.is_empty() {
         let fade = (title.actionbar_left as f32 / 10.0).min(1.0);
+        let alpha = (fade * 255.0) as u8;
+        // "Now Playing" cycles round the rainbow (`Mth.hsvToRgb(t / 50, 0.7, 0.6)`).
+        let color = if title.actionbar_rainbow {
+            let rgb = crate::game::jukebox::hsv(title.actionbar_left as f32 / 50.0, 0.7, 0.6);
+            Color32::from_rgba_unmultiplied((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, alpha)
+        } else {
+            Color32::from_white_alpha(alpha)
+        };
         font::shadowed(
             painter,
             pos2(full.center().x, full.bottom() - 68.0 * scale),
             Align2::CENTER_BOTTOM,
             &title.actionbar,
-            Color32::from_white_alpha((fade * 255.0) as u8),
+            color,
             8.0 * scale,
         );
     }

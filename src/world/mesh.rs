@@ -952,9 +952,14 @@ fn mesh_liquid(
         let tinted = tints
             .corners(texture.tint, x, z, corners)
             .map(|color| color.map(|c| c * face.shade()));
-        let lit = smooth_face(models, area, light, cell, face);
-        let colors = [0, 1, 2, 3].map(|i| tinted[i].map(|c| c * lit[i].0));
-        let lights = lit.map(|(_, l)| l);
+        // Vanilla's `LiquidBlockRenderer`: every face takes the brighter of
+        // the fluid's own light and the light above it (so the sea's surface
+        // is lit as the sky is however deep it is), with no occlusion.
+        let own = light.get(x, y, z);
+        let above = light.get(x, y + 1, z);
+        let lit = fluid_light(own, above);
+        let colors = tinted;
+        let lights = [lit; 4];
         let corners = translate(corners, origin);
         mesh.quad_uvs(corners, uvs, colors, lights);
         if face == Face::Top {
@@ -970,6 +975,12 @@ fn mesh_liquid(
             );
         }
     }
+}
+
+/// The light a fluid's faces are drawn with: the brighter of its own cell's
+/// (sky, block) light and the cell above's, each on its own.
+pub fn fluid_light(own: (u8, u8), above: (u8, u8)) -> [f32; 2] {
+    [own.0.max(above.0) as f32, own.1.max(above.1) as f32]
 }
 
 /// Texture coordinates for a fluid surface's corners: the still texture
@@ -2165,6 +2176,43 @@ mod tests {
     }
 
     const WATER: BlockState = BlockState::of(blocks::WATER);
+
+    /// The (color, light) of the vertices of the translucent mesh at or
+    /// above `y`, sorted.
+    fn surface_vertices(mesh: &Mesh, y: f32) -> Vec<([u32; 3], [u32; 2])> {
+        let mut found: Vec<_> = mesh
+            .vertices
+            .iter()
+            .filter(|v| v.position[1] >= y)
+            .map(|v| (v.color.map(f32::to_bits), v.light.map(f32::to_bits)))
+            .collect();
+        found.sort_unstable();
+        found
+    }
+
+    #[test]
+    fn the_sea_surface_is_lit_the_same_at_any_depth_and_has_no_occlusion() {
+        let column = |floor: i32| {
+            let mut blocks = vec![(4, floor, 4, STONE)];
+            // Rock beside the column, so occlusion would show if used.
+            blocks.push((5, 61, 4, STONE));
+            blocks.extend((floor + 1..=62).map(|y| (4, y, 4, WATER)));
+            mesh_with(&blocks, true)
+        };
+        let shallow = surface_vertices(&column(60), 62.5);
+        let deep = surface_vertices(&column(22), 62.5);
+        assert!(!shallow.is_empty());
+        assert_eq!(shallow, deep, "2 deep and 40 deep look alike from above");
+        for (color, light) in &shallow {
+            assert_eq!(f32::from_bits(light[0]), 15.0, "sky light 15 at noon");
+            // Tint times face shade, never darkened by occlusion.
+            assert!(color.iter().all(|&c| f32::from_bits(c) >= 0.6 * 0.2));
+        }
+        // Under the surface the light is the dimmed water's own, while a
+        // surface cell next to rock keeps the sky's.
+        assert_eq!(fluid_light((14, 0), (15, 0)), [15.0, 0.0]);
+        assert_eq!(fluid_light((3, 9), (2, 5)), [3.0, 9.0]);
+    }
 
     #[test]
     fn water_goes_in_the_translucent_list_with_a_lowered_surface_seen_from_below() {

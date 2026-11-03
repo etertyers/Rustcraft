@@ -818,6 +818,9 @@ pub struct TitleState {
     pub age: Option<u32>,
     /// Ticks the action bar text has left.
     pub actionbar_left: u32,
+    /// The action bar's color cycles round the rainbow ("Now Playing").
+    #[serde(default)]
+    pub actionbar_rainbow: bool,
 }
 
 impl Default for TitleState {
@@ -831,6 +834,7 @@ impl Default for TitleState {
             fade_out: 20,
             age: None,
             actionbar_left: 0,
+            actionbar_rainbow: false,
         }
     }
 }
@@ -876,6 +880,7 @@ impl TitleState {
         self.actionbar.clear();
         self.age = None;
         self.actionbar_left = 0;
+        self.actionbar_rainbow = false;
     }
 
     /// `/title reset`: clear and put the times back.
