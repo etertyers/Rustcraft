@@ -13,6 +13,7 @@ pub mod packs;
 pub mod profiler;
 pub mod shadow;
 pub mod sun;
+pub mod water;
 
 use std::collections::BTreeMap;
 

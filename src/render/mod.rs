@@ -149,6 +149,23 @@ macro_rules! world_shader {
     };
 }
 
+/// A Trailer shader: globals.wgsl, trailer_common.wgsl, then `body`.
+macro_rules! trailer_shader {
+    ($device:expr, $file:literal) => {
+        $device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some($file),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("globals.wgsl"),
+                    include_str!("trailer_common.wgsl"),
+                    include_str!($file)
+                )
+                .into(),
+            ),
+        })
+    };
+}
+
 /// A chunk's mesh on the GPU.
 /// A mesh on the GPU: opaque indices first, then translucent ones.
 struct ChunkBuffers {
@@ -186,6 +203,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     /// The Vanilla look's pipelines (M53's, drawing into the surface) and
     /// the Trailer look's (the same shaders into the HDR target, reading
@@ -222,6 +240,18 @@ pub struct Renderer {
     sun_bind_group: wgpu::BindGroup,
     moon_bind_group: wgpu::BindGroup,
     cloud_bind_group: wgpu::BindGroup,
+    cloud_texture: wgpu::Texture,
+    /// The opaque scene copied for the water, and whether the frame's
+    /// world is drawn in two passes to take it.
+    scene: SceneCopies,
+    split_world: bool,
+    /// A degenerate triangle drawn through every Trailer pipeline on the
+    /// first Trailer frame, so none compiles in the middle of play (the
+    /// first water in view cost a 50 ms frame).
+    warm_mesh: ChunkBuffers,
+    warmed: std::cell::Cell<bool>,
+    /// The depth and HDR textures can be copied from (see `create_depth_view`).
+    copy_usage: bool,
     glint_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
@@ -257,6 +287,8 @@ pub struct Renderer {
 struct Pipelines {
     blocks: wgpu::RenderPipeline,
     translucent: wgpu::RenderPipeline,
+    /// The Trailer look's cheaper water for Low (no scene copy).
+    translucent_low: Option<wgpu::RenderPipeline>,
     mob: wgpu::RenderPipeline,
     /// Depth only, for a boat's water mask.
     mask: wgpu::RenderPipeline,
@@ -297,12 +329,42 @@ impl Pipelines {
         Self {
             blocks: create_block_pipeline(device, blocks, shader, format, false, true, faces),
             translucent: create_block_pipeline(device, blocks, shader, format, true, true, faces),
+            translucent_low: faces.then(|| {
+                create_block_pipeline_entry(
+                    device,
+                    blocks,
+                    shader,
+                    format,
+                    (true, true, faces),
+                    Some("fs_translucent_low"),
+                )
+            }),
             // Mob boxes are drawn from both sides, so face winding doesn't matter.
             mob: create_block_pipeline(device, blocks, shader, format, false, false, faces),
             mask: create_mask_pipeline(device, blocks, shader, format, faces),
             crack: create_crack_pipeline(device, blocks, shader, format, faces),
-            sky: create_sky_pipeline(device, layouts, &shaders.sky, format),
-            clouds: create_cloud_pipeline(device, layouts, &shaders.clouds, format),
+            sky: create_sky_pipeline(
+                device,
+                layouts,
+                if faces {
+                    &shaders.trailer_sky
+                } else {
+                    &shaders.sky
+                },
+                format,
+                faces,
+            ),
+            clouds: create_cloud_pipeline(
+                device,
+                layouts,
+                if faces {
+                    &shaders.trailer_clouds
+                } else {
+                    &shaders.clouds
+                },
+                format,
+                faces,
+            ),
             faces,
         }
     }
@@ -312,6 +374,8 @@ impl Pipelines {
 struct Shaders {
     blocks: wgpu::ShaderModule,
     trailer: wgpu::ShaderModule,
+    trailer_sky: wgpu::ShaderModule,
+    trailer_clouds: wgpu::ShaderModule,
     sky: wgpu::ShaderModule,
     clouds: wgpu::ShaderModule,
 }
@@ -320,7 +384,9 @@ impl Shaders {
     fn new(device: &wgpu::Device) -> Self {
         Self {
             blocks: world_shader!(device, "shader.wgsl"),
-            trailer: world_shader!(device, "trailer.wgsl"),
+            trailer: trailer_shader!(device, "trailer.wgsl"),
+            trailer_sky: trailer_shader!(device, "trailer_sky.wgsl"),
+            trailer_clouds: trailer_shader!(device, "trailer_clouds.wgsl"),
             sky: world_shader!(device, "sky.wgsl"),
             clouds: world_shader!(device, "clouds.wgsl"),
         }
@@ -405,7 +471,7 @@ impl Renderer {
         // egui blends in gamma space, so it draws through a non-sRGB view of the frame.
         config.view_formats = vec![config.format.remove_srgb_suffix()];
         surface.configure(&device, &config);
-        let depth_view = create_depth_view(&device, &config);
+        let (depth_texture, depth_view) = create_depth_view(&device, &config, false);
 
         let layouts = Layouts::new(&device);
         let globals_layout = &layouts.globals;
@@ -445,8 +511,8 @@ impl Renderer {
             create_texture_bind_group(&device, &queue, &texture_layout, "sun", &sky.sun);
         let moon_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "moon", &sky.moon);
-        let cloud_bind_group =
-            create_texture_bind_group(&device, &queue, &texture_layout, "clouds", &sky.clouds);
+        let (cloud_texture, cloud_bind_group) =
+            create_texture(&device, &queue, &texture_layout, "clouds", &sky.clouds);
         let glint_bind_group =
             create_texture_bind_group(&device, &queue, &texture_layout, "glint", &sky.glint);
         let shaders = Shaders::new(&device);
@@ -487,10 +553,42 @@ impl Renderer {
             egui_wgpu::RendererOptions::default(),
         );
 
+        let warm_mesh = {
+            let buffer = |contents: &[u8], usage| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("warm"),
+                    contents,
+                    usage,
+                })
+            };
+            ChunkBuffers {
+                vertices: buffer(
+                    bytemuck::cast_slice(&[<vertex::Vertex as bytemuck::Zeroable>::zeroed(); 3]),
+                    wgpu::BufferUsages::VERTEX,
+                ),
+                faces: buffer(bytemuck::cast_slice(&[0u32; 3]), wgpu::BufferUsages::VERTEX),
+                indices: buffer(
+                    bytemuck::cast_slice(&[0u32, 1, 2]),
+                    wgpu::BufferUsages::INDEX,
+                ),
+                opaque: 3,
+                translucent: 0,
+                atlas: 0,
+                shadow_indices: None,
+                y_range: (0.0, 0.0),
+            }
+        };
+        let scene = SceneCopies::new(&device, hdr_format, 1, 1);
+        let cloud_view = cloud_texture.create_view(&Default::default());
         let shadows = visuals::shadow::ShadowMaps::new(
             &device,
             &layouts.shadow,
             visuals::sun::ShadowConfig::of(visuals::Quality::Medium),
+            &visuals::shadow::SceneViews {
+                clouds: &cloud_view,
+                color: &scene.color_view,
+                depth: &scene.depth_view,
+            },
         );
         Ok(Self {
             surface,
@@ -502,6 +600,7 @@ impl Renderer {
             device,
             queue,
             config,
+            depth_texture,
             depth_view,
             vanilla,
             trailer,
@@ -522,6 +621,12 @@ impl Renderer {
             sun_bind_group,
             moon_bind_group,
             cloud_bind_group,
+            cloud_texture,
+            scene,
+            split_world: false,
+            warm_mesh,
+            warmed: std::cell::Cell::new(false),
+            copy_usage: false,
             glint_bind_group,
             globals_buffer,
             globals_bind_group,
@@ -541,6 +646,21 @@ impl Renderer {
             egui_renderer,
             trailer_startup,
         })
+    }
+
+    /// Makes group 3 of the Trailer pipelines again, after the clouds'
+    /// picture or the scene copy changed.
+    fn rebind_trailer(&mut self) {
+        let cloud_view = self.cloud_texture.create_view(&Default::default());
+        self.shadows.rebind(
+            &self.device,
+            &self.shadow_pipeline,
+            &visuals::shadow::SceneViews {
+                clouds: &cloud_view,
+                color: &self.scene.color_view,
+                depth: &self.scene.depth_view,
+            },
+        );
     }
 
     /// Which look draws from the next frame on.
@@ -570,12 +690,15 @@ impl Renderer {
         self.atlas_generation += 1;
         self.sun_bind_group = create_texture_bind_group(device, queue, layout, "sun", &sky.sun);
         self.moon_bind_group = create_texture_bind_group(device, queue, layout, "moon", &sky.moon);
-        self.cloud_bind_group =
-            create_texture_bind_group(device, queue, layout, "clouds", &sky.clouds);
+        let (cloud_texture, cloud_bind_group) =
+            create_texture(device, queue, layout, "clouds", &sky.clouds);
+        self.cloud_texture = cloud_texture;
+        self.cloud_bind_group = cloud_bind_group;
         self.mob_bind_groups = mob_textures
             .iter()
             .map(|image| create_texture_bind_group(device, queue, layout, "mob", image))
             .collect();
+        self.rebind_trailer();
     }
 
     /// Other players' skins, in the order of their slots.
@@ -728,13 +851,13 @@ impl Renderer {
     /// The shadow maps' index buffer for a chunk mesh, if it has any
     /// triangle the sun reaches.
     fn shadow_indices(&self, mesh: &Mesh) -> Option<(wgpu::Buffer, u32)> {
-        let lit = sunlit_triangles(mesh);
+        let lit = &mesh.shadow_indices;
         (!lit.is_empty()).then(|| {
             let buffer = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("shadow indices"),
-                    contents: bytemuck::cast_slice(&lit),
+                    contents: bytemuck::cast_slice(lit),
                     usage: wgpu::BufferUsages::INDEX,
                 });
             (buffer, lit.len() as u32)
@@ -778,8 +901,31 @@ impl Renderer {
             translucent: mesh.translucent.len() as u32,
             atlas: self.atlas_generation,
             shadow_indices: self.shadow_indices(mesh),
-            y_range: mesh_y_range(mesh),
+            y_range: mesh.y_range,
         }
+    }
+
+    /// Whether a chunk in view has water, ice or glass to draw: the world
+    /// is only split into two passes (and the scene copied) when so.
+    fn any_translucent_in_view(&self, camera: &Camera, frustum: &Frustum) -> bool {
+        let _ = camera;
+        self.chunks.iter().any(|(pos, chunk)| {
+            let (x, z) = pos.min_block();
+            let min = Vec3::new(x as f32, chunk.y_range.0, z as f32);
+            let max = Vec3::new(
+                x as f32 + CHUNK_SIZE as f32,
+                chunk.y_range.1,
+                z as f32 + CHUNK_SIZE as f32,
+            );
+            chunk.translucent > 0 && frustum.intersects_box(min, max)
+        })
+    }
+
+    fn draw_sky(&self, pass: &mut wgpu::RenderPass<'_>, set: &Pipelines) {
+        pass.set_pipeline(&set.sky);
+        pass.set_bind_group(1, &self.sun_bind_group, &[]);
+        pass.set_bind_group(2, &self.moon_bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 
     fn draw_clouds(&self, pass: &mut wgpu::RenderPass<'_>, set: &Pipelines) {
@@ -839,7 +985,8 @@ impl Renderer {
         self.config.width = size.width;
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
-        self.depth_view = create_depth_view(&self.device, &self.config);
+        (self.depth_texture, self.depth_view) =
+            create_depth_view(&self.device, &self.config, self.copy_usage);
     }
 
     /// Draws a frame. Returns false if the surface wasn't ready and the frame was skipped.
@@ -1055,12 +1202,22 @@ impl Renderer {
             profiler.begin_frame();
         }
         let trailer = self.visuals.trailer();
+        // The water reads a copy of the opaque scene when it reflects or
+        // refracts: only then do the depth and HDR textures need the flag.
+        let copy = trailer
+            && (self.visuals.on(visuals::Effect::Reflections)
+                || self.visuals.on(visuals::Effect::Refraction));
+        if copy != self.copy_usage {
+            self.copy_usage = copy;
+            (self.depth_texture, self.depth_view) =
+                create_depth_view(&self.device, &self.config, copy);
+        }
         if trailer {
             self.trailer_frame
-                .prepare(&self.device, self.config.width, self.config.height);
+                .prepare(&self.device, self.config.width, self.config.height, copy);
         }
         // The sun's light and shadow maps (before the world is drawn).
-        let sun_frame = trailer.then(|| self.prepare_sun(camera, environment));
+        let sun_frame = trailer.then(|| self.prepare_sun(environment));
         let mut shadow_triangles = 0;
         if let Some(sun_frame) = &sun_frame {
             shadow_triangles =
@@ -1083,13 +1240,12 @@ impl Renderer {
         } else {
             clear_color(self.config.format)
         };
-        let timestamps = profiler.as_mut().and_then(|p| p.pass("world"));
         let (drawn, triangles) = self.draw_world(
             &mut encoder,
             world_view,
             set,
             clear,
-            timestamps,
+            profiler.as_mut(),
             camera,
             environment,
             &frustum,
@@ -1110,8 +1266,6 @@ impl Renderer {
                 fog_start: 1.0e6,
                 fog_end: 2.0e6,
                 fog_density: 0.0,
-                // The hand is in camera space: no sun, so no shadow lookups.
-                sky: environment.sky && !trailer,
                 ..*environment
             };
             let hand_proj = hand::hand_projection(self.aspect());
@@ -1243,13 +1397,17 @@ impl Renderer {
         view: &wgpu::TextureView,
         set: &Pipelines,
         clear: wgpu::Color,
-        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+        mut profiler: Option<&mut visuals::profiler::GpuProfiler>,
         camera: &Camera,
         environment: &Environment,
         frustum: &Frustum,
         outline: u32,
     ) -> (usize, u64) {
         let faces = set.faces;
+        // The Trailer water reads a copy of what's been drawn so far: the
+        // world is drawn in two passes, with the copy between them.
+        let split = faces && self.split_world && self.any_translucent_in_view(camera, frustum);
+        let timestamps = profiler.as_mut().and_then(|p| p.pass("world"));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("world"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1265,7 +1423,11 @@ impl Renderer {
                 view: &self.depth_view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
+                    store: if split {
+                        wgpu::StoreOp::Store
+                    } else {
+                        wgpu::StoreOp::Discard
+                    },
                 }),
                 stencil_ops: None,
             }),
@@ -1276,10 +1438,11 @@ impl Renderer {
         if faces {
             pass.set_bind_group(3, &self.shadows.read_group, &[]);
         }
-        pass.set_pipeline(&set.sky);
-        pass.set_bind_group(1, &self.sun_bind_group, &[]);
-        pass.set_bind_group(2, &self.moon_bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        // Vanilla draws the sky first; Trailer's goes after the opaque
+        // things, where it shades only what they leave uncovered.
+        if !faces {
+            self.draw_sky(&mut pass, set);
+        }
         pass.set_pipeline(&set.blocks);
         pass.set_bind_group(1, &self.atlas_bind_group, &[]);
         pass.set_bind_group(2, &self.glint_bind_group, &[]);
@@ -1350,12 +1513,84 @@ impl Renderer {
             pass.set_pipeline(&set.crack);
             draw_range(&mut pass, crack, 0..crack.opaque, faces);
         }
+        if faces {
+            self.draw_sky(&mut pass, set);
+            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+            pass.set_bind_group(2, &self.glint_bind_group, &[]);
+            if !self.warmed.replace(true) {
+                // Zero-area, so nothing shows; each pipeline is used once.
+                for pipeline in [Some(&set.translucent), set.translucent_low.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .chain([&set.blocks, &set.mob, &set.mask, &set.crack])
+                {
+                    pass.set_pipeline(pipeline);
+                    draw_range(&mut pass, &self.warm_mesh, 0..3, true);
+                }
+                self.draw_clouds(&mut pass, set);
+            }
+        }
+        // The water's own pass: after a copy of the opaque scene.
+        let mut pass = if split {
+            drop(pass);
+            let size = wgpu::Extent3d {
+                width: self.scene.size.0,
+                height: self.scene.size.1,
+                depth_or_array_layers: 1,
+            };
+            if let Some(hdr) = self.trailer_frame.hdr_texture() {
+                encoder.copy_texture_to_texture(
+                    hdr.as_image_copy(),
+                    self.scene.color.as_image_copy(),
+                    size,
+                );
+                encoder.copy_texture_to_texture(
+                    self.depth_texture.as_image_copy(),
+                    self.scene.depth.as_image_copy(),
+                    size,
+                );
+            }
+            let timestamps = profiler.as_mut().and_then(|p| p.pass("water"));
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("water"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: timestamps,
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_bind_group(2, &self.glint_bind_group, &[]);
+            pass.set_bind_group(3, &self.shadows.read_group, &[]);
+            pass
+        } else {
+            pass
+        };
         // Clouds and water both blend: draw whichever is farther first.
         let above_clouds = camera.position.y > environment.cloud_height;
         if above_clouds && environment.sky && self.clouds {
             self.draw_clouds(&mut pass, set);
         }
-        pass.set_pipeline(&set.translucent);
+        // Low's water has no scene copy to read: a lighter shader.
+        let translucent = match &set.translucent_low {
+            Some(low) if !self.split_world => low,
+            _ => &set.translucent,
+        };
+        pass.set_pipeline(translucent);
         pass.set_bind_group(1, &self.atlas_bind_group, &[]);
         // Entities' shadows, under the water drawn next.
         if let Some(entities) = &self.entities {
@@ -1380,32 +1615,62 @@ impl Renderer {
         (visible.len(), triangles)
     }
 
-    /// The sun's light for the frame and the shadow maps' size for the
-    /// quality; eases rain over 10 s.
-    fn prepare_sun(
-        &mut self,
-        camera: &Camera,
-        environment: &Environment,
-    ) -> visuals::shadow::SunFrame {
-        use visuals::{Effect, sun};
+    /// The sun's light for the frame, the shadow maps' size for the
+    /// quality and the water and cloud settings; eases rain over 10 s, and
+    /// makes the scene copy when the water needs one.
+    fn prepare_sun(&mut self, environment: &Environment) -> visuals::shadow::SunFrame {
+        use visuals::{Effect, Quality, shadow::WaterFrame, sun};
         // Rain fades in and out over 10 s (200 ticks) of game time.
         let elapsed = (environment.time - self.rain_time).clamp(0.0, 40.0);
         self.rain_time = environment.time;
         let step = elapsed / 200.0;
         self.rain += (environment.rain - self.rain).clamp(-step, step);
-        let config = sun::ShadowConfig::of(self.visuals.quality);
-        if self.shadows.config != config {
-            self.shadows =
-                visuals::shadow::ShadowMaps::new(&self.device, &self.shadow_pipeline, config);
-        }
-        let sunlight = environment.sunlight && environment.sky;
+        let visuals = self.visuals;
+        let on = |effect| visuals.on(effect);
+        let quality = visuals.quality;
+        let config = sun::ShadowConfig::of(quality);
+        // Under water (the sky is off but the dimension has a sun) the
+        // sun only shows as caustics, and only on High.
+        let underwater = environment.sunlight && !environment.sky;
+        let caustics = underwater && on(Effect::Caustics);
+        let sunlight = environment.sunlight && (environment.sky || caustics);
         let light = sun::light(environment.celestial_angle, self.rain, sunlight);
-        let on = |effect| self.visuals.on(effect);
         let shadows = on(Effect::Shadows) && sunlight && light.strength > 0.02;
+        // The water reads a copy of the opaque scene on Medium and High.
+        let ssr_steps = match quality {
+            Quality::Low => 0,
+            Quality::Medium => 16,
+            Quality::High => 32,
+        } * u32::from(on(Effect::Reflections));
+        let refraction = on(Effect::Refraction);
+        self.split_world = ssr_steps > 0 || refraction;
+        let size = (self.config.width, self.config.height);
+        let mut rebind = self.shadows.config != config;
+        if self.split_world && self.scene.size != size {
+            let format = self.trailer_frame.format();
+            self.scene = SceneCopies::new(&self.device, format, size.0, size.1);
+            rebind = true;
+        }
+        if self.shadows.config != config {
+            let cloud_view = self.cloud_texture.create_view(&Default::default());
+            self.shadows = visuals::shadow::ShadowMaps::new(
+                &self.device,
+                &self.shadow_pipeline,
+                config,
+                &visuals::shadow::SceneViews {
+                    clouds: &cloud_view,
+                    color: &self.scene.color_view,
+                    depth: &self.scene.depth_view,
+                },
+            );
+        } else if rebind {
+            self.rebind_trailer();
+        }
+        let clouds = self.clouds && environment.sky;
+        let not_low = quality != Quality::Low;
         // The sky's color tints the ambient light under the open sky.
         let sky = environment.sky_color;
         let sky_tint = Vec3::ONE.lerp(sky / sky.max_element().max(0.01), 0.3);
-        let _ = camera;
         visuals::shadow::SunFrame {
             light,
             sunlight,
@@ -1415,6 +1680,20 @@ impl Renderer {
             leaf_light: on(Effect::LeafLight),
             dimension_tint: environment.ambient_tint,
             sky_tint,
+            water: WaterFrame {
+                ssr_steps: if self.split_world { ssr_steps } else { 0 },
+                refraction: self.split_world && refraction,
+                caustics,
+                snell: quality == Quality::High && underwater && on(Effect::Caustics),
+                screen: [size.0 as f32, size.1 as f32],
+                cloud_height: environment.cloud_height,
+                clouds,
+                cloud_reflections: clouds && not_low,
+                cloud_shadows: clouds && on(Effect::CloudShadows),
+                glass_metal: quality == Quality::High && on(Effect::Reflections),
+                sky_effects: on(Effect::CloudShading),
+                rain: self.rain,
+            },
         }
     }
 
@@ -1538,30 +1817,6 @@ impl Renderer {
             .write_buffer(&self.shadows.uniform, 0, bytemuck::bytes_of(&uniform));
         triangles
     }
-}
-
-/// The opaque triangles of `mesh` with sky light on some vertex.
-fn sunlit_triangles(mesh: &Mesh) -> Vec<u32> {
-    mesh.indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .filter(|tri| {
-            tri.iter()
-                .any(|&i| mesh.vertices[i as usize].light[0] > 0.0)
-        })
-        .flatten()
-        .copied()
-        .collect()
-}
-
-/// The lowest and highest vertex of a mesh.
-fn mesh_y_range(mesh: &Mesh) -> (f32, f32) {
-    mesh.vertices
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), v| {
-            (lo.min(v.position[1]), hi.max(v.position[1]))
-        })
 }
 
 /// Draws `range` of a mesh's indices, if it isn't empty.
@@ -1744,10 +1999,30 @@ fn create_block_pipeline(
     cull_back: bool,
     faces: bool,
 ) -> wgpu::RenderPipeline {
+    create_block_pipeline_entry(
+        device,
+        layout,
+        shader,
+        format,
+        (translucent, cull_back, faces),
+        None,
+    )
+}
+
+/// `create_block_pipeline` with `(translucent, cull_back, faces)` and a
+/// fragment entry point other than the usual one.
+fn create_block_pipeline_entry(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    (translucent, cull_back, faces): (bool, bool, bool),
+    entry_override: Option<&'static str>,
+) -> wgpu::RenderPipeline {
     let (label, entry, blend) = if translucent {
         (
             "translucent blocks",
-            "fs_translucent",
+            entry_override.unwrap_or("fs_translucent"),
             Some(wgpu::BlendState::ALPHA_BLENDING),
         )
     } else {
@@ -1895,10 +2170,21 @@ fn create_cloud_pipeline(
     layouts: &Layouts,
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
+    trailer: bool,
 ) -> wgpu::RenderPipeline {
+    // The Trailer clouds read the cloud picture and the sun in group 3.
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("clouds"),
-        bind_group_layouts: &[Some(&layouts.globals), Some(&layouts.texture)],
+        bind_group_layouts: &if trailer {
+            vec![
+                Some(&layouts.globals),
+                Some(&layouts.texture),
+                Some(&layouts.texture),
+                Some(&layouts.shadow.read_layout),
+            ]
+        } else {
+            vec![Some(&layouts.globals), Some(&layouts.texture)]
+        },
         immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1940,14 +2226,19 @@ fn create_sky_pipeline(
     layouts: &Layouts,
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
+    trailer: bool,
 ) -> wgpu::RenderPipeline {
+    let mut groups = vec![
+        Some(&layouts.globals),
+        Some(&layouts.texture),
+        Some(&layouts.texture),
+    ];
+    if trailer {
+        groups.push(Some(&layouts.shadow.read_layout));
+    }
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sky"),
-        bind_group_layouts: &[
-            Some(&layouts.globals),
-            Some(&layouts.texture),
-            Some(&layouts.texture),
-        ],
+        bind_group_layouts: &groups,
         immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1963,7 +2254,12 @@ fn create_sky_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
+            // The Trailer sky is drawn after the world, at the far plane.
+            depth_compare: Some(if trailer {
+                wgpu::CompareFunction::LessEqual
+            } else {
+                wgpu::CompareFunction::Always
+            }),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -1979,26 +2275,76 @@ fn create_sky_pipeline(
     })
 }
 
+/// The depth buffer; with `copy` it can be copied out for the water
+/// (Trailer, Medium and High). The flag costs speed on Apple GPUs, so
+/// it's only set while a frame needs the copy.
 fn create_depth_view(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
-) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    copy: bool,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("depth"),
+        size: wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: if copy {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+        },
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+/// A copy of the opaque scene's color and depth, taken before the water
+/// is drawn (Medium and High): what refraction and screen-space
+/// reflections read.
+struct SceneCopies {
+    color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    size: (u32, u32),
+}
+
+impl SceneCopies {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let make = |label, format| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+        };
+        let color = make("scene color", format);
+        let depth = make("scene depth", DEPTH_FORMAT);
+        Self {
+            color_view: color.create_view(&Default::default()),
+            depth_view: depth.create_view(&Default::default()),
+            color,
+            depth,
+            size: (width, height),
+        }
+    }
 }
 
 /// The sky color as a clear value for `format`. sRGB surfaces expect linear input.
@@ -2069,6 +2415,30 @@ mod tests {
             took.as_secs_f64() * 1000.0
         );
         assert!(took < std::time::Duration::from_millis(300), "{took:?}");
+    }
+
+    /// M51's underwater fog (24 blocks at first, 57.6 after 100 ticks,
+    /// 96 after 600) reaches the shaders unchanged: both looks read the
+    /// same globals, and the Trailer shaders have no fog of their own.
+    #[test]
+    fn m51_fog_is_the_same_in_the_trailer_look() {
+        use crate::game::environment::{environment, water_fog_end};
+        use crate::world::biome::Biome;
+        for (ticks, end) in [(0, 24.0), (100, 57.6), (600, 96.0)] {
+            let mut env = environment(6000, 0.0, Biome::Ocean, Vec3::Z, None);
+            env.fog_end = water_fog_end(Biome::Ocean, ticks);
+            let g = globals(glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, Vec3::ZERO, &env);
+            assert!((g.fog[0] - end).abs() < 1e-3, "{ticks}: {}", g.fog[0]);
+        }
+        // The Trailer shaders use `fog_visibility` and add no fog formula.
+        for source in [
+            include_str!("trailer.wgsl"),
+            include_str!("trailer_sky.wgsl"),
+            include_str!("trailer_clouds.wgsl"),
+            include_str!("trailer_common.wgsl"),
+        ] {
+            assert!(!source.contains("fog_density"), "a fog formula of its own");
+        }
     }
 
     #[test]
