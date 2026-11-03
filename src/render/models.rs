@@ -95,6 +95,62 @@ pub const DYE_COLORS: [[f32; 3]; 16] = [
     [0.114, 0.114, 0.129],
 ];
 
+/// The names vanilla's models give a mob's parts, worked out from their
+/// roles and order (mobs.ron has none): `head`, `body`, the legs and
+/// arms of a humanoid or a four-legged walker, wings, a tail, a spider's
+/// `leg1` to `leg8`. A custom model that `attach`es to a part is
+/// matched by these.
+pub fn vanilla_part_names(model: &crate::entity::mobs::Model) -> Vec<String> {
+    let humanoid = model
+        .parts
+        .iter()
+        .any(|p| matches!(p.role, Role::ArmA | Role::ArmB | Role::Reaching | Role::Aim));
+    let (mut legs, mut arms, mut bodies) = (0, 0, 0);
+    model
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(i, part)| match part.role {
+            Role::Head => "head".to_owned(),
+            Role::None => {
+                bodies += 1;
+                if bodies == 1 {
+                    "body".to_owned()
+                } else {
+                    format!("part{i}")
+                }
+            }
+            Role::LegA | Role::LegB if humanoid => if part.role == Role::LegA {
+                "right_leg"
+            } else {
+                "left_leg"
+            }
+            .to_owned(),
+            Role::LegA | Role::LegB => {
+                legs += 1;
+                [
+                    "right_hind_leg",
+                    "left_hind_leg",
+                    "right_front_leg",
+                    "left_front_leg",
+                ]
+                .get(legs - 1)
+                .map_or_else(|| format!("leg{legs}"), |n| (*n).to_owned())
+            }
+            Role::ArmA | Role::ArmB | Role::Reaching | Role::Aim => {
+                arms += 1;
+                if arms == 1 { "right_arm" } else { "left_arm" }.to_owned()
+            }
+            Role::WingA => "right_wing".to_owned(),
+            Role::WingB => "left_wing".to_owned(),
+            Role::Lid => "lid".to_owned(),
+            Role::Tail => "tail".to_owned(),
+            Role::SpiderLeg(n) => format!("leg{}", n + 1),
+            Role::Tentacle(n) => format!("tentacle{}", n + 1),
+        })
+        .collect()
+}
+
 /// What a model needs to know about the mob it's posed for.
 struct Pose {
     swing: f32,
@@ -117,6 +173,28 @@ pub fn add_mob_model(
     alpha: f32,
     light: (u8, u8),
     tint: [f32; 3],
+) {
+    // A custom entity model (a resource pack's, M58) draws in place of the
+    // mob's own body; its layers (wool, saddles) are left out.
+    let custom = std::ptr::eq(model, &def.model)
+        .then(crate::cem::active)
+        .flatten()
+        .and_then(|registry| registry.find(&def.name, mob.data.age < 0).cloned())
+        .filter(|_| mob.data.variant == 0);
+    add_mob_model_using(mesh, mob, def, model, alpha, light, tint, custom);
+}
+
+/// `add_mob_model` with the custom model to draw the body with, if any.
+#[allow(clippy::too_many_arguments)]
+pub fn add_mob_model_using(
+    mesh: &mut Mesh,
+    mob: &Mob,
+    def: &MobDef,
+    model: &crate::entity::mobs::Model,
+    alpha: f32,
+    light: (u8, u8),
+    tint: [f32; 3],
+    custom: Option<std::sync::Arc<crate::cem::CemModel>>,
 ) {
     let (feet, yaw, limb_amount) = mob.pose(alpha);
     let head_yaw = angle_difference(mob.head_yaw, yaw);
@@ -152,7 +230,10 @@ pub fn add_mob_model(
         scale *= f32::from(mob.data.size);
     }
     // A baby villager or animal is half size.
-    if mob.data.age < 0 || mob.data.villager.as_ref().is_some_and(|v| v.baby > 0) {
+    let baby = mob.data.age < 0 || mob.data.villager.as_ref().is_some_and(|v| v.baby > 0);
+    // A pack's own baby model is already small.
+    let own_baby = baby && custom.as_ref().is_some_and(|m| m.baby);
+    if baby && !own_baby {
         scale *= 0.5;
     }
     let swell = mob.swell_amount(alpha);
@@ -176,7 +257,31 @@ pub fn add_mob_model(
         let local = Vec3::new(-model.x, FEET_Y - model.y, model.z) / PIXELS * scale;
         (feet.as_vec3() + turn * local).to_array()
     };
-    for part in &model.parts {
+    let attached: Vec<String> = custom
+        .as_ref()
+        .map(|cem| {
+            cem.parts
+                .iter()
+                .filter(|p| p.attach)
+                .map(|p| p.vanilla.clone().unwrap_or_else(|| p.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let names = custom.is_some().then(|| vanilla_part_names(model));
+    if let Some(cem) = &custom {
+        let (frame, counter) = crate::cem::frame();
+        let entity = crate::cem::vars::EntityVars::of(mob, def.health as f32, &frame);
+        crate::cem::with_state(mob.id, &def.name, cem, &entity, counter, |runtime| {
+            crate::cem::pose::add_parts(mesh, cem, runtime, place, color, light);
+        });
+    }
+    for (index, part) in model.parts.iter().enumerate() {
+        // Replaced by the custom model, unless it attaches to this part.
+        if let Some(names) = &names
+            && !attached.contains(&names[index])
+        {
+            continue;
+        }
         let (rx, ry, rz, pivot) = animate(part, &pose);
         // 1.0.0 rotates a part about z, then y, then x (applied x first).
         let rotation =
@@ -574,6 +679,195 @@ mod tests {
         assert!(east.1.x > 0.5 + 0.5, "snout to the east: {:?}", east);
         let (_, top) = bounds(&mesh_of("zombie", 0.0, true));
         assert!(top.y < 64.0 + 0.7, "lying down: {top}");
+    }
+
+    /// A custom pig written for these tests: a head that attaches to the
+    /// vanilla head, and a body that replaces the vanilla body, all
+    /// swinging with the limb swing.
+    const CUSTOM_PIG: &str = r#"{
+        "textureSize": [64, 32],
+        "models": [
+            {"part": "head", "id": "head", "attach": true, "invertAxis": "xy", "translate": [0, -12, 6],
+             "boxes": [{"coordinates": [-1, -1, -1, 2, 2, 2], "textureOffset": [0, 0]}],
+             "animations": [{"head.rx": "sin(age * 0.1) * 0.2"}]},
+            {"part": "body", "id": "body", "invertAxis": "xy", "translate": [0, -11, -2],
+             "boxes": [{"coordinates": [-5, -8, -8, 10, 16, 8], "textureOffset": [28, 8]}]}
+        ]
+    }"#;
+
+    fn custom(text: &str) -> std::sync::Arc<crate::cem::CemModel> {
+        std::sync::Arc::new(
+            crate::cem::model::parse(text, &|_| None, &mut |_| {}).expect("a model"),
+        )
+    }
+
+    fn mesh_using(name: &str, model: Option<std::sync::Arc<crate::cem::CemModel>>) -> Mesh {
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let kind = mobs.find(name).unwrap();
+        let def = mobs.get(kind);
+        let mob = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        let mut mesh = Mesh::default();
+        add_mob_model_using(
+            &mut mesh,
+            &mob,
+            def,
+            &def.model,
+            1.0,
+            (15, 0),
+            [1.0; 3],
+            model,
+        );
+        mesh
+    }
+
+    #[test]
+    fn vanilla_parts_have_the_names_a_custom_model_attaches_to() {
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let names = |name: &str| vanilla_part_names(&mobs.get(mobs.find(name).unwrap()).model);
+        assert_eq!(
+            names("pig"),
+            [
+                "head",
+                "body",
+                "right_hind_leg",
+                "left_hind_leg",
+                "right_front_leg",
+                "left_front_leg"
+            ]
+        );
+        let zombie = names("zombie");
+        for name in [
+            "head",
+            "body",
+            "right_arm",
+            "left_arm",
+            "right_leg",
+            "left_leg",
+        ] {
+            assert!(zombie.iter().any(|n| n == name), "{name} in {zombie:?}");
+        }
+    }
+
+    #[test]
+    fn a_custom_model_replaces_the_body_attaches_where_asked_and_other_mobs_are_unchanged() {
+        let plain = mesh_using("pig", None);
+        assert_eq!(plain.indices.len() / 6, 7 * 6);
+        let with = mesh_using("pig", Some(custom(CUSTOM_PIG)));
+        // The vanilla head and snout stay (the head is attached to), and
+        // the custom model adds a head box and a body: 2 + 1 + 1 boxes.
+        assert_eq!(
+            with.indices.len() / 6,
+            4 * 6,
+            "attached head keeps its two boxes"
+        );
+        assert_ne!(with, plain);
+        // A mob the pack has no model for looks as before: the same mob
+        // drawn through the public entry point (which finds no model for
+        // it) and with none given is the same mesh.
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let kind = mobs.find("zombie").unwrap();
+        let def = mobs.get(kind);
+        let mob = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+        let (mut a, mut b) = (Mesh::default(), Mesh::default());
+        add_mob_model(&mut a, &mob, def, &def.model, 1.0, (15, 0), [1.0; 3]);
+        add_mob_model_using(&mut b, &mob, def, &def.model, 1.0, (15, 0), [1.0; 3], None);
+        assert_eq!(a.vertices.len(), b.vertices.len());
+        for (i, (x, y)) in a.vertices.iter().zip(&b.vertices).enumerate() {
+            assert_eq!(x, y, "vertex {i}");
+        }
+        assert_eq!(a.indices, b.indices);
+        assert_eq!(a.indices.len() / 6, 6 * 6);
+        // A model with no attach replaces every vanilla part.
+        let replaced = custom(
+            r#"{"textureSize": [64, 32], "models": [{"id": "all", "boxes": [{"coordinates": [0, 0, 0, 4, 4, 4], "textureOffset": [0, 0]}]}]}"#,
+        );
+        assert_eq!(mesh_using("pig", Some(replaced)).indices.len() / 6, 6);
+    }
+
+    /// 100 animated mobs on screen: building their meshes and running
+    /// their animations takes at most 1.0 ms a frame on the M1 (release).
+    #[test]
+    fn a_hundred_animated_mobs_take_under_a_millisecond_a_frame() {
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let kind = mobs.find("pig").unwrap();
+        let def = mobs.get(kind);
+        // A model of a dozen parts with the kinds of animation lines Fresh
+        // Animations uses.
+        let mut parts = String::new();
+        for i in 0..12 {
+            if i > 0 {
+                parts.push(',');
+            }
+            parts.push_str(&format!(
+                r#"{{"id": "p{i}", "translate": [0, {y}, 0], "boxes": [{{"coordinates": [-1, 0, -1, 2, 3, 2], "textureOffset": [0, 0]}}],
+                   "animations": [{{"var.s{i}": "sin(age * 0.1 + {i}) * limb_speed", "p{i}.rx": "if(is_hurt, 0.3, cos(limb_swing * 0.6662 + {i}) * 1.4 * limb_speed + var.s{i} * 0.1)", "p{i}.ry": "torad(clamp(head_yaw, -30, 30)) * 0.5"}}]}}"#,
+                y = i as f32 * 0.5
+            ));
+        }
+        let model = custom(&format!(
+            r#"{{"textureSize": [64, 32], "models": [{parts}]}}"#
+        ));
+        let herd: Vec<Mob> = (0..100)
+            .map(|i| {
+                let mut mob = Mob::new(kind, def, DVec3::new(i as f64, 64.0, 0.5), 0.0);
+                mob.id = 1000 + i as u64;
+                mob.limb_swing = i as f32 * 0.3;
+                mob
+            })
+            .collect();
+        let frame = |n: u64| {
+            crate::cem::begin_frame(n as f32, 0.5, DVec3::ZERO);
+            let mut mesh = Mesh::default();
+            for mob in &herd {
+                add_mob_model_using(
+                    &mut mesh,
+                    mob,
+                    def,
+                    &def.model,
+                    0.5,
+                    (15, 0),
+                    [1.0; 3],
+                    Some(model.clone()),
+                );
+            }
+            mesh
+        };
+        for n in 0..20 {
+            frame(n); // warm up
+        }
+        let started = std::time::Instant::now();
+        let frames = 200;
+        let mut quads = 0;
+        for n in 0..frames {
+            quads = frame(100 + n).indices.len() / 6;
+        }
+        let each = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+        println!("100 animated mobs: {each:.3} ms a frame ({quads} quads)");
+        assert_eq!(quads, 100 * 12 * 6);
+        // Debug test builds are slower than the release the milestone
+        // measures (1.0 ms on the M1).
+        // What the same 100 mobs cost with the plain models, for scale.
+        let started = std::time::Instant::now();
+        for n in 0..frames {
+            let mut mesh = Mesh::default();
+            for mob in &herd {
+                add_mob_model_using(
+                    &mut mesh,
+                    mob,
+                    def,
+                    &def.model,
+                    0.5,
+                    (15, 0),
+                    [1.0; 3],
+                    None,
+                );
+            }
+            assert!(mesh.indices.len() / 6 > 0 && n < frames);
+        }
+        let plain = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+        println!("the same 100 mobs with the plain pig model: {plain:.3} ms a frame");
+        let allowed = if cfg!(debug_assertions) { 12.0 } else { 1.0 };
+        assert!(each < allowed, "{each:.3} ms a frame");
     }
 
     #[test]

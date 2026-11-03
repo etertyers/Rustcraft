@@ -2085,4 +2085,114 @@ mod tests {
         );
         assert!(clients[1].0.chat_events.is_empty());
     }
+
+    /// CEM animations (M58) are drawn on each client from the mob's synced
+    /// state, so two clients must get the same variables for the same mob
+    /// on the same tick: the entity variables, and the variables a model
+    /// keeps from tick to tick.
+    #[test]
+    fn two_clients_agree_on_a_villagers_and_a_zombies_animation_variables() {
+        use crate::cem::{
+            model,
+            pose::Runtime,
+            vars::{EntityVars, Frame},
+        };
+        use std::collections::BTreeMap;
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |server, clients| {
+            server.player_count() == 2 && clients.iter().all(|(c, _)| c.welcomed)
+        });
+        let ids: Vec<u64> = ["zombie", "villager"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                server
+                    .game
+                    .summon(name, DVec3::new(4.5 + 2.0 * i as f64, 64.0, 3.5), 0.0)
+                    .expect("a mob")
+                    .id
+            })
+            .collect();
+        // A model that keeps a counter and a flag, and reads what the
+        // animations of Fresh Animations read.
+        let model = model::parse(
+            r#"{"models": [{"id": "body", "animations": [
+                {"var.t": "var.t + 1",
+                 "var.sway": "sin(age * 0.2) * limb_speed + var.sway * 0.5 + head_yaw * 0.01",
+                 "varb.angry": "is_aggressive || (is_hurt && health < max_health)",
+                 "body.rx": "torad(head_pitch) + var.sway * 0.1 + if(is_child, 0.2, 0)"}]}]}"#,
+            &|_| None,
+            &mut |_| {},
+        )
+        .expect("a model");
+        // What each client sees of each mob at each of its ticks.
+        type Seen = BTreeMap<(usize, u64, u64), (EntityVars, Vec<f32>)>;
+        let mut seen = Seen::new();
+        let mut runtimes: BTreeMap<(usize, u64), (Runtime, u64)> = BTreeMap::new();
+        let defs = mob_registry();
+        let start = server.game.time();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while server.game.time() < start + 200 {
+            assert!(Instant::now() < deadline, "the ticks never came");
+            for (client, game) in clients.iter_mut() {
+                client.advance(game, 0.05);
+            }
+            server.advance(0.05);
+            for (index, (client, game)) in clients.iter_mut().enumerate() {
+                client.receive(game);
+                let tick = game.time();
+                for &id in &ids {
+                    let Some(mob) = game.mobs.iter().find(|m| m.id == id) else {
+                        continue;
+                    };
+                    let (runtime, last) = runtimes
+                        .entry((index, id))
+                        .or_insert_with(|| (Runtime::new(&model, id), tick.saturating_sub(1)));
+                    if tick == *last {
+                        continue;
+                    }
+                    // The same inputs on every client: only the mob's
+                    // synced state and the tick.
+                    let frame = Frame {
+                        time: tick as f32,
+                        frame_time: 0.05,
+                        frame_counter: 0,
+                        player: DVec3::ZERO,
+                        alpha: 0.0,
+                    };
+                    let vars = EntityVars::of(mob, defs.get(mob.kind).health as f32, &frame);
+                    runtime.animate(&model, &vars);
+                    *last = tick;
+                    seen.insert((index, id, tick), (vars, runtime.vars.clone()));
+                }
+            }
+        }
+        // Compare every tick both clients saw. The variables of a mob come
+        // from its state alone, so clients that saw the same state agree.
+        let mut compared = 0;
+        for (&(client, id, tick), (vars, kept)) in &seen {
+            if client != 0 {
+                continue;
+            }
+            let Some((other_vars, other_kept)) = seen.get(&(1, id, tick)) else {
+                continue;
+            };
+            // Same mob state this tick on both (a client a tick behind the
+            // server shows the one before)?
+            if vars.0[..8] != other_vars.0[..8] {
+                continue;
+            }
+            assert_eq!(vars, other_vars, "mob {id} at tick {tick}");
+            compared += 1;
+            // What it keeps matches too once both have counted the same
+            // number of ticks since they first saw it.
+            if kept[0] == other_kept[0] {
+                assert_eq!(
+                    kept, other_kept,
+                    "kept variables of mob {id} at tick {tick}"
+                );
+            }
+        }
+        assert!(compared >= 100, "only {compared} ticks could be compared");
+    }
 }
