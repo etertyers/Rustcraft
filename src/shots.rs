@@ -503,6 +503,16 @@ pub static SHOTS: &[Shot] = &[
         stage: torches_in_cave,
     },
     Shot {
+        name: "m39-fullbright",
+        about: "the m34 deepslate cheese cave at night with no torches, seen with Fullbright switched on by its G key: every block lit, \"Fullbright: ON\" above the hotbar",
+        world: Some(WorldKind::Generated { seed: 20111118 }),
+        view: Some(([-79.5, -17.0, 66.5], 2.6, -0.2)),
+        time: Some(18000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "m35-key-binds",
         about: "Options, Controls, Key Binds over the paused game: every action by category, Sneak moved onto W so both show red, and Jump waiting for a new key",
         world: Some(WorldKind::Flat),

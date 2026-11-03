@@ -108,6 +108,7 @@ pub fn run(bots: usize) -> Result<Report> {
             conn.send(ClientMsg::Login {
                 version: PROTOCOL_VERSION,
                 name: format!("Bot_{i}"),
+                mods: crate::mods::active().required(),
             });
             conn.send(ClientMsg::Settings(PlayerSettings {
                 view_distance: VIEW_DISTANCE,

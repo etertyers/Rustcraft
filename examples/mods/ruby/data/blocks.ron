@@ -1,0 +1,14 @@
+// Blocks in the same format as assets/data/blocks.ron. Names are
+// <mod id>:<name>. This one reuses the game's red block texture; a mod can
+// ship its own in assets/minecraft/textures/block/ruby_block.png.
+#![enable(implicit_some)]
+[
+    (
+        name: "ruby:ruby_block",
+        display: "Block of Ruby",
+        hardness: 5.0,
+        tool: Pickaxe,
+        harvest: (tools: [Pickaxe], tier: Iron),
+        textures: (all: "redstone_block"),
+    ),
+]

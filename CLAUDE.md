@@ -148,6 +148,7 @@ src/
   server.rs, client.rs, net/{protocol,transport}.rs, game/sync.rs   # the server (the world and every player; chunks, edits, snapshots and sounds to each client), the client link (prediction and replay), the messages and connections, a game as a client's copy of the world
   bindings.rs, ui/options.rs   # key bindings (actions, categories, vanilla defaults and options.txt ids), the Options screens and Key Binds list
   ui/{font,text_field}.rs   # the Minecraft font (bitmap glyphs from the packs made into a TrueType font for egui, § codes, text shadow), the one-line text box (anvil names, chat)
+  mods/{mod,lua,client}.rs, game/{modding,random_ticks}.rs, ui/mods.rs, mods/ examples/mods/   # mod folders and the set chosen at startup, the sandboxed Lua runtime and its API, the client's Lua (keys, HUD text, brightness), the server's mod host and events, random ticks, the Mods screen, the bundled Fullbright and the Ruby example (docs/modding.md)
   ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
@@ -593,7 +594,7 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 
 #### Checkpoint G — Mods, farming and fishing
 
-### - [ ] M39 — Lua mods and Fullbright
+### - [x] M39 — Lua mods and Fullbright
 - **Mod folders:** `mods/<id>/` beside `saves/`, or a `.zip`. Each has `mod.ron` (id, name, version, authors, description, Rustcraft version, dependencies) and any of: `data/` (blocks, items, recipes, loot tables, creative tabs, mob drops in the same RON formats as `assets/data/`), `assets/` (a resource-pack layer for textures, models, sounds, lang and fonts) and `main.lua`. Mod content uses its own namespace (`<id>:ruby_block`).
 - **Lua API (`mlua`, Lua 5.4):** register blocks and items with callbacks (on use, on place, on break, on random tick), events (server tick, player join/leave, block break/place, entity damage/death, chat message, item crafted), register commands (M38) and key bindings (M35's Mods category), read and set blocks, spawn entities, give items, send chat, run timers, and a small client-side API for HUD text and render settings (brightness override). Documented in `docs/modding.md` with an example mod in `examples/mods/ruby/`.
 - **Sandbox:** no `os`, `io` or `require` outside the mod folder; an instruction-count limit per call so a broken mod can't freeze the game; Lua errors are caught, logged and shown in the Mods screen without crashing.

@@ -44,7 +44,7 @@ fn read_with_placeholders<T: for<'de> Deserialize<'de>>(path: &str, placeholders
 
 /// `pub const NAME: Ty = Ty(n);` for each name, then `COUNT`, `NAMES` and
 /// `by_name`.
-fn constants(ty: &str, names: &[&str]) -> String {
+fn constants(ty: &str, kind: &str, names: &[&str]) -> String {
     let mut out = String::new();
     for (index, name) in names.iter().enumerate() {
         let ident = name.to_ascii_uppercase();
@@ -58,8 +58,8 @@ fn constants(ty: &str, names: &[&str]) -> String {
     writeln!(out, "];").unwrap();
     writeln!(
         out,
-        "/// The {ty} named `name` (without the `minecraft:` namespace).\n\
-         pub fn by_name(name: &str) -> Option<{ty}> {{\n    match name {{"
+        "/// The built-in {ty} named `name` (without the `minecraft:` namespace).\n\
+         pub fn by_builtin(name: &str) -> Option<{ty}> {{\n    match name {{"
     )
     .unwrap();
     for name in names {
@@ -67,6 +67,13 @@ fn constants(ty: &str, names: &[&str]) -> String {
         writeln!(out, "        {name:?} => Some({ident}),").unwrap();
     }
     writeln!(out, "        _ => None,\n    }}\n}}").unwrap();
+    writeln!(
+        out,
+        "/// The {ty} named `name`: a built-in one, or a mod's (`mod:name`).\n\
+         pub fn by_name(name: &str) -> Option<{ty}> {{\n    \
+         by_builtin(name).or_else(|| crate::mods::active().{kind}_by_name(name).map({ty}))\n}}"
+    )
+    .unwrap();
     out
 }
 
@@ -96,6 +103,14 @@ fn main() {
 
     let out = env::var("OUT_DIR").unwrap();
     let out = Path::new(&out);
-    fs::write(out.join("blocks.rs"), constants("BlockId", &block_names)).unwrap();
-    fs::write(out.join("items.rs"), constants("ItemId", &item_names)).unwrap();
+    fs::write(
+        out.join("blocks.rs"),
+        constants("BlockId", "block", &block_names),
+    )
+    .unwrap();
+    fs::write(
+        out.join("items.rs"),
+        constants("ItemId", "item", &item_names),
+    )
+    .unwrap();
 }

@@ -279,6 +279,7 @@ mod tests {
         let missing: Vec<&str> = every_item()
             .into_iter()
             .filter(|id| !made.contains(id) && !NOT_CRAFTED.contains(&id.name()))
+            .filter(|id| id.name() != "unknown_item")
             // Placeholders (docs/placeholders.md) have no recipes yet.
             .filter(|id| {
                 !crate::inventory::item::registry()

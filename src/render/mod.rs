@@ -84,6 +84,9 @@ pub struct Environment {
     pub sky: bool,
     /// The Brightness option, 0 (Moody) to 1 (Bright).
     pub brightness: f32,
+    /// A light level (0–15) every block is lit at least as much as: a
+    /// mod's brightness override (Fullbright). 0 is off.
+    pub min_light: f32,
     /// Glint Speed and Glint Strength as multiples of vanilla's defaults.
     pub glint: [f32; 2],
     /// The dimension's ambient light, lifting the dark (modern
@@ -1101,7 +1104,7 @@ fn globals(
             if env.sky { 0.0 } else { 1.0 },
             env.ambient,
         ],
-        lighting: [env.brightness, env.glint[0], env.glint[1], 0.0],
+        lighting: [env.brightness, env.glint[0], env.glint[1], env.min_light],
     }
 }
 

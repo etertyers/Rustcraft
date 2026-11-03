@@ -8,7 +8,7 @@
 
 use std::{fmt, sync::LazyLock};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use glam::IVec3;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -35,6 +35,7 @@ impl BlockId {
         super::blocks::NAMES
             .get(self.index())
             .copied()
+            .or_else(|| crate::mods::active().block_name(self.index()))
             .unwrap_or("unknown")
     }
 }
@@ -50,12 +51,21 @@ impl<'de> Deserialize<'de> for BlockId {
 
 impl Serialize for BlockId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&format_args!("{NAMESPACE}:{}", self.name()))
+        serializer.collect_str(&qualified(self.name()))
     }
 }
 
-/// The namespace every block and item is in.
+/// The namespace every built-in block and item is in.
 pub const NAMESPACE: &str = "minecraft";
+
+/// `name` with its namespace: `minecraft:` unless it has one (`ruby:gem`).
+pub fn qualified(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.contains(':') {
+        name.into()
+    } else {
+        format!("{NAMESPACE}:{name}").into()
+    }
+}
 
 /// `name` without a leading `minecraft:`.
 pub fn strip_namespace(name: &str) -> &str {
@@ -276,7 +286,7 @@ impl BlockState {
 /// `blocks.ron` lists them.
 impl fmt::Display for BlockState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{NAMESPACE}:{}", self.id.name())?;
+        f.write_str(&qualified(self.id.name()))?;
         let layout = registry().layout(self.id);
         if layout.props.is_empty() {
             return Ok(());
@@ -902,6 +912,12 @@ pub struct BlockDef {
     /// Overrides for states meeting a condition, applied in order.
     #[serde(default)]
     pub variants: Vec<(String, Variant)>,
+    /// Gets random ticks (crops, and mod blocks with `on_random_tick`).
+    #[serde(default)]
+    pub random_ticks: bool,
+    /// A mod's script has callbacks for it (`on_use`, `on_place`, `on_break`).
+    #[serde(default)]
+    pub scripted: bool,
 }
 
 fn default_true() -> bool {
@@ -1128,9 +1144,38 @@ pub fn registry() -> &'static BlockRegistry {
             include_str!("../../assets/data/blocks.ron"),
             include_str!("../../assets/data/placeholder_blocks.ron"),
         ])
-        .expect("assets/data/blocks.ron and placeholder_blocks.ron are valid")
+        .expect("assets/data/blocks.ron, placeholder_blocks.ron and the mods' blocks are valid")
     });
     &REGISTRY
+}
+
+/// The mods' blocks (from their data and `main.lua`) in the order of the
+/// mod set's block names, which is where their IDs come from.
+fn mod_defs() -> Result<Vec<BlockDef>> {
+    let mods = crate::mods::active();
+    let mut by_name: std::collections::HashMap<String, BlockDef> = std::collections::HashMap::new();
+    for active in &mods.active {
+        if let Some(text) = &active.data.blocks {
+            for def in ron::from_str::<Vec<BlockDef>>(text)
+                .with_context(|| format!("{}'s data/blocks.ron", active.manifest.id))?
+            {
+                by_name.insert(def.name.clone(), def);
+            }
+        }
+    }
+    for lua in &mods.lua_blocks {
+        let def: BlockDef = serde_json::from_value(lua.def.clone())
+            .with_context(|| format!("a block of {}", lua.mod_id))?;
+        by_name.insert(def.name.clone(), def);
+    }
+    mods.block_names_all()
+        .iter()
+        .map(|name| {
+            by_name
+                .remove(*name)
+                .with_context(|| format!("no definition for the block {name}"))
+        })
+        .collect()
 }
 
 impl BlockRegistry {
@@ -1146,6 +1191,7 @@ impl BlockRegistry {
                 super::blocks::COUNT
             );
         }
+        blocks.extend(mod_defs()?);
         let mut layouts = Vec::with_capacity(blocks.len());
         let mut conditions = Vec::with_capacity(blocks.len());
         let mut bases = Vec::with_capacity(blocks.len());
@@ -1153,7 +1199,7 @@ impl BlockRegistry {
         let mut states = 0u32;
         for (index, def) in blocks.iter_mut().enumerate() {
             def.id = BlockId(index as u16);
-            if super::blocks::NAMES[index] != def.name {
+            if index < super::blocks::COUNT && super::blocks::NAMES[index] != def.name {
                 bail!(
                     "block {index} is {} but was built as {}",
                     def.name,

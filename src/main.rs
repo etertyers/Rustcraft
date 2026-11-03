@@ -4,6 +4,8 @@ use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
     env_logger::init();
+    // Chooses the mods before any block or item registry is built.
+    rustcraft::mods::init();
     // Writes the built-in structure templates to assets/structures (for
     // after changing their designs in code); overwrites what's there.
     if std::env::args().any(|arg| arg == "--write-structures") {

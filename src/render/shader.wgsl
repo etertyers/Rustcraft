@@ -51,7 +51,12 @@ fn not_gamma(x: vec3<f32>) -> vec3<f32> {
 // Modern `LightTexture.updateLightTexture`: sky light scaled by the time
 // of day (and bluish at night), warm torch light, a little gray, then
 // blended toward the brighter curve by the Brightness option.
-fn lightmap(light: vec2<f32>) -> vec3<f32> {
+fn lightmap(raw_light: vec2<f32>) -> vec3<f32> {
+    // A mod's brightness override lights everything at least this much.
+    var light = raw_light;
+    if (globals.lighting.w > 0.0) {
+        light = max(raw_light, vec2<f32>(globals.lighting.w));
+    }
     let sun = globals.fog.z;
     let sky_level = brightness(light.x) * (sun * 0.95 + 0.05);
     let night = sun * 0.65 + 0.35;

@@ -52,6 +52,7 @@ impl Client {
         conn.send(ClientMsg::Login {
             version: PROTOCOL_VERSION,
             name: name.to_owned(),
+            mods: crate::mods::active().required(),
         });
         conn.send(ClientMsg::Settings(settings));
         Self {

@@ -1,0 +1,10 @@
+// The example mod of docs/modding.md: a block, an item, a recipe, a
+// command and a block-break event. Copy the folder into mods/ to try it.
+(
+    id: "ruby",
+    name: "Ruby",
+    version: "1.0.0",
+    authors: ["Rustcraft"],
+    description: "Rubies, a block of them, a recipe, /rubies and a word when you break one.",
+    rustcraft: "1.1",
+)

@@ -1,0 +1,8 @@
+// Items go at the end of the tab with the same title, or make a new tab.
+(
+    tabs: [
+        (title: "Building Blocks", icon: "bricks", items: ["ruby:ruby_block"]),
+        (title: "Ingredients", icon: "stick", items: ["ruby:ruby"]),
+        (title: "Tools & Utilities", icon: "stick", items: ["ruby:treasure_map"]),
+    ],
+)

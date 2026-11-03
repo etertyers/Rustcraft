@@ -1,0 +1,5 @@
+// Items in the same format as assets/data/items.ron.
+#![enable(implicit_some)]
+[
+    (name: "ruby:ruby", display: "Ruby", texture: "redstone"),
+]

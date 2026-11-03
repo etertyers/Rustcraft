@@ -165,6 +165,19 @@ pub struct Pack {
 impl Pack {
     /// Opens a resource pack folder or `.zip`.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_anchored(path, "pack.mcmeta")
+    }
+
+    /// Opens a mod's folder or `.zip` as a resource layer: its
+    /// `assets/minecraft/` tree, found beside `mod.ron` and with no
+    /// `pack.mcmeta` needed.
+    pub fn open_mod(path: &Path) -> Result<Self> {
+        let mut pack = Self::open_anchored(path, "mod.ron")?;
+        pack.info = PackInfo::default();
+        Ok(pack)
+    }
+
+    fn open_anchored(path: &Path, anchor: &str) -> Result<Self> {
         let id = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -176,7 +189,7 @@ impl Pack {
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
         {
-            open_zip(path)?
+            open_zip(path, anchor)?
         } else {
             bail!("{} is neither a folder nor a .zip", path.display());
         };
@@ -188,11 +201,13 @@ impl Pack {
             root: NAMESPACE_ROOT,
         };
         let mcmeta = pack
-            .read_file("pack.mcmeta")
-            .with_context(|| format!("{} has no pack.mcmeta", path.display()))?;
-        pack.info = PackInfo::parse(&String::from_utf8_lossy(&mcmeta))
-            .with_context(|| format!("reading {}/pack.mcmeta", path.display()))?;
-        pack.icon = pack.read_file("pack.png");
+            .read_file(anchor)
+            .with_context(|| format!("{} has no {anchor}", path.display()))?;
+        if anchor == "pack.mcmeta" {
+            pack.info = PackInfo::parse(&String::from_utf8_lossy(&mcmeta))
+                .with_context(|| format!("reading {}/pack.mcmeta", path.display()))?;
+            pack.icon = pack.read_file("pack.png");
+        }
         Ok(pack)
     }
 
@@ -274,7 +289,7 @@ impl Pack {
     }
 }
 
-fn open_zip(path: &Path) -> Result<Files> {
+fn open_zip(path: &Path, anchor: &str) -> Result<Files> {
     let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let archive = ZipArchive::new(BufReader::new(file))
         .with_context(|| format!("reading {}", path.display()))?;
@@ -283,11 +298,11 @@ fn open_zip(path: &Path) -> Result<Files> {
         .filter_map(|name| name.ok().map(|n| n.into_owned()))
         .collect();
     // Some zips wrap the pack in one folder.
-    let prefix = if all.iter().any(|n| n == "pack.mcmeta") {
+    let prefix = if all.iter().any(|n| n == anchor) {
         String::new()
     } else {
         all.iter()
-            .filter_map(|n| n.strip_suffix("pack.mcmeta"))
+            .filter_map(|n| n.strip_suffix(anchor))
             .filter(|p| p.ends_with('/') && p[..p.len() - 1].find('/').is_none())
             .min_by_key(|p| p.len())
             .unwrap_or_default()

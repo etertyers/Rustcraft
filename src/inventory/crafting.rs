@@ -113,13 +113,32 @@ struct FuelDef {
 #[serde(deny_unknown_fields)]
 struct RecipesFile {
     /// Groups of items recipes can name (modern Minecraft's item tags).
+    #[serde(default)]
     tags: BTreeMap<String, Vec<ItemId>>,
+    #[serde(default)]
     shaped: Vec<ShapedDef>,
+    #[serde(default)]
     shapeless: Vec<ShapelessDef>,
+    #[serde(default)]
     smelting: Vec<SmeltingDef>,
     #[serde(default)]
     stonecutting: Vec<StonecuttingDef>,
+    #[serde(default)]
     fuels: Vec<FuelDef>,
+}
+
+impl RecipesFile {
+    /// Adds what a mod's recipes file lists.
+    fn merge(&mut self, other: RecipesFile) {
+        for (tag, items) in other.tags {
+            self.tags.entry(tag).or_default().extend(items);
+        }
+        self.shaped.extend(other.shaped);
+        self.shapeless.extend(other.shapeless);
+        self.smelting.extend(other.smelting);
+        self.stonecutting.extend(other.stonecutting);
+        self.fuels.extend(other.fuels);
+    }
 }
 
 /// A shaped recipe as a width × height grid of optional ingredients.
@@ -141,14 +160,27 @@ pub struct Recipes {
 }
 
 impl Recipes {
+    /// The recipes in `path` and those of the active mods.
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        Self::from_ron(&text).with_context(|| format!("parsing {}", path.display()))
+        let mut file: RecipesFile =
+            ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        for active in &crate::mods::active().active {
+            if let Some(text) = &active.data.recipes {
+                let theirs = ron::from_str(text)
+                    .with_context(|| format!("{}'s data/recipes.ron", active.manifest.id))?;
+                file.merge(theirs);
+            }
+        }
+        Self::build(file).with_context(|| format!("parsing {}", path.display()))
     }
 
     pub fn from_ron(text: &str) -> Result<Self> {
-        let file: RecipesFile = ron::from_str(text)?;
+        Self::build(ron::from_str(text)?)
+    }
+
+    fn build(file: RecipesFile) -> Result<Self> {
         let tags = &file.tags;
         let mut shaped = Vec::new();
         for def in file.shaped {

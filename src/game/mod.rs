@@ -30,6 +30,7 @@ mod mob_acts;
 #[cfg(test)]
 mod mob_tests;
 mod mobs;
+pub(crate) mod modding;
 #[cfg(test)]
 mod moves;
 mod nether_mobs;
@@ -39,6 +40,7 @@ mod portals;
 mod potions;
 #[cfg(test)]
 mod progression;
+mod random_ticks;
 mod redstone;
 mod shulkers;
 mod sleep;
@@ -381,6 +383,10 @@ pub struct Game {
     /// Lines for everyone's chat: deaths and advancements (a server sends
     /// them on).
     pub chat_out: Vec<String>,
+    /// Lines for one player's chat only (a mod's `rc.say`), by index.
+    pub chat_to: Vec<(usize, String)>,
+    /// The world's mods (M39).
+    mods: modding::ModState,
     /// Dropped items lying around.
     pub entities: Vec<ItemEntity>,
     /// Experience orbs lying around.
@@ -446,6 +452,8 @@ pub struct Game {
     /// travel waits for the tick's end).
     ticking: bool,
     swapped: u32,
+    /// The index of the player in `self.player` (0 is the host).
+    turn: usize,
     /// Set on going to another dimension, until the app has seen it.
     dimension_changed: bool,
     /// Every Nether portal lit or built, by dimension: a block of its
@@ -496,6 +504,8 @@ impl Game {
             cheats: false,
             day_offset: 0,
             chat_out: Vec::new(),
+            chat_to: Vec::new(),
+            mods: Default::default(),
             entities: Vec::new(),
             orbs: Vec::new(),
             particles: Vec::new(),
@@ -532,6 +542,7 @@ impl Game {
             live: FastMap::default(),
             ticking: false,
             swapped: 0,
+            turn: 0,
             dimension_changed: false,
             portals: Vec::new(),
             eyes: Vec::new(),
@@ -1056,6 +1067,7 @@ impl Game {
             return;
         }
         self.time += 1;
+        self.tick_mods();
         // With `doDaylightCycle` off the time of day holds still.
         if !self.rules.do_daylight_cycle {
             self.day_offset -= 1;
@@ -1078,9 +1090,11 @@ impl Game {
         for i in 0..self.others.len() {
             std::mem::swap(&mut self.player, &mut self.others[i]);
             self.swapped += 1;
+            self.turn = i + 1;
             if self.player.dimension == here {
                 self.hearing(&mut turn);
             }
+            self.turn = 0;
             self.swapped -= 1;
             std::mem::swap(&mut self.player, &mut self.others[i]);
         }
@@ -1205,6 +1219,7 @@ impl Game {
         self.post_process();
         self.tick_furnaces();
         self.tick_brewing();
+        self.tick_random_blocks();
     }
 
     /// After the world's tick: advancements, the player's sounds and what

@@ -467,6 +467,7 @@ impl WorldDir {
                 name: level.name.clone(),
                 game_mode: level.game_mode,
                 last_played: level.last_played,
+                mods: crate::mods::active().all_versions(),
             },
         );
         Ok(())

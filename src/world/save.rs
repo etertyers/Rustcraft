@@ -143,7 +143,7 @@ impl From<ChunkDataV3> for ChunkData {
 struct SectionData {
     /// 0 = bottom.
     index: u8,
-    palette: Vec<BlockState>,
+    palette: Vec<String>,
     /// Palette indices in `y, z, x` order.
     blocks: Vec<u16>,
 }
@@ -153,15 +153,32 @@ fn bincode_config() -> impl bincode::config::Config {
     bincode::config::standard().with_fixed_int_encoding()
 }
 
-/// A section's palette and indices.
-fn palettize(blocks: &[BlockState]) -> (Vec<BlockState>, Vec<u16>) {
-    let mut palette: Vec<BlockState> = Vec::new();
+/// A section's palette (state texts) and indices. `lost` holds the real
+/// states of unknown blocks, by `section * 4096 + index`.
+fn palettize(
+    blocks: &[BlockState],
+    section: usize,
+    lost: &std::collections::BTreeMap<u32, String>,
+) -> (Vec<String>, Vec<u16>) {
+    let mut palette: Vec<String> = Vec::new();
     let mut lookup: FastMap<BlockState, u16> = FastMap::default();
+    let mut lost_lookup: std::collections::HashMap<&str, u16> = Default::default();
+    let base = (section * SECTION_VOLUME) as u32;
     let indices = blocks
         .iter()
-        .map(|&block| {
+        .enumerate()
+        .map(|(i, &block)| {
+            if !lost.is_empty()
+                && block.is(crate::world::blocks::UNKNOWN_BLOCK)
+                && let Some(text) = lost.get(&(base + i as u32))
+            {
+                return *lost_lookup.entry(text).or_insert_with(|| {
+                    palette.push(text.clone());
+                    (palette.len() - 1) as u16
+                });
+            }
             *lookup.entry(block).or_insert_with(|| {
-                palette.push(block);
+                palette.push(block.to_string());
                 (palette.len() - 1) as u16
             })
         })
@@ -169,11 +186,31 @@ fn palettize(blocks: &[BlockState]) -> (Vec<BlockState>, Vec<u16>) {
     (palette, indices)
 }
 
+/// Reads a palette entry. A block of a mod that is not installed (or
+/// whose properties changed) becomes `UNKNOWN_BLOCK`, and its text is
+/// returned to be kept; anything else wrong is an error.
+fn parse_palette_entry(text: &str) -> Result<(BlockState, Option<String>), String> {
+    match BlockState::parse(text) {
+        Ok(state) => Ok((state, None)),
+        Err(err) => {
+            let name = text.split('[').next().unwrap_or(text);
+            if name.contains(':') && !name.starts_with("minecraft:") {
+                Ok((
+                    BlockState::of(crate::world::blocks::UNKNOWN_BLOCK),
+                    Some(text.to_owned()),
+                ))
+            } else {
+                Err(format!("{err:#}"))
+            }
+        }
+    }
+}
+
 /// Encodes and compresses a chunk.
 pub fn encode_chunk(chunk: &Chunk) -> Vec<u8> {
     let sections = (0..SECTION_COUNT)
         .filter_map(|index| {
-            let (palette, blocks) = palettize(chunk.section(index)?);
+            let (palette, blocks) = palettize(chunk.section(index)?, index, &chunk.lost);
             Some(SectionData {
                 index: index as u8,
                 palette,
@@ -204,8 +241,13 @@ pub fn encode_chunk(chunk: &Chunk) -> Vec<u8> {
     lz4_flex::compress_prepend_size(&bytes)
 }
 
-/// Decompresses and decodes a chunk, checking every field.
+/// Decompresses and decodes a chunk, checking every field. Items of mods
+/// that aren't installed, in its chests, read as unknown items.
 pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
+    crate::inventory::item::lenient(|| decode_chunk_strict(bytes))
+}
+
+fn decode_chunk_strict(bytes: &[u8]) -> Result<Chunk, SaveError> {
     let corrupt = |what: String| SaveError::Corrupt(what);
     let bytes = lz4_flex::decompress_size_prepended(bytes)
         .map_err(|err| corrupt(format!("chunk decompression: {err}")))?;
@@ -239,13 +281,27 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<Chunk, SaveError> {
         if index >= SECTION_COUNT || section.blocks.len() != SECTION_VOLUME {
             return Err(corrupt(format!("bad section {index}")));
         }
+        let palette = section
+            .palette
+            .iter()
+            .map(|text| parse_palette_entry(text))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|why| corrupt(format!("section {index}'s palette: {why}")))?;
         let blocks = section
             .blocks
             .iter()
-            .map(|&i| section.palette.get(i as usize).copied())
-            .collect::<Option<Vec<BlockState>>>()
+            .map(|&i| palette.get(i as usize))
+            .collect::<Option<Vec<_>>>()
             .ok_or_else(|| corrupt(format!("section {index} indexes past its palette")))?;
-        chunk.set_section(index, &blocks);
+        for (i, (_, lost)) in blocks.iter().enumerate() {
+            if let Some(text) = lost {
+                chunk
+                    .lost
+                    .insert((index * SECTION_VOLUME + i) as u32, text.clone());
+            }
+        }
+        let states: Vec<BlockState> = blocks.iter().map(|(state, _)| *state).collect();
+        chunk.set_section(index, &states);
     }
     if data.biomes.len() != CHUNK_SIZE * CHUNK_SIZE {
         return Err(corrupt(format!("{} biomes", data.biomes.len())));
@@ -586,7 +642,7 @@ mod tests {
             z: -1,
             sections: vec![SectionData {
                 index: 3,
-                palette: vec![stone],
+                palette: vec![stone.to_string()],
                 blocks: vec![0; SECTION_VOLUME],
             }],
             biomes: vec![Biome::Desert.id(); CHUNK_SIZE * CHUNK_SIZE],
@@ -635,12 +691,12 @@ mod tests {
             sections: vec![
                 SectionData {
                     index: 0,
-                    palette: vec![bedrock, stone],
+                    palette: vec![bedrock.to_string(), stone.to_string()],
                     blocks: bottom,
                 },
                 SectionData {
                     index: 4,
-                    palette: vec![BlockState::AIR, chest],
+                    palette: vec![BlockState::AIR.to_string(), chest.to_string()],
                     blocks: upper,
                 },
             ],

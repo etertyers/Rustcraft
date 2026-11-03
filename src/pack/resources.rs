@@ -105,6 +105,10 @@ impl Resources {
             }
             Err(_) => HashMap::new(),
         };
+        // The mods' resources sit over the base textures and under the
+        // packs the player picked.
+        let mut packs = packs;
+        packs.extend(crate::mods::active().packs());
         let mut res = Self::new(Pack::base(assets), packs, aliases).with_slices(slices);
         if !vanilla {
             return Ok(res);

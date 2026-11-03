@@ -1,0 +1,12 @@
+// Fullbright: press G to light every block as if it were in full light.
+// It only changes how the player's own game draws, so a LAN host and its
+// guests don't need to have it in common (client_only).
+(
+    id: "fullbright",
+    name: "Fullbright",
+    version: "1.0.0",
+    authors: ["Rustcraft"],
+    description: "Press G to see everything fully lit, even deep in a cave. Rebind it in Options > Controls > Key Binds > Mods.",
+    rustcraft: "1.1",
+    client_only: true,
+)

@@ -229,4 +229,6 @@
     (name: "chorus_fruit", texture: "chorus_fruit", food: (hunger: 4, saturation: 0.3, always_edible: true)),
     (name: "popped_chorus_fruit", texture: "popped_chorus_fruit"),
     (name: "firework_rocket", texture: "firework_rocket"),
+    // What an item of a mod that isn't installed reads as in a loaded save (M39).
+    (name: "unknown_item", texture: "knowledge_book"),
 ]

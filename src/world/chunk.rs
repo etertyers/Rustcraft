@@ -94,6 +94,10 @@ pub struct Chunk {
     /// Loaded from a save made before M34 (Y 0 to 255): the Overworld
     /// fills in the new depth below it (`Terrain::deepen`).
     pub shallow: bool,
+    /// Blocks of mods that aren't installed: they are `UNKNOWN_BLOCK` here
+    /// and keep their real state text, by `section * 4096 + index in it`,
+    /// to be saved back as they were.
+    pub lost: BTreeMap<u32, String>,
 }
 
 impl Chunk {
@@ -106,6 +110,7 @@ impl Chunk {
             block_entities: BTreeMap::new(),
             post_process: Vec::new(),
             shallow: false,
+            lost: BTreeMap::new(),
         }
     }
 
