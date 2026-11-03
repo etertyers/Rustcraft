@@ -30,6 +30,7 @@ pub fn item_of(kind: CartKind) -> crate::inventory::item::ItemId {
         CartKind::Chest => items::CHEST_MINECART,
         CartKind::Hopper => items::HOPPER_MINECART,
         CartKind::Tnt => items::TNT_MINECART,
+        CartKind::CommandBlock => items::COMMAND_BLOCK_MINECART,
     }
 }
 
@@ -40,11 +41,66 @@ pub fn kind_of(item: crate::inventory::item::ItemId) -> Option<CartKind> {
         items::CHEST_MINECART => CartKind::Chest,
         items::HOPPER_MINECART => CartKind::Hopper,
         items::TNT_MINECART => CartKind::Tnt,
+        items::COMMAND_BLOCK_MINECART => CartKind::CommandBlock,
         _ => return None,
     })
 }
 
+/// The sentinel `Edit::at` that means "the cart with this index".
+pub const CART_EDIT: i32 = i32::MIN;
+
 impl Game {
+    /// Opens the command editor for a command block minecart.
+    pub(super) fn open_cart_command(&mut self, index: usize) {
+        if !self.may_edit_command_blocks() {
+            self.player.message = Some((
+                "§cOnly operators in creative mode can edit command blocks".to_owned(),
+                80,
+            ));
+            return;
+        }
+        let Some(cart) = self.carts.get(index) else {
+            return;
+        };
+        self.player.command_block_edit = Some(super::command_blocks::Edit {
+            at: [index as i32, CART_EDIT, 0],
+            command: cart.command.clone(),
+            mode: super::command_blocks::Mode::Impulse,
+            conditional: false,
+            auto: false,
+            track_output: true,
+            last_output: cart.last_output.clone(),
+        });
+    }
+
+    /// Runs a command block cart's command, from where the cart is.
+    fn run_cart_command(&mut self, index: usize) {
+        let Some(cart) = self.carts.get(index) else {
+            return;
+        };
+        let command = cart.command.trim().trim_start_matches('/').to_owned();
+        if command.is_empty() {
+            return;
+        }
+        let at = cart.position.floor().as_ivec3();
+        let caller = super::commands::Caller::for_block(self, at);
+        let (replies, _) = self.run_command_as_server(&caller, &command);
+        let mut first = None;
+        for reply in replies {
+            match reply {
+                super::commands::Reply::Sender(text) => {
+                    first.get_or_insert(crate::ui::chat::strip_codes(&text));
+                }
+                other => self.replies_out.push(other),
+            }
+        }
+        if let Some(cart) = self.carts.get_mut(index)
+            && let Some(text) = first
+        {
+            cart.last_output = text;
+        }
+    }
+
     /// Puts a cart of `kind` on the rail at `cell`, if that is one.
     pub(super) fn place_cart(&mut self, cell: IVec3, kind: CartKind) -> bool {
         let Some(state) = self.chunks.world().block(cell.x, cell.y, cell.z) else {
@@ -108,6 +164,7 @@ impl Game {
             }
             CartKind::Chest | CartKind::Hopper => self.open_cart(index),
             CartKind::Tnt => {}
+            CartKind::CommandBlock => self.open_cart_command(index),
         }
     }
 
@@ -259,6 +316,7 @@ impl Game {
         let mut carts = std::mem::take(&mut self.carts);
         let mut blasts = Vec::new();
         let mut ejected = Vec::new();
+        let mut runs: Vec<usize> = Vec::new();
         for (index, cart) in carts.iter_mut().enumerate() {
             let world = self.chunks.world();
             let collider = WorldCollider {
@@ -282,6 +340,11 @@ impl Game {
                 }
             } else if cart.kind == CartKind::Hopper {
                 cart.enabled = true;
+            }
+            // A command block cart runs its command every fourth tick on a
+            // powered activator rail.
+            if cart.kind == CartKind::CommandBlock && activated && self.time.is_multiple_of(4) {
+                runs.push(index);
             }
             let rider_push = match pushes.get(&index) {
                 Some(&push) if cart.rider => push,
@@ -308,6 +371,9 @@ impl Game {
             }
         }
         self.carts = carts;
+        for index in runs {
+            self.run_cart_command(index);
+        }
         for index in ejected {
             let cart = self.carts[index].clone();
             self.for_each_player(|game| {

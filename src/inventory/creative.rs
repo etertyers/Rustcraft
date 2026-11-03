@@ -213,6 +213,8 @@ mod tests {
             .filter(|def| !listed.contains(&def.id))
             // What a save's missing mods become is not for the player to get.
             .filter(|def| def.name != "unknown_item")
+            // Command blocks come from `/give` alone (M45).
+            .filter(|def| !def.name.contains("command_block"))
             .map(|def| def.name.as_str())
             .collect();
         assert!(missing.is_empty(), "in no tab: {missing:?}");

@@ -52,6 +52,8 @@ pub enum Prop {
     Short,
     Locked,
     Triggered,
+    /// A command block runs only if the block behind it succeeded.
+    Conditional,
     Eye,
     Persistent,
     Unstable,
@@ -149,6 +151,7 @@ impl Prop {
             Short => "short",
             Locked => "locked",
             Triggered => "triggered",
+            Conditional => "conditional",
             Eye => "eye",
             Persistent => "persistent",
             Unstable => "unstable",

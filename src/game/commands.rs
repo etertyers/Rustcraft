@@ -12,6 +12,8 @@ mod components;
 mod data_cmds;
 mod execute;
 mod extra;
+mod function_cmds;
+mod server_cmds;
 mod text_cmds;
 mod world;
 
@@ -73,7 +75,7 @@ const LOCATE_BIOME_BLOCKS: i32 = 6400;
 /// Who typed a command, what they may do, and where and as whom it runs
 /// (`/execute` changes the executor, position, look and dimension; the
 /// answers still go to `index`).
-struct Caller {
+pub(super) struct Caller {
     /// The player the answers go to.
     index: usize,
     cheats: bool,
@@ -95,7 +97,7 @@ struct Caller {
 
 impl Caller {
     /// Player `index` typing a command.
-    fn new(game: &Game, index: usize, cheats: bool, host: bool) -> Self {
+    pub(super) fn new(game: &Game, index: usize, cheats: bool, host: bool) -> Self {
         let p = game.player_at(index);
         Caller {
             index,
@@ -112,7 +114,22 @@ impl Caller {
 
     /// Who is speaking: the executor's name (a player's, or a mob's shown name).
     fn actor_name(&self, game: &Game) -> String {
+        if self.executor == Target::Mob(0) {
+            return "@".to_owned();
+        }
         game.target_name(self.executor)
+    }
+
+    /// A command block at `at` running its command: no entity is the
+    /// executor (`@s` finds nothing, `say` speaks as `@`), standing in the
+    /// block's own cell, with every permission.
+    pub(super) fn for_block(game: &Game, at: IVec3) -> Self {
+        let mut caller = Caller::new(game, 0, true, true);
+        caller.executor = Target::Mob(0);
+        caller.pos = at.as_dvec3() + DVec3::new(0.5, 0.0, 0.5);
+        caller.look = (0.0, 0.0);
+        caller.dim = game.dimension;
+        caller
     }
 
     /// Reports the number a command produced (its result for `store`).
@@ -424,6 +441,107 @@ const COMMANDS: &[Command] = &[
         args: &[Arg::Players, Arg::Free],
         run: kick,
     },
+    cmd!(
+        "tick",
+        [],
+        true,
+        false,
+        "/tick (query | rate <rate> | freeze | unfreeze | step [time] | sprint <time|stop>)",
+        [
+            Arg::After(server_cmds::tick_tab),
+            Arg::After(server_cmds::tick_tab)
+        ],
+        server_cmds::tick_cmd
+    ),
+    cmd!(
+        "worldborder",
+        [],
+        true,
+        false,
+        "/worldborder (set|add <size> [seconds] | center <x z> | damage (amount|buffer) <v> | warning (distance|time) <v> | get)",
+        [
+            Arg::After(server_cmds::worldborder_tab),
+            Arg::After(server_cmds::worldborder_tab),
+            Arg::After(server_cmds::worldborder_tab),
+            Arg::After(server_cmds::worldborder_tab)
+        ],
+        server_cmds::worldborder
+    ),
+    cmd!(
+        "forceload",
+        [],
+        true,
+        false,
+        "/forceload (add <from> [to] | remove (<from> [to] | all) | query [pos])",
+        [
+            Arg::After(server_cmds::forceload_tab),
+            Arg::After(server_cmds::forceload_tab),
+            Arg::After(server_cmds::forceload_tab),
+            Arg::After(server_cmds::forceload_tab),
+            Arg::After(server_cmds::forceload_tab)
+        ],
+        server_cmds::forceload
+    ),
+    cmd!(
+        "function",
+        [],
+        true,
+        false,
+        "/function <id> [macro arguments | with (entity|block|storage) <source> [path]]",
+        [
+            Arg::After(function_cmds::function_tab),
+            Arg::After(function_cmds::function_tab),
+            Arg::After(function_cmds::function_tab),
+            Arg::After(function_cmds::function_tab)
+        ],
+        function_cmds::function
+    ),
+    cmd!(
+        "return",
+        [],
+        true,
+        false,
+        "/return (<value> | fail | run <command>)",
+        [Arg::After(function_cmds::return_tab)],
+        function_cmds::return_cmd
+    ),
+    cmd!(
+        "schedule",
+        [],
+        true,
+        false,
+        "/schedule (function <id> <time> [append|replace] | clear <id>)",
+        [
+            Arg::After(function_cmds::schedule_tab),
+            Arg::After(function_cmds::schedule_tab),
+            Arg::After(function_cmds::schedule_tab),
+            Arg::After(function_cmds::schedule_tab)
+        ],
+        function_cmds::schedule
+    ),
+    cmd!(
+        "datapack",
+        [],
+        true,
+        false,
+        "/datapack (list [available|enabled] | enable <name> [first|last|before <pack>|after <pack>] | disable <name>)",
+        [
+            Arg::After(function_cmds::datapack_tab),
+            Arg::After(function_cmds::datapack_tab),
+            Arg::After(function_cmds::datapack_tab),
+            Arg::After(function_cmds::datapack_tab)
+        ],
+        function_cmds::datapack
+    ),
+    cmd!(
+        "reload",
+        [],
+        true,
+        false,
+        "/reload",
+        [],
+        function_cmds::reload
+    ),
     cmd!(
         "execute",
         [],
@@ -955,6 +1073,15 @@ impl Game {
 
     /// Runs `line` as `caller` (a player, or `/execute`'s context). Returns
     /// the replies and the number the command reported, if it succeeded.
+    /// Runs a command as the server's own context (command blocks).
+    pub(super) fn run_command_as_server(
+        &mut self,
+        caller: &Caller,
+        line: &str,
+    ) -> (Vec<Reply>, Option<i32>) {
+        self.run_as(caller, line)
+    }
+
     fn run_as(&mut self, caller: &Caller, line: &str) -> (Vec<Reply>, Option<i32>) {
         let words = tokens(line);
         let Some((&name, args)) = words.split_first() else {
@@ -2033,6 +2160,10 @@ fn kick(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, S
 mod m43_tests;
 #[cfg(test)]
 mod m44_tests;
+#[cfg(test)]
+mod m45_blocks_tests;
+#[cfg(test)]
+mod m45_tests;
 
 #[cfg(test)]
 mod tests {

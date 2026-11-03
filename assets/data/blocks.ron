@@ -99,6 +99,24 @@
             ("facing=up", (textures: (top: "dispenser_front_vertical", south: "furnace_side"))),
             ("facing=down", (textures: (bottom: "dispenser_front_vertical", south: "furnace_side"))),
         ]),
+    (name: "command_block", hardness: -1.0, props: [FacingAll, Conditional], placement: LookAll, activate: CommandBlock, drops: Nothing, textures: (north: "command_block_back", south: "command_block_front", side: "command_block_side", end: "command_block_side"),
+        variants: [
+            ("conditional=true", (textures: (north: "command_block_back", south: "command_block_front", side: "command_block_conditional", end: "command_block_conditional"))),
+            ("facing=up", (textures: (top: "command_block_front", bottom: "command_block_back", north: "command_block_side", south: "command_block_side"))),
+            ("facing=down", (textures: (bottom: "command_block_front", top: "command_block_back", north: "command_block_side", south: "command_block_side"))),
+        ]),
+    (name: "chain_command_block", hardness: -1.0, props: [FacingAll, Conditional], placement: LookAll, activate: CommandBlock, drops: Nothing, textures: (north: "chain_command_block_back", south: "chain_command_block_front", side: "chain_command_block_side", end: "chain_command_block_side"),
+        variants: [
+            ("conditional=true", (textures: (north: "chain_command_block_back", south: "chain_command_block_front", side: "chain_command_block_conditional", end: "chain_command_block_conditional"))),
+            ("facing=up", (textures: (top: "chain_command_block_front", bottom: "chain_command_block_back", north: "chain_command_block_side", south: "chain_command_block_side"))),
+            ("facing=down", (textures: (bottom: "chain_command_block_front", top: "chain_command_block_back", north: "chain_command_block_side", south: "chain_command_block_side"))),
+        ]),
+    (name: "repeating_command_block", hardness: -1.0, props: [FacingAll, Conditional], placement: LookAll, activate: CommandBlock, drops: Nothing, textures: (north: "repeating_command_block_back", south: "repeating_command_block_front", side: "repeating_command_block_side", end: "repeating_command_block_side"),
+        variants: [
+            ("conditional=true", (textures: (north: "repeating_command_block_back", south: "repeating_command_block_front", side: "repeating_command_block_conditional", end: "repeating_command_block_conditional"))),
+            ("facing=up", (textures: (top: "repeating_command_block_front", bottom: "repeating_command_block_back", north: "repeating_command_block_side", south: "repeating_command_block_side"))),
+            ("facing=down", (textures: (bottom: "repeating_command_block_front", top: "repeating_command_block_back", north: "repeating_command_block_side", south: "repeating_command_block_side"))),
+        ]),
     (name: "sandstone", hardness: 0.8, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (top: "sandstone_top", bottom: "sandstone_bottom", side: "sandstone")),
     (name: "note_block", activate: Redstone, hardness: 0.8, props: [Instrument, Note, Powered], textures: (all: "note_block")),
     // `facing` points from the foot to the head.

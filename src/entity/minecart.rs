@@ -43,6 +43,8 @@ pub enum CartKind {
     Chest,
     Hopper,
     Tnt,
+    /// Runs its command on a powered activator rail (M45).
+    CommandBlock,
 }
 
 impl CartKind {
@@ -90,6 +92,11 @@ pub struct Minecart {
     /// A hopper cart's pause, and whether an activator rail turned it off.
     pub cooldown: u8,
     pub enabled: bool,
+    /// A command block cart's command and what it last said.
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub last_output: String,
 }
 
 /// The ends of each rail shape as offsets (x, y, z) from the rail's
@@ -129,6 +136,8 @@ impl Minecart {
             fuse: -1,
             cooldown: 0,
             enabled: true,
+            command: String::new(),
+            last_output: String::new(),
         }
     }
 

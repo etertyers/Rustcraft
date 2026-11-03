@@ -553,6 +553,16 @@ pub static SHOTS: &[Shot] = &[
         stage: two_players,
     },
     Shot {
+        name: "m45-command-blocks",
+        about: "a repeating command block feeding two chain command blocks (purple then green), and the editor open over them with a command typed, Tab-completable, and the mode, conditional and redstone buttons",
+        world: Some(WorldKind::Flat),
+        view: Some(([2.5, 64.0, 5.5], std::f32::consts::PI - 0.35, -0.25)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: command_block_chain,
+    },
+    Shot {
         name: "m44-board",
         about: "the sidebar listing a kills objective (names on a gold team colored) and a bossbar across the top of a plains view",
         world: Some(WorldKind::Flat),
@@ -739,6 +749,44 @@ fn wheat_farm(game: &mut Game) {
 }
 
 /// A lake south of the player (Z 4..20), and a cast into it.
+/// Repeating → chain → chain along +X, powered by a redstone block, and the
+/// editor open on the first.
+fn command_block_chain(game: &mut Game) {
+    use crate::game::command_blocks::{Edit, Mode};
+    game.cheats = true;
+    game.mobs.clear();
+    let first = at(3, 64, 0);
+    let kinds = [
+        (Mode::Repeat, "say tick"),
+        (Mode::Chain, "scoreboard players add #chain kills 1"),
+        (Mode::Chain, "execute as @a at @s run particle flame ~ ~1 ~"),
+    ];
+    for (i, (mode, command)) in kinds.iter().enumerate() {
+        let cell = first + glam::IVec3::X * i as i32;
+        let state = BlockState::of(mode.block()).with_face(Prop::FacingAll, Face::East);
+        game.set_blocks(&[(cell, state)]);
+        game.finish_command_block_edit(Some(Edit {
+            at: cell.to_array(),
+            command: (*command).to_owned(),
+            mode: *mode,
+            conditional: false,
+            auto: true,
+            track_output: true,
+            last_output: String::new(),
+        }));
+    }
+    game.run_ticks(1);
+    game.player.command_block_edit = Some(Edit {
+        at: first.to_array(),
+        command: "say tick".to_owned(),
+        mode: Mode::Repeat,
+        conditional: false,
+        auto: true,
+        track_output: true,
+        last_output: "tick".to_owned(),
+    });
+}
+
 /// A sidebar of kills with the player on a gold team, and a purple bossbar.
 fn scoreboard_and_bossbar(game: &mut Game) {
     for line in [

@@ -182,6 +182,7 @@ impl Game {
                 self.redstone.piston_done(at);
             }
             Event::Dispense(at) => self.dispense(at),
+            Event::CommandPower { at, powered } => self.command_block_power(at, powered),
             Event::Prime(at) => self.prime_tnt(at),
         }
     }

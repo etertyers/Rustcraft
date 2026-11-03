@@ -549,6 +549,7 @@ mod tests {
         // predate; a resource pack brings them.
         let needs_pack: BTreeSet<String> = [
             "amethyst_shard",
+            "command_block_minecart",
             "bamboo_door",
             "cherry_door",
             "copper_ingot",

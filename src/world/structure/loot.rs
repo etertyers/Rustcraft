@@ -124,8 +124,40 @@ fn mod_tables() -> &'static std::collections::HashMap<String, Vec<Pool>> {
     })
 }
 
+fn pack_tables() -> &'static std::sync::RwLock<std::collections::HashMap<String, Vec<Pool>>> {
+    static TABLES: std::sync::OnceLock<
+        std::sync::RwLock<std::collections::HashMap<String, Vec<Pool>>>,
+    > = std::sync::OnceLock::new();
+    TABLES.get_or_init(Default::default)
+}
+
+/// Replaces the tables data packs add (M45): `ns:path` ids. A pack table
+/// named `minecraft:<name>` replaces the built-in one.
+pub fn set_pack_tables(tables: std::collections::HashMap<String, Vec<Pool>>) {
+    if let Ok(mut guard) = pack_tables().write() {
+        *guard = tables;
+    }
+}
+
 /// The pools of the table called `name`, with those mods add.
 pub fn table(name: &str) -> Option<Vec<Pool>> {
+    if let Ok(guard) = pack_tables().read() {
+        let bare = name.strip_prefix("minecraft:").unwrap_or(name);
+        if let Some(pools) = guard
+            .get(name)
+            .or_else(|| guard.get(&format!("minecraft:{bare}")))
+        {
+            return Some(pools.clone());
+        }
+        // `chests/<name>` and `minecraft:chests/<name>` for a pack's override.
+        if let Some(pools) = guard.get(&format!("minecraft:chests/{bare}")) {
+            return Some(pools.clone());
+        }
+    }
+    table_without_packs(name)
+}
+
+fn table_without_packs(name: &str) -> Option<Vec<Pool>> {
     let extra = mod_tables().get(name);
     match (builtin_table(name), extra) {
         (Some(mut pools), Some(extra)) => {

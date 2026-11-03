@@ -96,6 +96,7 @@ impl Game {
             rules: self.rules.clone(),
             player: self.player.clone(),
             board: self.board_view_for_player(),
+            border: self.border.clone(),
             players: players
                 .into_iter()
                 .filter(|view| view.name != self.player.name && near(view.feet))
@@ -197,6 +198,7 @@ impl Game {
         self.breath = e.breath;
         self.remote_players = snapshot.players;
         self.board_view = snapshot.board;
+        self.border = snapshot.border;
         (server_body, server_prev)
     }
 

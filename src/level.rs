@@ -73,6 +73,11 @@ pub struct Level {
     /// the book).
     #[serde(default)]
     pub recipe_book: crate::inventory::book::Settings,
+    /// The world border and the chunks `/forceload` keeps (M45).
+    #[serde(default)]
+    pub border: crate::game::border::WorldBorder,
+    #[serde(default)]
+    pub forced: Vec<[i32; 2]>,
     /// The world's game rules (added in M32; `/gamerule` sets them in M38).
     #[serde(default)]
     pub rules: GameRules,
@@ -462,6 +467,8 @@ impl Level {
             end: EndData::default(),
             advancements: Default::default(),
             recipe_book: Default::default(),
+            border: Default::default(),
+            forced: Vec::new(),
             rules: GameRules::default(),
             boats: Vec::new(),
             difficulty: Difficulty::default(),

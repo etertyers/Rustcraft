@@ -41,6 +41,39 @@ pub enum BlockEntity {
     Spawner(Spawner),
     /// A brewing stand (M26).
     BrewingStand(crate::inventory::brewing::BrewingStand),
+    /// A command block's command and state (M45).
+    CommandBlock(CommandBlock),
+}
+
+/// What a command block keeps (its mode is its block, `conditional` is in its state).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommandBlock {
+    pub command: String,
+    /// Always Active (runs without redstone).
+    pub auto: bool,
+    /// Redstone reaches it now.
+    pub powered: bool,
+    /// An impulse block has been triggered and runs on its next turn.
+    pub pending: bool,
+    /// The first line its command said last time, without codes.
+    pub last_output: String,
+    pub track_output: bool,
+    /// What the command returned the last time it ran.
+    pub success: i32,
+}
+
+impl Default for CommandBlock {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            auto: false,
+            powered: false,
+            pending: false,
+            last_output: String::new(),
+            track_output: true,
+            success: 0,
+        }
+    }
 }
 
 /// What a spawner makes, and the ticks until it next tries.
@@ -76,7 +109,7 @@ impl BlockEntity {
             Self::Furnace(furnace) => &furnace.slots,
             Self::Hopper(hopper) => &hopper.slots,
             Self::BrewingStand(stand) => &stand.slots,
-            Self::Spawner(_) => &[],
+            Self::Spawner(_) | Self::CommandBlock(_) => &[],
         }
     }
 
@@ -86,7 +119,7 @@ impl BlockEntity {
             Self::Furnace(furnace) => &mut furnace.slots,
             Self::Hopper(hopper) => &mut hopper.slots,
             Self::BrewingStand(stand) => &mut stand.slots,
-            Self::Spawner(_) => &mut [],
+            Self::Spawner(_) | Self::CommandBlock(_) => &mut [],
         }
     }
 

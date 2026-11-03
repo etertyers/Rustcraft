@@ -18,6 +18,8 @@ pub enum Layer {
     Death,
     /// Typing in chat (M38).
     Chat,
+    /// Editing a command block (M45).
+    CommandBlock,
 }
 
 #[derive(Debug, Default)]

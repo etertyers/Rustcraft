@@ -72,6 +72,8 @@ pub enum ClientMsg {
     SpectatorTeleport(String),
     /// ... or a team in its page of the menu: to one of its members.
     SpectatorTeleportTeam(String),
+    /// The command block editor's Done (the new settings) or Cancel (`None`).
+    CommandBlock(Option<crate::game::command_blocks::Edit>),
 }
 
 /// One tick of a player's movement input.
@@ -159,6 +161,8 @@ pub struct Snapshot {
     pub players: Vec<PlayerView>,
     /// The scoreboard, titles' companions and bossbars this player sees.
     pub board: crate::game::board::BoardView,
+    /// The world border, to draw.
+    pub border: crate::game::border::WorldBorder,
 }
 
 /// Another player as others see them.

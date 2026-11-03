@@ -694,6 +694,8 @@ pub enum Activate {
     Dispenser,
     /// Opens its five slots.
     Hopper,
+    /// Opens a command block's editor (operators in creative).
+    CommandBlock,
     /// Opens the enchanting screen.
     Enchanting,
     /// Opens the anvil screen.
@@ -1565,6 +1567,16 @@ mod tests {
         // The eye of the End portal frame is only in vanilla's and the
         // packs' textures (the sign borrows the oak planks).
         let mut expected = vec!["block/end_portal_frame_eye".to_owned()];
+        // Command blocks (M45) are only in vanilla's and the packs' textures.
+        for kind in [
+            "command_block",
+            "chain_command_block",
+            "repeating_command_block",
+        ] {
+            for face in ["back", "conditional", "front", "side"] {
+                expected.push(format!("block/{kind}_{face}"));
+            }
+        }
         // Concrete isn't in Kenzo's textures; a resource pack brings it.
         for color in [
             "white",

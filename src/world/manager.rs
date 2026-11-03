@@ -142,6 +142,8 @@ pub struct ChunkManager {
     /// loading or regenerating them would lose the changes.
     unsaved: FastSet<ChunkPos>,
     unloaded_edits: FastMap<ChunkPos, Arc<Chunk>>,
+    /// Chunks `/forceload` keeps loaded.
+    forced: std::collections::HashSet<ChunkPos>,
     /// Meshes rebuilt by edits, handed out by the next `update`.
     remeshed: Vec<(ChunkPos, Mesh)>,
     /// Drawn chunks whose light changed, waiting for a background remesh.
@@ -341,6 +343,7 @@ impl ChunkManager {
             revisions: FastMap::default(),
             unsaved: FastSet::default(),
             unloaded_edits: FastMap::default(),
+            forced: std::collections::HashSet::new(),
             remeshed: Vec::new(),
             relight: FastSet::default(),
             lights: FastMap::default(),
@@ -395,8 +398,17 @@ impl ChunkManager {
 
     /// `update` around several centers at once (a server's players): a
     /// chunk is kept while it's near any of them.
+    /// Keeps these chunks loaded wherever the players are (`/forceload`).
+    pub fn set_forced(&mut self, chunks: impl IntoIterator<Item = ChunkPos>) {
+        self.forced = chunks.into_iter().collect();
+    }
+
     pub fn update_around(&mut self, centers: &[ChunkPos]) -> Changes {
+        let forced = self.forced.clone();
         let near = |pos: ChunkPos| {
+            if forced.contains(&pos) {
+                return 0;
+            }
             centers
                 .iter()
                 .map(|&center| Self::distance(pos, center))
@@ -471,6 +483,19 @@ impl ChunkManager {
         let Some(jobs) = self.jobs.clone() else {
             return changes;
         };
+        // Forced chunks load whatever else is going on.
+        if !remote {
+            for pos in self.forced.clone() {
+                if self.world.get(pos).is_none() {
+                    if let Some(chunk) = self.unloaded_edits.remove(&pos) {
+                        changes.loaded.push(pos);
+                        self.world.insert_shared(chunk);
+                    } else if self.generating.insert(pos) {
+                        let _ = jobs.send(Job::Generate(pos));
+                    }
+                }
+            }
+        }
         // The nearest first, taking each player's ring in turn.
         let offsets = self.offsets.clone();
         let jobs_for = offsets

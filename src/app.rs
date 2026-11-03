@@ -199,6 +199,8 @@ pub struct App {
     f3_was_visible: bool,
     /// F3+F4's mode switcher: the mode chosen.
     mode_switcher: Option<usize>,
+    /// The command block editor, open while the server says one is being edited.
+    command_block: Option<crate::ui::command_block::CommandBlockEditor>,
     /// The spectator menu is open, on its players (0) or teams (1) page.
     spectator_menu: bool,
     spectator_page: u8,
@@ -260,6 +262,7 @@ impl App {
             f3_used: false,
             f3_was_visible: false,
             mode_switcher: None,
+            command_block: None,
             spectator_menu: false,
             spectator_page: 0,
             client_mods: crate::mods::client::ClientMods::start(),
@@ -1055,6 +1058,8 @@ impl App {
             if escape && press {
                 self.close_chat();
             }
+        } else if self.command_block.is_some() {
+            // The command block editor has the keyboard (it handles Escape).
         } else if (is(Action::Chat) || is(Action::Command))
             && press
             && self.link.is_some()
@@ -1219,7 +1224,10 @@ impl App {
             }
         }
         if let Some(options) = link.completions.take() {
-            self.chat.completions(options);
+            match self.command_block.as_mut() {
+                Some(editor) => editor.completions(options),
+                None => self.chat.completions(options),
+            }
         }
     }
 
@@ -2027,6 +2035,13 @@ impl App {
                     |cell| chunks.light_at(cell.x, cell.y, cell.z).unwrap_or((15, 0)),
                 );
             }
+            crate::render::entities::add_border(
+                &mut mesh,
+                &game.border,
+                game.time(),
+                self.effect_uvs.shadow,
+                game.player.camera.position.as_dvec3(),
+            );
             renderer.set_entities(&mesh);
             // A spectator has no hand, and a hidden GUI hides it too.
             if self.hide_gui || game.player.mode.is_spectator() {
@@ -2439,7 +2454,7 @@ impl App {
             .as_mut()
             .map(|menu| (menu, &mut self.options, &mut difficulty));
         let chat = (!self.hide_gui).then_some((&mut self.chat, &chat_settings));
-        let (ui, actions, chat_action) = debug_ui.frame(
+        let (ui, actions, chat_action, editor_action) = debug_ui.frame(
             window,
             &game.player.camera,
             &stats,
@@ -2447,6 +2462,7 @@ impl App {
             screen,
             pause,
             chat,
+            self.command_block.as_mut(),
         );
         game.difficulty = difficulty;
         let mut environment = game.environment();
@@ -2524,6 +2540,56 @@ impl App {
             self.on_screen_action(action);
         }
         self.on_chat(chat_action);
+        self.on_editor(editor_action);
+        self.sync_command_block();
+    }
+
+    /// A right-click on a command block opens its editor (the server put
+    /// its data in the player's state); the server closing it closes ours.
+    fn sync_command_block(&mut self) {
+        let edit = self
+            .game
+            .as_ref()
+            .and_then(|g| g.player.command_block_edit.clone());
+        match (edit, self.command_block.is_some()) {
+            (Some(edit), false) => {
+                self.command_block = Some(crate::ui::command_block::CommandBlockEditor::new(edit));
+                self.stack.push(Layer::CommandBlock);
+                self.apply_grab();
+            }
+            (None, true) => {
+                self.command_block = None;
+                self.stack.remove(Layer::CommandBlock);
+                self.apply_grab();
+            }
+            _ => {}
+        }
+    }
+
+    /// What the command block editor asked for.
+    fn on_editor(&mut self, action: Option<crate::ui::command_block::EditorAction>) {
+        use crate::{net::protocol::ClientMsg, ui::command_block::EditorAction};
+        match action {
+            Some(EditorAction::Done(edit)) => {
+                self.tell_server(ClientMsg::CommandBlock(Some(edit)));
+                self.close_command_block();
+            }
+            Some(EditorAction::Cancel) => {
+                self.tell_server(ClientMsg::CommandBlock(None));
+                self.close_command_block();
+            }
+            Some(EditorAction::Complete(line)) => self.tell_server(ClientMsg::Complete(line)),
+            None => {}
+        }
+    }
+
+    fn close_command_block(&mut self) {
+        self.command_block = None;
+        if let Some(game) = self.game.as_mut() {
+            game.player.command_block_edit = None;
+        }
+        self.stack.remove(Layer::CommandBlock);
+        self.apply_grab();
     }
 
     /// The main menu over the sky.
@@ -3110,6 +3176,7 @@ mod tests {
             Layer::Bed,
             Layer::Death,
             Layer::Chat,
+            Layer::CommandBlock,
         ] {
             let mut app = app_in_a_world();
             app.stack.push(layer);
