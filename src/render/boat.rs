@@ -59,6 +59,14 @@ const BOAT: [Part; 5] = [
     },
 ];
 
+/// Vanilla's `water_patch`: a slab over the inside of the hull at the rim,
+/// drawn to the depth buffer only.
+const WATER_PATCH: Part = Part {
+    cubes: &[((0.0, 0.0), [-14.0, -9.0, -3.0], [28.0, 16.0, 3.0])],
+    pivot: [0.0, -3.0, 1.0],
+    rotation: [FRAC_PI_2, 0.0, 0.0],
+};
+
 const RAFT: [Part; 1] = [Part {
     cubes: &[
         ((0.0, 0.0), [-14.0, -11.0, -4.0], [28.0, 20.0, 4.0]),
@@ -179,6 +187,16 @@ pub fn add_boat(mesh: &mut Mesh, boat: &Boat, alpha: f32, light: (u8, u8)) {
             );
         }
     }
+    if !raft {
+        // The mask is the last box added; it moves to the mesh's second
+        // list, which the renderer draws with a depth-only pipeline.
+        let part = WATER_PATCH;
+        let (uv, from, extent) = part.cubes[0];
+        add(uv, from, extent, part.pivot, part.rotation);
+        let mask = mesh.indices.len() - 36;
+        let indices: Vec<u32> = mesh.indices.drain(mask..).collect();
+        mesh.translucent.extend(indices);
+    }
 }
 
 #[cfg(test)]
@@ -204,8 +222,20 @@ mod tests {
         let boat = Boat::new(1, BoatKind::of_item("oak_boat").unwrap(), DVec3::ZERO, 0.0);
         let mut mesh = Mesh::default();
         add_boat(&mut mesh, &boat, 1.0, (15, 0));
-        // Hull 5 boxes, paddles 4: 9 boxes of 24 corners.
-        assert_eq!(mesh.vertices.len(), 9 * 24);
+        // Hull 5 boxes, paddles 4, the water mask: 10 boxes of 24 corners,
+        // the mask's 36 indices in the second list.
+        assert_eq!(mesh.vertices.len(), 10 * 24);
+        assert_eq!(mesh.translucent.len(), 36);
+        let mask: Vec<f32> = mesh.translucent[..36]
+            .iter()
+            .map(|&i| mesh.vertices[i as usize].position[1])
+            .collect();
+        let (mask_low, mask_high) = (
+            mask.iter().copied().fold(f32::MAX, f32::min),
+            mask.iter().copied().fold(f32::MIN, f32::max),
+        );
+        // Over the inside of the hull, from the rim down a fifth of a block.
+        assert!((mask_high - 0.5625).abs() < 1e-4 && (mask_low - 0.375).abs() < 1e-4);
         let (lo, hi) = bounds(&mesh);
         // Facing north, the hull runs 28 pixels along z and 20 across x.
         let (long, wide) = (hi.z - lo.z, hi.x - lo.x);
@@ -229,7 +259,7 @@ mod tests {
         );
         let mut mesh = Mesh::default();
         add_boat(&mut mesh, &chest, 1.0, (15, 0));
-        assert_eq!(mesh.vertices.len(), 12 * 24);
+        assert_eq!(mesh.vertices.len(), 13 * 24);
         let raft = Boat::new(
             1,
             BoatKind::of_item("bamboo_raft").unwrap(),
@@ -239,6 +269,10 @@ mod tests {
         let mut mesh = Mesh::default();
         add_boat(&mut mesh, &raft, 1.0, (15, 0));
         assert_eq!(mesh.vertices.len(), 6 * 24);
+        assert!(
+            mesh.translucent.is_empty(),
+            "a raft has no inside to keep dry"
+        );
     }
 
     #[test]

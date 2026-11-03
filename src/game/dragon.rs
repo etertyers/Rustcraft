@@ -308,7 +308,9 @@ impl Game {
             {
                 let away = game.player.body.position() - from;
                 let flat = DVec3::new(away.x, 0.0, away.z).normalize_or_zero();
-                game.player.body.velocity += flat * WING_PUSH + DVec3::Y * 0.3;
+                game.player
+                    .body
+                    .push_velocity(flat * WING_PUSH + DVec3::Y * 0.3);
             }
         });
         for mob in &mut self.mobs {

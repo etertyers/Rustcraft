@@ -199,6 +199,7 @@ fn play(bot: &mut Bot, tick: u32, index: usize) {
         keys,
         yaw: bot.yaw,
         pitch: if looking_down { -1.4 } else { 0.0 },
+        fly_scale: 1.0,
     }));
     let press = |bot: &mut Bot, action, pressed| {
         bot.conn.send(ClientMsg::Action {

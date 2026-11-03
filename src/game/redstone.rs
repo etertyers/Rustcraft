@@ -339,7 +339,9 @@ impl Game {
             }
             by.map(|amount| step * (amount + 1e-3))
         };
-        if let Some(by) = shift(&self.player.body.aabb()) {
+        if self.player.body.pushable()
+            && let Some(by) = shift(&self.player.body.aabb())
+        {
             let feet = self.player.body.position() + by;
             self.player.body.set_position(feet);
         }

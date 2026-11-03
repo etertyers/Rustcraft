@@ -1620,4 +1620,100 @@ mod tests {
                 && caught(&c[1].1)
         });
     }
+
+    /// Flies Bob (a spectator, with the wheel at `scale`) east through
+    /// water, mobs and terrain for `ticks` ticks, holding `sprint`: the
+    /// client's and server's speeds in blocks a second each tick (from how
+    /// far each moved), and how often the server corrected the client.
+    fn fly_spectator(scale: f64, sprint: bool, ticks: usize) -> (Vec<f64>, Vec<f64>, u32) {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        let say = |clients: &mut [(Client, Game)], line: &str| {
+            clients[0].0.send(ClientMsg::Chat(line.to_owned()));
+        };
+        say(&mut clients, "/gamemode spectator Bob");
+        say(&mut clients, "/fill 8 64 -3 24 70 3 water");
+        say(&mut clients, "/fill 30 64 -3 34 66 3 stone");
+        say(&mut clients, "/setblock 40 65 0 cobweb");
+        say(&mut clients, "/setblock 44 65 0 soul_sand");
+        for x in [12, 20, 36] {
+            say(&mut clients, &format!("/summon pig {x} 64 0"));
+        }
+        run_until(&mut server, &mut clients, |s, c| {
+            s.game.others[0].mode == GameMode::Spectator
+                && c[1].1.player.mode == GameMode::Spectator
+        });
+        // Bob's start: above the flat world, facing east.
+        let start = DVec3::new(0.5, 66.0, 0.5);
+        for player in [&mut server.game.others[0], &mut clients[1].1.player] {
+            let mut body = player.body_state().clone();
+            body.set_position(start);
+            body.velocity = DVec3::ZERO;
+            player.set_body(body, start);
+        }
+        let (client, game) = &mut clients[1];
+        let mut body = game.player.body_state().clone();
+        body.fly_scale = scale;
+        game.player.set_body(body, start);
+        game.player.camera.yaw = std::f32::consts::FRAC_PI_2;
+        game.player.camera.pitch = 0.0;
+        game.player.keys.set_key(Action::Forward, true);
+        game.player.keys.set_key(Action::Sprint, sprint);
+        let before = client.corrections;
+        let (mut on_client, mut on_server) = (Vec::new(), Vec::new());
+        let (mut last_client, mut last_server) = (start, start);
+        for _ in 0..ticks {
+            for (client, game) in clients.iter_mut() {
+                client.advance(game, 0.05);
+            }
+            server.advance(0.05);
+            for (client, game) in clients.iter_mut() {
+                client.receive(game);
+            }
+            let here = clients[1].1.player.body_state().position();
+            on_client.push((here - last_client).length() * 20.0);
+            last_client = here;
+            let there = server.game.others[0].body_state().position();
+            on_server.push((there - last_server).length() * 20.0);
+            last_server = there;
+        }
+        (on_client, on_server, clients[1].0.corrections - before)
+    }
+
+    /// (min, max, average) once past the ramp-up (the first five seconds).
+    fn summary(speeds: &[f64]) -> (f64, f64, f64) {
+        let steady = &speeds[100..];
+        let min = steady.iter().copied().fold(f64::MAX, f64::min);
+        let max = steady.iter().copied().fold(0.0, f64::max);
+        (min, max, steady.iter().sum::<f64>() / steady.len() as f64)
+    }
+
+    #[test]
+    fn a_spectator_flies_steadily_through_water_terrain_and_mobs_without_corrections() {
+        // 30 s at the wheel's 2×, then 30 s of sprinting at 1×.
+        let (client, server, corrections) = fly_spectator(2.0, false, 600);
+        let (min, max, avg) = summary(&client);
+        eprintln!(
+            "M46 wheel 2x: min {min:.3} max {max:.3} avg {avg:.3} b/s, {corrections} corrections"
+        );
+        assert_eq!(summary(&server), (min, max, avg), "the server agrees");
+        assert_eq!(corrections, 0, "the server never corrected a spectator");
+        assert!(
+            max - min < 0.01 && (avg - 2.0 * 10.89).abs() < 0.05,
+            "steady at twice flight speed: {min}..{max}"
+        );
+        let (client, _, corrections) = fly_spectator(1.0, true, 600);
+        let (min, max, avg) = summary(&client);
+        eprintln!(
+            "M46 sprint: min {min:.3} max {max:.3} avg {avg:.3} b/s, {corrections} corrections"
+        );
+        assert_eq!(corrections, 0);
+        assert!(
+            max - min < 0.01 && (avg - 2.0 * 10.89).abs() < 0.05,
+            "{min}..{max}"
+        );
+    }
 }

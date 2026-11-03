@@ -653,6 +653,27 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_boat_settles_within_two_seconds_at_vanilla_height() {
+        let water = world(BlockState::of(blocks::WATER));
+        let surface = 62.0 + 8.0 / 9.0;
+        for wood in 0..WOODS.len() {
+            for chest in [false, true] {
+                let mut boat =
+                    Boat::new(1, BoatKind { wood, chest }, DVec3::new(8.0, 66.0, 8.0), 0.0);
+                run(&water, &mut boat, None, 40);
+                let depth = surface - boat.position.y;
+                assert!(
+                    (0.33..=0.41).contains(&depth),
+                    "wood {wood}: bottom {depth} under"
+                );
+                // The rim stands about 0.2 above the surface.
+                let rim = boat.position.y + HEIGHT - surface;
+                assert!((0.15..=0.23).contains(&rim), "rim {rim}");
+            }
+        }
+    }
+
+    #[test]
     fn rowing_speeds_match_vanilla_on_water_ice_and_land() {
         let water = speed(&world(BlockState::of(blocks::WATER)), 62.6);
         assert!((water - 8.0).abs() < 0.5, "water {water}");

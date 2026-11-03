@@ -171,6 +171,8 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
     mob_pipeline: wgpu::RenderPipeline,
+    /// Depth only, for a boat's water mask.
+    mask_pipeline: wgpu::RenderPipeline,
     crack_pipeline: wgpu::RenderPipeline,
     /// The crack over the block being mined, if any.
     crack: Option<ChunkBuffers>,
@@ -340,6 +342,7 @@ impl Renderer {
             false,
             false,
         );
+        let mask_pipeline = create_mask_pipeline(&device, &pipeline_layout, &shader, config.format);
         let crack_pipeline =
             create_crack_pipeline(&device, &pipeline_layout, &shader, config.format);
         let mob_bind_groups = mob_textures
@@ -372,6 +375,7 @@ impl Renderer {
             pipeline,
             translucent_pipeline,
             mob_pipeline,
+            mask_pipeline,
             crack_pipeline,
             crack: None,
             mob_bind_groups,
@@ -929,6 +933,18 @@ impl Renderer {
                     pass.set_bind_group(1, group, &[]);
                     draw_range(&mut pass, mesh, 0..mesh.opaque);
                 }
+                // Vanilla's water mask: a boat's inside, in depth only, so the
+                // water drawn next stops at its rim.
+                pass.set_pipeline(&self.mask_pipeline);
+                for (kind, mesh) in &self.mobs {
+                    if mesh.translucent == 0 {
+                        continue;
+                    }
+                    if let Some(group) = self.mob_bind_groups.get(*kind) {
+                        pass.set_bind_group(1, group, &[]);
+                        draw_range(&mut pass, mesh, mesh.opaque..mesh.opaque + mesh.translucent);
+                    }
+                }
                 pass.set_bind_group(1, &self.atlas_bind_group, &[]);
             }
             if let Some(crack) = &self.crack {
@@ -1247,6 +1263,46 @@ fn create_block_pipeline(
                 format,
                 blend,
                 write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// A boat's water mask: depth, no color, drawn from both sides.
+fn create_mask_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("water mask"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[Some(vertex::Vertex::layout())],
+        },
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::empty(),
             })],
         }),
         multiview_mask: None,

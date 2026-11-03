@@ -139,7 +139,7 @@ impl Game {
             && self.player.mode.is_vulnerable()
         {
             self.player.stats.damage(damage, DamageSource::Explosion);
-            self.player.body.velocity += push;
+            self.player.body.push_velocity(push);
         }
     }
 

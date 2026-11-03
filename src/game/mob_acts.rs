@@ -183,7 +183,9 @@ impl Game {
                 }
                 if toss {
                     let lift = 0.25 + self.rng.next_f64() * 0.25;
-                    self.player.body.velocity.y = self.player.body.velocity.y.max(0.0) + lift;
+                    if self.player.body.pushable() {
+                        self.player.body.velocity.y = self.player.body.velocity.y.max(0.0) + lift;
+                    }
                 }
                 // Tame wolves take up the fight against whatever hit.
                 self.threat_id = mob.id;

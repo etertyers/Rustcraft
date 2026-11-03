@@ -392,6 +392,9 @@ pub fn knock_back(body: &mut Body, from: DVec3) {
 /// `strength` along `toward` (horizontal; a zero vector pushes a hair east),
 /// and lifts a body on the ground by `strength`, up to 0.4.
 pub fn push(body: &mut Body, strength: f64, toward: DVec3) {
+    if !body.pushable() {
+        return;
+    }
     let mut dir = DVec3::new(toward.x, 0.0, toward.z);
     if dir.length_squared() < 1e-8 {
         dir = DVec3::X;
