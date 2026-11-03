@@ -143,6 +143,16 @@ fn main() -> Result<()> {
             std::process::exit(err.exit_code());
         }
     };
+    // `--perf-test --all-looks`: each look and quality in turn.
+    if cli.all_looks && cli.bench.as_ref().is_some_and(|b| b.perf_report.is_some()) {
+        return rustcraft::perf::run_all_looks(&args);
+    }
+    // `--shot <name> --compare`: the scene once per look, side by side.
+    if cli.compare
+        && let Some((_, out)) = &cli.shot
+    {
+        return rustcraft::render::visuals::compare::run(&args, out, cli.quality);
+    }
     // `--perf-test --runs <n>` flies n times in child processes.
     if let Some(bench) = cli
         .bench
@@ -155,7 +165,9 @@ fn main() -> Result<()> {
     let mut app = app::App::new(cli.world)
         .with_bench(cli.bench)
         .with_view(cli.view)
-        .with_lan(cli.name, cli.join, cli.lan);
+        .with_lan(cli.name, cli.join, cli.lan)
+        .with_size(cli.size)
+        .with_visuals(cli.visuals, cli.quality);
     // `--pack <file or folder>` (repeatable): play or shoot with these
     // resource packs instead of the chosen ones, leaving options.ron be.
     let packs: Vec<String> = args

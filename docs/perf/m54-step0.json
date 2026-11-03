@@ -1,0 +1,80 @@
+{
+  "label": "m54-step0",
+  "row": "vanilla",
+  "commit": "0b0099bbc5eebd5a7f7a11c952198af8285e7b15-dirty",
+  "machine": "Macmini9,1",
+  "machine_detail": "Macmini9,1 (Apple M1)",
+  "dimension": "overworld",
+  "seed": 20111118,
+  "render_distance": 9,
+  "seconds": 60.0,
+  "runs": 3,
+  "measures": {
+    "average_fps": 134.52369689941406,
+    "chunk_generation_ms": 9.047359301098902,
+    "chunks_generated": 1365.0,
+    "chunks_meshed": 1616.0,
+    "frames": 8072.0,
+    "frames_over_33ms": 0.0,
+    "frames_over_50ms": 0.0,
+    "light_mesh_ms": 9.660719357098571,
+    "memory_mib": 607.5625,
+    "one_percent_low_fps": 59.866798400878906,
+    "worst_frame_ms": 31.71050262451172
+  },
+  "spread_pct": {
+    "average_fps": 13.989680296773704,
+    "chunk_generation_ms": 5.624956449458232,
+    "chunks_generated": 0.0,
+    "chunks_meshed": 9.034653465346535,
+    "frames": 13.999008919722497,
+    "frames_over_33ms": 0.0,
+    "frames_over_50ms": 0.0,
+    "light_mesh_ms": 6.614538092547756,
+    "memory_mib": 18.87408702808353,
+    "one_percent_low_fps": 16.9168983622878,
+    "worst_frame_ms": 7901.120620235163
+  },
+  "benchmarks": {},
+  "per_run": [
+    {
+      "average_fps": 123.98807525634766,
+      "chunk_generation_ms": 9.461214973626374,
+      "chunks_generated": 1365.0,
+      "chunks_meshed": 1613.0,
+      "frames": 7440.0,
+      "frames_over_33ms": 3.0,
+      "frames_over_50ms": 3.0,
+      "light_mesh_ms": 9.660719357098571,
+      "memory_mib": 505.25,
+      "one_percent_low_fps": 49.97095489501953,
+      "worst_frame_ms": 2528.849853515625
+    },
+    {
+      "average_fps": 134.52369689941406,
+      "chunk_generation_ms": 8.952304953113552,
+      "chunks_generated": 1365.0,
+      "chunks_meshed": 1616.0,
+      "frames": 8072.0,
+      "frames_over_33ms": 0.0,
+      "frames_over_50ms": 0.0,
+      "light_mesh_ms": 9.105039874381188,
+      "memory_mib": 607.5625,
+      "one_percent_low_fps": 59.866798400878906,
+      "worst_frame_ms": 23.364791870117188
+    },
+    {
+      "average_fps": 142.80751037597656,
+      "chunk_generation_ms": 9.047359301098902,
+      "chunks_generated": 1365.0,
+      "chunks_meshed": 1759.0,
+      "frames": 8570.0,
+      "frames_over_33ms": 0.0,
+      "frames_over_50ms": 0.0,
+      "light_mesh_ms": 9.744051836270607,
+      "memory_mib": 619.921875,
+      "one_percent_low_fps": 60.09856033325195,
+      "worst_frame_ms": 31.71050262451172
+    }
+  ]
+}

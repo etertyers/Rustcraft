@@ -187,7 +187,8 @@ impl Menu {
     }
 
     fn open_packs(&mut self, options: &Options, back: Screen) {
-        let packs = PackScreen::new(crate::pack::packs_dir(), &options.resource_packs);
+        let packs = PackScreen::new(crate::pack::packs_dir(), &options.resource_packs)
+            .for_look(options.visuals.look.name());
         self.screen = Screen::ResourcePacks(packs, Box::new(back));
     }
 

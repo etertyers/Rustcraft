@@ -19,6 +19,7 @@ pub mod harvest;
 pub mod legacy;
 pub mod light;
 pub mod manager;
+pub mod materials;
 pub mod mesh;
 pub mod piston;
 pub mod plants;

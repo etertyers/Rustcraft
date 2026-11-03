@@ -95,10 +95,13 @@ impl PauseMenu {
                         match screen.show(ui, options, Some(difficulty)) {
                             Some(OptionsAction::Done) => self.options = None,
                             Some(OptionsAction::ResourcePacks) => {
-                                self.packs = Some(PackScreen::new(
-                                    crate::pack::packs_dir(),
-                                    &options.resource_packs,
-                                ));
+                                self.packs = Some(
+                                    PackScreen::new(
+                                        crate::pack::packs_dir(),
+                                        &options.resource_packs,
+                                    )
+                                    .for_look(options.visuals.look.name()),
+                                );
                             }
                             None => {}
                         }

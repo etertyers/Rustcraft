@@ -1,0 +1,53 @@
+// What the Trailer look's shaders treat each block as (M54): a material
+// class per block state, packed into each vertex (render::vertex::pack_face).
+// The Vanilla look ignores it.
+//
+// Rules are tried in order and the first that matches wins; blocks no rule
+// matches are `Opaque`. A rule's `blocks` are names (`glowstone`), `#name`
+// for every block that acts as that one (`#oak_leaves`: all leaves, see
+// `acts_as` in blocks.ron), or a `*` at either end (`*_stained_glass`).
+// `when` limits it to states meeting a condition (`lit=true`), as in
+// blocks.ron's variants. Names of blocks Rustcraft doesn't have yet are
+// skipped, so vanilla's can be listed ahead of time.
+//
+// Classes: Opaque, CutoutLeaves, CutoutPlant (grass, flowers, ferns,
+// saplings), Crops, Vines (vines and hanging plants), Water, Lava, Ice,
+// Glass (and stained glass), Emissive, Metal (shines a
+// little). `glow` (1-15) is how brightly it glows in the Trailer look:
+// emissive blocks and lava are drawn brighter than 1.0 there, so they bloom.
+[
+    (blocks: ["#oak_leaves", "*_leaves"], class: CutoutLeaves),
+    (blocks: [
+        "short_grass", "tall_grass", "fern", "large_fern", "#poppy", "#oak_sapling",
+        "dandelion", "*_tulip", "torchflower", "pitcher_plant", "sweet_berry_bush",
+        "dead_bush", "sugar_cane", "bamboo_sapling", "crimson_roots", "warped_roots",
+        "nether_sprouts", "crimson_fungus", "warped_fungus", "brown_mushroom", "red_mushroom",
+        "pink_petals", "seagrass", "tall_seagrass", "kelp", "kelp_plant", "lily_pad",
+        "small_dripleaf", "big_dripleaf_stem", "azalea", "flowering_azalea", "spore_blossom",
+        "lilac", "rose_bush", "peony", "sunflower",
+    ], class: CutoutPlant),
+    (blocks: [
+        "wheat", "carrots", "potatoes", "beetroots", "melon_stem", "pumpkin_stem",
+        "attached_melon_stem", "attached_pumpkin_stem", "nether_wart", "torchflower_crop",
+        "pitcher_crop", "cocoa",
+    ], class: Crops),
+    (blocks: [
+        "vine", "weeping_vines", "weeping_vines_plant", "twisting_vines",
+        "twisting_vines_plant", "cave_vines", "cave_vines_plant", "hanging_roots",
+        "glow_lichen", "pale_hanging_moss",
+    ], class: Vines),
+    (blocks: ["water", "bubble_column"], class: Water),
+    (blocks: ["lava"], class: Lava, glow: 15),
+    (blocks: ["ice", "packed_ice", "blue_ice", "frosted_ice"], class: Ice),
+    (blocks: ["glass", "glass_pane", "tinted_glass", "*_stained_glass", "*_stained_glass_pane"], class: Glass),
+    (blocks: ["glowstone", "sea_lantern", "shroomlight", "*_froglight"], class: Emissive, glow: 15),
+    (blocks: ["fire", "soul_fire"], class: Emissive, glow: 15),
+    (blocks: ["torch", "wall_torch", "lantern", "jack_o_lantern", "end_rod"], class: Emissive, glow: 14),
+    (blocks: ["soul_torch", "soul_wall_torch", "soul_lantern"], class: Emissive, glow: 10),
+    (blocks: ["redstone_lamp", "redstone_torch", "redstone_wall_torch"], when: "lit=true", class: Emissive, glow: 12),
+    (blocks: ["magma_block"], class: Emissive, glow: 3),
+    (blocks: [
+        "gold_block", "iron_block", "copper_block", "*_copper", "diamond_block",
+        "emerald_block", "netherite_block",
+    ], class: Metal),
+]

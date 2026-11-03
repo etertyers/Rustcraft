@@ -166,6 +166,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.1 | M14–M30 | A–D | `docs/milestones/v1.1.md` | released (`v1.1.0`) |
 | 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | built: M31–M38 tagged, PRs #45–#48 (M39–M42) await Kenzo; `v1.2.0` not tagged |
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | built: PRs #49–#59 open, stacked |
+| 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | in progress: the trailer look |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`.
 
@@ -236,3 +237,10 @@ Every numeric target in a milestone says where it comes from: vanilla code or da
 - Checkpoint J (M50–M52) fixes Kenzo's second v1.3 playtest: the boat camera, stray characters when screens open, timed HUD messages, underwater visibility, and /locate bastion; and adds strongholds with eyes of ender so survival can be beaten.
 - Caves match vanilla 1.21.11's world-gen data term by term, checked by a test against the downloaded JSON (assets/vanilla/data, never committed); M48's made-up surface-opening targets are removed (M53).
 - "Oceans are too dark" meant underwater visibility, not water color. Water colors stay vanilla (M47); underwater fog follows vanilla's 96-block fog with water vision (M51).
+
+### v1.4 (the trailer look)
+
+- v1.4 adds the Trailer look (Checkpoint K, M54–M58): native wgpu effects in the style of the trailers and Complementary Reimagined, with a quality profile (Low/Medium/High) and per-effect toggles. It's the default; F12 switches to the Vanilla look, which stays identical to M53 (checked against reference images).
+- Rustcraft doesn't load OptiFine/Iris shader packs: they target vanilla's OpenGL pipeline and would need a compatibility layer that is slower and months of work. The look is written natively in WGSL instead. Resource packs with OptiFine CEM models and animations (Fresh Animations) are supported (M58).
+- Each look has its own resource pack list. The Trailer list starts with Fresh Animations, Barebones Better Leaves and Bare Bones if they're in resourcepacks/; none of the three is ever bundled or committed (their licenses forbid redistribution).
+- Frame-rate budgets on Kenzo's Mac mini M1 at 1080p, render distance 9: Vanilla within 3% of M53; Trailer Low ≥ 100 FPS average / 50 at the 1% low; Medium ≥ 75 / 45; High ≥ 60 / 40. Each Trailer effect has a GPU-time share, measured with timestamps every milestone.

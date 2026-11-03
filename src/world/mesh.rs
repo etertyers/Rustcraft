@@ -411,7 +411,7 @@ impl ChunkArea {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     /// Opaque and cutout faces.
@@ -420,9 +420,60 @@ pub struct Mesh {
     pub translucent: Vec<u32>,
     /// Where `quad` puts new faces.
     adding_translucent: bool,
+    /// One packed face attribute per vertex (`render::vertex::pack_face`):
+    /// the normal, material class and flags the Trailer look reads. Kept
+    /// beside `vertices` so the vertex format stays as M53 had it.
+    pub faces: Vec<u32>,
+    /// The material class, glow and flags new faces get.
+    material: u8,
+    material_flags: u8,
+    /// The bottom of the block being meshed (vertices above its middle get
+    /// `FLAG_TOP`), or NaN outside a chunk.
+    block_bottom: f32,
+    /// The block is still water (its flat top face waves).
+    still_water: bool,
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            translucent: Vec::new(),
+            adding_translucent: false,
+            faces: Vec::new(),
+            material: crate::world::materials::Class::Opaque as u8,
+            material_flags: 0,
+            block_bottom: f32::NAN,
+            still_water: false,
+        }
+    }
 }
 
 impl Mesh {
+    /// A mesh whose faces are entities' (mobs, players, items, the hand).
+    pub fn entity() -> Self {
+        let mut mesh = Self::default();
+        mesh.set_material(crate::world::materials::Material {
+            class: crate::world::materials::Class::Entity,
+            glow: 0,
+        });
+        mesh
+    }
+
+    /// The material faces added from now on get.
+    pub fn set_material(&mut self, material: crate::world::materials::Material) {
+        self.material = material.class as u8;
+        self.material_flags = material.glow.min(15) << 4;
+    }
+
+    /// Faces added from now on belong to the block whose bottom is at
+    /// `bottom` (NaN: no block), still water or not.
+    fn set_block(&mut self, bottom: f32, still_water: bool) {
+        self.block_bottom = bottom;
+        self.still_water = still_water;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty() && self.translucent.is_empty()
     }
@@ -431,6 +482,7 @@ impl Mesh {
     pub fn append(&mut self, other: &Mesh) {
         let base = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&other.vertices);
+        self.faces.extend_from_slice(&other.faces);
         self.indices.extend(other.indices.iter().map(|i| i + base));
         self.translucent
             .extend(other.translucent.iter().map(|i| i + base));
@@ -482,6 +534,7 @@ impl Mesh {
                 light: lights[i],
             });
         }
+        self.add_faces(&corners);
         // Split along the brighter diagonal so a single dark corner doesn't
         // smear across the whole face.
         let weight =
@@ -497,6 +550,26 @@ impl Mesh {
             &mut self.indices
         };
         indices.extend(order.map(|i| base + i));
+    }
+
+    /// The packed face attribute of a quad's four corners.
+    fn add_faces(&mut self, corners: &[[f32; 3]; 4]) {
+        use crate::render::vertex::{FLAG_STILL_WATER_TOP, FLAG_TOP, pack_face};
+        let [a, b, c, _] = corners.map(glam::Vec3::from);
+        let normal = (b - a).cross(c - a).normalize_or(glam::Vec3::Y);
+        let mut flags = self.material_flags;
+        if self.still_water
+            && normal.y > 0.99
+            && corners.iter().all(|p| (p[1] - corners[0][1]).abs() < 1e-4)
+        {
+            flags |= FLAG_STILL_WATER_TOP;
+        }
+        let middle = self.block_bottom + 0.5;
+        for corner in corners {
+            let top = if corner[1] > middle { FLAG_TOP } else { 0 };
+            self.faces
+                .push(pack_face(normal.to_array(), self.material, flags | top));
+        }
     }
 
     /// Adds an evenly lit quad visible from both sides, with a color per
@@ -525,6 +598,9 @@ pub const SOLID_FLAG: f32 = 32.0;
 fn solid_faces(mesh: &mut Mesh, first: usize) {
     for vertex in &mut mesh.vertices[first..] {
         vertex.light[1] += SOLID_FLAG;
+    }
+    for face in &mut mesh.faces[first..] {
+        *face |= u32::from(crate::render::vertex::FLAG_SOLID) << 24;
     }
 }
 
@@ -1322,6 +1398,12 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                     ];
                     let model = models.get_at(block, min_x + x as i32, y, min_z + z as i32);
                     mesh.adding_translucent = model.translucent;
+                    mesh.set_material(crate::world::materials::of(block));
+                    mesh.set_block(
+                        y as f32,
+                        block.is(crate::world::blocks::WATER)
+                            && crate::world::fluid::level(block) == 0,
+                    );
                     let side = model.faces[Face::North.index()];
                     let side_color = tints.flat(side.tint, x as i32, z as i32);
                     let side_colors =
@@ -1501,6 +1583,37 @@ mod tests {
     const WHEAT: BlockState = BlockState::of(blocks::WHEAT);
     const TORCH: BlockState = BlockState::of(blocks::TORCH);
     const FENCE: BlockState = BlockState::of(blocks::OAK_FENCE);
+
+    #[test]
+    fn every_vertex_has_a_face_attribute_with_its_class_and_flags() {
+        use crate::render::vertex::{FLAG_STILL_WATER_TOP, FLAG_TOP, unpack_face};
+        use crate::world::materials::Class;
+        let water = BlockState::of(blocks::WATER);
+        let mesh = mesh_with(
+            &[(1, 64, 1, FLOWER), (5, 64, 5, STONE), (8, 64, 8, water)],
+            true,
+        );
+        assert_eq!(mesh.faces.len(), mesh.vertices.len());
+        let mut plant_tops = 0;
+        for (v, &face) in mesh.vertices.iter().zip(&mesh.faces) {
+            let (normal, class, flags) = unpack_face(face);
+            let length = normal.iter().map(|c| c * c).sum::<f32>().sqrt();
+            assert!((length - 1.0).abs() < 1e-3);
+            if v.position[0] < 3.0 && v.position[2] < 3.0 {
+                assert_eq!(class, Class::CutoutPlant as u8);
+                // The flower's top corners bend; its bottom stays put.
+                assert_eq!(flags & FLAG_TOP != 0, v.position[1] > 64.5);
+                plant_tops += usize::from(flags & FLAG_TOP != 0);
+            } else if v.position[0] < 7.0 {
+                assert_eq!(class, Class::Opaque as u8);
+            } else {
+                assert_eq!(class, Class::Water as u8);
+                let top = normal[1] > 0.99;
+                assert_eq!(flags & FLAG_STILL_WATER_TOP != 0, top, "{normal:?}");
+            }
+        }
+        assert!(plant_tops > 0);
+    }
 
     fn models() -> BlockModels {
         BlockModels::new(

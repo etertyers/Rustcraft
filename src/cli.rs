@@ -3,7 +3,14 @@
 
 use std::fmt;
 
-use crate::{app::WorldKind, bench, game::view::ViewMode, player::mode::GameMode, shots};
+use crate::{
+    app::WorldKind,
+    bench,
+    game::view::ViewMode,
+    player::mode::GameMode,
+    render::visuals::{LookKind, Quality},
+    shots,
+};
 
 /// The scene to capture and where to save it.
 pub type ShotArgs = (&'static shots::Shot, std::path::PathBuf);
@@ -20,6 +27,16 @@ pub struct Cli {
     pub name: Option<String>,
     pub join: Option<String>,
     pub lan: Option<u16>,
+    /// `--size <w>x<h>`: the window's size in pixels (for `--shot`).
+    pub size: Option<(u32, u32)>,
+    /// `--visuals vanilla|trailer` and `--quality low|medium|high`: the
+    /// look this run, without saving it.
+    pub visuals: Option<LookKind>,
+    pub quality: Option<Quality>,
+    /// `--shot <name> --compare`: the scene once per look, side by side.
+    pub compare: bool,
+    /// `--perf-test --all-looks`: Vanilla and Trailer Low, Medium and High.
+    pub all_looks: bool,
 }
 
 /// The world `--creative` makes when no `--world` names one.
@@ -43,8 +60,14 @@ Usage: cargo run --release -- [flags]
   --perf-test           the performance gate (writes docs/perf/<label>.md and .json); --underwater flies in the sea
     --runs <n>            ...n flights in one launch; the report has each measure's median and spread
     --label <name>        ...name the results <name> (default m<N>, with -nether, -end or -underwater)
-    --row <name>          ...which baseline row the results are for (default vanilla)
+    --row <name>          ...which baseline row the results are for (default vanilla,
+                            or trailer-<quality> with --visuals trailer)
+    --all-looks           ...Vanilla, then Trailer at Low, Medium and High (one results file each)
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
+    --size <w>x<h>        ...at this size in pixels (default 1280x720)
+    --compare             ...once per look, Vanilla left and Trailer right, in one picture
+  --visuals vanilla|trailer   draw with this look this time (F12 switches in game)
+  --quality low|medium|high   the Trailer look's quality this time
   --name <player>       play as this name this time (Options keeps yours)
   --join <ip:port>      join a world open to LAN
   --lan [port]          open the world to LAN as soon as it's up
@@ -106,6 +129,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let (mut runs, mut label, mut row, mut perf_out) = (1u32, None, None, None);
     let mut view = ViewMode::First;
     let (mut name, mut join, mut lan) = (None, None, None);
+    let mut size = None;
+    let (mut visuals, mut quality, mut compare, mut all_looks) = (None, None, false, false);
     fn value(
         args: &mut impl Iterator<Item = String>,
         flag: &str,
@@ -130,6 +155,27 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                 })?);
             }
             "--out" => out = Some(value(&mut args, "--out", "a file")?.into()),
+            "--compare" => compare = true,
+            "--all-looks" => all_looks = true,
+            "--visuals" => {
+                let text = value(&mut args, "--visuals", "vanilla or trailer")?;
+                visuals = Some(LookKind::parse(&text).ok_or_else(|| {
+                    CliError::wrong(format!("bad visuals {text:?} (vanilla or trailer)"))
+                })?);
+            }
+            "--quality" => {
+                let text = value(&mut args, "--quality", "low, medium or high")?;
+                quality = Some(Quality::parse(&text).ok_or_else(|| {
+                    CliError::wrong(format!("bad quality {text:?} (low, medium or high)"))
+                })?);
+            }
+            "--size" => {
+                let text = value(&mut args, "--size", "a size like 640x360")?;
+                size =
+                    Some(parse_size(&text).ok_or_else(|| {
+                        CliError::wrong(format!("bad size {text:?} (like 640x360)"))
+                    })?);
+            }
             "--bench" => {
                 let seconds = match args.next_if(|next| !next.starts_with("--")) {
                     Some(text) => text
@@ -254,7 +300,10 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         bench.underwater = underwater && dimension == Dimension::Overworld;
         bench.runs = runs;
         bench.label = label;
-        bench.row = row.unwrap_or(bench.row.clone());
+        bench.row = row.unwrap_or_else(|| match visuals {
+            Some(LookKind::Trailer) => quality.unwrap_or_default().row(),
+            _ => bench.row.clone(),
+        });
         bench.run_out = perf_out;
         // Each dimension's report has its own file.
         let name = bench.perf_label();
@@ -272,6 +321,11 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             name,
             join: None,
             lan: None,
+            size: None,
+            visuals,
+            quality,
+            compare: false,
+            all_looks,
         });
     }
     let world = match (world, seed) {
@@ -299,7 +353,19 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         name,
         join,
         lan,
+        size,
+        visuals,
+        quality,
+        compare,
+        all_looks: false,
     })
+}
+
+/// `640x360` as (640, 360).
+fn parse_size(text: &str) -> Option<(u32, u32)> {
+    let (w, h) = text.split_once('x')?;
+    let size = (w.parse().ok()?, h.parse().ok()?);
+    (size.0 > 0 && size.1 > 0).then_some(size)
 }
 
 #[cfg(test)]
@@ -330,8 +396,24 @@ mod tests {
             .bench
             .unwrap();
         assert_eq!((plain.runs, plain.row.as_str()), (1, "vanilla"));
-        assert_eq!(plain.perf_label(), "m53-nether");
+        assert_eq!(
+            plain.perf_label(),
+            format!("m{}-nether", bench::PERF_MILESTONE)
+        );
         assert!(parse_words(&["--perf-test", "--runs", "0"]).is_err());
+        let trailer =
+            parse_words(&["--perf-test", "--visuals", "trailer", "--quality", "high"]).unwrap();
+        assert_eq!(trailer.bench.unwrap().row, "trailer-high");
+        assert_eq!(trailer.visuals, Some(LookKind::Trailer));
+        let shot =
+            parse_words(&["--shot", "forest-noon", "--compare", "--size", "640x360"]).unwrap();
+        assert!(shot.compare && shot.size == Some((640, 360)));
+        assert!(parse_words(&["--visuals", "fancy"]).is_err());
+        assert!(
+            parse_words(&["--perf-test", "--all-looks"])
+                .unwrap()
+                .all_looks
+        );
     }
 
     #[test]
