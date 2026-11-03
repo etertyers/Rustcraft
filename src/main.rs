@@ -143,6 +143,14 @@ fn main() -> Result<()> {
             std::process::exit(err.exit_code());
         }
     };
+    // `--perf-test --runs <n>` flies n times in child processes.
+    if let Some(bench) = cli
+        .bench
+        .as_ref()
+        .filter(|b| b.perf_report.is_some() && b.runs > 1)
+    {
+        return rustcraft::perf::run_many(bench, &args);
+    }
     let event_loop = EventLoop::new()?;
     let mut app = app::App::new(cli.world)
         .with_bench(cli.bench)

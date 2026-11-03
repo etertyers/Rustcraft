@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Some tests read assets/vanilla/ (git-ignored), and others skip without it.
+      - name: Cache vanilla assets
+        uses: actions/cache@v4
+        with:
+          path: assets/vanilla
+          key: vanilla-${{ hashFiles('scripts/fetch-vanilla-assets.sh') }}
+
+      - name: Fetch vanilla assets
+        run: scripts/fetch-vanilla-assets.sh
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --all-targets -- -D warnings
+
+      # Debug: faster overall than --release (no optimized rebuild) and it runs the debug-assertion tests.
+      - run: cargo test

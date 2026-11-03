@@ -92,6 +92,16 @@ pub struct Bench {
     /// `--underwater` (M51): the Overworld flight runs 6 blocks under the
     /// surface of a deep ocean, so the water's fog and overlay are drawn.
     pub underwater: bool,
+    /// `--runs <n>`: how many flights `--perf-test` makes (the report has the
+    /// median of each measure).
+    pub runs: u32,
+    /// `--label <name>`: the name of docs/perf/<label>.json (default m<N>).
+    pub label: Option<String>,
+    /// `--row <name>`: which row of the baseline these results are for.
+    pub row: String,
+    /// `--perf-out <file>` (internal): one of `--runs`' flights writes its
+    /// measures here instead of into docs/perf.
+    pub run_out: Option<std::path::PathBuf>,
     elapsed: f32,
     warm_up: Vec<FrameTimes>,
     frames: Vec<FrameTimes>,
@@ -105,6 +115,10 @@ impl Bench {
             perf_report: None,
             dimension: Default::default(),
             underwater: false,
+            runs: 1,
+            label: None,
+            row: "vanilla".to_owned(),
+            run_out: None,
             elapsed: 0.0,
             warm_up: Vec::new(),
             frames: Vec::new(),
@@ -179,6 +193,45 @@ impl Bench {
             over_33ms: sorted.iter().filter(|&&dt| dt > 1.0 / 30.0).count(),
             over_50ms: sorted.iter().filter(|&&dt| dt > 0.05).count(),
         })
+    }
+
+    /// This flight's measures by name (see `perf::Result`), after the warm-up.
+    pub fn perf_measures(&self, run: RunStats) -> Option<std::collections::BTreeMap<String, f64>> {
+        let f = self.flight()?;
+        let mut m = std::collections::BTreeMap::new();
+        let mut put = |key: &str, value: f64| m.insert(key.to_owned(), value);
+        put("average_fps", f.average_fps.into());
+        put("one_percent_low_fps", f.one_percent_low_fps.into());
+        put("worst_frame_ms", f.worst_ms.into());
+        put("frames_over_33ms", f.over_33ms as f64);
+        put("frames_over_50ms", f.over_50ms as f64);
+        put("frames", f.frames as f64);
+        put("chunks_generated", run.generated.0 as f64);
+        put("chunk_generation_ms", run.generated.1);
+        put("chunks_meshed", run.meshed.0 as f64);
+        put("light_mesh_ms", run.meshed.1);
+        if let Some(memory) = run.memory_mib {
+            put("memory_mib", memory);
+        }
+        Some(m)
+    }
+
+    /// The name of the results: `--label`, else `m<N>` and the dimension.
+    pub fn perf_label(&self) -> String {
+        self.label
+            .clone()
+            .unwrap_or_else(|| format!("m{PERF_MILESTONE}{}", self.dimension_suffix()))
+    }
+
+    /// The name of this run's dimension, as in `docs/perf/m<N>-<name>.md`.
+    pub fn dimension_suffix(&self) -> &'static str {
+        use crate::world::dimension::Dimension;
+        match self.dimension {
+            Dimension::Overworld if self.underwater => "-underwater",
+            Dimension::Overworld => "",
+            Dimension::Nether => "-nether",
+            Dimension::End => "-end",
+        }
     }
 
     /// The `--perf-test` write-up, in Markdown.
