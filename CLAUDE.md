@@ -152,6 +152,7 @@ src/
   game/farming.rs   # crops on random ticks (vanilla's growth formula), farmland, hoes, bone meal, the composter, saplings, mushrooms; breeding is in game/animals.rs
   mods/{mod,lua,client}.rs, game/{modding,random_ticks}.rs, ui/mods.rs, mods/ examples/mods/   # mod folders and the set chosen at startup, the sandboxed Lua runtime and its API, the client's Lua (keys, HUD text, brightness), the server's mod host and events, random ticks, the Mods screen, the bundled Fullbright and the Ruby example (docs/modding.md)
   ui/chat.rs, game/commands.rs   # the chat lines, box and Chat Settings; the commands (table, selectors, Tab completion), run on the server
+  game/commands/{extra,world,components}.rs, game/{selector,modes,admin,weather}.rs, ui/modes.rs   # (M43) the everyday, block-editing and item-component commands; selectors in full; spectator and adventure rules and spectating; operators, bans and the whitelist; the weather state; the F3+F4 switcher and spectator menu
   advancements.rs, game/advance.rs, assets/data/advancements.ron, inventory/sweep.rs   # the advancement tree and what meets its criteria, the events and toasts in play (L opens the screen), the recipe sweep test
 assets/structures/   # structure templates, one folder per pool (village/<style>/{centers,streets,houses}, desert_temple...)
   audio/             # sound events: the merged sounds.json table, kira playback, block and mob sound names
@@ -629,6 +630,42 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - Rebuild the `.app`, set its version to 1.2.0, tag `v1.2.0`.
 - **Done when:** 60+ FPS at render distance 9 in each dimension on the Mac mini (single player), server ticks under 50 ms with 8 LAN bots, and the new `.app` launches by double-click, opens v1.1 worlds, and hosts and joins LAN games. **Stop: Checkpoint G.**
 
+### 7.4 Version 1.3 — commands
+
+Same rules as §7.3 (one screenshot at most per milestone, server-side, two-client tests), with one checkpoint:
+
+| Checkpoint | Milestones | Theme |
+|---|---|---|
+| H | M43–M45 | Vanilla Java's full command set, spectator and adventure mode, command blocks |
+
+General rules for every command: vanilla Java 1.21 syntax, Tab completion for every argument (commands, players, selectors, block and item ids, block states, coordinates with `~` and `^`), red error messages with vanilla wording, permission levels (cheat commands need Allow Cheats or an operator on LAN), `sendCommandFeedback` and `commandBlockOutput` game rules, and unit tests for parsing and each command's effect. Mods (M39) can still register their own commands. `/help` lists every command and `/help <command>` shows its usage.
+
+#### Checkpoint H — Commands
+
+### - [x] M43 — Game modes and everyday commands
+- **Spectator mode:** fly through blocks (no collision), no gravity, invisible to mobs and to non-spectator players (other spectators see a translucent head), can't break, place, pick up or interact, except to look inside containers read-only. Mouse wheel changes flight speed. Left-click a mob or player to spectate from its eyes (vanilla shaders for creepers, spiders and endermen are optional), Shift to leave. Number keys open vanilla's spectator menu (teleport to a player, or to a team in M44). The hotbar and hearts are hidden. Saved per player.
+- **Adventure mode:** can't break or place blocks, except items with the `can_break` / `can_place_on` components (settable with `/give` component syntax), but can use doors, buttons, levers, containers, beds and fight.
+- **F3+F4** opens vanilla's game-mode switcher, and **F3+N** toggles between spectator and the previous mode (cheats required).
+- **Selectors in full:** `@p @a @r @s @e @n` with `type, name, tag, team, distance, x/y/z, dx/dy/dz, limit, sort, level, gamemode, scores, nbt-lite (data paths the game supports), x_rotation, y_rotation, predicate` (predicate can wait until M45).
+- **Commands to add or complete:** `/gamemode` (all four modes), `/defaultgamemode`, `/spectate`, `/clone` (masked, replace, filtered, move, force), `/fill` (replace, destroy, hollow, keep, outline), `/fillbiome`, `/setblock` (replace, destroy, keep), `/place` (feature, structure, jigsaw, template), `/locate` (structure, biome, poi), `/give` with item components, `/clear` with counts, `/summon` with entity data, `/kill`, `/damage`, `/effect give/clear`, `/enchant`, `/attribute`, `/experience`, `/advancement`, `/recipe`, `/teleport` (facing, rotation, other entities), `/rotate`, `/spreadplayers`, `/ride`, `/particle`, `/playsound`, `/stopsound`, `/say`, `/me`, `/msg`, `/teammsg` (with M44), `/list`, `/seed`, `/time` (set, add, query), `/weather`, `/difficulty`, `/gamerule` (every vanilla game rule the game has a system for), `/spawnpoint`, `/setworldspawn`, `/random`, `/save-all`, `/save-on`, `/save-off`, and for the LAN host `/kick`, `/ban`, `/pardon`, `/op`, `/deop`, `/whitelist`, `/publish`, `/stop`.
+- **Done when:** spectator and adventure work as above, F3+F4 switches modes, and every listed command passes its tests. One screenshot: spectating a mob from its eyes.
+
+### - [ ] M44 — /execute, scoreboards, teams and text
+- **`/execute`** with every subcommand: `as`, `at`, `positioned` (including `over`), `rotated`, `facing`, `align`, `anchored`, `in`, `on` (relations like `vehicle`, `passengers`, `owner`, `attacker`), `summon`, `if/unless` (block, blocks, entity, score, data, predicate, biome, dimension, loaded, items, function), `store result/success` (score, bossbar, data) and `run`. Chained execution follows vanilla's order and limits.
+- **Scoreboards:** `/scoreboard objectives` (add, remove, list, setdisplay to sidebar, list, below_name, and team sidebars; modify displayname, rendertype, numberformat) with criteria `dummy`, `trigger`, `deathCount`, `playerKillCount`, `totalKillCount`, `health`, `food`, `air`, `armor`, `level`, `xp`, and the stat criteria the game tracks (`minecraft.mined:`, `minecraft.used:`, `minecraft.killed:`, etc.). `/scoreboard players` (set, add, remove, reset, get, list, enable, operation with `+= -= *= /= %= = < > ><`). Sidebar, tab-list and below-name displays. Saved per world.
+- **Teams:** `/team` (add, remove, join, leave, empty, modify color, prefix, suffix, friendlyFire, seeFriendlyInvisibles, nametagVisibility, collisionRule, deathMessageVisibility). Colored names in chat and above heads. **`/tag`** and **`/trigger`**.
+- **Text:** JSON text components (text, translate, score, selector, keybind, color, bold/italic etc., clickEvent and hoverEvent) in `/tellraw`, `/title` (title, subtitle, actionbar, times, clear, reset), bossbars, signs and item names.
+- **`/bossbar`** (add, remove, set name/color/style/value/max/players/visible, get, list).
+- **Data:** `/data get/merge/modify/remove` for entities, block entities and storage, over the data paths the game supports (record which ones in DECISIONS.md); `/item replace/modify`; `/loot` (spawn, give, insert, replace from loot tables, kill, mine, fish).
+- **Done when:** a scoreboard counts kills and shows in the sidebar, `/execute as @a at @s if block ~ ~-1 ~ minecraft:gold_block run ...` works, teams color names, and titles and bossbars display. One screenshot: the sidebar and a bossbar.
+
+### - [ ] M45 — Functions, data packs and command blocks
+- **Data packs:** `saves/<world>/datapacks/<pack>/` with `pack.mcmeta` and `data/<namespace>/function/*.mcfunction` (also loot tables, advancements, recipes and predicates the game already loads). `/datapack list/enable/disable`, `/reload`. Function tags `minecraft:load` and `minecraft:tick` run on load and every tick.
+- **`/function`** (with macro arguments), `/return`, `/schedule function` (and `clear`), and the `maxCommandChainLength` limit.
+- **Command blocks:** impulse (orange), chain (green) and repeating (purple), each conditional or unconditional and Needs Redstone or Always Active, facing like vanilla. The GUI: command field with Tab completion, previous output, track output toggle, mode, conditional and redstone buttons. Only operators in creative can place or edit them; obtained only with `/give`. Minecart with command block. Chained blocks run in the same tick in vanilla's order. `commandBlockOutput` and `commandBlocksEnabled` game rules.
+- **`/tick`** (query, rate, freeze, step, sprint), **`/worldborder`** (set, add, center, damage, warning, get) with the border rendered and enforced, and **`/forceload`**.
+- **Done when:** a data pack with a tick function runs, a repeating → chain command block line works with redstone, `/schedule` fires on time, and the world border shrinks and pushes players. One screenshot: a command block chain with its GUI open. **Stop: Checkpoint H.**
+
 ## 8. Decisions log (from Kenzo)
 
 - Mobs: pig and zombie in v1.0; many more mobs in v1.1 (M20, M24, M25, M28).
@@ -662,3 +699,5 @@ Same build rules as v1.1 (small commits, tests, perf gate, one PR per milestone,
 - The head-clipping bug is the inventory player picture.
 - Order: bug fixes first, then the client/server split and LAN before chat, mods, farming and fishing, so those are built multiplayer-ready.
 - At most one screenshot per milestone (usage cost); Kenzo does the visual checks by hand.
+- v1.3 (M43–M45) expands commands to vanilla Java's full set, including spectator and adventure mode, /execute, scoreboards, teams, data-pack functions and command blocks.
+- Cheat commands still need Allow Cheats (or operator on LAN); command blocks are op-only in creative.

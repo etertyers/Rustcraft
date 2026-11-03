@@ -2,6 +2,7 @@
 //! input, and dropped items, advanced on the 20 TPS fixed timestep. `App`
 //! owns at most one.
 
+pub mod admin;
 pub mod advance;
 mod animals;
 mod armor;
@@ -33,6 +34,7 @@ mod mob_acts;
 mod mob_tests;
 mod mobs;
 pub(crate) mod modding;
+pub mod modes;
 #[cfg(test)]
 mod moves;
 mod nether_mobs;
@@ -44,6 +46,7 @@ mod potions;
 mod progression;
 mod random_ticks;
 mod redstone;
+pub mod selector;
 mod shulkers;
 mod sleep;
 mod sounds;
@@ -53,6 +56,7 @@ pub mod sync;
 mod updates;
 pub mod view;
 mod villagers;
+pub mod weather;
 
 use std::{path::Path, sync::Arc};
 
@@ -227,6 +231,24 @@ pub struct PlayerState {
     /// Ticks the bow has been drawn.
     drawing: Option<u32>,
     mounted: Option<u64>,
+    /// The mob whose eyes a spectator sees through (M43).
+    /// `/attribute ... movement_speed base set`, as a multiple of normal.
+    #[serde(default = "one")]
+    pub speed_scale: f64,
+    /// Recipes `/recipe give` unlocked (the book shows them all).
+    #[serde(default)]
+    pub recipes: std::collections::BTreeSet<String>,
+    /// `/tag`'s tags on this player (M43).
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub spectating: Option<modes::Spectated>,
+    /// The spectator menu (number keys) is open.
+    #[serde(skip)]
+    pub spectator_menu: bool,
+    /// The mode before the last change, for F3+N.
+    #[serde(default)]
+    pub previous_mode: GameMode,
     /// The hotbar slot being eaten from and for how many ticks.
     eating: Option<(usize, u32)>,
     /// The block being mined and how far along it is (0–1).
@@ -328,6 +350,12 @@ impl PlayerState {
             shield_ticks: 0,
             drawing: None,
             mounted: None,
+            spectating: None,
+            tags: Vec::new(),
+            speed_scale: 1.0,
+            recipes: Default::default(),
+            previous_mode: GameMode::Survival,
+            spectator_menu: false,
             mining: None,
             eating: None,
             boat: None,
@@ -379,6 +407,15 @@ pub struct Game {
     spawn: DVec3,
     /// The world's game rules.
     pub rules: crate::level::GameRules,
+    /// `/defaultgamemode`: the mode players joining for the first time get.
+    pub default_mode: Option<GameMode>,
+    /// Operators, bans and the whitelist (a hosted world's).
+    pub admin: admin::Admin,
+    pub weather: weather::Weather,
+    /// Ticks until the weather changes by itself.
+    pub weather_ticks: u32,
+    /// `/save-off` stops the autosave.
+    pub autosave: bool,
     pub difficulty: crate::level::Difficulty,
     /// Commands are allowed in this world (chosen when it was made).
     pub cheats: bool,
@@ -509,6 +546,11 @@ impl Game {
             keeps_sounds: false,
             spawn,
             rules: crate::level::GameRules::default(),
+            default_mode: None,
+            admin: admin::Admin::default(),
+            weather: weather::Weather::Clear,
+            weather_ticks: weather::DEFAULT_TICKS,
+            autosave: true,
             difficulty: crate::level::Difficulty::default(),
             cheats: false,
             day_offset: 0,
@@ -607,6 +649,7 @@ impl Game {
             ender_chest: Vec::new(),
             advancements: level.advancements.clone(),
             recipe_book: level.recipe_book.clone(),
+            game_mode: None,
         });
         game.rules = level.rules.clone();
         game.difficulty = level.difficulty;
@@ -623,6 +666,7 @@ impl Game {
         game.portals = level.portals.clone();
         game.end = level.end.clone();
         game.restore_fight(level.end.dragon);
+        game.admin = admin::Admin::load(dir.path());
         game.saved = Some(SavedWorld { dir, level });
         Ok(game)
     }
@@ -663,6 +707,7 @@ impl Game {
             ender_chest: p.ender_chest.clone(),
             advancements: p.progress.clone(),
             recipe_book: p.recipe_book.clone(),
+            game_mode: Some(p.mode),
         }
     }
 
@@ -680,8 +725,12 @@ impl Game {
         p.inventory.repair(&self.items);
         p.stats = data.stats.clone();
         p.bed = data.bed.map(glam::IVec3::from_array);
+        if let Some(mode) = file.game_mode {
+            p.mode = mode;
+        }
         p.body.may_fly = p.mode.can_fly();
-        p.body.flying = data.flying && p.body.may_fly;
+        p.body.no_clip = p.mode.is_spectator();
+        p.body.flying = (data.flying || p.mode.is_spectator()) && p.body.may_fly;
         p.ender_chest = file.ender_chest.clone();
         p.dimension = file.dimension;
         p.seen_credits = file.seen_credits;
@@ -792,6 +841,9 @@ impl Game {
         saved.level.advancements = progress;
         saved.level.recipe_book = recipe_book;
         saved.level.rules = self.rules.clone();
+        if let Some(mode) = self.default_mode {
+            saved.level.game_mode = mode;
+        }
         saved.level.difficulty = self.difficulty;
         saved.level.cheats = self.cheats;
         saved.level.day_offset = self.day_offset;
@@ -958,6 +1010,12 @@ impl Game {
                 steps as i32
             }
         };
+        if self.player.mode.is_spectator() {
+            // The wheel sets a spectator's flight speed instead (0.1×–5×).
+            let scale = self.player.body.fly_scale * 1.15f64.powi(-steps);
+            self.player.body.fly_scale = scale.clamp(0.1, 5.0);
+            return;
+        }
         let slot = self.player.inventory.selected as i32 + steps;
         self.player.inventory.selected = slot.rem_euclid(HOTBAR_SLOTS as i32) as usize;
     }
@@ -968,6 +1026,7 @@ impl Game {
         self.player.body = Body::new(feet);
         self.player.body.flying = self.player.mode.can_fly();
         self.player.body.may_fly = self.player.mode.can_fly();
+        self.player.body.no_clip = self.player.mode.is_spectator();
         self.player.prev_feet = feet;
         self.player.camera.yaw = yaw;
         self.player.camera.pitch = pitch;
@@ -1079,12 +1138,21 @@ impl Game {
         }
         self.time += 1;
         self.tick_mods();
+        if self.rules.do_weather_cycle {
+            self.weather_ticks = self.weather_ticks.saturating_sub(1);
+            if self.weather_ticks == 0 {
+                let roll = self.rng.below(100);
+                self.weather = self.weather.next(roll);
+                self.weather_ticks = weather::DEFAULT_TICKS + self.rng.below(6000);
+            }
+        }
         // With `doDaylightCycle` off the time of day holds still.
         if !self.rules.do_daylight_cycle {
             self.day_offset -= 1;
         }
         self.ticks_since_save += 1;
         if self.ticks_since_save >= config::AUTOSAVE_TICKS
+            && self.autosave
             && let Err(err) = self.save()
         {
             error!("autosave failed: {err:#}");
@@ -1136,6 +1204,11 @@ impl Game {
     /// Returns false while they wait for chunks or the credits roll.
     fn tick_player(&mut self) -> bool {
         self.player.prev_feet = self.player.body.position();
+        self.player.stats.exempt = [
+            !self.rules.fall_damage,
+            !self.rules.fire_damage,
+            !self.rules.drowning_damage,
+        ];
         // What the player aims at, from where they stand this tick (a
         // client's camera may be anywhere between ticks).
         let eye = self
@@ -1257,7 +1330,9 @@ impl Game {
             let source = self.player.stats.last_source.unwrap_or(DamageSource::Mob);
             let attacker = self.player.stats.last_attacker.as_deref();
             let line = format!("{} {}", self.player.name, source.death_message_by(attacker));
-            self.chat_out.push(line);
+            if self.rules.show_death_messages {
+                self.chat_out.push(line);
+            }
         }
     }
 
@@ -1271,6 +1346,14 @@ impl Game {
             blocks: self.items.blocks,
         };
         self.player.body.may_fly = self.player.mode.can_fly();
+        self.player.body.no_clip = self.player.mode.is_spectator();
+        if !self.player.mode.is_spectator() {
+            self.player.body.fly_scale = 1.0;
+        }
+        // Looking through a mob's eyes, the player's own keys do nothing.
+        if self.player.spectating.is_some() {
+            return;
+        }
         // Wait for the chunks around the player to load before moving them.
         if !collider.is_loaded(&self.player.body.aabb()) {
             return;
@@ -1282,6 +1365,7 @@ impl Game {
             ..self.player.keys.move_input()
         };
         effects_move(&mut self.player.body, &self.player.stats.effects);
+        self.player.body.speed_factor *= self.player.speed_scale;
         self.player
             .body
             .tick(&input, self.player.camera.yaw, &collider);
@@ -1475,6 +1559,10 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
     body.levitation = effects
         .get(Effect::Levitation)
         .map(|active| active.amplifier);
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// A seed for drop and throw randomness, from the clock.

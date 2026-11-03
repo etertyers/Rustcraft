@@ -18,7 +18,7 @@ use crate::{
 
 /// Bumped whenever a message changes, so mismatched games refuse each
 /// other instead of misreading.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// What a client tells the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +68,8 @@ pub enum ClientMsg {
     Complete(String),
     /// Leaving.
     Disconnect,
+    /// A spectator picked a player in the spectator menu (M43).
+    SpectatorTeleport(String),
 }
 
 /// One tick of a player's movement input.
@@ -161,6 +163,9 @@ pub struct PlayerView {
     pub pose: crate::render::player::PlayerPose,
     pub wearer: crate::figure::Wearer,
     pub invisible: bool,
+    /// In spectator mode: other spectators see them, everyone else doesn't.
+    #[serde(default)]
+    pub spectator: bool,
 }
 
 /// Everything that moves in the player's dimension.

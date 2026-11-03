@@ -477,7 +477,9 @@ impl Game {
             pending.push((index, intent, prey.index));
             if mob.is_dead() && !mob.looted {
                 mob.looted = true;
-                self.on_mob_death(mob);
+                if self.rules.do_mob_loot {
+                    self.on_mob_death(mob);
+                }
             }
         }
         self.apply_intents(&mut mobs, pending);

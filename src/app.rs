@@ -191,6 +191,16 @@ pub struct App {
     hide_gui: bool,
     /// List Players (Tab) is held.
     tab_held: bool,
+    /// F3 is held, and a combo (F3+F4, F3+N) used it, so letting go won't
+    /// toggle the debug screen.
+    f3_held: bool,
+    f3_used: bool,
+    /// Whether the debug screen was showing when F3 went down.
+    f3_was_visible: bool,
+    /// F3+F4's mode switcher: the mode chosen.
+    mode_switcher: Option<usize>,
+    /// The spectator menu is open.
+    spectator_menu: bool,
     /// The client's mods (key presses, HUD text, brightness).
     client_mods: crate::mods::client::ClientMods,
     /// The chat lines and the box (M38).
@@ -245,6 +255,11 @@ impl App {
             pause: None,
             hide_gui: false,
             tab_held: false,
+            f3_held: false,
+            f3_used: false,
+            f3_was_visible: false,
+            mode_switcher: None,
+            spectator_menu: false,
             client_mods: crate::mods::client::ClientMods::start(),
             chat: Default::default(),
             server: None,
@@ -579,6 +594,30 @@ impl App {
         }
         if action == Action::PlayerList {
             self.tab_held = pressed;
+            return;
+        }
+        // A spectator's number keys pick from the spectator menu.
+        if let Some(slot) = action.hotbar_slot()
+            && game.player.mode.is_spectator()
+        {
+            if pressed && !repeat && grabbed {
+                if self.spectator_menu {
+                    self.spectator_menu = false;
+                    let own = game.player.name.clone();
+                    let names: Vec<String> = self
+                        .link
+                        .as_ref()
+                        .map(|l| l.players.iter().filter(|n| **n != own).cloned().collect())
+                        .unwrap_or_default();
+                    if let Some(name) = names.get(slot) {
+                        self.tell_server(crate::net::protocol::ClientMsg::SpectatorTeleport(
+                            name.clone(),
+                        ));
+                    }
+                } else {
+                    self.spectator_menu = true;
+                }
+            }
             return;
         }
         if local {
@@ -932,6 +971,14 @@ impl App {
         let is = |action| actions.contains(&action);
         let escape = input == Input::Key(KeyCode::Escape);
         let press = pressed && !repeat;
+        if self.f3_combo(input, pressed, repeat) {
+            return;
+        }
+        if escape && press && (self.spectator_menu || self.mode_switcher.is_some()) {
+            self.spectator_menu = false;
+            self.mode_switcher = None;
+            return;
+        }
         // The Key Binds screen is waiting for a key: this is it, or Escape
         // to unbind.
         if press
@@ -1032,6 +1079,83 @@ impl App {
             for action in actions {
                 self.act(action, pressed, repeat, grabbed);
             }
+        }
+    }
+
+    /// F3 with F4 (the game-mode switcher: F4 steps, letting go of F3
+    /// applies) or N (spectator and back). Returns whether `input` was part
+    /// of one; the server decides if the player may.
+    fn f3_combo(&mut self, input: Input, pressed: bool, repeat: bool) -> bool {
+        let Input::Key(key) = input else {
+            return false;
+        };
+        let playing = self.playing() && self.stack.is_empty() && self.game.is_some();
+        match key {
+            KeyCode::F3 if pressed && !repeat => {
+                self.f3_held = true;
+                self.f3_used = false;
+                self.f3_was_visible = self.debug_ui.as_ref().is_some_and(|d| d.is_visible());
+                false
+            }
+            KeyCode::F3 if !pressed => {
+                self.f3_held = false;
+                if let Some(chosen) = self.mode_switcher.take() {
+                    let mode = crate::player::mode::GameMode::ALL[chosen];
+                    if self.game.as_ref().is_some_and(|g| g.player.mode != mode) {
+                        self.tell_server(crate::net::protocol::ClientMsg::Chat(format!(
+                            "/gamemode {}",
+                            mode.id()
+                        )));
+                    }
+                }
+                if self.f3_used {
+                    // The combo took the key; the screen stays as it was.
+                    self.f3_used = false;
+                    let was = self.f3_was_visible;
+                    if let Some(debug_ui) = self.debug_ui.as_mut() {
+                        debug_ui.set_visible(was);
+                    }
+                    return true;
+                }
+                false
+            }
+            KeyCode::F4 if self.f3_held && pressed && !repeat && playing => {
+                self.f3_used = true;
+                let current = self.game.as_ref().map_or(0, |g| {
+                    crate::player::mode::GameMode::ALL
+                        .iter()
+                        .position(|m| *m == g.player.mode)
+                        .unwrap_or(0)
+                });
+                self.mode_switcher = Some(match self.mode_switcher {
+                    Some(chosen) => (chosen + 1) % 4,
+                    None => (current + 1) % 4,
+                });
+                true
+            }
+            KeyCode::KeyN if self.f3_held && pressed && !repeat && playing => {
+                self.f3_used = true;
+                let to = self.game.as_ref().map(|g| {
+                    if g.player.mode.is_spectator() {
+                        let back = g.player.previous_mode;
+                        if back.is_spectator() {
+                            crate::player::mode::GameMode::Creative
+                        } else {
+                            back
+                        }
+                    } else {
+                        crate::player::mode::GameMode::Spectator
+                    }
+                });
+                if let Some(mode) = to {
+                    self.tell_server(crate::net::protocol::ClientMsg::Chat(format!(
+                        "/gamemode {}",
+                        mode.id()
+                    )));
+                }
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1570,6 +1694,10 @@ impl App {
         if let Some(reason) = self.link.as_ref().and_then(|link| link.gone.clone()) {
             return self.leave_world(reason);
         }
+        // `/stop` saves and goes back to the title screen.
+        if self.server.as_ref().is_some_and(|s| s.stopping) {
+            return self.quit_to_title();
+        }
         // Another dimension's chunks replace this one's.
         if game.take_dimension_change() {
             renderer.clear_world();
@@ -1759,7 +1887,10 @@ impl App {
             let mut guest_elytra = Mesh::default();
             if let (Some(atlas), Some(item_models)) = (&self.atlas, &self.item_models) {
                 let alpha = game.tick_alpha();
-                for view in &game.remote_players {
+                for view in game.remote_players.iter().filter(|v| {
+                    !matches!(&game.player.spectating,
+                        Some(crate::game::modes::Spectated::Player(n)) if *n == v.name)
+                }) {
                     let skin = self.guest_skins.iter().position(|(n, _)| *n == view.name);
                     let fig = Figure {
                         icons,
@@ -1848,7 +1979,8 @@ impl App {
                 );
             }
             renderer.set_entities(&mesh);
-            if self.hide_gui {
+            // A spectator has no hand, and a hidden GUI hides it too.
+            if self.hide_gui || game.player.mode.is_spectator() {
                 renderer.set_hand(None, None);
             } else {
                 renderer.set_hand(Some(&player.hand_arm), Some(&player.hand_item));
@@ -1869,7 +2001,18 @@ impl App {
                     }
                 }
             };
-            for mob in game.mobs.iter().filter(near) {
+            // A spectator sees through the eyes of the mob they spectate,
+            // so its own body isn't drawn around them.
+            let spectated = match &game.player.spectating {
+                Some(crate::game::modes::Spectated::Mob(id)) => Some(*id),
+                _ => None,
+            };
+            for mob in game
+                .mobs
+                .iter()
+                .filter(near)
+                .filter(|m| Some(m.id) != spectated)
+            {
                 let def = defs.get(mob.kind);
                 let light = light_at(mob.eye());
                 let slot = defs.texture_slot(mob.kind, mob.data.variant);
@@ -2021,6 +2164,15 @@ impl App {
             .map(|link| link.players.clone());
         let hud = Hud {
             hidden: self.hide_gui,
+            bars: game.player.mode.shows_hotbar(),
+            switcher: self.mode_switcher,
+            spectator_menu: (self.spectator_menu && game.player.mode.is_spectator()).then(|| {
+                let own = &game.player.name;
+                self.link
+                    .as_ref()
+                    .map(|l| l.players.iter().filter(|n| *n != own).cloned().collect())
+                    .unwrap_or_default()
+            }),
             name_tags,
             player_list,
             crosshair: self.stack.grabbed(),

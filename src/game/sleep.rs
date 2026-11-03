@@ -123,11 +123,18 @@ impl Game {
         sleep.ticks = (sleep.ticks + 1).min(SLEEP_TICKS);
         // The night passes once everyone is fast asleep; until then, a
         // player who is waits in bed.
-        let asleep = self.players_here().into_iter().all(|i| {
-            self.player_at(i)
-                .sleep
-                .is_some_and(|sleep| sleep.ticks >= SLEEP_TICKS)
-        });
+        let here = self.players_here();
+        let sleeping = here
+            .iter()
+            .filter(|&&i| {
+                self.player_at(i)
+                    .sleep
+                    .is_some_and(|sleep| sleep.ticks >= SLEEP_TICKS)
+            })
+            .count();
+        // `playersSleepingPercentage`: 100 means everyone.
+        let asleep = sleeping > 0
+            && sleeping * 100 >= here.len() * self.rules.players_sleeping_percentage as usize;
         if !asleep {
             return;
         }

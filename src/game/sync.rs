@@ -266,6 +266,7 @@ impl Game {
                 .stats
                 .effects
                 .has(crate::player::effects::Effect::Invisibility),
+            spectator: p.mode.is_spectator(),
         }
     }
 

@@ -183,6 +183,9 @@ pub struct Surroundings {
 pub struct Stats {
     /// Health in points (half hearts); hits can leave fractions.
     pub health: f32,
+    /// `fallDamage`, `fireDamage` and `drowningDamage` are off (set by the game each tick).
+    #[serde(skip)]
+    pub exempt: [bool; 3],
     pub food: i32,
     pub saturation: f32,
     pub exhaustion: f32,
@@ -237,6 +240,7 @@ pub struct Stats {
 impl Default for Stats {
     fn default() -> Self {
         Self {
+            exempt: [false; 3],
             health: MAX_HEALTH,
             food: MAX_FOOD,
             saturation: START_SATURATION,
@@ -307,6 +311,20 @@ impl Stats {
     /// fresh hit (which knocks back and flashes), false if it was absorbed
     /// or only topped up the last one.
     pub fn damage(&mut self, amount: f32, source: DamageSource) -> bool {
+        let [fall, fire, drown] = self.exempt;
+        match source {
+            DamageSource::Fall if fall => return false,
+            DamageSource::Drowning if drown => return false,
+            DamageSource::Lava
+            | DamageSource::InFire
+            | DamageSource::Fire
+            | DamageSource::HotFloor
+                if fire =>
+            {
+                return false;
+            }
+            _ => {}
+        }
         let amount = if source.scales_with_difficulty() {
             self.difficulty.scale_damage(amount)
         } else {

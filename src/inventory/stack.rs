@@ -39,6 +39,12 @@ pub struct Extra {
     /// in the damage so older saves read back unchanged.
     #[serde(skip)]
     pub contents: Vec<Option<ItemStack>>,
+    /// Adventure mode's `can_break` and `can_place_on` block ids (M43);
+    /// saved after the contents, flagged in the damage.
+    #[serde(skip)]
+    pub can_break: Vec<String>,
+    #[serde(skip)]
+    pub can_place_on: Vec<String>,
 }
 
 impl ItemStack {
@@ -144,6 +150,31 @@ impl ItemStack {
         self.tidy();
     }
 
+    /// The blocks adventure mode may break with this item.
+    pub fn can_break(&self) -> &[String] {
+        self.extra.as_ref().map_or(&[], |extra| &extra.can_break)
+    }
+
+    /// The blocks adventure mode may place this item against.
+    pub fn can_place_on(&self) -> &[String] {
+        self.extra.as_ref().map_or(&[], |extra| &extra.can_place_on)
+    }
+
+    /// Sets the `can_break` and `can_place_on` lists (block ids or `#tags`).
+    pub fn set_block_rules(&mut self, can_break: Vec<String>, can_place_on: Vec<String>) {
+        if can_break.is_empty() && can_place_on.is_empty() {
+            if let Some(extra) = self.extra.as_mut() {
+                extra.can_break.clear();
+                extra.can_place_on.clear();
+            }
+        } else {
+            let extra = self.extra.get_or_insert_with(Default::default);
+            extra.can_break = can_break;
+            extra.can_place_on = can_place_on;
+        }
+        self.tidy();
+    }
+
     /// Drops `extra` once it holds nothing, so plain stacks compare and
     /// save as plain.
     fn tidy(&mut self) {
@@ -160,24 +191,31 @@ const HAS_EXTRA: u8 = 0x80;
 /// Set in a saved stack's damage when its contents follow the extra (a
 /// shulker box item); no tool wears out that far.
 const HAS_CONTENTS: u16 = 0x8000;
+/// Set in a saved stack's damage when its block rules follow.
+const HAS_RULES: u16 = 0x4000;
 
 impl Serialize for ItemStack {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let held = !self.contents().is_empty();
+        let ruled = !self.can_break().is_empty() || !self.can_place_on().is_empty();
         let mut out = serializer.serialize_struct(
             "ItemStack",
-            3 + self.extra.is_some() as usize + held as usize,
+            3 + self.extra.is_some() as usize + held as usize + ruled as usize,
         )?;
         out.serialize_field("id", &self.id)?;
         let flag = if self.extra.is_some() { HAS_EXTRA } else { 0 };
         out.serialize_field("count", &(self.count | flag))?;
-        let damage = self.damage | if held { HAS_CONTENTS } else { 0 };
+        let damage =
+            self.damage | if held { HAS_CONTENTS } else { 0 } | if ruled { HAS_RULES } else { 0 };
         out.serialize_field("damage", &damage)?;
         if let Some(extra) = &self.extra {
             out.serialize_field("extra", extra)?;
         }
         if held {
             out.serialize_field("contents", self.contents())?;
+        }
+        if ruled {
+            out.serialize_field("rules", &(self.can_break(), self.can_place_on()))?;
         }
         out.end()
     }
@@ -210,10 +248,17 @@ impl<'de> Deserialize<'de> for ItemStack {
                     let contents = seq.next_element()?.ok_or_else(|| missing("contents"))?;
                     extra.get_or_insert_with(Default::default).contents = contents;
                 }
+                if damage & HAS_RULES != 0 {
+                    let (can_break, can_place_on): (Vec<String>, Vec<String>) =
+                        seq.next_element()?.ok_or_else(|| missing("rules"))?;
+                    let held = extra.get_or_insert_with(Default::default);
+                    held.can_break = can_break;
+                    held.can_place_on = can_place_on;
+                }
                 Ok(ItemStack {
                     id,
                     count: count & !HAS_EXTRA,
-                    damage: damage & !HAS_CONTENTS,
+                    damage: damage & !(HAS_CONTENTS | HAS_RULES),
                     extra,
                 })
             }
@@ -221,6 +266,7 @@ impl<'de> Deserialize<'de> for ItemStack {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ItemStack, A::Error> {
                 let (mut id, mut count, mut damage, mut extra) = (None, None, None, None);
                 let mut contents: Option<Vec<Option<ItemStack>>> = None;
+                let mut rules: Option<(Vec<String>, Vec<String>)> = None;
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "id" => id = Some(map.next_value()?),
@@ -228,6 +274,7 @@ impl<'de> Deserialize<'de> for ItemStack {
                         "damage" => damage = Some(map.next_value()?),
                         "extra" => extra = Some(Box::new(map.next_value::<Extra>()?)),
                         "contents" => contents = Some(map.next_value()?),
+                        "rules" => rules = Some(map.next_value()?),
                         _ => {
                             map.next_value::<serde::de::IgnoredAny>()?;
                         }
@@ -238,10 +285,15 @@ impl<'de> Deserialize<'de> for ItemStack {
                 if let Some(contents) = contents {
                     extra.get_or_insert_with(Default::default).contents = contents;
                 }
+                if let Some((can_break, can_place_on)) = rules {
+                    let held = extra.get_or_insert_with(Default::default);
+                    held.can_break = can_break;
+                    held.can_place_on = can_place_on;
+                }
                 Ok(ItemStack {
                     id: id.ok_or_else(|| missing("id"))?,
                     count: count.ok_or_else(|| missing("count"))? & !HAS_EXTRA,
-                    damage: damage.unwrap_or(0u16) & !HAS_CONTENTS,
+                    damage: damage.unwrap_or(0u16) & !(HAS_CONTENTS | HAS_RULES),
                     extra,
                 })
             }
@@ -249,7 +301,7 @@ impl<'de> Deserialize<'de> for ItemStack {
 
         deserializer.deserialize_struct(
             "ItemStack",
-            &["id", "count", "damage", "extra", "contents"],
+            &["id", "count", "damage", "extra", "contents", "rules"],
             StackVisitor,
         )
     }
@@ -412,6 +464,39 @@ mod tests {
         assert_eq!((back, used), (stack.clone(), bytes.len()));
         let text = ron::to_string(&stack).unwrap();
         assert_eq!(ron::from_str::<ItemStack>(&text).unwrap(), stack);
+    }
+
+    #[test]
+    fn can_break_and_can_place_on_round_trip_with_the_rest_and_old_stacks_load() {
+        let mut ruled = enchanted();
+        ruled.set_block_rules(
+            vec!["minecraft:stone".to_owned()],
+            vec!["grass_block".to_owned(), "dirt".to_owned()],
+        );
+        let mut shulker = ItemStack::new(items::DIRT, 1);
+        shulker.set_contents(vec![Some(ItemStack::new(items::COAL, 4)), None]);
+        shulker.set_block_rules(vec!["stone".to_owned()], vec![]);
+        let slots = vec![
+            Some(ruled.clone()),
+            Some(ItemStack::new(items::DIRT, 3)),
+            Some(shulker),
+            Some(enchanted()),
+        ];
+        let bytes = bincode::serde::encode_to_vec(&slots, bincode_config()).unwrap();
+        let (back, used): (Vec<Option<ItemStack>>, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode_config()).unwrap();
+        assert_eq!((&back, used), (&slots, bytes.len()));
+        let first = back[0].as_ref().unwrap();
+        assert_eq!(first.can_break(), ["minecraft:stone"]);
+        assert_eq!(first.can_place_on(), ["grass_block", "dirt"]);
+        assert_eq!(first.level_of(Enchantment::Efficiency), 3);
+        let text = ron::to_string(&ruled).unwrap();
+        assert_eq!(ron::from_str::<ItemStack>(&text).unwrap(), ruled);
+        // Clearing the rules leaves a plain stack that saves as plain.
+        let mut plain = ItemStack::new(items::DIRT, 2);
+        plain.set_block_rules(vec!["stone".to_owned()], vec![]);
+        plain.set_block_rules(vec![], vec![]);
+        assert_eq!(plain, ItemStack::new(items::DIRT, 2));
     }
 
     #[test]

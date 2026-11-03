@@ -631,6 +631,39 @@ impl ChunkManager {
         self.apply_edits(edits, false);
     }
 
+    /// Sets the biome of block columns `(x, z)` in loaded chunks (`/fillbiome`)
+    /// and remeshes them for the new tint; returns how many changed. A
+    /// client keeps the biomes its chunks arrived with until they reload.
+    pub fn set_biomes(&mut self, columns: &[((i32, i32), crate::world::biome::Biome)]) -> usize {
+        let size = CHUNK_SIZE as i32;
+        let mut changed = 0;
+        let mut touched: FastSet<ChunkPos> = FastSet::default();
+        for &((x, z), biome) in columns {
+            let pos = ChunkPos::of_block(x, z);
+            let Some(chunk) = self.world.get_mut(pos) else {
+                continue;
+            };
+            let (lx, lz) = (x.rem_euclid(size) as usize, z.rem_euclid(size) as usize);
+            if chunk.biome(lx, lz) != biome {
+                chunk.set_biome(lx, lz, biome);
+                changed += 1;
+                touched.insert(pos);
+            }
+        }
+        let mut remesh = Vec::new();
+        for pos in touched {
+            if !matches!(*self.source, ChunkSource::Remote) {
+                self.unsaved.insert(pos);
+            }
+            if let Some(chunk) = self.world.get(pos) {
+                let at = IVec3::new(pos.x * size, 0, pos.z * size);
+                remesh.push((at, chunk.get(0, 0, 0)));
+            }
+        }
+        self.apply_edits(&remesh, true);
+        changed
+    }
+
     fn apply_edits(&mut self, edits: &[(IVec3, BlockState)], remesh_now: bool) {
         let size = CHUNK_SIZE as i32;
         let mut touched = FastSet::default();

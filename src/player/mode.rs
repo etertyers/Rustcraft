@@ -9,6 +9,10 @@ pub enum GameMode {
     #[default]
     Survival,
     Creative,
+    /// Can't break or place blocks (except by `can_break`/`can_place_on`).
+    Adventure,
+    /// Flies through blocks, unseen, touching nothing.
+    Spectator,
 }
 
 impl GameMode {
@@ -16,8 +20,38 @@ impl GameMode {
         match self {
             GameMode::Survival => "Survival",
             GameMode::Creative => "Creative",
+            GameMode::Adventure => "Adventure",
+            GameMode::Spectator => "Spectator",
         }
     }
+
+    /// Vanilla's lowercase id, for `/gamemode`, `/defaultgamemode` and saves.
+    pub fn id(self) -> &'static str {
+        match self {
+            GameMode::Survival => "survival",
+            GameMode::Creative => "creative",
+            GameMode::Adventure => "adventure",
+            GameMode::Spectator => "spectator",
+        }
+    }
+
+    /// The mode a vanilla name or number means.
+    pub fn parse(word: &str) -> Option<Self> {
+        Some(match word {
+            "survival" | "s" | "0" => GameMode::Survival,
+            "creative" | "c" | "1" => GameMode::Creative,
+            "adventure" | "a" | "2" => GameMode::Adventure,
+            "spectator" | "sp" | "3" => GameMode::Spectator,
+            _ => return None,
+        })
+    }
+
+    pub const ALL: [GameMode; 4] = [
+        GameMode::Survival,
+        GameMode::Creative,
+        GameMode::Adventure,
+        GameMode::Spectator,
+    ];
 
     /// Blocks break on the first hit, with no mining time.
     pub fn breaks_instantly(self) -> bool {
@@ -26,17 +60,17 @@ impl GameMode {
 
     /// Broken blocks drop items.
     pub fn drops_items(self) -> bool {
-        self == GameMode::Survival
+        matches!(self, GameMode::Survival | GameMode::Adventure)
     }
 
     /// Placing a block uses one from the stack.
     pub fn uses_up_items(self) -> bool {
-        self == GameMode::Survival
+        matches!(self, GameMode::Survival | GameMode::Adventure)
     }
 
     /// Tools lose durability.
     pub fn wears_tools(self) -> bool {
-        self == GameMode::Survival
+        matches!(self, GameMode::Survival | GameMode::Adventure)
     }
 
     /// Every block and item is to hand: E opens the creative item list,
@@ -47,19 +81,45 @@ impl GameMode {
 
     /// Health and hunger matter: damage, hunger and death (survival).
     pub fn is_vulnerable(self) -> bool {
-        self == GameMode::Survival
+        matches!(self, GameMode::Survival | GameMode::Adventure)
     }
 
     /// Double-tapping jump toggles flight.
     pub fn can_fly(self) -> bool {
-        self == GameMode::Creative
+        matches!(self, GameMode::Creative | GameMode::Spectator)
+    }
+
+    /// Blocks can be broken and placed freely (adventure needs item
+    /// components, spectators never).
+    pub fn edits_world(self) -> bool {
+        matches!(self, GameMode::Survival | GameMode::Creative)
+    }
+
+    /// Adventure's `can_break` / `can_place_on` rules apply.
+    pub fn needs_permission_to_edit(self) -> bool {
+        self == GameMode::Adventure
+    }
+
+    /// Passes through blocks and entities, and mobs ignore the player.
+    pub fn is_spectator(self) -> bool {
+        self == GameMode::Spectator
+    }
+
+    /// Opens doors, levers, chests and so on, hits mobs and picks things up.
+    pub fn interacts(self) -> bool {
+        self != GameMode::Spectator
+    }
+
+    /// The hotbar, hearts and hunger are drawn.
+    pub fn shows_hotbar(self) -> bool {
+        self != GameMode::Spectator
     }
 
     /// The other mode, for the create-world button that cycles through them.
     pub fn next(self) -> Self {
         match self {
             GameMode::Survival => GameMode::Creative,
-            GameMode::Creative => GameMode::Survival,
+            _ => GameMode::Survival,
         }
     }
 }
