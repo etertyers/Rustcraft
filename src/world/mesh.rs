@@ -439,9 +439,9 @@ pub struct Mesh {
     /// thread's uploads stay quick.
     pub shadow_indices: Vec<u32>,
     pub y_range: (f32, f32),
-    /// Some face glows (lava, fire, torches, glowstone...): it may need
-    /// bloom.
-    pub glows: bool,
+    /// The lowest and highest glowing face (lava, fire, torches,
+    /// glowstone...), if any: it may need bloom.
+    pub glow_y: Option<(f32, f32)>,
 }
 
 impl Default for Mesh {
@@ -458,7 +458,7 @@ impl Default for Mesh {
             still_water: false,
             shadow_indices: Vec::new(),
             y_range: (0.0, 0.0),
-            glows: false,
+            glow_y: None,
         }
     }
 }
@@ -506,7 +506,15 @@ impl Mesh {
             .copied()
             .collect();
         // The glow strength is the face attribute's top nibble.
-        self.glows = self.faces.iter().any(|f| f >> 28 != 0);
+        self.glow_y = self
+            .faces
+            .iter()
+            .zip(&self.vertices)
+            .filter(|(f, _)| **f >> 28 != 0)
+            .map(|(_, v)| v.position[1])
+            .fold(None, |range: Option<(f32, f32)>, y| {
+                Some(range.map_or((y, y), |(lo, hi)| (lo.min(y), hi.max(y))))
+            });
         self.y_range = self
             .vertices
             .iter()

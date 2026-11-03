@@ -1,5 +1,6 @@
-//! Bloom (M57): a chain of half-size levels (5 on Medium and High, 4 on
-//! Low) the HDR frame is filtered down through and added back up, so
+//! Bloom (M57): a chain of levels (5 on Medium and High, 4 on Low; a
+//! quarter of the frame, then each half the one before) the HDR frame is
+//! filtered down through and the post pass adds them up again, so
 //! light brighter than 1.0 — the sun, glowing blocks, lava, fire, glints
 //! on water — spreads a soft glow. The result is the first level, which
 //! the post pass adds to the picture.
@@ -188,8 +189,11 @@ impl Bloom {
         self.built = Some((size, count, generation));
         self.levels.clear();
         let (mut w, mut h) = size;
-        for _ in 0..count {
-            (w, h) = ((w / 2).max(1), (h / 2).max(1));
+        for i in 0..count {
+            // The first level is a quarter of the frame (reading the whole
+            // frame costs the most); each after it half the one before.
+            let shrink = if i == 0 { 4 } else { 2 };
+            (w, h) = ((w / shrink).max(1), (h / shrink).max(1));
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("bloom level"),
                 size: wgpu::Extent3d {
@@ -212,10 +216,13 @@ impl Bloom {
             });
         }
         let group = |input: &wgpu::TextureView, input_size: (u32, u32), first: bool| {
+            // The first level's four taps sit two texels out, to cover the
+            // quarter-size step.
+            let reach = if first { 2.0 } else { 1.0 };
             let params = Params {
                 values: [
-                    1.0 / input_size.0 as f32,
-                    1.0 / input_size.1 as f32,
+                    reach / input_size.0 as f32,
+                    reach / input_size.1 as f32,
                     THRESHOLD,
                     f32::from(first),
                 ],

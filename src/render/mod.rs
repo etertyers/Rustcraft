@@ -187,8 +187,9 @@ struct ChunkBuffers {
     /// shadow on anything the sun reaches. `None` for meshes drawn by the
     /// frame (mobs, items) and chunks with none.
     shadow_indices: Option<(wgpu::Buffer, u32)>,
-    /// Some face glows: bloom has something to do.
-    glows: bool,
+    /// The lowest and highest glowing face: bloom has something to do
+    /// when one is near the camera's height.
+    glow_y: Option<(f32, f32)>,
     /// The lowest and highest vertex, for culling against a shadow map.
     y_range: (f32, f32),
 }
@@ -590,7 +591,7 @@ impl Renderer {
                 translucent: 0,
                 atlas: 0,
                 shadow_indices: None,
-                glows: false,
+                glow_y: None,
                 y_range: (0.0, 0.0),
             }
         };
@@ -873,7 +874,7 @@ impl Renderer {
             translucent: mesh.translucent.len() as u32,
             atlas: self.atlas_generation,
             shadow_indices: None,
-            glows: false,
+            glow_y: None,
             y_range: (0.0, 0.0),
         }
     }
@@ -931,7 +932,7 @@ impl Renderer {
             translucent: mesh.translucent.len() as u32,
             atlas: self.atlas_generation,
             shadow_indices: self.shadow_indices(mesh),
-            glows: mesh.glows,
+            glow_y: mesh.glow_y,
             y_range: mesh.y_range,
         }
     }
@@ -950,21 +951,24 @@ impl Renderer {
         if environment.sky
             && environment.sunlight
             && sun.y > -0.05
-            && camera.forward().dot(sun) > 0.2
+            && camera.forward().dot(sun) > 0.55
         {
             return true;
         }
+        // A glow far above or below the camera is hidden by the ground.
+        let reach = 64.0;
         self.chunks.iter().any(|(pos, chunk)| {
             let (x, z) = pos.min_block();
-            chunk.glows
-                && frustum.intersects_box(
-                    Vec3::new(x as f32, chunk.y_range.0, z as f32),
-                    Vec3::new(
-                        x as f32 + CHUNK_SIZE as f32,
-                        chunk.y_range.1,
-                        z as f32 + CHUNK_SIZE as f32,
-                    ),
-                )
+            chunk.glow_y.is_some_and(|(lo, hi)| {
+                hi > camera.position.y - reach && lo < camera.position.y + reach
+            }) && frustum.intersects_box(
+                Vec3::new(x as f32, chunk.y_range.0, z as f32),
+                Vec3::new(
+                    x as f32 + CHUNK_SIZE as f32,
+                    chunk.y_range.1,
+                    z as f32 + CHUNK_SIZE as f32,
+                ),
+            )
         })
     }
 
