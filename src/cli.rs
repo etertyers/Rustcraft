@@ -40,7 +40,7 @@ Usage: cargo run --release -- [flags]
   --view first|back|front   the view to start in (F5 cycles it)
   --pack <name>         play with this resource pack once (repeatable)
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
-  --perf-test           the performance gate (writes docs/perf/m<N>.md)
+  --perf-test           the performance gate (writes docs/perf/m<N>.md); --underwater flies in the sea
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
   --name <player>       play as this name this time (Options keeps yours)
   --join <ip:port>      join a world open to LAN
@@ -97,6 +97,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let (mut shot, mut out) = (None, None);
     let mut test_world = None;
     let mut nether = false;
+    let mut underwater = false;
     let mut end = false;
     let mut view = ViewMode::First;
     let (mut name, mut join, mut lan) = (None, None, None);
@@ -194,6 +195,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             }
             "--flat" => test_world = Some(WorldKind::Flat),
             "--nether" => nether = true,
+            "--underwater" => underwater = true,
             "--end" => end = true,
             "--world" => world = Some(value(&mut args, "--world", "a name")?),
             "--creative" => creative = true,
@@ -233,9 +235,11 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             (Dimension::Overworld, WorldKind::Generated { seed })
         };
         bench.dimension = dimension;
+        bench.underwater = underwater && dimension == Dimension::Overworld;
         // Each dimension's report has its own file.
         if let Some(path) = bench.perf_report.as_mut() {
             let suffix = match dimension {
+                Dimension::Overworld if underwater => "-underwater",
                 Dimension::Overworld => "",
                 Dimension::Nether => "-nether",
                 Dimension::End => "-end",

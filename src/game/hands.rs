@@ -493,7 +493,7 @@ impl Game {
         let progress = if self.player.mode.breaks_instantly() {
             1.0
         } else {
-            let in_water = self.eye_in() == Some(Fluid::Water);
+            let in_water = self.eyes_in() == Some(Fluid::Water);
             let per_tick = harvest::progress_per_tick_with(
                 def,
                 self.selected_tool(),

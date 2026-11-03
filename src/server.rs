@@ -1783,6 +1783,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn eyes_under_water_get_used_to_it_for_the_swimmer_only_on_the_server_and_in_both_clients() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2
+                && c.iter().all(|(client, game)| {
+                    client.welcomed && block_at(game, IVec3::new(3, 63, 3)).is_some()
+                })
+        });
+        let mut water = Vec::new();
+        for x in -3..=5 {
+            for z in -3..=5 {
+                for y in 56..=63 {
+                    water.push((
+                        IVec3::new(x, y, z),
+                        crate::world::block::BlockState::of(blocks::WATER),
+                    ));
+                }
+            }
+        }
+        server.game.set_blocks(&water);
+        run_until(&mut server, &mut clients, |_, c| {
+            c.iter().all(|(_, game)| {
+                block_at(game, IVec3::new(1, 60, 1))
+                    == Some(crate::world::block::BlockState::of(blocks::WATER))
+            })
+        });
+        // Alice floats under the surface; Bob stands on dry land far off.
+        server.game.with_player(0, |game| {
+            game.player.mode = GameMode::Creative;
+            game.fly_to(DVec3::new(1.5, 58.0, 1.5));
+        });
+        server.game.with_player(1, |game| {
+            game.fly_to(DVec3::new(0.5, 70.0, 12.5));
+        });
+        let t0 = server.game.time();
+        run_until(&mut server, &mut clients, |s, _| s.game.time() > t0 + 120);
+        // The server has no camera for a player (it stays where they
+        // spawned), so it counts from where the body is.
+        let seen = |game: &Game, index: usize| game.player_at(index).water_vision_ticks();
+        assert!(seen(&server.game, 0) >= 100, "{}", seen(&server.game, 0));
+        assert_eq!(
+            seen(&server.game, 1),
+            0,
+            "the dry player's eyes aren't used to it"
+        );
+        assert!(
+            clients[0].1.player.water_vision_ticks() >= 100,
+            "Alice's client is told"
+        );
+        assert_eq!(
+            clients[1].1.player.water_vision_ticks(),
+            0,
+            "Bob's client isn't"
+        );
+        let alice = clients[0].1.environment();
+        assert!(
+            alice.fog_end > 24.0,
+            "Alice's fog ends at {}",
+            alice.fog_end
+        );
+    }
+
     /// Flies Bob (a spectator, with the wheel at `scale`) east through
     /// water, mobs and terrain for `ticks` ticks, holding `sprint`: the
     /// client's and server's speeds in blocks a second each tick (from how

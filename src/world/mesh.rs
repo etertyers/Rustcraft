@@ -2248,6 +2248,35 @@ mod tests {
     }
 
     #[test]
+    fn a_ten_block_cube_of_water_has_faces_only_on_its_outside() {
+        let cube: Vec<_> = (3..13)
+            .flat_map(|x| (50..60).flat_map(move |y| (3..13).map(move |z| (x, y, z, WATER))))
+            .collect();
+        let mesh = mesh_with(&cube, true);
+        assert!(mesh.indices.is_empty(), "nothing opaque");
+        // Six sides of 100 faces, and the surface seen from below: 700.
+        // Faces between two water blocks would make thousands.
+        assert_eq!(mesh.translucent.len() / 6, 700);
+        // Every face lies on the cube's boundary (the surface is a little
+        // below the top, as water's is).
+        for quad in mesh.translucent.as_chunks::<6>().0.iter() {
+            let p: Vec<_> = quad
+                .iter()
+                .map(|&i| mesh.vertices[i as usize].position)
+                .collect();
+            let flat = |axis: usize, at: f32| p.iter().all(|v| (v[axis] - at).abs() < 1e-4);
+            let top = p.iter().all(|v| v[1] > 59.0 && v[1] < 60.0);
+            let on_boundary = flat(0, 3.0)
+                || flat(0, 13.0)
+                || flat(2, 3.0)
+                || flat(2, 13.0)
+                || flat(1, 50.0)
+                || top;
+            assert!(on_boundary, "an inside face: {p:?}");
+        }
+    }
+
+    #[test]
     fn water_under_water_is_full_height_and_hides_shared_faces() {
         let mesh = mesh_with(&[(4, 60, 4, WATER), (4, 61, 4, WATER)], true);
         // Two blocks of 5 visible faces each, plus the surface from below.

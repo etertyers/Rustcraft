@@ -18,6 +18,9 @@ pub const DEFAULT_SECONDS: f32 = 60.0;
 pub const SPEED: f64 = 10.9;
 /// Feet height for the flight, above most hills.
 pub const HEIGHT: f64 = 100.0;
+/// Feet height for `--underwater`: the eyes are 5–6 blocks under the sea
+/// surface (Y 63).
+pub const UNDERWATER_HEIGHT: f64 = 56.4;
 
 impl Bench {
     /// Feet height for this dimension's flight: the Nether's caverns are
@@ -25,6 +28,7 @@ impl Bench {
     pub fn height(&self) -> f64 {
         use crate::world::dimension::Dimension;
         match self.dimension {
+            Dimension::Overworld if self.underwater => UNDERWATER_HEIGHT,
             Dimension::Overworld => HEIGHT,
             Dimension::Nether => 72.0,
             Dimension::End => 90.0,
@@ -36,13 +40,17 @@ impl Bench {
     /// outer islands and a city.
     pub fn start(&self) -> Option<[f64; 3]> {
         use crate::world::dimension::Dimension;
-        (self.dimension == Dimension::End).then_some([27.5, self.height(), -550.0])
+        match self.dimension {
+            Dimension::End => Some([27.5, self.height(), -550.0]),
+            Dimension::Overworld if self.underwater => Some([1248.5, self.height(), 1248.5]),
+            _ => None,
+        }
     }
 }
 /// The window's size: a 1080p screen.
 pub const WINDOW_SIZE: (u32, u32) = (1920, 1080);
 /// The milestone `--perf-test` writes up (`docs/perf/m<N>.md`).
-pub const PERF_MILESTONE: u32 = 49;
+pub const PERF_MILESTONE: u32 = 51;
 /// `--perf-test`'s flight length and render distance.
 pub const PERF_SECONDS: f32 = 60.0;
 pub const PERF_DISTANCE: i32 = 9;
@@ -81,6 +89,9 @@ pub struct Bench {
     /// default; the Nether's and the End's fly where there is something to
     /// see.
     pub dimension: crate::world::dimension::Dimension,
+    /// `--underwater` (M51): the Overworld flight runs 6 blocks under the
+    /// surface of a deep ocean, so the water's fog and overlay are drawn.
+    pub underwater: bool,
     elapsed: f32,
     warm_up: Vec<FrameTimes>,
     frames: Vec<FrameTimes>,
@@ -93,6 +104,7 @@ impl Bench {
             distance: None,
             perf_report: None,
             dimension: Default::default(),
+            underwater: false,
             elapsed: 0.0,
             warm_up: Vec::new(),
             frames: Vec::new(),
@@ -177,6 +189,7 @@ impl Bench {
         let pass =
             f.average_fps >= MIN_AVERAGE_FPS && f.one_percent_low_fps >= MIN_ONE_PERCENT_LOW_FPS;
         let flag = match self.dimension {
+            crate::world::dimension::Dimension::Overworld if self.underwater => " --underwater",
             crate::world::dimension::Dimension::Overworld => "",
             crate::world::dimension::Dimension::Nether => " --nether",
             crate::world::dimension::Dimension::End => " --end",

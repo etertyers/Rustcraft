@@ -75,6 +75,9 @@ pub struct GuiTextures {
     pub creative: TextureHandle,
     /// The Search tab's panel, with its text box.
     pub creative_search: TextureHandle,
+    /// `misc/underwater` drawn over the screen under water; `None` if no
+    /// pack or vanilla has it.
+    pub underwater: Option<TextureHandle>,
     /// The Survival Inventory tab's panel.
     pub creative_inventory: TextureHandle,
     pub tabs: TextureHandle,
@@ -230,6 +233,15 @@ impl GuiTextures {
                 .or_else(|_| sheet("gui/container/anvil", &[]))?,
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
             creative_search: sheet("gui/container/creative_inventory/tab_item_search", &[])?,
+            underwater: compose_sheet(res, "misc/underwater", &[]).map(|image| {
+                let size = [image.width() as usize, image.height() as usize];
+                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+                let options = egui::TextureOptions {
+                    wrap_mode: egui::TextureWrapMode::Repeat,
+                    ..egui::TextureOptions::NEAREST
+                };
+                ctx.load_texture("underwater", pixels, options)
+            }),
             creative_inventory: sheet("gui/container/creative_inventory/tab_inventory", &[])?,
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,
             icons: sheet("gui/icons", ICONS)?,
