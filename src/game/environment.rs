@@ -195,6 +195,7 @@ impl Game {
             super::weather::Weather::Clear => 0.0,
             _ => 1.0,
         };
+        environment.snow = biome.is_cold_at(p.y);
         if self.eye_in() == Some(Fluid::Water) {
             let eye = self.player.camera.position.floor().as_ivec3();
             let (sky, block) = self.chunks.light_at(eye.x, eye.y, eye.z).unwrap_or((15, 0));
@@ -282,6 +283,7 @@ pub fn environment(
         rain: 0.0,
         sunlight: true,
         ambient_tint: Vec3::ONE,
+        snow: false,
     }
 }
 
@@ -322,6 +324,7 @@ pub fn nether(time: u64, partial: f32, biome: Biome, view: f32, eye: Option<Flui
         rain: 0.0,
         sunlight: false,
         ambient_tint: Vec3::new(1.06, 0.99, 0.9),
+        snow: false,
     }
 }
 
@@ -356,6 +359,7 @@ pub fn end(time: u64, partial: f32, view: f32, eye: Option<Fluid>) -> Environmen
         rain: 0.0,
         sunlight: false,
         ambient_tint: Vec3::new(0.98, 0.95, 1.07),
+        snow: false,
     }
 }
 

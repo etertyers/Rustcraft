@@ -101,6 +101,9 @@ pub struct Environment {
     /// What the Trailer look tints the ambient light with: warm in the
     /// Nether, a faint purple in the End, none elsewhere.
     pub ambient_tint: Vec3,
+    /// Precipitation here is snow (a cold biome at the camera): rain
+    /// doesn't wet the ground.
+    pub snow: bool,
 }
 
 /// The sky images from the packs' `environment/` folder.
@@ -158,6 +161,7 @@ macro_rules! trailer_shader {
                 concat!(
                     include_str!("globals.wgsl"),
                     include_str!("trailer_common.wgsl"),
+                    include_str!("sway.wgsl"),
                     include_str!($file)
                 )
                 .into(),
@@ -183,6 +187,9 @@ struct ChunkBuffers {
     /// shadow on anything the sun reaches. `None` for meshes drawn by the
     /// frame (mobs, items) and chunks with none.
     shadow_indices: Option<(wgpu::Buffer, u32)>,
+    /// The lowest and highest glowing face: bloom has something to do
+    /// when one is near the camera's height.
+    glow_y: Option<(f32, f32)>,
     /// The lowest and highest vertex, for culling against a shadow map.
     y_range: (f32, f32),
 }
@@ -250,6 +257,15 @@ pub struct Renderer {
     /// first water in view cost a 50 ms frame).
     warm_mesh: ChunkBuffers,
     warmed: std::cell::Cell<bool>,
+    /// The Trailer look's bloom, light shafts and FXAA, and which of the
+    /// shafts and FXAA are drawn this frame (set by `prepare_sun`).
+    bloom: visuals::bloom::Bloom,
+    shafts: visuals::shafts::Shafts,
+    fxaa: visuals::fxaa::Fxaa,
+    shafts_active: bool,
+    fxaa_active: bool,
+    /// The light shafts' color times their strength.
+    shaft_color: [f32; 3],
     /// The depth and HDR textures can be copied from (see `create_depth_view`).
     copy_usage: bool,
     glint_bind_group: wgpu::BindGroup,
@@ -529,7 +545,7 @@ impl Renderer {
             visuals::frame::hdr_format(device.features()),
             true,
         );
-        let trailer_frame = visuals::frame::TrailerFrame::new(&device, config.format);
+        let trailer_frame = visuals::frame::TrailerFrame::new(&device, &queue, config.format);
         let trailer_startup = started.elapsed();
         log::info!(
             "Trailer look's pipelines made in {:.1} ms",
@@ -575,9 +591,17 @@ impl Renderer {
                 translucent: 0,
                 atlas: 0,
                 shadow_indices: None,
+                glow_y: None,
                 y_range: (0.0, 0.0),
             }
         };
+        let bloom = visuals::bloom::Bloom::new(&device, hdr_format);
+        let shafts = visuals::shafts::Shafts::new(
+            &device,
+            &layouts.trailer_blocks,
+            &trailer_shader!(device, "visuals/shafts.wgsl"),
+        );
+        let fxaa = visuals::fxaa::Fxaa::new(&device, &queue, config.format);
         let scene = SceneCopies::new(&device, hdr_format, 1, 1);
         let cloud_view = cloud_texture.create_view(&Default::default());
         let shadows = visuals::shadow::ShadowMaps::new(
@@ -626,6 +650,12 @@ impl Renderer {
             split_world: false,
             warm_mesh,
             warmed: std::cell::Cell::new(false),
+            bloom,
+            shafts,
+            fxaa,
+            shafts_active: false,
+            fxaa_active: false,
+            shaft_color: [0.0; 3],
             copy_usage: false,
             glint_bind_group,
             globals_buffer,
@@ -844,6 +874,7 @@ impl Renderer {
             translucent: mesh.translucent.len() as u32,
             atlas: self.atlas_generation,
             shadow_indices: None,
+            glow_y: None,
             y_range: (0.0, 0.0),
         }
     }
@@ -901,8 +932,44 @@ impl Renderer {
             translucent: mesh.translucent.len() as u32,
             atlas: self.atlas_generation,
             shadow_indices: self.shadow_indices(mesh),
+            glow_y: mesh.glow_y,
             y_range: mesh.y_range,
         }
+    }
+
+    /// Whether anything brighter than white could be on screen: the sun
+    /// (or its glint on water) in front of the camera, or a chunk in view
+    /// with glowing blocks. When nothing is, bloom would add nothing, so
+    /// its passes are skipped (the picture is the same).
+    fn something_glows(
+        &self,
+        camera: &Camera,
+        environment: &Environment,
+        frustum: &Frustum,
+    ) -> bool {
+        let sun = visuals::sun::sun_direction(environment.celestial_angle);
+        if environment.sky
+            && environment.sunlight
+            && sun.y > -0.05
+            && camera.forward().dot(sun) > 0.55
+        {
+            return true;
+        }
+        // A glow far above or below the camera is hidden by the ground.
+        let reach = 64.0;
+        self.chunks.iter().any(|(pos, chunk)| {
+            let (x, z) = pos.min_block();
+            chunk.glow_y.is_some_and(|(lo, hi)| {
+                hi > camera.position.y - reach && lo < camera.position.y + reach
+            }) && frustum.intersects_box(
+                Vec3::new(x as f32, chunk.y_range.0, z as f32),
+                Vec3::new(
+                    x as f32 + CHUNK_SIZE as f32,
+                    chunk.y_range.1,
+                    z as f32 + CHUNK_SIZE as f32,
+                ),
+            )
+        })
     }
 
     /// Whether a chunk in view has water, ice or glass to draw: the world
@@ -1204,9 +1271,9 @@ impl Renderer {
         let trailer = self.visuals.trailer();
         // The water reads a copy of the opaque scene when it reflects or
         // refracts: only then do the depth and HDR textures need the flag.
+        let plan = visuals::planned_passes(&self.visuals);
         let copy = trailer
-            && (self.visuals.on(visuals::Effect::Reflections)
-                || self.visuals.on(visuals::Effect::Refraction));
+            && (plan.contains(&"water") || plan.contains(&"shafts") || plan.contains(&"fxaa"));
         if copy != self.copy_usage {
             self.copy_usage = copy;
             (self.depth_texture, self.depth_view) =
@@ -1215,6 +1282,11 @@ impl Renderer {
         if trailer {
             self.trailer_frame
                 .prepare(&self.device, self.config.width, self.config.height, copy);
+            self.trailer_frame.prepare_ldr(
+                &self.device,
+                self.config.format,
+                plan.contains(&"fxaa"),
+            );
         }
         // The sun's light and shadow maps (before the world is drawn).
         let sun_frame = trailer.then(|| self.prepare_sun(environment));
@@ -1314,16 +1386,80 @@ impl Renderer {
         }
 
         if trailer {
+            let size = (self.config.width, self.config.height);
+            // Glow round what's brighter than white.
+            let mut bloom: Vec<&wgpu::TextureView> = Vec::new();
+            if plan.contains(&"bloom")
+                && self.something_glows(camera, environment, &frustum)
+                && let Some(hdr) = self.trailer_frame.hdr_view()
+            {
+                self.bloom.prepare(
+                    &self.device,
+                    self.trailer_frame.format(),
+                    hdr,
+                    size,
+                    visuals::bloom::levels(self.visuals.quality),
+                    self.trailer_frame.generation(),
+                );
+                self.bloom.run(&mut encoder, profiler.as_mut());
+                bloom = self.bloom.levels();
+            }
+            // Light shafts, if the sun is up and they're on.
+            let mut shafts = None;
+            if self.shafts_active
+                && let Some((_, scale)) = visuals::shafts::settings(self.visuals.quality)
+            {
+                self.shafts.prepare(&self.device, size, scale);
+                self.shafts.run(
+                    &mut encoder,
+                    [
+                        &self.globals_bind_group,
+                        &self.atlas_bind_group,
+                        &self.glint_bind_group,
+                        &self.shadows.read_group,
+                    ],
+                    profiler.as_mut(),
+                );
+                shafts = self.shafts.result();
+            }
             let tint = environment
                 .sunrise
                 .map_or(0.0, |(_, strength)| strength * 0.4);
+            let mut params = visuals::frame::PostParams::new(tint, environment.min_light > 0.0);
+            if !bloom.is_empty() {
+                params = params.with_bloom(visuals::bloom::STRENGTH, bloom.len());
+            }
+            if shafts.is_some() {
+                params = params.with_shafts(self.shaft_color);
+            }
+            // With FXAA the picture goes to a texture first.
+            let target = match (self.fxaa_active, self.trailer_frame.ldr_view()) {
+                (true, Some(ldr)) => ldr,
+                _ => &view,
+            };
             self.trailer_frame.post(
+                &self.device,
                 &self.queue,
                 &mut encoder,
-                &view,
-                &visuals::frame::PostParams::new(tint, environment.min_light > 0.0),
+                target,
+                &params,
+                &bloom,
+                shafts,
                 profiler.as_mut(),
             );
+            if self.fxaa_active
+                && let Some(ldr) = self.trailer_frame.ldr_view()
+            {
+                let timestamps = profiler.as_mut().and_then(|p| p.pass("fxaa"));
+                self.fxaa.run(
+                    &self.device,
+                    &mut encoder,
+                    ldr,
+                    &self.scene.depth_view,
+                    &view,
+                    timestamps,
+                );
+            }
         }
 
         let screen = egui_wgpu::ScreenDescriptor {
@@ -1407,6 +1543,9 @@ impl Renderer {
         // The Trailer water reads a copy of what's been drawn so far: the
         // world is drawn in two passes, with the copy between them.
         let split = faces && self.split_world && self.any_translucent_in_view(camera, frustum);
+        // The shafts and FXAA read the opaque scene's depth: kept, and
+        // copied after the world, before the hand clears it.
+        let copy_depth = faces && (self.shafts_active || self.fxaa_active);
         let timestamps = profiler.as_mut().and_then(|p| p.pass("world"));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("world"),
@@ -1423,7 +1562,7 @@ impl Renderer {
                 view: &self.depth_view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
-                    store: if split {
+                    store: if split || copy_depth {
                         wgpu::StoreOp::Store
                     } else {
                         wgpu::StoreOp::Discard
@@ -1612,6 +1751,18 @@ impl Renderer {
         if outline > 0 {
             self.outline.draw(&mut pass, outline, faces);
         }
+        drop(pass);
+        if copy_depth && !split {
+            encoder.copy_texture_to_texture(
+                self.depth_texture.as_image_copy(),
+                self.scene.depth.as_image_copy(),
+                wgpu::Extent3d {
+                    width: self.scene.size.0,
+                    height: self.scene.size.1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         (visible.len(), triangles)
     }
 
@@ -1633,8 +1784,22 @@ impl Renderer {
         // sun only shows as caustics, and only on High.
         let underwater = environment.sunlight && !environment.sky;
         let caustics = underwater && on(Effect::Caustics);
-        let sunlight = environment.sunlight && (environment.sky || caustics);
+        let shafts_cfg = visuals::shafts::settings(quality).filter(|_| on(Effect::LightShafts));
+        // Shafts under water come from the surface: the sun's shadow maps
+        // are drawn for them too.
+        let sunlight =
+            environment.sunlight && (environment.sky || caustics || shafts_cfg.is_some());
         let light = sun::light(environment.celestial_angle, self.rain, sunlight);
+        let shaft_strength = sun::shaft_strength(&light, self.rain, sunlight);
+        self.shafts_active = shafts_cfg.is_some() && shaft_strength > 0.01;
+        self.fxaa_active = on(Effect::Fxaa);
+        self.shaft_color = if underwater {
+            // The surface's light in the water's own color (M51's fog).
+            let fog = environment.fog_color;
+            (fog * shaft_strength * 1.2).to_array()
+        } else {
+            (light.color / light.strength.max(0.01) * shaft_strength * 0.9).to_array()
+        };
         let shadows = on(Effect::Shadows) && sunlight && light.strength > 0.02;
         // The water reads a copy of the opaque scene on Medium and High.
         let ssr_steps = match quality {
@@ -1646,7 +1811,8 @@ impl Renderer {
         self.split_world = ssr_steps > 0 || refraction;
         let size = (self.config.width, self.config.height);
         let mut rebind = self.shadows.config != config;
-        if self.split_world && self.scene.size != size {
+        let need_scene = self.split_world || self.shafts_active || self.fxaa_active;
+        if need_scene && self.scene.size != size {
             let format = self.trailer_frame.format();
             self.scene = SceneCopies::new(&self.device, format, size.0, size.1);
             rebind = true;
@@ -1680,6 +1846,18 @@ impl Renderer {
             leaf_light: on(Effect::LeafLight),
             dimension_tint: environment.ambient_tint,
             sky_tint,
+            atmos: {
+                let mut atmos = self.atmos_frame(environment);
+                if let (true, Some((steps, scale))) = (self.shafts_active, shafts_cfg) {
+                    atmos.shafts = [
+                        steps as f32,
+                        visuals::shafts::REACH,
+                        visuals::shafts::SCATTER,
+                        scale as f32,
+                    ];
+                }
+                atmos
+            },
             water: WaterFrame {
                 ssr_steps: if self.split_world { ssr_steps } else { 0 },
                 refraction: self.split_world && refraction,
@@ -1697,6 +1875,51 @@ impl Renderer {
         }
     }
 
+    /// The fog, wind, rain and glow settings of the frame.
+    fn atmos_frame(&self, environment: &Environment) -> visuals::shadow::AtmosFrame {
+        use visuals::Effect;
+        let on = |effect| self.visuals.on(effect);
+        // Under water the fog is M51's alone.
+        let underwater = environment.fog_start < 0.0 || environment.fog_density > 0.0;
+        let overworld_sky = environment.sunlight && environment.sky;
+        // Thickest as the sun rises (the morning, sun in the east and low).
+        let sun = visuals::sun::sun_direction(environment.celestial_angle);
+        let morning = if sun.x > 0.0 {
+            (1.0 - ((sun.y - 0.2).abs() / 0.5)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        visuals::shadow::AtmosFrame {
+            height_fog: if on(Effect::HeightFog) && overworld_sky && !underwater {
+                0.0016
+            } else {
+                0.0
+            },
+            morning,
+            dimension_fog: if on(Effect::HeightFog) && !environment.sunlight && !underwater {
+                if environment.ambient > 0.05 && environment.ambient < 0.2 {
+                    // The Nether: thick and warm, in the biome's fog color.
+                    0.011
+                } else {
+                    // The End: a dark purple.
+                    0.005
+                }
+            } else {
+                0.0
+            },
+            sway: on(Effect::SwayingPlants),
+            wetness: if on(Effect::Wetness) && !environment.snow && overworld_sky {
+                self.rain
+            } else {
+                0.0
+            },
+            rain_rings: on(Effect::Wetness) && self.visuals.quality != visuals::Quality::Low,
+            emissive: self.visuals.trailer(),
+            wind: self.rain,
+            shafts: [0.0; 4],
+        }
+    }
+
     /// Draws each cascade that needs it (the light moved more than 0.05°,
     /// the camera a shadow texel, a chunk changed, or mobs cast into it),
     /// then writes the frame's uniform. Returns the triangles drawn.
@@ -1710,6 +1933,19 @@ impl Renderer {
         use visuals::{Effect, shadow, sun};
         let mut triangles = 0;
         let mut to_draw = Vec::new();
+        // Swaying leaves move their shadows: draw again every quarter
+        // second of wind.
+        let phase = if frame.atmos.sway {
+            (self.rain_time / 5.0) as u32 + 1
+        } else {
+            0
+        };
+        let sway = [
+            self.rain_time,
+            frame.atmos.wind,
+            f32::from(frame.atmos.sway),
+            0.0,
+        ];
         if frame.shadows {
             let config = frame.config;
             let mobs_cast = self.visuals.on(Effect::EntityShadows);
@@ -1727,6 +1963,7 @@ impl Renderer {
                     d.direction.dot(frame.light.direction) > same_light
                         && d.center == center
                         && d.revision == self.mesh_revision
+                        && d.phase == phase
                 });
                 // Mobs move every frame: the near cascade is drawn again.
                 let skip = unchanged && !(i == 0 && mobs_cast);
@@ -1735,12 +1972,13 @@ impl Renderer {
                 if skip || waiting {
                     continue;
                 }
-                self.shadows.write_cascade(&self.queue, i, &matrix);
+                self.shadows.write_cascade(&self.queue, i, &matrix, sway);
                 self.shadows.drawn[i] = Some(shadow::Drawn {
                     matrix,
                     center,
                     direction: frame.light.direction,
                     revision: self.mesh_revision,
+                    phase,
                 });
                 to_draw.push(i);
             }
@@ -2405,7 +2643,7 @@ mod tests {
                     visuals::frame::hdr_format(device.features()),
                     true,
                 );
-                let _frame = visuals::frame::TrailerFrame::new(&device, format);
+                let _frame = visuals::frame::TrailerFrame::new(&device, &_queue, format);
                 started.elapsed()
             })
             .min()

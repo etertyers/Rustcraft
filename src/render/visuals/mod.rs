@@ -7,12 +7,16 @@
 //! (`src/look.rs` already means "everything texture-derived"; this is the
 //! renderer's look.)
 
+pub mod bloom;
 pub mod compare;
 pub mod frame;
+pub mod fxaa;
 pub mod packs;
 pub mod profiler;
 pub mod shadow;
+pub mod shafts;
 pub mod sun;
+pub mod sway;
 pub mod water;
 
 use std::collections::BTreeMap;
@@ -255,6 +259,36 @@ impl Visuals {
     }
 }
 
+/// The passes a frame draws, in order, from its settings (the water's
+/// pass only when something translucent is in view): the one place that
+/// decides which effects get a pass, so turning an effect off removes it.
+pub fn planned_passes(v: &FrameVisuals) -> Vec<&'static str> {
+    if !v.trailer() {
+        return vec!["world", "hand", "ui"];
+    }
+    let mut passes = Vec::new();
+    if v.on(Effect::Shadows) {
+        passes.push("shadow");
+    }
+    passes.push("world");
+    if v.on(Effect::Reflections) || v.on(Effect::Refraction) {
+        passes.push("water");
+    }
+    passes.push("hand");
+    if v.on(Effect::Bloom) {
+        passes.push("bloom");
+    }
+    if v.on(Effect::LightShafts) && shafts::settings(v.quality).is_some() {
+        passes.push("shafts");
+    }
+    passes.push("post");
+    if v.on(Effect::Fxaa) {
+        passes.push("fxaa");
+    }
+    passes.push("ui");
+    passes
+}
+
 /// The resolved settings the renderer draws a frame with.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrameVisuals {
@@ -309,6 +343,76 @@ mod tests {
         assert!(!v.enabled(Effect::LightShafts) && v.enabled(Effect::Shadows));
         assert!(!FrameVisuals::vanilla().on(Effect::Shadows));
         assert!(v.frame().on(Effect::Shadows));
+    }
+
+    /// Every effect has a value for each profile, from the milestone
+    /// entries, and the Trailer Settings screen lists all of them.
+    #[test]
+    fn every_effect_has_a_low_medium_and_high_setting() {
+        use Quality::*;
+        let off = |q: Quality| -> Vec<Effect> {
+            Effect::ALL
+                .into_iter()
+                .filter(|e| !e.default_for(q))
+                .collect()
+        };
+        assert_eq!(
+            off(Low),
+            [
+                Effect::EntityShadows,
+                Effect::Reflections,
+                Effect::Refraction,
+                Effect::Caustics,
+                Effect::CloudShadows,
+                Effect::LightShafts,
+                Effect::Fxaa,
+            ]
+        );
+        assert_eq!(off(Medium), [Effect::Caustics]);
+        assert!(off(High).is_empty());
+        // The screen lists each by a name of its own.
+        let mut names: Vec<&str> = Effect::ALL.iter().map(|e| e.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), Effect::ALL.len());
+        assert!(Effect::ALL.len() >= 16);
+    }
+
+    #[test]
+    fn turning_an_effect_off_removes_its_pass() {
+        let medium = FrameVisuals::default();
+        let all = planned_passes(&medium);
+        for pass in ["shadow", "water", "bloom", "shafts", "fxaa"] {
+            assert!(all.contains(&pass), "{pass} on Medium: {all:?}");
+        }
+        let without = |effects: &[Effect]| {
+            let mut v = Visuals::default();
+            for e in effects {
+                v.set(*e, false);
+            }
+            planned_passes(&v.frame())
+        };
+        assert!(!without(&[Effect::Shadows]).contains(&"shadow"));
+        assert!(!without(&[Effect::Bloom]).contains(&"bloom"));
+        assert!(!without(&[Effect::LightShafts]).contains(&"shafts"));
+        assert!(!without(&[Effect::Fxaa]).contains(&"fxaa"));
+        // The water's pass needs reflections or refraction: one is enough.
+        assert!(without(&[Effect::Reflections]).contains(&"water"));
+        assert!(!without(&[Effect::Reflections, Effect::Refraction]).contains(&"water"));
+        // Vanilla draws M53's three passes only.
+        assert_eq!(
+            planned_passes(&FrameVisuals::vanilla()),
+            ["world", "hand", "ui"]
+        );
+        // Low: no water pass, no shafts, no FXAA, but a smaller bloom.
+        let low = Visuals {
+            quality: Quality::Low,
+            ..Visuals::default()
+        };
+        assert_eq!(
+            planned_passes(&low.frame()),
+            ["shadow", "world", "hand", "bloom", "post", "ui"]
+        );
     }
 
     #[test]

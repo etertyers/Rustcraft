@@ -81,11 +81,13 @@ fn fs_main(in: SkyOutput) -> @location(0) vec4<f32> {
 
     let a = globals.sky_color.w * 2.0 * PI;
     let sun = vec3<f32>(-sin(a), cos(a), 0.0);
+    // The sun's disc is drawn above white so it blooms.
+    var disc = vec3<f32>(0.0);
     if dir.y > 0.0 && globals.fog.y == 0.0 {
         color += vec3<f32>(stars(dir) * globals.fog.w);
         let sun_uv = billboard(dir, sun, SUN_SIZE);
         if sun_uv.x >= 0.0 {
-            color += textureSampleLevel(sun_texture, sun_sampler, sun_uv, 0.0).rgb;
+            disc = srgb_to_linear(textureSampleLevel(sun_texture, sun_sampler, sun_uv, 0.0).rgb) * 3.0;
         }
         let moon_uv = billboard(dir, -sun, MOON_SIZE);
         if moon_uv.x >= 0.0 {
@@ -95,5 +97,5 @@ fn fs_main(in: SkyOutput) -> @location(0) vec4<f32> {
             color += textureSampleLevel(moon_texture, moon_sampler, uv, 0.0).rgb;
         }
     }
-    return vec4<f32>(srgb_to_linear(min(color, vec3<f32>(1.0))), 1.0);
+    return vec4<f32>(srgb_to_linear(min(color, vec3<f32>(1.0))) + disc, 1.0);
 }

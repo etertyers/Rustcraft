@@ -2,6 +2,8 @@
 //! (`hdr_format`) with the same depth buffer, then post passes draw it into
 //! the window's frame, and the UI goes on top, untouched, as in Vanilla.
 
+use wgpu::util::DeviceExt;
+
 use super::profiler::GpuProfiler;
 
 /// The Trailer look's world target when the GPU can't render to the
@@ -28,8 +30,6 @@ pub fn hdr_format(features: wgpu::Features) -> wgpu::TextureFormat {
 struct Target {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
-    /// Reads it (and the post uniform) in the next pass.
-    bind_group: wgpu::BindGroup,
 }
 
 /// Mirrors `Post` in post.wgsl.
@@ -41,6 +41,14 @@ pub struct PostParams {
     pub params: [f32; 4],
     /// The sunrise and sunset tint.
     pub tint: [f32; 4],
+    /// x: how much of the bloom is added; the weights of its first four
+    /// levels come with `bloom_weights`.
+    pub bloom: [f32; 4],
+    /// The weights of the bloom's levels (the fifth is `bloom.y`).
+    pub bloom_weights: [f32; 4],
+    /// rgb: the light shafts' color times their strength; w: 1 when they
+    /// are drawn.
+    pub shafts: [f32; 4],
 }
 
 impl PostParams {
@@ -57,7 +65,28 @@ impl PostParams {
         Self {
             params: [super::sun::SATURATION, shoulder, sunrise, 0.0],
             tint: [1.05, 0.97, 0.86, 1.0],
+            bloom: [0.0; 4],
+            bloom_weights: [0.0; 4],
+            shafts: [0.0; 4],
         }
+    }
+
+    pub fn with_bloom(mut self, strength: f32, levels: usize) -> Self {
+        let weight = |i: usize| {
+            if i < levels {
+                super::bloom::WEIGHTS[i]
+            } else {
+                0.0
+            }
+        };
+        self.bloom = [strength, weight(4), 0.0, 0.0];
+        self.bloom_weights = [weight(0), weight(1), weight(2), weight(3)];
+        self
+    }
+
+    pub fn with_shafts(mut self, color: [f32; 3]) -> Self {
+        self.shafts = [color[0], color[1], color[2], 1.0];
+        self
     }
 }
 
@@ -68,6 +97,14 @@ pub struct TrailerFrame {
     post: wgpu::RenderPipeline,
     /// The HDR target, at the frame's size; made on first use.
     hdr: Option<Target>,
+    /// Counts the HDR target's remakes, for what was built against it.
+    generation: u64,
+    /// The tone-mapped picture, for FXAA to read (when FXAA is on).
+    ldr: Option<(wgpu::Texture, wgpu::TextureView)>,
+    ldr_size: (u32, u32),
+    sampler: wgpu::Sampler,
+    /// A black 1 × 1, for a bloom or shafts that isn't drawn.
+    dummy: wgpu::TextureView,
     hdr_format: wgpu::TextureFormat,
     /// The target can be copied from (with the water reading the scene).
     copyable: bool,
@@ -76,7 +113,7 @@ pub struct TrailerFrame {
 
 impl TrailerFrame {
     /// `format`: the window's frame.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let hdr_format = hdr_format(device.features());
         let input_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("post input"),
@@ -101,6 +138,74 @@ impl TrailerFrame {
                     },
                     count: None,
                 },
+                // The bloom's five levels, the light shafts, and a sampler
+                // for them.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let post_uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -116,11 +221,43 @@ impl TrailerFrame {
             immediate_size: 0,
         });
         let post = fullscreen_pipeline(device, &layout, &shader, "post", format);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("post"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let dummy = device
+            .create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("post dummy"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &[0, 0, 0, 255],
+            )
+            .create_view(&Default::default());
         Self {
             input_layout,
             post_uniform,
             post,
             hdr: None,
+            generation: 0,
+            ldr: None,
+            ldr_size: (0, 0),
+            sampler,
+            dummy,
             hdr_format,
             copyable: false,
             size: (0, 0),
@@ -155,25 +292,47 @@ impl TrailerFrame {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("hdr input"),
-            layout: &self.input_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.post_uniform.as_entire_binding(),
-                },
-            ],
+        self.generation += 1;
+        self.hdr = Some(Target { texture, view });
+    }
+
+    /// The tone-mapped picture's texture (made, or dropped when `on` is
+    /// false), for FXAA to read.
+    pub fn prepare_ldr(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat, on: bool) {
+        if !on {
+            self.ldr = None;
+            return;
+        }
+        if self.ldr.is_some() && self.ldr_size == self.size {
+            return;
+        }
+        self.ldr_size = self.size;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ldr"),
+            size: wgpu::Extent3d {
+                width: self.size.0,
+                height: self.size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
         });
-        self.hdr = Some(Target {
-            texture,
-            view,
-            bind_group,
-        });
+        let view = texture.create_view(&Default::default());
+        self.ldr = Some((texture, view));
+    }
+
+    /// The tone-mapped picture, when FXAA is on.
+    pub fn ldr_view(&self) -> Option<&wgpu::TextureView> {
+        self.ldr.as_ref().map(|(_, v)| v)
+    }
+
+    /// Changes whenever the HDR target is made again.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// The format of the world target.
@@ -191,24 +350,73 @@ impl TrailerFrame {
         self.hdr.as_ref().map(|t| &t.view)
     }
 
-    /// The post passes, from the HDR target into `frame`.
+    /// The post pass: the HDR target (with the bloom and the light
+    /// shafts when given) tone-mapped into `target`.
+    #[allow(clippy::too_many_arguments)]
     pub fn post(
         &self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        frame: &wgpu::TextureView,
+        target: &wgpu::TextureView,
         params: &PostParams,
+        bloom: &[&wgpu::TextureView],
+        shafts: Option<&wgpu::TextureView>,
         profiler: Option<&mut GpuProfiler>,
     ) {
         let Some(hdr) = &self.hdr else {
             return;
         };
         queue.write_buffer(&self.post_uniform, 0, bytemuck::bytes_of(params));
+        // A bloom level that isn't drawn (Low has four) is black.
+        let level = |i: usize| bloom.get(i).copied().unwrap_or(&self.dummy);
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post"),
+            layout: &self.input_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&hdr.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.post_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(level(0)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(level(1)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(level(2)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(level(3)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(level(4)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(shafts.unwrap_or(&self.dummy)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
         let timestamps = profiler.and_then(|p| p.pass("post"));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("post"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: frame,
+                view: target,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -220,7 +428,7 @@ impl TrailerFrame {
             ..Default::default()
         });
         pass.set_pipeline(&self.post);
-        pass.set_bind_group(0, &hdr.bind_group, &[]);
+        pass.set_bind_group(0, &group, &[]);
         pass.draw(0..3, 0..1);
     }
 }

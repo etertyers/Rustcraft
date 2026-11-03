@@ -36,6 +36,15 @@ struct Trailer {
     // x: clouds in reflections; y: cloud shadows; z: glass and metal
     // reflect; w: rain, 0-1.
     extras: vec4<f32>,
+    // x: height-fog density (0: off); y: more of it in the morning, 0-1;
+    // z: the Nether's and the End's fog density; w: plants and leaves sway.
+    atmos: vec4<f32>,
+    // x: wet ground, 0-1; y: rain rings on water; z: glowing blocks are
+    // drawn above 1.0 to bloom; w: wind, 0-1.
+    weather: vec4<f32>,
+    // The light shafts: x: steps; y: the farthest they look; z: scattering
+    // per block; w: pixels of the frame one pixel of theirs covers.
+    shaft: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> trailer: Trailer;
 @group(3) @binding(1) var shadow_map: texture_depth_2d_array;
@@ -270,4 +279,23 @@ fn screen_reflection(origin: vec3<f32>, dir: vec3<f32>, steps: u32, jitter: f32)
     let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     let color = textureSampleLevel(scene_color, scene_sampler, uv, 0.0).rgb;
     return vec4<f32>(color, smoothstep(0.0, 0.08, edge));
+}
+
+// ---- fog ----
+
+// Thin height fog (thicker low down, in the morning, over the sea) and the
+// Nether's and the End's thick fog, mixed over what Vanilla's fog left.
+// Never shortens Vanilla's fog distances: it only adds haze, and is off
+// under water (M51's fog is alone there). `color` is linear.
+fn extra_fog(color: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    var amount = 0.0;
+    let distance_to = distance(world, globals.camera.xyz);
+    if trailer.atmos.x > 0.0 {
+        let low = exp(-max(world.y - 64.0, 0.0) * 0.035);
+        amount = 1.0 - exp(-distance_to * trailer.atmos.x * low * (1.0 + 1.6 * trailer.atmos.y));
+    }
+    if trailer.atmos.z > 0.0 {
+        amount = max(amount, 1.0 - exp(-distance_to * trailer.atmos.z));
+    }
+    return mix(color, srgb_to_linear(globals.fog_color.rgb), amount);
 }
