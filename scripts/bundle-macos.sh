@@ -41,6 +41,8 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 # (assets/vanilla is the local fallback layer from scripts/fetch-vanilla-assets.sh;
 # it goes into this local build only and is never committed).
 rsync -a --exclude '.DS_Store' --exclude '*.svg' --exclude '/vanilla/.git' assets/ "$APP/Contents/Resources/assets/"
+# The bundled mods (Fullbright); players' own are in Application Support/Rustcraft/mods.
+rsync -a --exclude '.DS_Store' mods/ "$APP/Contents/Resources/mods/"
 
 cat >"$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

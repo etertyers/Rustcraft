@@ -221,6 +221,15 @@ impl Chunk {
             .map_or(0, |index| index + 1)
     }
 
+    /// The lowest section that holds blocks (`SECTION_COUNT` if it's all
+    /// air): everything under it is air.
+    pub fn bottom_section(&self) -> usize {
+        self.sections
+            .iter()
+            .position(Option::is_some)
+            .unwrap_or(SECTION_COUNT)
+    }
+
     /// One above the top of the highest section holding any block, as a
     /// world Y: no block in the chunk is at or above this height.
     pub fn height_bound(&self) -> i32 {

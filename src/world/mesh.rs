@@ -366,6 +366,27 @@ impl ChunkArea {
             .unwrap_or(0)
     }
 
+    /// Whether section `section` (counted from the bottom of the world) of
+    /// the chunk at column `cx`, row `cz` of the 3×3 area (0 is the
+    /// west/north one) is all air, or its chunk isn't loaded.
+    pub fn section_is_air(&self, cx: usize, cz: usize, section: usize) -> bool {
+        self.chunks[cz][cx]
+            .as_ref()
+            .is_none_or(|chunk| chunk.section_is_empty(section))
+    }
+
+    /// The lowest section holding blocks in any loaded chunk of the area:
+    /// all air below it.
+    pub fn bottom_section(&self) -> usize {
+        self.chunks
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|chunk| chunk.bottom_section())
+            .min()
+            .unwrap_or(0)
+    }
+
     pub fn center(&self) -> &Chunk {
         self.chunks[1][1]
             .as_deref()
