@@ -245,6 +245,11 @@ pub struct Renderer {
     /// world is drawn in two passes to take it.
     scene: SceneCopies,
     split_world: bool,
+    /// A degenerate triangle drawn through every Trailer pipeline on the
+    /// first Trailer frame, so none compiles in the middle of play (the
+    /// first water in view cost a 50 ms frame).
+    warm_mesh: ChunkBuffers,
+    warmed: std::cell::Cell<bool>,
     /// The depth and HDR textures can be copied from (see `create_depth_view`).
     copy_usage: bool,
     glint_bind_group: wgpu::BindGroup,
@@ -548,6 +553,31 @@ impl Renderer {
             egui_wgpu::RendererOptions::default(),
         );
 
+        let warm_mesh = {
+            let buffer = |contents: &[u8], usage| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("warm"),
+                    contents,
+                    usage,
+                })
+            };
+            ChunkBuffers {
+                vertices: buffer(
+                    bytemuck::cast_slice(&[<vertex::Vertex as bytemuck::Zeroable>::zeroed(); 3]),
+                    wgpu::BufferUsages::VERTEX,
+                ),
+                faces: buffer(bytemuck::cast_slice(&[0u32; 3]), wgpu::BufferUsages::VERTEX),
+                indices: buffer(
+                    bytemuck::cast_slice(&[0u32, 1, 2]),
+                    wgpu::BufferUsages::INDEX,
+                ),
+                opaque: 3,
+                translucent: 0,
+                atlas: 0,
+                shadow_indices: None,
+                y_range: (0.0, 0.0),
+            }
+        };
         let scene = SceneCopies::new(&device, hdr_format, 1, 1);
         let cloud_view = cloud_texture.create_view(&Default::default());
         let shadows = visuals::shadow::ShadowMaps::new(
@@ -594,6 +624,8 @@ impl Renderer {
             cloud_texture,
             scene,
             split_world: false,
+            warm_mesh,
+            warmed: std::cell::Cell::new(false),
             copy_usage: false,
             glint_bind_group,
             globals_buffer,
@@ -819,13 +851,13 @@ impl Renderer {
     /// The shadow maps' index buffer for a chunk mesh, if it has any
     /// triangle the sun reaches.
     fn shadow_indices(&self, mesh: &Mesh) -> Option<(wgpu::Buffer, u32)> {
-        let lit = sunlit_triangles(mesh);
+        let lit = &mesh.shadow_indices;
         (!lit.is_empty()).then(|| {
             let buffer = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("shadow indices"),
-                    contents: bytemuck::cast_slice(&lit),
+                    contents: bytemuck::cast_slice(lit),
                     usage: wgpu::BufferUsages::INDEX,
                 });
             (buffer, lit.len() as u32)
@@ -869,7 +901,7 @@ impl Renderer {
             translucent: mesh.translucent.len() as u32,
             atlas: self.atlas_generation,
             shadow_indices: self.shadow_indices(mesh),
-            y_range: mesh_y_range(mesh),
+            y_range: mesh.y_range,
         }
     }
 
@@ -1485,6 +1517,18 @@ impl Renderer {
             self.draw_sky(&mut pass, set);
             pass.set_bind_group(1, &self.atlas_bind_group, &[]);
             pass.set_bind_group(2, &self.glint_bind_group, &[]);
+            if !self.warmed.replace(true) {
+                // Zero-area, so nothing shows; each pipeline is used once.
+                for pipeline in [Some(&set.translucent), set.translucent_low.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .chain([&set.blocks, &set.mob, &set.mask, &set.crack])
+                {
+                    pass.set_pipeline(pipeline);
+                    draw_range(&mut pass, &self.warm_mesh, 0..3, true);
+                }
+                self.draw_clouds(&mut pass, set);
+            }
         }
         // The water's own pass: after a copy of the opaque scene.
         let mut pass = if split {
@@ -1773,30 +1817,6 @@ impl Renderer {
             .write_buffer(&self.shadows.uniform, 0, bytemuck::bytes_of(&uniform));
         triangles
     }
-}
-
-/// The opaque triangles of `mesh` with sky light on some vertex.
-fn sunlit_triangles(mesh: &Mesh) -> Vec<u32> {
-    mesh.indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .filter(|tri| {
-            tri.iter()
-                .any(|&i| mesh.vertices[i as usize].light[0] > 0.0)
-        })
-        .flatten()
-        .copied()
-        .collect()
-}
-
-/// The lowest and highest vertex of a mesh.
-fn mesh_y_range(mesh: &Mesh) -> (f32, f32) {
-    mesh.vertices
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), v| {
-            (lo.min(v.position[1]), hi.max(v.position[1]))
-        })
 }
 
 /// Draws `range` of a mesh's indices, if it isn't empty.

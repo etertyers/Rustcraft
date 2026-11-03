@@ -432,6 +432,13 @@ pub struct Mesh {
     block_bottom: f32,
     /// The block is still water (its flat top face waves).
     still_water: bool,
+    /// The opaque triangles with sky light on some vertex, for the
+    /// Trailer look's shadow maps (what's deep underground casts no
+    /// shadow on anything the sun reaches), and the lowest and highest
+    /// vertex. Made by `mesh_chunk` on the worker thread so the main
+    /// thread's uploads stay quick.
+    pub shadow_indices: Vec<u32>,
+    pub y_range: (f32, f32),
 }
 
 impl Default for Mesh {
@@ -446,6 +453,8 @@ impl Default for Mesh {
             material_flags: 0,
             block_bottom: f32::NAN,
             still_water: false,
+            shadow_indices: Vec::new(),
+            y_range: (0.0, 0.0),
         }
     }
 }
@@ -476,6 +485,28 @@ impl Mesh {
 
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty() && self.translucent.is_empty()
+    }
+
+    /// Works out `shadow_indices` and `y_range` (a chunk mesh is done).
+    fn finish(&mut self) {
+        self.shadow_indices = self
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter(|tri| {
+                tri.iter()
+                    .any(|&i| self.vertices[i as usize].light[0] > 0.0)
+            })
+            .flatten()
+            .copied()
+            .collect();
+        self.y_range = self
+            .vertices
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| {
+                (lo.min(v.position[1]), hi.max(v.position[1]))
+            });
     }
 
     /// Adds another mesh's faces after this one's.
@@ -1575,6 +1606,7 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
             }
         }
     }
+    mesh.finish();
     mesh
 }
 
