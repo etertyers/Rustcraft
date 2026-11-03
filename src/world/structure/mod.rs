@@ -91,7 +91,7 @@ impl Kind {
     }
 
     /// Farthest any block reaches from the start chunk, in chunks.
-    fn reach(self) -> i32 {
+    pub fn reach(self) -> i32 {
         match self {
             Kind::Village => 7,
             Kind::DesertTemple | Kind::JungleTemple => 2,

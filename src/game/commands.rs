@@ -13,6 +13,7 @@ mod data_cmds;
 mod execute;
 mod extra;
 mod function_cmds;
+pub(super) mod locate;
 mod server_cmds;
 mod text_cmds;
 mod world;
@@ -34,13 +35,7 @@ use crate::{
         mode::GameMode,
         stats::DamageSource,
     },
-    world::{
-        biome::Biome,
-        block::BlockState,
-        chunk::ChunkPos,
-        dimension::Dimension,
-        structure::{self, Kind},
-    },
+    world::{biome::Biome, block::BlockState, dimension::Dimension},
 };
 
 /// Where a command's answer goes.
@@ -69,7 +64,6 @@ pub enum Reply {
 /// The most blocks one `/fill` changes (vanilla's limit).
 const FILL_LIMIT: i64 = 32768;
 /// How far `/locate` looks, in chunks and blocks.
-const LOCATE_CHUNKS: i32 = 100;
 const LOCATE_BIOME_BLOCKS: i32 = 6400;
 
 /// Who typed a command, what they may do, and where and as whom it runs
@@ -1974,12 +1968,12 @@ fn setworldspawn(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<
 
 fn locate(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>, String> {
     let (Some(what), Some(name)) = (args.first().copied(), args.get(1)) else {
-        return Err("Usage: /locate <structure|biome> <name>".to_owned());
+        return Err("Usage: /locate <structure|biome|poi> <name>".to_owned());
     };
     let name = name.strip_prefix("minecraft:").unwrap_or(name);
     let from = caller.pos;
-    if caller.dim != Dimension::Overworld {
-        return Err("Only the Overworld can be searched".to_owned());
+    if what == "structure" {
+        return locate::locate_structure(game, caller, name);
     }
     if what == "poi" {
         let at = extra::locate_poi(game, from, name)?;
@@ -1991,27 +1985,26 @@ fn locate(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>,
             away.round() as i64
         )));
     }
-    let terrain = game
-        .chunks
-        .terrain()
-        .ok_or("This world has no terrain to search")?;
     let found = match what {
-        "structure" => {
-            let kind = structure_kind(name).ok_or_else(|| format!("Unknown structure: {name}"))?;
-            if kind == Kind::Stronghold {
-                game.nearest_stronghold(from)
-                    .map(|(x, z)| IVec3::new(x as i32, 64, z as i32))
-            } else {
-                nearest_structure(terrain, kind, from)
-            }
-        }
         "biome" => {
             let biome = Biome::ALL
                 .iter()
                 .copied()
                 .find(|b| biome_id(*b) == name)
                 .ok_or_else(|| format!("Unknown biome: {name}"))?;
-            nearest_biome(terrain, biome, from)
+            let seed = game
+                .chunks
+                .seed()
+                .ok_or("This world has no terrain to search")?;
+            if caller.dim == Dimension::Overworld {
+                let terrain = game
+                    .chunks
+                    .terrain()
+                    .ok_or("This world has no terrain to search")?;
+                nearest_biome(terrain, biome, from)
+            } else {
+                locate::nearest_biome_in(seed, caller.dim, biome, from)
+            }
         }
         other => return Err(format!("Unknown kind: {other}")),
     };
@@ -2025,60 +2018,6 @@ fn locate(game: &mut Game, caller: &Caller, args: &[&str]) -> Result<Vec<Reply>,
         at.z,
         away.round() as i64
     )))
-}
-
-/// A structure's vanilla id.
-fn structure_kind(name: &str) -> Option<Kind> {
-    Some(match name {
-        "village" | "village_plains" | "village_desert" | "village_savanna" | "village_taiga"
-        | "village_snowy" => Kind::Village,
-        "desert_pyramid" => Kind::DesertTemple,
-        "jungle_pyramid" => Kind::JungleTemple,
-        "shipwreck" => Kind::Shipwreck,
-        "ruined_portal" => Kind::RuinedPortal,
-        "mineshaft" => Kind::Mineshaft,
-        "stronghold" => Kind::Stronghold,
-        _ => return None,
-    })
-}
-
-/// The nearest structure of `kind` that's made, searching outward.
-fn nearest_structure(
-    terrain: &crate::world::worldgen::terrain::Terrain,
-    kind: Kind,
-    from: DVec3,
-) -> Option<IVec3> {
-    let center = ChunkPos::of_block(from.x.floor() as i32, from.z.floor() as i32);
-    let mut best: Option<(f64, IVec3)> = None;
-    let mut seen = std::collections::HashSet::new();
-    for ring in 0..LOCATE_CHUNKS {
-        // Anything found closer than this ring can't be beaten.
-        if best.is_some_and(|(d, _)| d < f64::from((ring - 1).max(0) * 16)) {
-            break;
-        }
-        for dz in -ring..=ring {
-            for dx in -ring..=ring {
-                if dx.abs().max(dz.abs()) != ring {
-                    continue;
-                }
-                let pos = center.offset(dx, dz);
-                for start in kind.starts_near(terrain.seed(), pos) {
-                    if !seen.insert(start) {
-                        continue;
-                    }
-                    if let Some(found) = structure::structure_at(terrain, kind, start) {
-                        let c = found.bounds.center();
-                        let d = DVec3::new(f64::from(c.x), 0.0, f64::from(c.z))
-                            .distance(DVec3::new(from.x, 0.0, from.z));
-                        if best.is_none_or(|(b, _)| d < b) {
-                            best = Some((d, c));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    best.map(|(_, at)| at)
 }
 
 /// The nearest column in `biome`, searching outward every 32 blocks.
@@ -2164,6 +2103,8 @@ mod m44_tests;
 mod m45_blocks_tests;
 #[cfg(test)]
 mod m45_tests;
+#[cfg(test)]
+mod m49_tests;
 
 #[cfg(test)]
 mod tests {

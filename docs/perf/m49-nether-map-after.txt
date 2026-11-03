@@ -1,0 +1,8 @@
+nether map: 4096 chunks
+  Basalt Deltas  chunks  947  pillars   0.00/chunk (median   0, max   0 tall)  column clusters  12.32/chunk (median  3, max 10)  free basalt runs: 1410 tall, 207932 short
+  Crimson Forest chunks  806  pillars   0.00/chunk (median   0, max   0 tall)  column clusters   0.00/chunk (median  0, max  0)  free basalt runs: 0 tall, 22 short
+  Nether Wastes  chunks  884  pillars   0.00/chunk (median   0, max   0 tall)  column clusters   0.00/chunk (median  0, max  0)  free basalt runs: 2 tall, 945 short
+  Soul Sand Valley chunks  828  pillars   0.16/chunk (median  26, max  76 tall)  column clusters   0.00/chunk (median  0, max  0)  free basalt runs: 34 tall, 3354 short
+  Warped Forest  chunks  631  pillars   0.00/chunk (median   0, max   0 tall)  column clusters   0.00/chunk (median  0, max  0)  free basalt runs: 0 tall, 134 short
+  outside their biome: 0 pillars, 0 column clusters
+

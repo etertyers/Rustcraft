@@ -487,6 +487,45 @@ impl Out<'_> {
     }
 }
 
+/// One basalt pillar or column cluster a chunk placed, kept while
+/// `--nether-map` counts them.
+#[derive(Debug, Clone, Copy)]
+pub struct Placement {
+    pub pillar: bool,
+    pub biome: Biome,
+    pub height: i32,
+    /// Where the stack's lowest block is.
+    pub bottom: i32,
+    /// The column it stands in.
+    pub at: (i32, i32),
+}
+
+thread_local! {
+    static PLACEMENTS: std::cell::RefCell<Option<Vec<Placement>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Starts keeping the placements this thread makes.
+pub fn log_placements() {
+    PLACEMENTS.with(|log| *log.borrow_mut() = Some(Vec::new()));
+}
+
+/// Takes what was kept, and stops keeping.
+pub fn take_placements() -> Vec<Placement> {
+    PLACEMENTS.with(|log| log.borrow_mut().take().unwrap_or_default())
+}
+
+/// Notes a placement, once: from the chunk it starts in.
+fn note(out: &Out, origin: ChunkPos, placement: Placement) {
+    if out.chunk.pos == origin {
+        PLACEMENTS.with(|log| {
+            if let Some(log) = log.borrow_mut().as_mut() {
+                log.push(placement);
+            }
+        });
+    }
+}
+
 type Feature = fn(&mut Land, &mut Out, ChunkPos, &mut Rng);
 
 /// Every feature in the order they're placed, each with its salt.
@@ -722,70 +761,167 @@ fn deltas(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
     }
 }
 
-/// Clusters of basalt columns rising from the deltas' floors and lava
-/// (modern `small_basalt_columns` and `large_basalt_columns`).
+/// Blocks a basalt column never stands on (modern's `BasaltColumnsFeature`
+/// skips them): bedrock, magma, soul sand, nether bricks, nether wart.
+fn bad_footing(block: BlockState) -> bool {
+    matches!(
+        block.id(),
+        blocks::BEDROCK
+            | blocks::MAGMA_BLOCK
+            | blocks::SOUL_SAND
+            | blocks::NETHER_BRICKS
+            | blocks::NETHER_WART_BLOCK
+            | blocks::WARPED_WART_BLOCK
+    )
+}
+
+/// The tallest a basalt column ever stands.
+const COLUMN_MAX: i32 = 10;
+
+/// Clusters of basalt columns rising from the deltas' floors and from the
+/// lava (modern `small_basalt_columns`, 4 on every floor layer of a column
+/// picked, height 1–4, reach 0–1, and `large_basalt_columns`, 2, height
+/// 5–10, reach 2–3): every column within the reach finds the floor nearest
+/// the center's height and stacks basalt up from it, shorter the farther
+/// from the center, until it meets anything.
 fn columns(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
-    for n in 0..5 {
-        let (x, z) = spot(rng, origin);
-        let large = n < 2;
-        let (reach, height) = if large {
-            (between(rng, 2, 3), between(rng, 5, 10))
-        } else {
-            (between(rng, 0, 1), between(rng, 1, 4))
-        };
-        if !out.near(x, z, reach) || land.biome(x, z) != Biome::BasaltDeltas {
-            continue;
-        }
-        let base = land.floors(x, z).first().copied().unwrap_or(LAVA_LEVEL);
-        let base = base.max(LAVA_LEVEL);
-        let seed = rng.next_u64();
-        for dz in -reach..=reach {
-            for dx in -reach..=reach {
-                let (bx, bz) = (x + dx, z + dz);
-                let mut col = Rng::for_chunk(seed, bx, bz, 0);
-                let falloff = dx.abs() + dz.abs();
-                let h = height - falloff * height / (reach * 2 + 2) - col.below(2) as i32;
-                if h <= 0 || col.below(4) == 0 && falloff > 0 {
-                    continue;
-                }
-                for y in base + 1..=(base + h).min(HEIGHT - 6) {
-                    if land.solid(bx, y, bz) {
-                        break;
+    for (count, large) in [(4, false), (2, true)] {
+        for _ in 0..count {
+            let (x, z) = spot(rng, origin);
+            let (reach, height) = if large {
+                (between(rng, 2, 3), between(rng, 5, COLUMN_MAX))
+            } else {
+                (between(rng, 0, 1), between(rng, 1, 4))
+            };
+            let seed = rng.next_u64();
+            if !out.near(x, z, reach) || land.biome(x, z) != Biome::BasaltDeltas {
+                continue;
+            }
+            // One cluster on each floor layer of the column, the lava sea's
+            // surface counting as one.
+            let mut layers = land.floors(x, z);
+            layers.push(LAVA_LEVEL);
+            for center in layers {
+                note(
+                    out,
+                    origin,
+                    Placement {
+                        pillar: false,
+                        biome: Biome::BasaltDeltas,
+                        height,
+                        bottom: center,
+                        at: (x, z),
+                    },
+                );
+                for dz in -reach..=reach {
+                    for dx in -reach..=reach {
+                        let (bx, bz) = (x + dx, z + dz);
+                        if !out.near(bx, bz, 0) {
+                            continue;
+                        }
+                        let mut col = Rng::for_chunk(seed, bx, bz, center as u64);
+                        let falloff = dx.abs() + dz.abs();
+                        let h = (height - falloff * height / (reach * 2 + 2) - col.below(2) as i32)
+                            .min(COLUMN_MAX);
+                        if h <= 0 || col.below(4) == 0 && falloff > 0 {
+                            continue;
+                        }
+                        // The floor nearest the center's height: a solid
+                        // block with air above it, or the lava's surface.
+                        let floor = land
+                            .floors(bx, bz)
+                            .into_iter()
+                            .chain([LAVA_LEVEL])
+                            .filter(|&f| (f - center).abs() <= 3)
+                            .min_by_key(|&f| (f - center).abs());
+                        let Some(floor) = floor else {
+                            continue;
+                        };
+                        if floor > LAVA_LEVEL && bad_footing(land.base(bx, floor, bz)) {
+                            continue;
+                        }
+                        for y in floor + 1..=(floor + h).min(HEIGHT - 6) {
+                            if land.solid(bx, y, bz) {
+                                break;
+                            }
+                            out.set(bx, y, bz, upright(blocks::BASALT));
+                        }
                     }
-                    out.set(bx, y, bz, upright(blocks::BASALT));
                 }
             }
         }
     }
 }
 
-/// Basalt pillars from floor to ceiling in the soul sand valleys (modern
-/// `basalt_pillar`).
+/// Basalt pillars from a ceiling to the floor in the soul sand valleys
+/// (modern `basalt_pillar`): ten tries a chunk at a random height, each
+/// only where its block is open and the one above isn't; basalt goes
+/// straight down to the first thing in the way (the lava sea included),
+/// each side of it a block at a time with a tenth's chance until one misses,
+/// and a flared foot of basalt within 3 blocks, thinning outward.
 fn pillars(land: &mut Land, out: &mut Out, origin: ChunkPos, rng: &mut Rng) {
-    for _ in 0..3 {
+    for _ in 0..10 {
         let (x, z) = spot(rng, origin);
-        if !out.near(x, z, 1) || land.biome(x, z) != Biome::SoulSandValley {
-            continue;
-        }
-        let ceilings = land.ceilings(x, z);
-        if ceilings.is_empty() {
-            continue;
-        }
-        let top = ceilings[rng.below(ceilings.len() as u32) as usize] - 1;
+        let top = between(rng, 10, 117);
         let seed = rng.next_u64();
+        if !out.near(x, z, 3) || land.biome(x, z) != Biome::SoulSandValley {
+            continue;
+        }
+        if !(land.open(x, top, z) && land.solid(x, top + 1, z)) {
+            continue;
+        }
+        let mut sides = [true; 4];
         let mut y = top;
-        while y > LAVA_LEVEL && !land.solid(x, y, z) {
+        while land.open(x, y, z) {
             out.set(x, y, z, upright(blocks::BASALT));
-            // A few blocks beside the pillar, near its ends.
-            for (i, (dx, dz)) in [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().enumerate() {
-                if Rng::for_chunk(seed, x, z, (y * 4 + i as i32) as u64).below(6) == 0
-                    && !land.solid(x + dx, y, z + dz)
-                {
+            for (i, (dx, dz)) in [(0, -1), (0, 1), (-1, 0), (1, 0)].into_iter().enumerate() {
+                if !sides[i] {
+                    continue;
+                }
+                let mut roll = Rng::for_chunk(seed, x + dx, z + dz, y as u64 * 4 + i as u64);
+                if roll.below(10) == 0 && land.open(x + dx, y, z + dz) {
                     out.set(x + dx, y, z + dz, upright(blocks::BASALT));
+                } else {
+                    sides[i] = false;
                 }
             }
             y -= 1;
         }
+        // The foot: basalt within 3 blocks where there is air over ground.
+        let foot = y + 1;
+        for dz in -3i32..=3 {
+            for dx in -3i32..=3 {
+                let mut roll = Rng::for_chunk(seed, x + dx, z + dz, 0xF00);
+                if (roll.below(10) as i32) >= 10 - dx.abs() * dz.abs() {
+                    continue;
+                }
+                // Down at most 3 to find ground under air.
+                let (bx, bz) = (x + dx, z + dz);
+                let mut at = foot;
+                let mut room = 3;
+                while land.open(bx, at - 1, bz) && room > 0 {
+                    at -= 1;
+                    room -= 1;
+                }
+                if !land.open(bx, at, bz) {
+                    continue;
+                }
+                if !land.open(bx, at - 1, bz) {
+                    out.set(bx, at, bz, upright(blocks::BASALT));
+                }
+            }
+        }
+        note(
+            out,
+            origin,
+            Placement {
+                pillar: true,
+                biome: Biome::SoulSandValley,
+                height: top - foot + 1,
+                bottom: foot,
+                at: (x, z),
+            },
+        );
     }
 }
 
