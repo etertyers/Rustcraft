@@ -20,6 +20,7 @@ mod end_tests;
 pub mod environment;
 mod experience;
 mod explosion;
+pub mod farming;
 mod fluids;
 mod gateways;
 mod gear;
@@ -274,6 +275,8 @@ pub struct PlayerState {
     pub recipe_book: crate::inventory::book::Settings,
     toasts: Vec<advance::Toast>,
     levitation_from: Option<f64>,
+    /// The longest fall of the airtime in progress, for trampling farmland.
+    fall_seen: f32,
 }
 
 impl PlayerState {
@@ -353,6 +356,7 @@ impl PlayerState {
             recipe_book: Default::default(),
             toasts: Vec::new(),
             levitation_from: None,
+            fall_seen: 0.0,
         }
     }
 }
@@ -385,6 +389,8 @@ pub struct Game {
     pub chat_out: Vec<String>,
     /// Lines for one player's chat only (a mod's `rc.say`), by index.
     pub chat_to: Vec<(usize, String)>,
+    /// Composters filling up: the tick they're ready on, and where.
+    farm_due: Vec<(u64, glam::IVec3)>,
     /// The world's mods (M39).
     mods: modding::ModState,
     /// Dropped items lying around.
@@ -505,6 +511,7 @@ impl Game {
             day_offset: 0,
             chat_out: Vec::new(),
             chat_to: Vec::new(),
+            farm_due: Vec::new(),
             mods: Default::default(),
             entities: Vec::new(),
             orbs: Vec::new(),
@@ -1220,11 +1227,21 @@ impl Game {
         self.tick_furnaces();
         self.tick_brewing();
         self.tick_random_blocks();
+        self.tick_farm_due();
     }
 
     /// After the world's tick: advancements, the player's sounds and what
     /// dying drops.
     fn tick_player_after(&mut self) {
+        if self.player.body.on_ground {
+            let seen = std::mem::take(&mut self.player.fall_seen);
+            if seen > 0.5 {
+                let feet = self.player.body.position();
+                self.trample(feet, seen);
+            }
+        } else {
+            self.player.fall_seen = self.player.fall_seen.max(self.player.stats.fall_distance);
+        }
         self.tick_advancements();
         self.tick_sounds();
         self.on_death();

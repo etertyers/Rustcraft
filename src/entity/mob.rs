@@ -56,6 +56,12 @@ pub struct MobData {
     /// Ticks left in love mode after being fed breeding food.
     #[serde(default)]
     pub love: u32,
+    /// Ticks until it can breed again (5 minutes after a baby).
+    #[serde(default)]
+    pub breed_cooldown: u32,
+    /// Negative while a baby: ticks left until it is grown (M40).
+    #[serde(default)]
+    pub age: i32,
     /// A horse's markings (0 none, 1 white, 2 white field, 3 white dots,
     /// 4 black dots) and armor (0 none, 1 leather, 2 iron, 3 gold,
     /// 4 diamond).

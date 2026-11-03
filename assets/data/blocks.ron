@@ -70,9 +70,9 @@
     (name: "dirt", hardness: 0.5, tool: Shovel, textures: (all: "dirt")),
     (name: "cobblestone", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "cobblestone")),
     (name: "oak_planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "oak_planks")),
-    (name: "oak_sapling", hardness: 0.0, props: [Stage], needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "oak_sapling")),
-    (name: "spruce_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "spruce_sapling")),
-    (name: "birch_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "birch_sapling")),
+    (name: "oak_sapling", random_ticks: true, hardness: 0.0, props: [Stage], needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "oak_sapling")),
+    (name: "spruce_sapling", random_ticks: true, hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "spruce_sapling")),
+    (name: "birch_sapling", random_ticks: true, hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "birch_sapling")),
     (name: "bedrock", hardness: -1.0, textures: (all: "bedrock")),
     // Level 0 is a source, 1-7 flowing further from one, 8 and up falling.
     (name: "water", hardness: 100.0, props: [Level], item: false, fluid: Water, drops: Nothing, opacity: 1, tint: Water, replaceable: true, shape: Liquid, layer: Translucent, solid: false, cull_same: true, textures: (end: "water_still", side: "water_flow")),
@@ -151,8 +151,8 @@
     (name: "moving_piston", hardness: -1.0, props: [FacingAll, PistonType], item: false, drops: Nothing, shape: None, solid: false, blocks_flow: true),
     (name: "dandelion", hardness: 0.0, acts_as: "poppy", burns: (encourage: 60, catch: 100), needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "dandelion")),
     (name: "poppy", hardness: 0.0, burns: (encourage: 60, catch: 100), needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "poppy")),
-    (name: "brown_mushroom", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, light: 1, textures: (all: "brown_mushroom")),
-    (name: "red_mushroom", hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "red_mushroom")),
+    (name: "brown_mushroom", random_ticks: true, hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, light: 1, textures: (all: "brown_mushroom")),
+    (name: "red_mushroom", random_ticks: true, hardness: 0.0, needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "red_mushroom")),
     (name: "gold_block", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "gold_block")),
     (name: "iron_block", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Stone), textures: (all: "iron_block")),
     // 1.0.0's stone slab (smooth stone since 1.14).
@@ -183,7 +183,7 @@
     (name: "diamond_ore", hardness: 3.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), drops: All([(item: "diamond")]), textures: (all: "diamond_ore")),
     (name: "diamond_block", hardness: 5.0, tool: Pickaxe, harvest: (tools: [Pickaxe], tier: Iron), textures: (all: "diamond_block")),
     (name: "crafting_table", hardness: 2.5, activate: Crafting, textures: (top: "crafting_table_top", bottom: "oak_planks", north: "crafting_table_front", south: "crafting_table_front", east: "crafting_table_side", west: "crafting_table_side")),
-    (name: "wheat", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "wheat", when: "age=7"), (item: "wheat_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "wheat_stage0"),
+    (name: "wheat", soil: Farmland, random_ticks: true, hardness: 0.0, props: [Age7], item: false, drops: All([(item: "wheat", when: "age=7"), (item: "wheat_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "wheat_stage0"),
         variants: [
             ("age=1", (textures: (all: "wheat_stage1"))),
             ("age=2", (textures: (all: "wheat_stage2"))),
@@ -194,7 +194,7 @@
             ("age=7", (textures: (all: "wheat_stage7"))),
         ]),
     // Moisture 7 is fully wet.
-    (name: "farmland", hardness: 0.6, props: [Moisture], tool: Shovel, drops: All([(item: "dirt")]), opacity: 15, shape: Farmland, textures: (all: "dirt", top: "farmland"),
+    (name: "farmland", random_ticks: true, hardness: 0.6, props: [Moisture], tool: Shovel, drops: All([(item: "dirt")]), opacity: 15, shape: Farmland, textures: (all: "dirt", top: "farmland"),
         variants: [("moisture=7", (textures: (top: "farmland_moist")))]),
     (name: "furnace", hardness: 3.5, props: [Facing, Lit], placement: Facing, activate: Furnace, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "furnace_top", side: "furnace_side", south: "furnace_front"),
         variants: [("lit=true", (textures: (south: "furnace_front_on"), light: 13))]),
@@ -224,9 +224,9 @@
     (name: "snow", hardness: 0.1, placement: Layers, props: [Layers], tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: "snowball")]), replaceable: true, needs_ground: true, shape: SnowLayer, textures: (all: "snow")),
     (name: "ice", hardness: 0.5, tool: Pickaxe, drops: Nothing, opacity: 3, layer: Translucent, cull_same: true, slipperiness: 0.98, textures: (all: "ice")),
     (name: "snow_block", hardness: 0.2, tool: Shovel, harvest: (tools: [Shovel]), drops: All([(item: "snowball", min: 4)]), textures: (all: "snow")),
-    (name: "cactus", hardness: 0.4, props: [Age15], needs_ground: true, shape: Cactus, layer: Cutout, textures: (top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side")),
+    (name: "cactus", soil: Sand, random_ticks: true, hardness: 0.4, props: [Age15], needs_ground: true, shape: Cactus, layer: Cutout, textures: (top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side")),
     (name: "clay", hardness: 0.6, tool: Shovel, drops: All([(item: "clay_ball", min: 4)]), textures: (all: "clay")),
-    (name: "sugar_cane", hardness: 0.0, props: [Age15], item_texture: "sugar_cane", needs_ground: true, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "sugar_cane")),
+    (name: "sugar_cane", random_ticks: true, hardness: 0.0, props: [Age15], item_texture: "sugar_cane", needs_ground: true, shape: Cross, layer: Cutout, solid: false, blocks_flow: true, textures: (all: "sugar_cane")),
     (name: "jukebox", hardness: 2.0, props: [HasRecord], textures: (all: "jukebox_side", top: "jukebox_top")),
     (name: "oak_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], burns: (encourage: 5, catch: 20), shape: Fence, textures: (all: "oak_planks")),
     // 1.0.0's pumpkin, which always had a face.
@@ -278,8 +278,8 @@
     (name: "iron_bars", hardness: 5.0, props: [North, East, South, West, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Pane, layer: Cutout, textures: (all: "iron_bars")),
     (name: "glass_pane", hardness: 0.3, props: [North, East, South, West, Waterlogged], drops: Nothing, shape: Pane, layer: Translucent, textures: (all: "glass")),
     (name: "melon", hardness: 1.0, drops: All([(item: "melon_slice", min: 3, max: 7)]), textures: (end: "melon_top", side: "melon_side")),
-    (name: "pumpkin_stem", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "pumpkin_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "pumpkin_stem"), tint: Fixed(0x30C010)),
-    (name: "melon_stem", hardness: 0.0, props: [Age7], item: false, drops: All([(item: "melon_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "melon_stem"), tint: Fixed(0x30C010)),
+    (name: "pumpkin_stem", soil: Farmland, random_ticks: true, hardness: 0.0, props: [Age7], item: false, drops: All([(item: "pumpkin_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "pumpkin_stem"), tint: Fixed(0x30C010)),
+    (name: "melon_stem", soil: Farmland, random_ticks: true, hardness: 0.0, props: [Age7], item: false, drops: All([(item: "melon_seeds")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "melon_stem"), tint: Fixed(0x30C010)),
     (name: "vine", hardness: 0.2, climbable: true, placement: Vine, props: [Up, North, East, South, West], burns: (encourage: 15, catch: 100), drops: All([(item: "vine", tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, textures: (all: "vine"), tint: Foliage),
     (name: "glow_lichen", hardness: 0.2, placement: Vine, props: [Up, North, East, South, West], drops: All([(item: "glow_lichen", tool: Shears)]), replaceable: true, shape: Vine, layer: Cutout, solid: false, light: 7, textures: (all: "glow_lichen")),
     (name: "oak_fence_gate", hardness: 2.0, placement: Look, activate: Open, props: [Facing, InWall, Open, Powered], shape: FenceGate, textures: (all: "oak_planks")),
@@ -291,7 +291,7 @@
     (name: "nether_bricks", hardness: 2.0, tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (all: "nether_bricks")),
     (name: "nether_brick_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Fence, textures: (all: "nether_bricks")),
     (name: "nether_brick_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], tool: Pickaxe, harvest: (tools: [Pickaxe]), shape: Stairs, textures: (all: "nether_bricks")),
-    (name: "nether_wart", hardness: 0.0, props: [Age3], item_texture: "nether_wart", drops: OneOf([(item: "nether_wart", min: 2, max: 4, when: "age=3"), (item: "nether_wart")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "nether_wart_stage0"),
+    (name: "nether_wart", soil: SoulSand, random_ticks: true, hardness: 0.0, props: [Age3], item_texture: "nether_wart", drops: OneOf([(item: "nether_wart", min: 2, max: 4, when: "age=3"), (item: "nether_wart")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "nether_wart_stage0"),
         variants: [
             ("age=1|2", (textures: (all: "nether_wart_stage1"))),
             ("age=3", (textures: (all: "nether_wart_stage2"))),
@@ -422,7 +422,7 @@
     (name: "stripped_jungle_wood", hardness: 2.0, props: [Axis], placement: Axis, burns: (encourage: 5, catch: 5), tool: Axe, textures: (all: "stripped_jungle_log")),
     (name: "jungle_planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "jungle_planks")),
     (name: "jungle_leaves", hardness: 0.2, props: [Distance, Persistent, Waterlogged], placed: "persistent=true", acts_as: "oak_leaves", burns: (encourage: 30, catch: 60), drops: OneOf([(item: "jungle_leaves", tool: Shears), (item: "jungle_sapling", chance: 0.025, not_tool: Shears)]), opacity: 1, layer: Cutout, textures: (all: "jungle_leaves"), tint: Foliage),
-    (name: "jungle_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "jungle_sapling")),
+    (name: "jungle_sapling", random_ticks: true, hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "jungle_sapling")),
     (name: "jungle_slab", hardness: 2.0, props: [SlabType, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, placement: Slab, shape: Slab, textures: (all: "jungle_planks")),
     (name: "jungle_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Stairs, textures: (all: "jungle_planks")),
     (name: "jungle_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Fence, textures: (all: "jungle_planks")),
@@ -439,7 +439,7 @@
     (name: "stripped_acacia_wood", hardness: 2.0, props: [Axis], placement: Axis, burns: (encourage: 5, catch: 5), tool: Axe, textures: (all: "stripped_acacia_log")),
     (name: "acacia_planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "acacia_planks")),
     (name: "acacia_leaves", hardness: 0.2, props: [Distance, Persistent, Waterlogged], placed: "persistent=true", acts_as: "oak_leaves", burns: (encourage: 30, catch: 60), drops: OneOf([(item: "acacia_leaves", tool: Shears), (item: "acacia_sapling", chance: 0.05, not_tool: Shears)]), opacity: 1, layer: Cutout, textures: (all: "acacia_leaves"), tint: Foliage),
-    (name: "acacia_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "acacia_sapling")),
+    (name: "acacia_sapling", random_ticks: true, hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "acacia_sapling")),
     (name: "acacia_slab", hardness: 2.0, props: [SlabType, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, placement: Slab, shape: Slab, textures: (all: "acacia_planks")),
     (name: "acacia_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Stairs, textures: (all: "acacia_planks")),
     (name: "acacia_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Fence, textures: (all: "acacia_planks")),
@@ -456,7 +456,7 @@
     (name: "stripped_dark_oak_wood", hardness: 2.0, props: [Axis], placement: Axis, burns: (encourage: 5, catch: 5), tool: Axe, textures: (all: "stripped_dark_oak_log")),
     (name: "dark_oak_planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "dark_oak_planks")),
     (name: "dark_oak_leaves", hardness: 0.2, props: [Distance, Persistent, Waterlogged], placed: "persistent=true", acts_as: "oak_leaves", burns: (encourage: 30, catch: 60), drops: OneOf([(item: "dark_oak_leaves", tool: Shears), (item: "dark_oak_sapling", chance: 0.05, not_tool: Shears)]), opacity: 1, layer: Cutout, textures: (all: "dark_oak_leaves"), tint: Foliage),
-    (name: "dark_oak_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "dark_oak_sapling")),
+    (name: "dark_oak_sapling", random_ticks: true, hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "dark_oak_sapling")),
     (name: "dark_oak_slab", hardness: 2.0, props: [SlabType, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, placement: Slab, shape: Slab, textures: (all: "dark_oak_planks")),
     (name: "dark_oak_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Stairs, textures: (all: "dark_oak_planks")),
     (name: "dark_oak_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Fence, textures: (all: "dark_oak_planks")),
@@ -490,7 +490,7 @@
     (name: "stripped_cherry_wood", hardness: 2.0, props: [Axis], placement: Axis, burns: (encourage: 5, catch: 5), tool: Axe, textures: (all: "stripped_cherry_log")),
     (name: "cherry_planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "cherry_planks")),
     (name: "cherry_leaves", hardness: 0.2, props: [Distance, Persistent, Waterlogged], placed: "persistent=true", acts_as: "oak_leaves", burns: (encourage: 30, catch: 60), drops: OneOf([(item: "cherry_leaves", tool: Shears), (item: "cherry_sapling", chance: 0.05, not_tool: Shears)]), opacity: 1, layer: Cutout, textures: (all: "cherry_leaves")),
-    (name: "cherry_sapling", hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "cherry_sapling")),
+    (name: "cherry_sapling", random_ticks: true, hardness: 0.0, props: [Stage], acts_as: "oak_sapling", needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "cherry_sapling")),
     (name: "cherry_slab", hardness: 2.0, props: [SlabType, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, placement: Slab, shape: Slab, textures: (all: "cherry_planks")),
     (name: "cherry_stairs", hardness: 2.0, placement: Stairs, props: [Facing, Half, StairsShape, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Stairs, textures: (all: "cherry_planks")),
     (name: "cherry_fence", hardness: 2.0, props: [North, East, South, West, Waterlogged], burns: (encourage: 5, catch: 20), tool: Axe, shape: Fence, textures: (all: "cherry_planks")),
@@ -501,7 +501,7 @@
     (name: "cherry_button", activate: Redstone, hardness: 0.5, placement: Attached, props: [AttachFace, Facing, Powered], acts_as: "oak_button", shape: Button, solid: false, textures: (all: "cherry_planks")),
     (name: "cherry_pressure_plate", hardness: 0.5, props: [Powered], acts_as: "oak_pressure_plate", needs_ground: true, shape: PressurePlate, solid: false, blocks_flow: true, textures: (all: "cherry_planks")),
     // Bamboo (M21): the plant, its blocks and its wood set
-    (name: "bamboo", hardness: 1.0, burns: (encourage: 60, catch: 60), needs_ground: true, shape: Bamboo, layer: Cutout, textures: (all: "bamboo_stalk")),
+    (name: "bamboo", random_ticks: true, hardness: 1.0, burns: (encourage: 60, catch: 60), needs_ground: true, shape: Bamboo, layer: Cutout, textures: (all: "bamboo_stalk")),
     (name: "bamboo_block", hardness: 2.0, props: [Axis], placement: Axis, burns: (encourage: 5, catch: 5), tool: Axe, textures: (end: "bamboo_block_top", side: "bamboo_block")),
     (name: "stripped_bamboo_block", hardness: 2.0, props: [Axis], placement: Axis, burns: (encourage: 5, catch: 5), tool: Axe, textures: (end: "stripped_bamboo_block_top", side: "stripped_bamboo_block")),
     (name: "bamboo_planks", hardness: 2.0, burns: (encourage: 5, catch: 20), tool: Axe, textures: (all: "bamboo_planks")),
@@ -630,7 +630,7 @@
     // M23: villagers' job sites, village and structure blocks. Kenzo's
     // 1.12 textures have hay, the dirt path and the sandstone variants;
     // the rest come from a resource pack.
-    (name: "composter", hardness: 0.6, burns: (encourage: 5, catch: 20), tool: Axe, textures: (top: "composter_top", bottom: "composter_bottom", side: "composter_side")),
+    (name: "composter", props: [Level], hardness: 0.6, burns: (encourage: 5, catch: 20), tool: Axe, textures: (top: "composter_top", bottom: "composter_bottom", side: "composter_side")),
     (name: "lectern", hardness: 2.5, props: [Facing], placement: Facing, burns: (encourage: 30, catch: 20), tool: Axe, shape: Lectern, layer: Cutout, textures: (top: "lectern_top", bottom: "oak_planks", side: "lectern_sides", south: "lectern_front")),
     (name: "blast_furnace", hardness: 3.5, props: [Facing, Lit], placement: Facing, activate: Furnace, acts_as: "furnace", tool: Pickaxe, harvest: (tools: [Pickaxe]), textures: (end: "blast_furnace_top", side: "blast_furnace_side", south: "blast_furnace_front"),
         variants: [("lit=true", (textures: (south: "blast_furnace_front_on"), light: 13))]),
@@ -775,6 +775,25 @@
     (name: "loom", hardness: 2.5, tool: Axe, burns: (encourage: 5, catch: 20), textures: (top: "loom_top", bottom: "loom_bottom", side: "loom_side", south: "loom_front")),
     (name: "cartography_table", hardness: 2.5, tool: Axe, burns: (encourage: 5, catch: 20), textures: (top: "cartography_table_top", bottom: "cartography_table_side3", side: "cartography_table_side2", south: "cartography_table_side1")),
     (name: "fletching_table", hardness: 2.5, tool: Axe, burns: (encourage: 5, catch: 20), textures: (top: "fletching_table_top", bottom: "fletching_table_front", side: "fletching_table_side", south: "fletching_table_front")),
+    (name: "carrots", hardness: 0.0, props: [Age7], item: false, soil: Farmland, random_ticks: true, drops: OneOf([(item: "carrot", min: 2, max: 4, when: "age=7"), (item: "carrot")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "carrots_stage0"),
+        variants: [
+            ("age=2|3", (textures: (all: "carrots_stage1"))),
+            ("age=4|5|6", (textures: (all: "carrots_stage2"))),
+            ("age=7", (textures: (all: "carrots_stage3")))
+        ]),
+    (name: "potatoes", hardness: 0.0, props: [Age7], item: false, soil: Farmland, random_ticks: true, drops: All([(item: "potato", min: 2, max: 4, when: "age=7"), (item: "potato", when: "age=0|1|2|3|4|5|6"), (item: "poisonous_potato", chance: 0.02, when: "age=7")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "potatoes_stage0"),
+        variants: [
+            ("age=2|3", (textures: (all: "potatoes_stage1"))),
+            ("age=4|5|6", (textures: (all: "potatoes_stage2"))),
+            ("age=7", (textures: (all: "potatoes_stage3")))
+        ]),
+    (name: "beetroots", hardness: 0.0, props: [Age3], item: false, soil: Farmland, random_ticks: true, drops: All([(item: "beetroot", when: "age=3"), (item: "beetroot_seeds", min: 1, max: 3, when: "age=3"), (item: "beetroot_seeds", when: "age=0|1|2")]), needs_ground: true, shape: Crop, layer: Cutout, solid: false, textures: (all: "beetroots_stage0"),
+        variants: [("age=1", (textures: (all: "beetroots_stage1"))), ("age=2", (textures: (all: "beetroots_stage2"))), ("age=3", (textures: (all: "beetroots_stage3")))]),
+    (name: "sweet_berry_bush", hardness: 0.0, props: [Age3], item: false, random_ticks: true, drops: All([(item: "sweet_berries", min: 2, max: 3, when: "age=3"), (item: "sweet_berries", when: "age=2")]), needs_ground: true, shape: Cross, layer: Cutout, solid: false, textures: (all: "sweet_berry_bush_stage0"),
+        variants: [("age=1", (textures: (all: "sweet_berry_bush_stage1"))), ("age=2", (textures: (all: "sweet_berry_bush_stage2"))), ("age=3", (textures: (all: "sweet_berry_bush_stage3")))]),
+    (name: "cocoa", hardness: 0.2, props: [Age2], item: false, random_ticks: true, drops: All([(item: "cocoa_beans", min: 2, max: 3, when: "age=2"), (item: "cocoa_beans", when: "age=0|1")]), shape: Cross, layer: Cutout, solid: false, textures: (all: "cocoa_stage0"),
+        variants: [("age=1", (textures: (all: "cocoa_stage1"))), ("age=2", (textures: (all: "cocoa_stage2")))]),
+    (name: "kelp", hardness: 0.0, props: [Age25, Waterlogged], defaults: "waterlogged=true", random_ticks: true, item_texture: "kelp", shape: Cross, layer: Cutout, solid: false, textures: (all: "kelp")),
     // What a block of a mod that isn't installed becomes in a loaded world; the chunk keeps its real name and saves it back (M39).
     (name: "unknown_block", hardness: 1.0, item: false, textures: (all: "glowstone")),
 ]

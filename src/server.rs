@@ -1151,4 +1151,52 @@ mod tests {
             Some(ServerMsg::Welcome { .. })
         ));
     }
+
+    #[test]
+    fn crops_and_calves_grow_on_the_server_and_both_clients_see_the_same() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        server.game.cheats = true;
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2
+                && c.iter().all(|(client, game)| {
+                    client.welcomed && block_at(game, IVec3::new(3, 63, 3)).is_some()
+                })
+                && s.game.chunks.light_at(3, 64, 3).is_some()
+        });
+        // Noon, a wet farm with wheat, and two cows in love.
+        let _ = server.game.run_command(0, "time set 6000", true, true);
+        let farm = crate::world::block::BlockState::of(blocks::FARMLAND)
+            .with_number(crate::world::props::Prop::Moisture, 7);
+        let wheat = crate::world::block::BlockState::of(blocks::WHEAT);
+        let spot = IVec3::new(3, 64, 3);
+        server
+            .game
+            .set_blocks(&[(IVec3::new(3, 63, 3), farm), (spot, wheat)]);
+        server.game.rules.random_tick_speed = 4096;
+        for x in [8.5, 9.5] {
+            server
+                .game
+                .summon("cow", DVec3::new(x, 64.0, 3.5), 0.0)
+                .unwrap()
+                .data
+                .love = 600;
+        }
+        let calves = |game: &Game| game.mobs.iter().filter(|m| m.data.age < 0).count();
+        let ripe = |game: &Game| {
+            block_at(game, spot).is_some_and(|b| {
+                b.is(blocks::WHEAT) && b.number(crate::world::props::Prop::Age7) == 7
+            })
+        };
+        run_until(&mut server, &mut clients, |s, c| {
+            ripe(&s.game)
+                && c.iter().all(|(_, game)| ripe(game))
+                && calves(&s.game) == 1
+                && c.iter().all(|(_, game)| calves(game) == 1)
+        });
+        assert_eq!(
+            calves(&server.game),
+            1,
+            "one calf, and the parents are done"
+        );
+    }
 }

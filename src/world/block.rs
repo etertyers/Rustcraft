@@ -781,6 +781,25 @@ pub struct Variant {
     pub light: Option<u8>,
 }
 
+/// What a plant needs under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Soil {
+    Farmland,
+    SoulSand,
+    Sand,
+}
+
+impl Soil {
+    pub fn allows(self, support: BlockState) -> bool {
+        use super::blocks as b;
+        match self {
+            Soil::Farmland => support.is(b::FARMLAND),
+            Soil::SoulSand => support.is(b::SOUL_SAND),
+            Soil::Sand => support.is(b::SAND) || support.is(b::RED_SAND) || support.is(b::CACTUS),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDef {
@@ -915,6 +934,10 @@ pub struct BlockDef {
     /// Gets random ticks (crops, and mod blocks with `on_random_tick`).
     #[serde(default)]
     pub random_ticks: bool,
+    /// What it must stand on, if more than "something solid" (crops need
+    /// farmland).
+    #[serde(default)]
+    pub soil: Option<Soil>,
     /// A mod's script has callbacks for it (`on_use`, `on_place`, `on_break`).
     #[serde(default)]
     pub scripted: bool,
@@ -1564,6 +1587,19 @@ mod tests {
             expected.push(format!("block/{color}_concrete"));
             expected.push(format!("block/{color}_concrete_powder"));
         }
+        // M40's farming blocks, which Kenzo's 1.12-era textures predate.
+        for name in ["beetroots", "carrots", "potatoes"] {
+            for stage in 0..4 {
+                expected.push(format!("block/{name}_stage{stage}"));
+            }
+        }
+        for stage in 0..4 {
+            expected.push(format!("block/sweet_berry_bush_stage{stage}"));
+        }
+        for stage in 0..3 {
+            expected.push(format!("block/cocoa_stage{stage}"));
+        }
+        expected.push("block/kelp".to_owned());
         // M21's modern blocks, which Kenzo's 1.12-era textures predate.
         for name in [
             "amethyst_block",

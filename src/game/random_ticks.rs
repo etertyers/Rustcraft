@@ -86,6 +86,9 @@ impl Game {
 
     /// One block's random tick.
     fn random_tick_block(&mut self, at: IVec3, state: BlockState) {
+        if self.farm_random_tick(at, state) {
+            return;
+        }
         self.mod_block_event(crate::mods::lua::BlockEvent::RandomTick, state, at);
     }
 }

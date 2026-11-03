@@ -151,8 +151,8 @@ pub fn add_mob_model(
     if mob.data.size > 0 {
         scale *= f32::from(mob.data.size);
     }
-    // A baby villager is half size.
-    if mob.data.villager.as_ref().is_some_and(|v| v.baby > 0) {
+    // A baby villager or animal is half size.
+    if mob.data.age < 0 || mob.data.villager.as_ref().is_some_and(|v| v.baby > 0) {
         scale *= 0.5;
     }
     let swell = mob.swell_amount(alpha);

@@ -234,27 +234,71 @@ impl Game {
         bells.into_iter().min_by_key(|at| at.distance_squared(cell))
     }
 
-    /// Harvests and replants one ripe wheat within 6 blocks of `site`.
+    /// Harvests and replants one ripe crop (wheat, carrots, potatoes or
+    /// beetroots) within 6 blocks of `site`, puts some of it in the
+    /// composter at `site`, and tosses a share to the nearest other
+    /// villager, who counts it toward breeding. Returns the farmer's own
+    /// food gained, if it harvested.
     fn harvest_near(&mut self, site: IVec3) -> bool {
         let world = self.chunks.world();
         let mut ripe = None;
         'search: for y in site.y - 2..=site.y + 2 {
             for z in site.z - 6..=site.z + 6 {
                 for x in site.x - 6..=site.x + 6 {
-                    if let Some(block) = world.block(x, y, z)
-                        && block.is(blocks::WHEAT)
-                        && block.number(Prop::Age7) == 7
-                    {
-                        ripe = Some((IVec3::new(x, y, z), block));
+                    let Some(block) = world.block(x, y, z) else {
+                        continue;
+                    };
+                    let (prop, max) = match block.def().name.as_str() {
+                        "wheat" | "carrots" | "potatoes" => (Prop::Age7, 7),
+                        "beetroots" => (Prop::Age3, 3),
+                        _ => continue,
+                    };
+                    if block.number(prop) == max {
+                        ripe = Some((IVec3::new(x, y, z), block, prop));
                         break 'search;
                     }
                 }
             }
         }
-        let Some((at, block)) = ripe else {
+        let Some((at, block, prop)) = ripe else {
             return false;
         };
-        self.edit(&[(at, block.with_number(Prop::Age7, 0))]);
+        // Replanting from its own seeds: the crop starts over.
+        self.edit(&[(at, block.with_number(prop, 0))]);
+        // Extra seeds go to the composter.
+        if let Some(composter) = self.chunks.world().block(site.x, site.y, site.z)
+            && composter.is(blocks::COMPOSTER)
+            && composter.number(Prop::Level) < 7
+            && self.rng.below(3) == 0
+        {
+            self.edit(&[(
+                site,
+                composter.with_number(Prop::Level, composter.number(Prop::Level) + 1),
+            )]);
+        }
+        // Bread, carrots, potatoes and beetroots are thrown to a neighbor.
+        let farmer = at.as_dvec3();
+        let neighbor = (0..self.mobs.len())
+            .filter(|&j| {
+                self.mobs[j]
+                    .data
+                    .villager
+                    .as_deref()
+                    .is_some_and(|v| v.baby == 0)
+                    && self.mobs[j].feet().distance(farmer) < 8.0
+            })
+            .min_by(|&a, &b| {
+                self.mobs[a]
+                    .feet()
+                    .distance(farmer)
+                    .total_cmp(&self.mobs[b].feet().distance(farmer))
+            });
+        if let Some(j) = neighbor
+            && let Some(v) = self.mobs[j].data.villager.as_deref_mut()
+            && v.food < 12
+        {
+            v.food += 1;
+        }
         true
     }
 
