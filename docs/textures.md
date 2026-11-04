@@ -45,6 +45,24 @@ when fixing: none were available when M61 was written.
 
 None: every texture Rustcraft asks for exists in vanilla 26.3 (M59's asset report has 0 missing).
 
+## Rabbits and the styles (M62)
+
+* The 26.3 rabbit changed layout (696 of 2048 shape pixels differ from the old one), which the built-in
+  boxes don't have, so the rabbit (and any mob like it) draws Rustcraft's own old-layout texture where
+  vanilla's doesn't fit the model (`Look`'s `own_texture` fallback, logged once per texture).
+* Rustcraft's own `assets/textures` never replace a file vanilla has (v1.5). In the Vanilla style 17
+  block and item textures are Rustcraft's own because vanilla 26.3 has no file under those names: the
+  beds, the chest, end portal and gateway, the dropper front, the piston top, the redstone lamp, and
+  the bed, empty map and shield items.
+* **Realistic = Patrix 32x alone.** With Fresh Animations under it the audit flags 174 mob parts
+  against 153 for Patrix alone: its mob textures clash with Fresh Animations' models on the shulker
+  (0 → 10 flags) and the villager (2 → 13). Patrix alone has 153 flags (rabbit 25, bee 18, silverfish
+  13, cat 10, salmon 10, horse 8, strider 7...): its mob textures follow 26.x layouts the built-in boxes
+  don't have, the same open problem as above, plus its own 225 `optifine/cem` files.
+* **Not implemented for Patrix:** its connected textures (26,455 files under `optifine/ctm`, 1,307
+  `.properties`), random and natural textures (165 files), emissive overlays and its `_n`/`_s`
+  normal and specular maps (21,690 files; PBR stays out of scope). Patrix loads as a plain 32× pack.
+
 ## Other known problems
 
 * Kenzo's own `assets/textures` copies still sit above vanilla's files (the "mashup"); M62 separates

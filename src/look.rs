@@ -410,6 +410,20 @@ pub fn mob_texture(res: &Resources, name: &str, size: Option<(u32, u32)>) -> Opt
         );
         first.get_or_insert(texture);
     }
+    // Vanilla's file is in a 26.x layout the built-in boxes don't have (the
+    // rabbit's): Rustcraft's own old-layout texture goes with them.
+    if let Some(own) = res.own_texture(name)
+        && own.image.dimensions() == found
+    {
+        static REPORTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        if let Ok(mut reported) = REPORTED.lock()
+            && !reported.iter().any(|n| n == name)
+        {
+            info!("{name}: vanilla's layout isn't modeled, using Rustcraft's own texture");
+            reported.push(name.to_owned());
+        }
+        return Some(own.first_frame());
+    }
     if first.is_none() {
         warn!("no layer has {name}");
     }
@@ -806,5 +820,161 @@ mod tests {
             .filter(|name| res.texture_in(res.vanilla_layer(), name).is_none())
             .collect();
         assert!(missing.is_empty(), "not in vanilla: {missing:?}");
+    }
+
+    /// The Vanilla style shows only vanilla's files: every block and item
+    /// texture comes from `assets/vanilla`, except the ones vanilla has no
+    /// file for (Rustcraft's own), which are few and listed.
+    #[test]
+    fn the_vanilla_style_resolves_every_texture_to_vanilla_or_a_listed_rustcraft_only_file() {
+        let assets = crate::assets::dir();
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let look = Look::build(&assets, Vec::new(), &mobs()).unwrap();
+        let mut own = Vec::new();
+        let mut names = std::collections::BTreeSet::new();
+        names.extend(crate::world::block::registry().texture_locations());
+        names.extend(crate::inventory::item::registry().texture_locations());
+        for name in &names {
+            let Some(texture) = look.res.texture(name) else {
+                continue;
+            };
+            if !texture.vanilla {
+                own.push(name.clone());
+            }
+        }
+        // Vanilla 26.3 has no file under these names (beds, chests and the
+        // like are entities there), so Rustcraft's own fill in.
+        let listed = [
+            "block/bed_feet_end",
+            "block/bed_feet_side",
+            "block/bed_feet_top",
+            "block/bed_head_end",
+            "block/bed_head_side",
+            "block/bed_head_top",
+            "block/chest_front",
+            "block/chest_side",
+            "block/chest_top",
+            "block/dropper_front_horizontal",
+            "block/end_gateway",
+            "block/end_portal",
+            "block/piston_top_normal",
+            "block/redstone_lamp_off",
+            "item/bed",
+            "item/map_empty",
+            "item/shield",
+        ];
+        assert_eq!(own, listed, "textures not from vanilla");
+        // And none comes from a pack: no pack was asked for.
+        assert!(
+            look.res
+                .layers()
+                .iter()
+                .skip(1)
+                .all(|pack| pack.builtin || !pack.id.is_empty())
+                && look.cem.models.is_empty(),
+            "no custom entity models in Vanilla"
+        );
+    }
+
+    /// In Barebones, every texture Bare Bones has resolves to one of the
+    /// style's own packs, never to vanilla or to Rustcraft's own.
+    #[test]
+    fn in_barebones_every_bare_bones_texture_resolves_to_the_barebones_stack() {
+        let assets = crate::assets::dir();
+        let dir = assets.join("downloads/resourcepacks");
+        let stack = crate::pack::style_stack(crate::render::visuals::Style::Barebones, &dir);
+        let Some(bare) =
+            crate::pack::find_by_words(&dir, &["barebones"], &["freshanimations", "leaves"])
+        else {
+            eprintln!("skipping: no Bare Bones in {}", dir.display());
+            return;
+        };
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let look = Look::build(
+            &assets,
+            open_packs_in(&crate::pack::packs_dir(), &dir, &stack),
+            &mobs(),
+        )
+        .unwrap();
+        let pack = Pack::open(&dir.join(&bare)).unwrap();
+        let mut checked = 0;
+        for name in crate::world::block::registry().texture_locations() {
+            if !pack.has(&format!("textures/{name}.png")) {
+                continue;
+            }
+            checked += 1;
+            let texture = look.res.texture(&name).unwrap();
+            assert!(
+                !texture.vanilla && texture.layer != 0,
+                "{name} comes from {}",
+                origin_name(&look, &texture)
+            );
+        }
+        assert!(checked > 100, "only {checked} block textures checked");
+    }
+
+    fn origin_name(look: &Look, texture: &crate::pack::Texture) -> String {
+        if texture.vanilla {
+            "vanilla".to_owned()
+        } else if texture.layer == 0 {
+            "Rustcraft's own".to_owned()
+        } else {
+            look.res.layers()[texture.layer].name().to_owned()
+        }
+    }
+
+    /// Going Vanilla, Barebones, Realistic and round again leaves nothing of
+    /// the other styles: the packs asked for are each style's own, and the
+    /// same style builds the same textures.
+    #[test]
+    fn switching_styles_back_and_forth_leaves_nothing_of_the_others() {
+        use crate::render::visuals::Style;
+        let assets = crate::assets::dir();
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let dir = assets.join("downloads/resourcepacks");
+        let mut options = crate::options::Options::default();
+        let mut atlases: std::collections::BTreeMap<&str, Vec<RgbaImage>> = Default::default();
+        for style in [
+            Style::Vanilla,
+            Style::Barebones,
+            Style::Realistic,
+            Style::Vanilla,
+            Style::Barebones,
+            Style::Realistic,
+        ] {
+            options.set_style(style);
+            let packs = options.active_packs(&dir);
+            // Only this style's own packs (and the player's extras: none).
+            assert_eq!(packs, crate::pack::style_stack(style, &dir), "{style:?}");
+            let look = Look::build(
+                &assets,
+                open_packs_in(&crate::pack::packs_dir(), &dir, &packs),
+                &mobs(),
+            )
+            .unwrap();
+            atlases
+                .entry(style.key())
+                .or_default()
+                .push(look.atlas.image().clone());
+        }
+        for (style, built) in &atlases {
+            assert_eq!(
+                built[0], built[1],
+                "{style} builds the same atlas every time"
+            );
+        }
+        // A style with packs looks different from Vanilla (when they're there).
+        if !crate::pack::style_stack(Style::Barebones, &dir).is_empty() {
+            assert_ne!(atlases["vanilla"][0], atlases["barebones"][0]);
+        }
     }
 }

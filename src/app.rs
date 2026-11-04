@@ -157,6 +157,10 @@ pub struct App {
     start_view: crate::game::view::ViewMode,
     /// The resource packs the look was built with, highest first.
     applied_packs: Vec<String>,
+    /// Shift is held (Shift+F12 cycles the style).
+    shift_down: bool,
+    /// The Measure button's benchmark runs, sending ("style/off", fps).
+    measure: Option<crossbeam_channel::Receiver<(String, f32)>>,
     /// A look being built with these packs on a background thread.
     /// Splashes and waterfall foam, Trailer look only.
     splashes: crate::game::splashes::Splashes,
@@ -244,33 +248,61 @@ fn available_packs() -> Vec<(String, String)> {
         .collect()
 }
 
-/// F12's switch: the other look (with its packs), named on the HUD.
+/// F12's switch: Shaders on or off for whatever style is on, named on the
+/// HUD ("Realistic, Shaders on").
 fn toggle_look(
     options: &mut Options,
     player: Option<&mut crate::game::PlayerState>,
 ) -> crate::render::visuals::LookKind {
-    let look = options.visuals.look.other();
-    options.set_look(look);
+    let on = !options.visuals.shaders();
+    options.visuals.set_shaders(on);
     if let Some(player) = player {
-        player.show(visuals_message(look));
+        player.show(crate::render::visuals::style_message(
+            options.visuals.style,
+            on,
+        ));
     }
-    look
+    options.visuals.look
 }
 
-/// What F12 shows: "Visuals: Trailer".
-pub fn visuals_message(look: crate::render::visuals::LookKind) -> String {
-    format!("Visuals: {}", look.name())
+/// Shift+F12: the next style (Vanilla, Barebones, Realistic, round), the
+/// Shaders setting kept, named on the HUD.
+fn cycle_style(
+    options: &mut Options,
+    player: Option<&mut crate::game::PlayerState>,
+) -> crate::render::visuals::Style {
+    let style = options.visuals.style.next();
+    options.set_style(style);
+    if let Some(player) = player {
+        player.show(crate::render::visuals::style_message(
+            style,
+            options.visuals.shaders(),
+        ));
+    }
+    style
 }
 
-/// "Vanilla", or "Trailer (Medium)", for F3.
-fn visuals_label(visuals: &crate::render::visuals::Visuals) -> &'static str {
-    use crate::render::visuals::{LookKind, Quality};
-    match (visuals.look, visuals.quality) {
-        (LookKind::Vanilla, _) => "Vanilla",
-        (LookKind::Trailer, Quality::Low) => "Trailer (Low)",
-        (LookKind::Trailer, Quality::Medium) => "Trailer (Medium)",
-        (LookKind::Trailer, Quality::High) => "Trailer (High)",
+/// "Barebones, shaders off" or "Realistic + Shaders (Medium)", for F3.
+fn visuals_label(visuals: &crate::render::visuals::Visuals) -> String {
+    if visuals.shaders() {
+        format!(
+            "{} + Shaders ({})",
+            visuals.style.name(),
+            visuals.quality.name()
+        )
+    } else {
+        format!("{}, shaders off", visuals.style.name())
     }
+}
+
+/// The "N fps average" of a `--bench` run's report.
+pub fn parse_average_fps(report: &str) -> Option<f32> {
+    let at = report.find(" fps average")?;
+    report[..at]
+        .rsplit(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// How far `--shot` has got with its scene.
@@ -336,6 +368,8 @@ impl App {
             skin_slim: false,
             start_view: Default::default(),
             applied_packs: Vec::new(),
+            shift_down: false,
+            measure: None,
             splashes: Default::default(),
             pending_look: None,
             animation_start: Instant::now(),
@@ -377,13 +411,17 @@ impl App {
 
     /// Draws with this look and quality this run (`--visuals`, `--quality`),
     /// with the look's own resource packs.
-    pub fn with_visuals(
+    pub fn with_graphics(
         mut self,
-        look: Option<crate::render::visuals::LookKind>,
+        style: Option<crate::render::visuals::Style>,
+        shaders: Option<bool>,
         quality: Option<crate::render::visuals::Quality>,
     ) -> Self {
-        if let Some(look) = look {
-            self.options.set_look(look);
+        if let Some(style) = style {
+            self.options.set_style(style);
+        }
+        if let Some(on) = shaders {
+            self.options.visuals.set_shaders(on);
         }
         if let Some(quality) = quality {
             self.options.visuals.quality = quality;
@@ -466,7 +504,7 @@ impl App {
             item::registry().len()
         );
         let mob_defs = Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?);
-        self.applied_packs = self.options.resource_packs.clone();
+        self.applied_packs = self.options.active_packs(&crate::pack::builtin_dir());
         let look = Look::with_packs(&assets, &self.applied_packs, &mob_defs)?;
         let mut renderer =
             Renderer::new(window.clone(), &look.atlas, &look.sky, &look.mob_textures)?;
@@ -1226,8 +1264,14 @@ impl App {
         } else if is(Action::Fullscreen) && press {
             self.options.fullscreen = !self.options.fullscreen;
             self.options_changed();
+        } else if is(Action::CycleStyle) && press {
+            self.cycle_style();
         } else if is(Action::ToggleVisuals) && press {
-            self.toggle_visuals();
+            if self.shift_down {
+                self.cycle_style();
+            } else {
+                self.toggle_visuals();
+            }
         } else if is(Action::HideGui) && press && self.game.is_some() {
             self.hide_gui = !self.hide_gui;
         } else if is(Action::Inventory)
@@ -1571,7 +1615,7 @@ impl App {
         let Some(mobs) = self.mob_defs.clone() else {
             return;
         };
-        let packs = self.options.resource_packs.clone();
+        let packs = self.options.active_packs(&crate::pack::builtin_dir());
         info!("applying resource packs {packs:?}");
         // Asked for again before it's ready: the newer request wins.
         self.applied_packs = packs.clone();
@@ -1692,12 +1736,89 @@ impl App {
         );
     }
 
-    /// F12: switches between the Vanilla and Trailer looks, each with its
-    /// own resource packs, and says which is on.
+    /// F12: Shaders on or off for the style that's on, and says so.
     fn toggle_visuals(&mut self) {
         let player = self.game.as_mut().map(|game| &mut game.player);
         let look = toggle_look(&mut self.options, player);
-        info!("visuals: {}", look.name());
+        info!(
+            "shaders: {}",
+            look == crate::render::visuals::LookKind::Trailer
+        );
+        self.options_changed();
+    }
+
+    /// The Measure button: a 20-second benchmark of every style with shaders
+    /// off and on (at the current quality), one run of the game each, in a
+    /// fixed test world. The numbers fill in Video Settings as they come.
+    fn start_measure(&mut self) {
+        self.options.visuals.measure_requested = false;
+        if self.measure.is_some() {
+            return;
+        }
+        self.options.visuals.measuring = true;
+        let (send, receive) = crossbeam_channel::unbounded();
+        self.measure = Some(receive);
+        let quality = self.options.visuals.quality;
+        std::thread::Builder::new()
+            .name("measure".into())
+            .spawn(move || {
+                let Ok(exe) = std::env::current_exe() else {
+                    return;
+                };
+                for style in crate::render::visuals::Style::BY_SPEED {
+                    for on in [false, true] {
+                        let output = std::process::Command::new(&exe)
+                            .args(["--bench", "20", "--seed", "12345", "--style", style.key()])
+                            .args(["--shaders", if on { "on" } else { "off" }])
+                            .args(["--quality", quality.name()])
+                            .output();
+                        let Ok(output) = output else { continue };
+                        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+                        if let Some(fps) = parse_average_fps(&text) {
+                            let key = format!("{}/{}", style.key(), if on { "on" } else { "off" });
+                            let _ = send.send((key, fps));
+                        }
+                    }
+                }
+            })
+            .map_err(|err| error!("can't start measuring: {err}"))
+            .ok();
+    }
+
+    /// Takes the numbers `start_measure` has so far, and saves them.
+    fn poll_measure(&mut self) {
+        if self.options.visuals.measure_requested {
+            self.start_measure();
+        }
+        let Some(receive) = self.measure.as_ref() else {
+            return;
+        };
+        let mut changed = false;
+        loop {
+            match receive.try_recv() {
+                Ok((key, fps)) => {
+                    self.options.visuals.measured.insert(key, fps);
+                    changed = true;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.measure = None;
+                    self.options.visuals.measuring = false;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if changed && self.bench.is_none() && self.shot.is_none() {
+            let _ = self.options.save(&Options::path());
+        }
+    }
+
+    /// Shift+F12: the next style; textures reload in the background.
+    fn cycle_style(&mut self) {
+        let player = self.game.as_mut().map(|game| &mut game.player);
+        let style = cycle_style(&mut self.options, player);
+        info!("style: {}", style.name());
         self.options_changed();
     }
 
@@ -1751,7 +1872,7 @@ impl App {
         crate::ui::gui::set_gui_scale(self.options.gui_scale);
         crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
         self.apply_fullscreen();
-        if self.options.resource_packs != self.applied_packs {
+        if self.options.active_packs(&crate::pack::builtin_dir()) != self.applied_packs {
             self.apply_resource_packs();
         }
         if let Some(game) = self.game.as_mut() {
@@ -1941,6 +2062,7 @@ impl App {
         self.last_frame = now;
         self.client_mods.advance(dt);
         self.poll_pending_look();
+        self.poll_measure();
         self.animate_textures();
         self.update_audio(dt);
         self.take_guest_skins();
@@ -3007,6 +3129,9 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } if self.stack.reaches_game() => {
                 self.recenter_cursor(position);
             }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift_down = modifiers.state().shift_key();
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.on_key(&event);
                 self.update_ime();
@@ -3301,24 +3426,63 @@ mod tests {
     use crate::{advancements::Event, game::tests::flat_game, look::Look, player::mode::GameMode};
 
     #[test]
-    fn f12_switches_the_look_and_says_so() {
+    fn f12_toggles_shaders_and_shift_f12_cycles_the_style_each_keeping_the_other() {
         use crate::bindings::{Action, Bindings, Input};
-        use crate::render::visuals::LookKind;
+        use crate::render::visuals::{LookKind, Style};
         assert_eq!(
             Bindings::default().get(Action::ToggleVisuals),
             Some(Input::Key(winit::keyboard::KeyCode::F12))
         );
+        // Shift+F12 is the same key with shift held; the style also has a
+        // key of its own to bind.
+        assert_eq!(Bindings::default().get(Action::CycleStyle), None);
         let mut game = flat_game(GameMode::Survival);
         let mut options = Options::default();
+        assert_eq!(options.visuals.style, Style::Barebones);
         assert_eq!(options.visuals.look, LookKind::Trailer);
+        // F12: shaders off, the style stays.
         assert_eq!(
             toggle_look(&mut options, Some(&mut game.player)),
             LookKind::Vanilla
         );
-        assert_eq!(options.visuals.look, LookKind::Vanilla);
-        assert_eq!(game.player.message.as_ref().unwrap().0, "Visuals: Vanilla");
+        assert_eq!(options.visuals.style, Style::Barebones);
+        assert_eq!(
+            game.player.message.as_ref().unwrap().0,
+            "Barebones, Shaders off"
+        );
+        // Shift+F12: Realistic, Vanilla, Barebones, round; shaders stay off.
+        assert_eq!(
+            cycle_style(&mut options, Some(&mut game.player)),
+            Style::Realistic
+        );
+        assert_eq!(
+            game.player.message.as_ref().unwrap().0,
+            "Realistic, Shaders off"
+        );
+        assert!(!options.visuals.shaders());
+        assert_eq!(
+            cycle_style(&mut options, Some(&mut game.player)),
+            Style::Vanilla
+        );
+        assert_eq!(
+            cycle_style(&mut options, Some(&mut game.player)),
+            Style::Barebones
+        );
+        // F12 again: shaders on, whatever the style.
         toggle_look(&mut options, Some(&mut game.player));
-        assert_eq!(game.player.message.as_ref().unwrap().0, "Visuals: Trailer");
+        assert_eq!(
+            game.player.message.as_ref().unwrap().0,
+            "Barebones, Shaders on"
+        );
+        cycle_style(&mut options, Some(&mut game.player));
+        assert!(
+            options.visuals.shaders(),
+            "the style change kept the shaders"
+        );
+        assert_eq!(
+            game.player.message.as_ref().unwrap().0,
+            "Realistic, Shaders on"
+        );
     }
 
     fn icons() -> crate::render::icons::ItemIcons {
@@ -3710,5 +3874,14 @@ mod tests {
         game.run_ticks(65);
         let leaving = toast_views(&game, Some(&icons));
         assert!(leaving.is_empty() || leaving[0].slide < 1.0);
+    }
+
+    #[test]
+    fn the_benchmarks_average_fps_is_read_from_its_report() {
+        assert_eq!(
+            parse_average_fps("3000 frames (0 off screen), 143 fps average, 1% low 61 fps"),
+            Some(143.0)
+        );
+        assert_eq!(parse_average_fps("nothing here"), None);
     }
 }

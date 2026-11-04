@@ -72,7 +72,7 @@
         }
       ]
     },
-    "trailer-low": {
+    "barebones-low": {
       "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
       "recorded": "2026-11-02",
       "runs": 3,
@@ -150,7 +150,7 @@
         }
       ]
     },
-    "trailer-medium": {
+    "barebones-medium": {
       "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
       "recorded": "2026-11-02",
       "runs": 3,
@@ -234,7 +234,7 @@
         }
       ]
     },
-    "trailer-high": {
+    "barebones-high": {
       "commit": "f4be709cf2c2ea7622c7a37288e1b3dcabf967b5",
       "recorded": "2026-11-02",
       "runs": 3,
@@ -317,7 +317,87 @@
           "date": "2026-11-02"
         }
       ]
+    },
+    "barebones": {
+      "commit": null,
+      "recorded": "2026-11-04",
+      "runs": 3,
+      "measures": {},
+      "spread_pct": {},
+      "benchmarks": {},
+      "budgets": {
+        "average_fps": {
+          "min": 111.4
+        },
+        "frames_over_50ms": {
+          "max": 0
+        }
+      },
+      "note": "v1.5 (M62): Barebones without shaders within 10% of Vanilla's baseline average until M63 adds extras"
+    },
+    "realistic": {
+      "commit": null,
+      "recorded": "2026-11-04",
+      "runs": 3,
+      "measures": {},
+      "spread_pct": {},
+      "benchmarks": {},
+      "budgets": {
+        "average_fps": {
+          "min": 111.4
+        },
+        "frames_over_50ms": {
+          "max": 0
+        }
+      },
+      "note": "v1.5 (M62): Realistic (Patrix 32x) without shaders within 10% of Vanilla's baseline average until M63"
+    },
+    "vanilla-medium": {
+      "commit": null,
+      "recorded": "2026-11-04",
+      "runs": 3,
+      "measures": {},
+      "spread_pct": {},
+      "benchmarks": {},
+      "budgets": {
+        "average_fps": {
+          "min": 75
+        },
+        "one_percent_low_fps": {
+          "min": 45
+        },
+        "gpu_extra_ms": {
+          "max": 4.5
+        },
+        "frames_over_50ms": {
+          "max": 0
+        }
+      },
+      "note": "v1.5 (M62): Vanilla with shaders on at Medium: the Medium budget"
+    },
+    "realistic-medium": {
+      "commit": null,
+      "recorded": "2026-11-04",
+      "runs": 3,
+      "measures": {},
+      "spread_pct": {},
+      "benchmarks": {},
+      "budgets": {
+        "average_fps": {
+          "min": 75
+        },
+        "one_percent_low_fps": {
+          "min": 45
+        },
+        "gpu_extra_ms": {
+          "max": 4.5
+        },
+        "frames_over_50ms": {
+          "max": 0
+        }
+      },
+      "note": "v1.5 (M62): Realistic with shaders on at Medium: the Medium budget"
     }
   },
-  "note": "Fixed baseline from M53 (branch foundation): median of 9 flights (3 launches x --runs 3) and cargo bench. Replaces docs/perf/baseline.md. Update only with scripts/perf_gate.py --update-baseline."
+  "note": "Fixed baseline from M53 (branch foundation): median of 9 flights (3 launches x --runs 3) and cargo bench. Replaces docs/perf/baseline.md. Update only with scripts/perf_gate.py --update-baseline. v1.5 (M62): the Trailer rows are now barebones-low/medium/high (Barebones with shaders on); new rows barebones, realistic, vanilla-medium and realistic-medium have budgets only."
 }

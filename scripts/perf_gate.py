@@ -2,7 +2,7 @@
 """The performance gate: compares perf results with docs/perf/baseline.json.
 
     scripts/perf_gate.py docs/perf/m54.json
-    scripts/perf_gate.py docs/perf/m54.json docs/perf/m54-trailer-*.json   (every look)
+    scripts/perf_gate.py docs/perf/m62.json docs/perf/m62-*.json   (every row)
     scripts/perf_gate.py docs/perf/m54.json --update-baseline
     scripts/perf_gate.py docs/perf/m54.json --update-baseline --accept "why"
 
@@ -19,7 +19,7 @@ Rules (a row in baseline.json can override a ratio under "thresholds"):
   memory_mib                         at most 110%
 A row can also carry absolute "budgets", {"<measure>": {"min": x, "max": y}},
 checked on the measures (or benchmarks) of the same name, so rows with no
-baseline numbers (the trailer rows) fit without changing this script.
+baseline numbers (v1.5's new style rows) fit without changing this script.
 
 --update-baseline rewrites the row only when every gated measure is equal or
 better. --accept "<reason>" writes it anyway and records the reason: only use

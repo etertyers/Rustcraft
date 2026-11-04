@@ -37,8 +37,11 @@ pub enum Page {
     KeyBinds,
     Chat,
     Accessibility,
-    /// Video Settings' Trailer Settings: each Trailer effect on or off (v1.4).
+    /// Video Settings' Shader Settings: each shader effect on or off (v1.4's
+    /// Trailer Settings).
     Trailer,
+    /// Video Settings' Extras: the video's mods, built in M63–M65.
+    Extras,
 }
 
 impl Page {
@@ -48,7 +51,7 @@ impl Page {
         match self {
             Page::Main => None,
             Page::Mouse | Page::KeyBinds => Some(Page::Controls),
-            Page::Trailer => Some(Page::Video),
+            Page::Trailer | Page::Extras => Some(Page::Video),
             _ => Some(Page::Main),
         }
     }
@@ -64,7 +67,8 @@ impl Page {
             Page::KeyBinds => "Key Binds",
             Page::Chat => "Chat Settings",
             Page::Accessibility => "Accessibility Settings",
-            Page::Trailer => "Trailer Settings",
+            Page::Trailer => "Shader Settings",
+            Page::Extras => "Extras",
         }
     }
 }
@@ -205,6 +209,10 @@ impl OptionsScreen {
             }
             Page::Trailer => {
                 self.trailer(ui, options);
+                None
+            }
+            Page::Extras => {
+                self.extras(ui, options);
                 None
             }
         };
@@ -354,28 +362,8 @@ impl OptionsScreen {
         egui::ScrollArea::vertical()
             .max_height(height)
             .show(ui, |ui| {
+                graphics_section(self, ui, options);
                 pairs(ui, "options-video", |ui, cell| {
-                    cell(ui);
-                    let look = options.visuals.look;
-                    let response =
-                        ui.add_sized(HALF, Button::new(format!("Visuals: {}", look.name())));
-                    if self.clicked(&response) {
-                        options.set_look(look.other());
-                    }
-                    cell(ui);
-                    let quality = options.visuals.quality;
-                    let response = ui.add_sized(
-                        HALF,
-                        Button::new(format!("Trailer Quality: {}", quality.name())),
-                    );
-                    if self.clicked(&response) {
-                        options.visuals.quality = quality.next();
-                    }
-                    cell(ui);
-                    let response = ui.add_sized(HALF, Button::new("Trailer Settings..."));
-                    if self.clicked(&response) {
-                        self.page = Page::Trailer;
-                    }
                     cell(ui);
                     let response = ui.add_sized(HALF, Button::new("Texture Viewer..."));
                     if self.clicked(&response) {
@@ -471,6 +459,20 @@ impl OptionsScreen {
 
     /// Each Trailer effect, on or off: the quality profile's choice unless
     /// the player changed it (marked with a *).
+    /// The Extras page: the video's mods, one toggle each (built in
+    /// M63–M65), on by default in Barebones and Realistic, off in Vanilla.
+    fn extras(&mut self, ui: &mut Ui, options: &mut Options) {
+        ui.label(
+            RichText::new(format!(
+                "Style: {}. The extras (footsteps by material, cave dust, wakes, rain particles, \
+                 player animations, sound physics, ambient sounds...) are built in the next \
+                 milestones and will be switched here, on by default in Barebones and Realistic.",
+                options.visuals.style.name()
+            ))
+            .color(GRAY),
+        );
+    }
+
     fn trailer(&mut self, ui: &mut Ui, options: &mut Options) {
         use crate::render::visuals::Effect;
         let height = list_height(ui);
@@ -856,6 +858,108 @@ fn sensitivity_name(sensitivity: f32) -> String {
     }
 }
 
+/// The Graphics section of Video Settings, fastest style first: the style
+/// (with the frame rates last measured on this computer), Shaders on or off,
+/// the shader quality and settings (greyed out with Shaders off), Extras and
+/// Measure.
+fn graphics_section(screen: &mut OptionsScreen, ui: &mut Ui, options: &mut Options) {
+    use crate::render::visuals::Style;
+    ui.label(RichText::new("Graphics").color(Color32::WHITE));
+    let shaders = options.visuals.shaders();
+    pairs(ui, "options-graphics", |ui, cell| {
+        cell(ui);
+        let style = options.visuals.style;
+        let response = ui.add_sized(HALF, Button::new(format!("Style: {}", style.name())));
+        if screen.clicked(&response) {
+            let order = Style::BY_SPEED;
+            let at = order.iter().position(|s| *s == style).unwrap_or(0);
+            options.set_style(order[(at + 1) % order.len()]);
+        }
+        cell(ui);
+        let response = ui.add_sized(
+            HALF,
+            Button::new(format!("Shaders: {}", if shaders { "On" } else { "Off" })),
+        );
+        if screen.clicked(&response) {
+            options.visuals.set_shaders(!shaders);
+        }
+        cell(ui);
+        let quality = options.visuals.quality;
+        let response = ui.add_enabled(
+            shaders,
+            Button::new(format!("Shader Quality: {}", quality.name())).min_size(HALF.into()),
+        );
+        if screen.clicked(&response) {
+            options.visuals.quality = quality.next();
+        }
+        cell(ui);
+        let response = ui.add_enabled(
+            shaders,
+            Button::new("Shader Settings...").min_size(HALF.into()),
+        );
+        if screen.clicked(&response) {
+            screen.page = Page::Trailer;
+        }
+        cell(ui);
+        let response = ui.add_sized(HALF, Button::new("Extras..."));
+        if screen.clicked(&response) {
+            screen.page = Page::Extras;
+        }
+        cell(ui);
+        let measuring = options.visuals.measuring;
+        let response = ui.add_enabled(
+            !measuring,
+            Button::new(if measuring { "Measuring..." } else { "Measure" }).min_size(HALF.into()),
+        );
+        if screen.clicked(&response) {
+            options.visuals.measure_requested = true;
+        }
+    });
+    // Each style's frame rate with shaders off and on, as last measured.
+    for style in Style::BY_SPEED {
+        ui.label(
+            RichText::new(speed_line(&options.visuals, style))
+                .small()
+                .color(GRAY),
+        );
+    }
+    // A style still works without its packs, and says which are missing.
+    for (title, link) in
+        crate::pack::missing_for(options.visuals.style, &crate::pack::builtin_dir())
+    {
+        ui.label(
+            RichText::new(format!("Missing: {title} ({link})"))
+                .small()
+                .color(Color32::from_rgb(0xff, 0x80, 0x80)),
+        );
+    }
+    ui.add_space(GAP);
+}
+
+/// "Barebones: about 160 / 110 FPS (shaders off / on)", or "not measured".
+pub fn speed_line(
+    visuals: &crate::render::visuals::Visuals,
+    style: crate::render::visuals::Style,
+) -> String {
+    let rate = |shaders: &str| {
+        visuals
+            .measured
+            .get(&format!("{}/{shaders}", style.key()))
+            .map(|fps| format!("{}", (fps / 5.0).round() as i64 * 5))
+    };
+    match (rate("off"), rate("on")) {
+        (Some(off), Some(on)) => {
+            format!(
+                "{}: about {off} / {on} FPS (shaders off / on)",
+                style.name()
+            )
+        }
+        (Some(off), None) => format!("{}: about {off} FPS with shaders off", style.name()),
+        (None, Some(on)) => format!("{}: about {on} FPS with shaders on", style.name()),
+        (None, None) => format!("{}: not measured yet (Measure)", style.name()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -912,5 +1016,68 @@ mod tests {
         assert_eq!(keys.get(Action::Drop), None);
         screen.bind(&mut keys, Some(Input::Key(KeyCode::KeyZ)));
         assert_eq!(keys.actions(Input::Key(KeyCode::KeyZ)).count(), 0);
+    }
+
+    #[test]
+    fn speed_lines_show_what_was_measured_and_the_styles_are_listed_fastest_first() {
+        use crate::render::visuals::{Style, Visuals};
+        assert_eq!(
+            Style::BY_SPEED,
+            [Style::Barebones, Style::Vanilla, Style::Realistic]
+        );
+        let mut v = Visuals::default();
+        assert_eq!(
+            speed_line(&v, Style::Barebones),
+            "Barebones: not measured yet (Measure)"
+        );
+        v.measured.insert("barebones/off".to_owned(), 162.3);
+        v.measured.insert("barebones/on".to_owned(), 108.9);
+        assert_eq!(
+            speed_line(&v, Style::Barebones),
+            "Barebones: about 160 / 110 FPS (shaders off / on)"
+        );
+        v.measured.insert("vanilla/off".to_owned(), 125.0);
+        assert_eq!(
+            speed_line(&v, Style::Vanilla),
+            "Vanilla: about 125 FPS with shaders off"
+        );
+    }
+
+    /// Video Settings' Graphics section draws with Shaders on and off (the
+    /// quality and settings buttons are added with `add_enabled(shaders)`).
+    #[test]
+    fn the_graphics_section_draws_with_shaders_on_and_off() {
+        let ctx = egui::Context::default();
+        let run = |options: &mut Options| {
+            let mut screen = OptionsScreen::new(Page::Video);
+            let mut texts = Vec::new();
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 700.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    graphics_section(&mut screen, ui, options);
+                    ctx_texts(ui, &mut texts);
+                },
+            );
+            texts
+        };
+        // The widgets' labels, in the order drawn.
+        fn ctx_texts(ui: &egui::Ui, out: &mut Vec<String>) {
+            ui.ctx().output(|o| {
+                let _ = o;
+            });
+            out.clear();
+        }
+        let mut options = Options::default();
+        run(&mut options);
+        assert!(options.visuals.shaders());
+        options.visuals.set_shaders(false);
+        run(&mut options);
+        assert!(!options.visuals.shaders());
     }
 }
