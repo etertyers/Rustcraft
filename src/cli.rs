@@ -76,7 +76,9 @@ Usage: cargo run --release -- [flags]
   --lan-test <n>        a server with n bots walking, mining and placing
                         for 60 s; prints tick times and bandwidth
   --help                this text
-Tools: --write-structures, --asset-report [--exit] (exit 1 if the build is incomplete), --gen-placeholders,
+Tools: --texture-audit [--mode vanilla|barebones|realistic] (contact sheets in target/texture-audit/),
+       --texture-viewer (check textures by eye and mark them), --texture-marks (print the marks),
+       --write-structures, --asset-report [--exit] (exit 1 if the build is incomplete), --gen-placeholders,
        --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>],
        --spawn-test [--seed <n>] (one night of mob counts in plains),
        --flower-test [--seed <n>] (flowers per chunk by biome)
@@ -250,7 +252,10 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             "--assets" => {
                 value(&mut args, "--assets", "a folder")?;
             }
-            "--exit" => {}
+            "--exit" | "--texture-audit" | "--texture-marks" | "--texture-viewer" => {}
+            "--mode" => {
+                value(&mut args, "--mode", "vanilla, barebones or realistic")?;
+            }
             "--runs" => {
                 let text = value(&mut args, "--runs", "a number")?;
                 runs = text

@@ -75,6 +75,8 @@ pub enum OptionsAction {
     /// Done on the main page: leave Options.
     Done,
     ResourcePacks,
+    /// Video Settings → Texture Viewer...
+    TextureViewer,
 }
 
 /// The open Options screen and the key bind being changed.
@@ -89,6 +91,8 @@ pub struct OptionsScreen {
     unmute_after_frame: bool,
     /// The Player Name box's text, kept even while it isn't a valid name.
     name: Option<String>,
+    /// An action a page asked for, handed back by `show`.
+    pending: Option<OptionsAction>,
 }
 
 impl Default for OptionsScreen {
@@ -105,6 +109,7 @@ impl OptionsScreen {
             muted: false,
             unmute_after_frame: false,
             name: None,
+            pending: None,
         }
     }
 
@@ -217,7 +222,7 @@ impl OptionsScreen {
             self.muted = false;
             self.unmute_after_frame = false;
         }
-        action
+        self.pending.take().or(action)
     }
 
     fn main(
@@ -370,6 +375,11 @@ impl OptionsScreen {
                     let response = ui.add_sized(HALF, Button::new("Trailer Settings..."));
                     if self.clicked(&response) {
                         self.page = Page::Trailer;
+                    }
+                    cell(ui);
+                    let response = ui.add_sized(HALF, Button::new("Texture Viewer..."));
+                    if self.clicked(&response) {
+                        self.pending = Some(OptionsAction::TextureViewer);
                     }
                     cell(ui);
                     let graphics = match options.graphics {

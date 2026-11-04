@@ -6,6 +6,7 @@ pub mod advancements;
 pub mod app;
 pub mod assets;
 pub mod audio;
+pub mod audit;
 pub mod bench;
 pub mod bindings;
 pub mod cem;
