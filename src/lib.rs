@@ -31,6 +31,7 @@ pub mod player;
 pub mod render;
 pub mod server;
 pub mod shots;
+pub mod startup;
 pub mod ui;
 pub mod world;
 pub mod worldlist;

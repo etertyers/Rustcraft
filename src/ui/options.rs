@@ -1051,7 +1051,7 @@ mod tests {
         let run = |options: &mut Options| {
             let mut screen = OptionsScreen::new(Page::Video);
             let mut texts = Vec::new();
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -1064,6 +1064,7 @@ mod tests {
                     ctx_texts(ui, &mut texts);
                 },
             );
+            output.textures_delta.clear();
             texts
         };
         // The widgets' labels, in the order drawn.

@@ -67,15 +67,30 @@ pub const ARMOR_MATERIALS: [(&str, &str); 9] = [
     ("copper", "copper"),
 ];
 
-/// The armor sheet's row for `material`'s layer (0 outer, 1 inner).
-pub fn armor_row(material: &str, layer: usize) -> Option<usize> {
-    let index = ARMOR_MATERIALS.iter().position(|(m, _)| *m == material)?;
-    Some(index * 2 + layer)
+/// How many layers are in the armor sheet, two for each material.
+pub const ARMOR_LAYERS: usize = ARMOR_MATERIALS.len() * 2;
+
+/// The armor sheet is a grid of layers this many across: one tall column
+/// of 18 would be 2304 pixels with a 32x pack, past what egui and some GPUs
+/// take.
+pub const ARMOR_COLUMNS: usize = 4;
+
+/// The armor sheet's grid: (columns, rows).
+pub const fn armor_grid() -> (usize, usize) {
+    (ARMOR_COLUMNS, ARMOR_LAYERS.div_ceil(ARMOR_COLUMNS))
 }
 
-/// Every armor layer texture stacked into one picture, a row of 64 × 32
-/// (or the packs' larger size) for each material's layer in
-/// `ARMOR_MATERIALS` order; a layer no pack has is left clear.
+/// The armor sheet's cell, as (column, row), for `material`'s layer (0
+/// outer, 1 inner).
+pub fn armor_row(material: &str, layer: usize) -> Option<(usize, usize)> {
+    let index = ARMOR_MATERIALS.iter().position(|(m, _)| *m == material)? * 2 + layer;
+    Some((index % ARMOR_COLUMNS, index / ARMOR_COLUMNS))
+}
+
+/// Every armor layer texture in one picture: a grid of cells of 64 × 32
+/// (or the packs' larger size), `ARMOR_COLUMNS` across, one for each
+/// material's layer in `ARMOR_MATERIALS` order; a layer no pack has is left
+/// clear.
 pub fn armor_sheet(res: &Resources) -> RgbaImage {
     let layers: Vec<Option<RgbaImage>> = ARMOR_MATERIALS
         .iter()
@@ -99,12 +114,14 @@ pub fn armor_sheet(res: &Resources) -> RgbaImage {
         .max()
         .unwrap_or(64);
     let row = width / 2;
-    let mut sheet = RgbaImage::new(width, row * layers.len() as u32);
+    let (columns, rows) = armor_grid();
+    let mut sheet = RgbaImage::new(width * columns as u32, row * rows as u32);
     for (i, layer) in layers.iter().enumerate() {
         if let Some(image) = layer {
             let image =
                 image::imageops::resize(image, width, row, image::imageops::FilterType::Nearest);
-            image::imageops::replace(&mut sheet, &image, 0, i64::from(row) * i as i64);
+            let (x, y) = ((i % columns) as i64, (i / columns) as i64);
+            image::imageops::replace(&mut sheet, &image, x * i64::from(width), y * i64::from(row));
         }
     }
     sheet
@@ -587,12 +604,16 @@ mod tests {
         );
         // Kenzo's 1.12 armor layers fill the sheet's rows.
         let sheet = look.armor_sheet();
-        assert_eq!(sheet.height(), sheet.width() / 2 * 18);
-        let row = sheet.width() / 2;
-        let iron = armor_row("iron", 0).unwrap() as u32;
+        let (columns, rows) = armor_grid();
+        let cell = sheet.width() / columns as u32;
+        assert_eq!(sheet.height(), cell / 2 * rows as u32);
+        let row = cell / 2;
+        let (iron_x, iron_y) = armor_row("iron", 0).unwrap();
         let opaque = (0..row)
-            .flat_map(|y| (0..sheet.width()).map(move |x| (x, y)))
-            .filter(|&(x, y)| sheet.get_pixel(x, iron * row + y)[3] > 0)
+            .flat_map(|y| (0..cell).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                sheet.get_pixel(iron_x as u32 * cell + x, iron_y as u32 * row + y)[3] > 0
+            })
             .count();
         assert!(opaque > 100, "iron's outer layer is there: {opaque}");
         assert!(look.atlas.has("block/grass_block_top"));

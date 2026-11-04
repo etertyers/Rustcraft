@@ -190,9 +190,7 @@ impl GuiTextures {
         res: &Resources,
     ) -> Result<Self> {
         let load = |name: &str, image: &RgbaImage| {
-            let size = [image.width() as usize, image.height() as usize];
-            let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-            ctx.load_texture(name, pixels, egui::TextureOptions::NEAREST)
+            crate::startup::load_egui(ctx, name, image, egui::TextureOptions::NEAREST)
         };
         let widths = std::cell::RefCell::new(Vec::new());
         let sheet = |name: &str, sprites: &[Sprite]| -> Result<TextureHandle> {
@@ -221,9 +219,10 @@ impl GuiTextures {
             recipe_button: sheet("gui/recipe_button", RECIPE_BUTTON)?,
             skin: load("skin", figure.skin),
             armor: load("armor", figure.armor),
-            armor_mask: ctx.load_texture(
+            armor_mask: crate::startup::load_egui_premultiplied(
+                ctx,
                 "armor mask",
-                super::glint::mask(figure.armor),
+                &super::glint::mask(figure.armor),
                 egui::TextureOptions::NEAREST,
             ),
             elytra: load("elytra", figure.elytra),
@@ -234,13 +233,11 @@ impl GuiTextures {
             creative: sheet("gui/container/creative_inventory/tab_items", &[])?,
             creative_search: sheet("gui/container/creative_inventory/tab_item_search", &[])?,
             underwater: compose_sheet(res, "misc/underwater", &[]).map(|image| {
-                let size = [image.width() as usize, image.height() as usize];
-                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
                 let options = egui::TextureOptions {
                     wrap_mode: egui::TextureWrapMode::Repeat,
                     ..egui::TextureOptions::NEAREST
                 };
-                ctx.load_texture("underwater", pixels, options)
+                crate::startup::load_egui(ctx, "underwater", &image, options)
             }),
             creative_inventory: sheet("gui/container/creative_inventory/tab_inventory", &[])?,
             tabs: sheet("gui/container/creative_inventory/tabs", TABS)?,

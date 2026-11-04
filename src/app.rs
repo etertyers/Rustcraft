@@ -157,6 +157,15 @@ pub struct App {
     start_view: crate::game::view::ViewMode,
     /// The resource packs the look was built with, highest first.
     applied_packs: Vec<String>,
+    /// The extra packs and style that last loaded, to go back to if the
+    /// next choice doesn't.
+    good_packs: (Vec<String>, crate::render::visuals::Style),
+    /// `--pack` was given: this run's packs aren't the saved ones.
+    packs_override: bool,
+    /// The "starting" marker, until the first frame is drawn.
+    start_marker: Option<std::path::PathBuf>,
+    /// What the title screen says about packs turned off at startup.
+    start_notice: Option<String>,
     /// Shift is held (Shift+F12 cycles the style).
     shift_down: bool,
     /// The Measure button's benchmark runs, sending ("style/off", fps).
@@ -314,6 +323,9 @@ pub struct ShotRun {
     captured: bool,
 }
 
+/// The `--shot` that captures the Texture Viewer, not a world.
+const TEXTURE_VIEWER_SHOT: &str = "texture-viewer";
+
 /// Frames drawn after staging a scene before capturing it, so remeshed
 /// chunks and the UI catch up.
 const SHOT_SETTLE_FRAMES: u32 = 10;
@@ -368,6 +380,10 @@ impl App {
             skin_slim: false,
             start_view: Default::default(),
             applied_packs: Vec::new(),
+            good_packs: (Vec::new(), crate::render::visuals::Style::default()),
+            packs_override: false,
+            start_marker: None,
+            start_notice: None,
             shift_down: false,
             measure: None,
             splashes: Default::default(),
@@ -397,7 +413,9 @@ impl App {
     pub fn with_shot(mut self, shot: &'static shots::Shot, out: std::path::PathBuf) -> Self {
         // Every scene is seen at the standard render distance.
         self.options.render_distance = config::RENDER_DISTANCE;
-        if self.world_kind.is_none() || shot.world.is_some() {
+        if shot.name == TEXTURE_VIEWER_SHOT {
+            // A menu screen: no world.
+        } else if self.world_kind.is_none() || shot.world.is_some() {
             self.world_kind = Some(shot.world.clone().unwrap_or(WorldKind::Flat));
         }
         self.shot = Some(ShotRun {
@@ -437,6 +455,7 @@ impl App {
 
     /// Uses these resource packs this time, without saving them as chosen.
     pub fn with_packs(mut self, packs: Vec<String>) -> Self {
+        self.packs_override = true;
         self.options.resource_packs = packs;
         self
     }
@@ -504,8 +523,44 @@ impl App {
             item::registry().len()
         );
         let mob_defs = Arc::new(MobRegistry::load(&assets.join("data/mobs.ron"))?);
-        self.applied_packs = self.options.active_packs(&crate::pack::builtin_dir());
-        let look = Look::with_packs(&assets, &self.applied_packs, &mob_defs)?;
+        // A start that never drew a frame leaves its marker: the next one
+        // goes without extra packs. The bench and shots don't count.
+        let tracked = self.bench.is_none() && self.shot.is_none();
+        let unfinished = tracked && crate::startup::begin(&crate::startup::marker_path());
+        if tracked {
+            self.start_marker = Some(crate::startup::marker_path());
+        }
+        let mode = if std::env::args().any(|arg| arg == "--safe-mode") {
+            crate::startup::Mode::Safe
+        } else if unfinished {
+            crate::startup::Mode::UnfinishedStart
+        } else {
+            crate::startup::Mode::Normal
+        };
+        // The GPU's own texture limit, for egui and for every upload.
+        let (ctx, first_textures) = crate::startup::egui_context(crate::startup::probe_gpu_limit());
+        let builtin = crate::pack::builtin_dir();
+        let started = crate::startup::start(
+            &assets,
+            (&crate::pack::packs_dir(), &builtin),
+            &mut self.options,
+            &mob_defs,
+            &ctx,
+            mode,
+            (!self.packs_override && tracked)
+                .then(Options::path)
+                .as_deref(),
+        )?;
+        if let Some(notice) = &started.notice {
+            warn!("{notice}");
+        }
+        self.start_notice = started.notice;
+        self.applied_packs = self.options.active_packs(&builtin);
+        self.good_packs = (
+            self.options.resource_packs.clone(),
+            self.options.visuals.style,
+        );
+        let look = started.look;
         let mut renderer =
             Renderer::new(window.clone(), &look.atlas, &look.sky, &look.mob_textures)?;
         // The bench measures how fast frames can go.
@@ -516,8 +571,9 @@ impl App {
         crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
         self.debug_ui = Some(DebugUi::new(
             &window,
-            look.atlas.image(),
-            look.figure(),
+            ctx,
+            first_textures,
+            started.gui,
             &look.res,
         )?);
         let recipes = Recipes::load(&assets.join("data/recipes.ron"))?;
@@ -552,7 +608,13 @@ impl App {
             }
             None => {
                 let mut menu = Menu::new(level::saves_dir());
-                if std::env::args().any(|arg| arg == "--texture-viewer") {
+                menu.error = self.start_notice.take();
+                if std::env::args().any(|arg| arg == "--texture-viewer")
+                    || self
+                        .shot
+                        .as_ref()
+                        .is_some_and(|run| run.shot.name == TEXTURE_VIEWER_SHOT)
+                {
                     menu.open_texture_viewer();
                 }
                 self.menu = Some(menu);
@@ -1624,7 +1686,15 @@ impl App {
         std::thread::Builder::new()
             .name("resource packs".into())
             .spawn(move || {
-                let _ = send.send(Look::with_packs(&assets::dir(), &wanted, &mobs));
+                // A pack that panics must not take the game down: it comes
+                // back as an error and the old look stays.
+                let built = crate::startup::build_look(
+                    &assets::dir(),
+                    (&crate::pack::packs_dir(), &crate::pack::builtin_dir()),
+                    &wanted,
+                    &mobs,
+                );
+                let _ = send.send(built.map_err(|reason| anyhow::anyhow!(reason)));
             })
             .map_err(|err| error!("can't start loading resource packs: {err}"))
             .ok();
@@ -1653,21 +1723,83 @@ impl App {
         }
         let look = match look {
             Ok(look) => look,
-            Err(err) => return error!("can't apply resource packs: {err:#}"),
+            Err(err) => return self.pack_failed(format!("{err:#}")),
         };
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.set_textures(&look.atlas, &look.sky, &look.mob_textures);
-        }
+        // The GUI images first: if they fail, nothing has changed yet.
         if let Some(debug_ui) = self.debug_ui.as_mut()
             && let Err(err) = debug_ui.set_textures(look.atlas.image(), look.figure(), &look.res)
         {
-            error!("can't load the GUI images: {err:#}");
+            return self.pack_failed(format!("the GUI images: {err:#}"));
         }
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_textures(&look.atlas, &look.sky, &look.mob_textures);
+        }
+        // It loaded: now the choice is saved.
+        self.good_packs = (
+            self.options.resource_packs.clone(),
+            self.options.visuals.style,
+        );
+        self.save_options();
         if let Some(game) = self.game.as_mut() {
             game.chunks.set_models(look.models.clone());
         }
         self.animation_start = Instant::now();
         self.install_look(look);
+    }
+
+    /// The packs just chosen didn't load: the old look stays, the choice is
+    /// undone and not saved, and Resource Packs says why.
+    fn pack_failed(&mut self, reason: String) {
+        error!("can't apply resource packs: {reason}");
+        let (packs, style) = self.good_packs.clone();
+        let chosen = self.options.resource_packs.join(", ");
+        self.options.set_style(style);
+        self.options.resource_packs = packs;
+        self.options.store_packs();
+        let builtin = crate::pack::builtin_dir();
+        self.applied_packs = self.options.active_packs(&builtin);
+        let message = format!("Resource pack {chosen} failed to load and was not used: {reason}");
+        if let Some(pause) = self.pause.as_mut() {
+            pause.packs = Some(
+                crate::ui::packs::PackScreen::new(
+                    crate::pack::packs_dir(),
+                    &self.options.resource_packs,
+                )
+                .with_builtin(builtin, &self.options.resource_packs)
+                .for_look(self.options.visuals.style.name())
+                .with_error(message),
+            );
+        } else if let Some(menu) = self.menu.as_mut() {
+            menu.show_pack_error(&self.options, message);
+        }
+    }
+
+    /// For the start-up tests.
+    #[cfg(test)]
+    pub(crate) fn set_mob_defs_for_test(&mut self, mobs: Arc<MobRegistry>) {
+        self.mob_defs = Some(mobs);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn options_for_test(&mut self) -> &mut Options {
+        &mut self.options
+    }
+
+    #[cfg(test)]
+    pub(crate) fn applied_packs_for_test(&self) -> Vec<String> {
+        self.applied_packs.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_resource_packs_for_test(&mut self) {
+        self.apply_resource_packs();
+    }
+
+    /// Polls the pack switch; true while it is still being built.
+    #[cfg(test)]
+    pub(crate) fn poll_pending_for_test(&mut self) -> bool {
+        self.poll_pending_look();
+        self.pending_look.is_some()
     }
 
     /// Plays texture animations up to now.
@@ -1880,7 +2012,16 @@ impl App {
         }
         let settings = self.player_settings();
         self.tell_server(crate::net::protocol::ClientMsg::Settings(settings));
-        // `--bench` and `--shot` runs leave the player's settings alone.
+        // A pack choice is saved once it has loaded (`poll_pending_look`).
+        if self.pending_look.is_some() {
+            return;
+        }
+        self.save_options();
+    }
+
+    /// Saves options.ron. `--bench` and `--shot` runs leave the player's
+    /// settings alone.
+    fn save_options(&self) {
         if self.bench.is_some() || self.shot.is_some() {
             return;
         }
@@ -3045,11 +3186,40 @@ impl App {
             return;
         };
         let options_before = self.options.clone();
+        // The Texture Viewer shot: the pig, once the vanilla set has loaded
+        // and a few frames have settled.
+        let mut capturing = false;
+        if let Some(run) = self
+            .shot
+            .as_mut()
+            .filter(|run| run.shot.name == TEXTURE_VIEWER_SHOT)
+            && let Some(viewer) = menu.viewer_mut()
+        {
+            match run.staged {
+                None if viewer.loaded_in.is_some() => {
+                    viewer.focus(crate::audit::Category::Mobs, "pig");
+                    run.staged = Some(0);
+                }
+                Some(frames) if frames >= SHOT_SETTLE_FRAMES => {
+                    renderer.capture_next_frame(run.out.clone());
+                    capturing = true;
+                }
+                Some(frames) => run.staged = Some(frames + 1),
+                None => {}
+            }
+        }
         let (ui, action) = debug_ui.menu_frame(window, menu, &mut self.options);
         // A noon sky behind the menu.
         let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
         let result = renderer.render(&Camera::new(Vec3::ZERO, 0.0, 0.0), &noon, ui);
+        if capturing && let Some(run) = self.shot.as_mut() {
+            println!("{}", run.out.display());
+            run.captured = true;
+        }
         self.finish_frame(event_loop, now, result);
+        if self.shot.as_ref().is_some_and(|run| run.captured) {
+            event_loop.exit();
+        }
         if self.options != options_before {
             self.options_changed();
         }
@@ -3062,6 +3232,9 @@ impl App {
         match result {
             Ok(presented) => {
                 self.frame_skipped = !presented;
+                if presented && let Some(marker) = self.start_marker.take() {
+                    crate::startup::finish(&marker);
+                }
                 if presented && let Some(debug_ui) = self.debug_ui.as_mut() {
                     debug_ui.frame_presented(now);
                 }

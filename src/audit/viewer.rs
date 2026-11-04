@@ -224,10 +224,29 @@ fn load_in_background(set: &str) -> Loading {
 }
 
 /// What the large view was drawn for: the id, the angles in hundredths, the
-/// animation and company, and whether it is enlarged.
-type LargeKey = (String, i32, i32, u8, bool);
+/// animation and company, and its size in pixels.
+type LargeKey = (String, i32, i32, u8, u32);
+
+/// Where each region was drawn in the last frame (points), for the layout
+/// test.
+#[derive(Debug, Default, Clone)]
+pub struct Report {
+    pub categories: Option<egui::Rect>,
+    pub grid: Option<egui::Rect>,
+    /// What the grid shows (its scroll area's visible part).
+    pub grid_view: Option<egui::Rect>,
+    /// The selected thumbnail, if it was drawn.
+    pub selected: Option<egui::Rect>,
+    /// The width the thumbnails have (the grid less its scroll bar).
+    pub grid_inner_width: f32,
+    pub large: Option<egui::Rect>,
+    pub raw: Option<egui::Rect>,
+    pub note: Option<egui::Rect>,
+    pub columns: usize,
+}
 
 pub struct Viewer {
+    pub report: Report,
     pub model: Model,
     loading: Loading,
     pub sets: Vec<String>,
@@ -240,6 +259,13 @@ pub struct Viewer {
     pitch: f32,
     anim: Anim,
     company: bool,
+    /// The large view's zoom (1 to 8) and the picture point, as a fraction
+    /// of the whole, at its top left corner.
+    zoom: f32,
+    zoom_at: egui::Vec2,
+    /// What made the grid last scroll, and where it is scrolled to.
+    grid_seen: Option<(usize, usize, Category, usize, String)>,
+    grid_offset: f32,
     started: Instant,
     /// How long the set took to load, once it has.
     pub loaded_in: Option<std::time::Duration>,
@@ -261,6 +287,7 @@ impl Viewer {
             .cloned()
             .unwrap_or_else(|| "vanilla".to_owned());
         Self {
+            report: Report::default(),
             model: Model::new(
                 &set,
                 Marks::load(&marks::marks_path()),
@@ -277,9 +304,20 @@ impl Viewer {
             pitch: View::THREE_QUARTER.pitch,
             anim: Anim::Idle,
             company: false,
+            zoom: 1.0,
+            zoom_at: egui::Vec2::ZERO,
+            grid_seen: None,
+            grid_offset: 0.0,
             started: Instant::now(),
             loaded_in: None,
         }
+    }
+
+    /// Shows `category` filtered by `search` (the shot and the tests).
+    pub fn focus(&mut self, category: Category, search: &str) {
+        self.category = category;
+        self.search = search.to_owned();
+        self.model.selected = 0;
     }
 
     /// Esc, from the game's own key handling: cancels a note, shrinks the
@@ -317,21 +355,21 @@ impl Viewer {
         }
     }
 
-    /// Draws the viewer. Returns true when Esc or Done closes it.
+    /// Draws the viewer inside the room `ui` has left, and nowhere else.
+    /// Returns true when Esc or Done closes it.
     pub fn show(&mut self, ui: &mut egui::Ui) -> bool {
         self.poll();
+        self.report = Report::default();
         let ctx = ui.ctx().clone();
+        let avail = ui.available_rect_before_wrap();
+        ui.allocate_rect(avail, egui::Sense::hover());
         let loaded = match &self.loading {
             Loading::Ready(l) => Some(l.clone()),
             Loading::Busy(..) => {
-                ui.label("Rendering thumbnails...");
                 ctx.request_repaint();
                 None
             }
-            Loading::Failed(err) => {
-                ui.label(RichText::new(format!("Can't load: {err}")).color(Color32::LIGHT_RED));
-                None
-            }
+            Loading::Failed(_) => None,
         };
         // The visible entries.
         let search = self.search.to_lowercase();
@@ -384,93 +422,207 @@ impl Viewer {
                 }
             }
         }
+        let regions = regions(avail, self.model.large, self.model.note.is_some());
         let total = loaded.as_ref().map_or(0, |l| l.entries.len());
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(self.model.status(total)).color(Color32::WHITE));
-            if let Some(t) = self.loaded_in {
-                ui.label(RichText::new(format!("(loaded in {:.1} s)", t.as_secs_f32())).small());
-            }
-            egui::ComboBox::from_id_salt("texture-set")
-                .selected_text(format!("Texture set: {}", self.model.set))
-                .show_ui(ui, |ui| {
-                    for set in self.sets.clone() {
-                        if ui.selectable_label(self.model.set == set, &set).clicked() {
-                            self.switch_set(&set);
-                        }
-                    }
-                });
-            if ui.button("Done").clicked() {
-                self.model.closed = true;
-            }
-        });
-        ui.separator();
-        let height = (ui.available_height() - 8.0).max(200.0);
-        ui.horizontal_top(|ui| {
-            // Categories and search.
-            ui.allocate_ui(vec2(150.0, height), |ui| {
-                ui.vertical(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(140.0));
-                    for category in Category::ALL {
-                        if ui.selectable_label(self.category == category, category.name()).clicked() {
-                            self.category = category;
-                            self.model.selected = 0;
-                        }
-                    }
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Arrows move, Enter enlarges\nB broken, K OK, U clear\nF next flagged, Esc closes").small());
-                });
+        self.top_bar(ui, regions.top, total, regions.categories.is_none());
+        if let Some(rect) = regions.note {
+            self.note_strip(ui, rect);
+        }
+        if let Some(rect) = regions.categories {
+            self.report.categories = Some(rect);
+            self.category_list(ui, rect);
+        }
+        let Some(loaded) = loaded else {
+            let text = match &self.loading {
+                Loading::Failed(err) => {
+                    RichText::new(format!("Can't load: {err}")).color(Color32::LIGHT_RED)
+                }
+                _ => RichText::new("Rendering thumbnails..."),
+            };
+            ui.scope_builder(egui::UiBuilder::new().max_rect(regions.grid), |ui| {
+                ui.label(text)
             });
-            let Some(loaded) = loaded else { return };
-            // The grid.
-            let cell = THUMB as f32 + 12.0;
-            ui.allocate_ui(vec2(640.0, height), |ui| {
-                let columns = ((ui.available_width() / cell) as usize).max(1);
-                self.model.columns = columns;
-                let rows = visible.len().div_ceil(columns);
-                let selected_row = self.model.selected / columns;
-                egui::ScrollArea::vertical()
-                    .id_salt("texture-grid")
-                    .max_height(height)
-                    .show_rows(ui, cell, rows, |ui, range| {
-                        if ui.input(|i| {
-                            i.key_pressed(EKey::ArrowDown)
-                                || i.key_pressed(EKey::ArrowUp)
-                                || i.key_pressed(EKey::F)
-                        }) {
-                            let top = selected_row as f32 * cell;
-                            ui.scroll_to_rect(
-                                egui::Rect::from_min_size(
-                                    ui.min_rect().min + vec2(0.0, top - range.start as f32 * cell),
-                                    vec2(cell, cell),
-                                ),
-                                None,
-                            );
-                        }
-                        for row in range {
-                            ui.horizontal(|ui| {
-                                for col in 0..columns {
-                                    let at = row * columns + col;
-                                    let Some(&index) = visible.get(at) else { break };
-                                    self.thumbnail(ui, &loaded.entries[index], at);
-                                }
-                            });
+            return self.model.closed;
+        };
+        let selected = self.model.current().and_then(|id| {
+            loaded
+                .entries
+                .iter()
+                .find(|e| e.id == id && e.category == self.category)
+        });
+        if self.model.large {
+            if let Some(entry) = selected {
+                self.report.grid = None;
+                self.large_area(ui, regions.grid, &loaded, entry);
+            }
+        } else {
+            self.report.grid = Some(regions.grid);
+            self.grid(ui, regions.grid, &loaded, &visible);
+            if let Some(entry) = selected {
+                self.detail(ui, regions.detail, &loaded, entry);
+            }
+        }
+        self.model.closed
+    }
+
+    /// Status, the texture set, and Done; in a small window also the
+    /// category list and search.
+    fn top_bar(&mut self, ui: &mut egui::Ui, rect: egui::Rect, total: usize, compact: bool) {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(self.model.status(total)).color(Color32::WHITE));
+                if let Some(t) = self.loaded_in {
+                    ui.label(
+                        RichText::new(format!("(loaded in {:.1} s)", t.as_secs_f32())).small(),
+                    );
+                }
+                egui::ComboBox::from_id_salt("texture-set")
+                    .selected_text(format!("Texture set: {}", self.model.set))
+                    .show_ui(ui, |ui| {
+                        for set in self.sets.clone() {
+                            if ui.selectable_label(self.model.set == set, &set).clicked() {
+                                self.switch_set(&set);
+                            }
                         }
                     });
-            });
-            // The selected one.
-            let selected = self
-                .model
-                .current()
-                .and_then(|id| loaded.entries.iter().find(|e| e.id == id && e.category == self.category));
-            ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
-                ui.vertical(|ui| {
-                    if let Some(entry) = selected {
-                        self.detail(ui, &loaded, entry);
-                    }
-                });
+                if compact {
+                    egui::ComboBox::from_id_salt("categories")
+                        .selected_text("Categories")
+                        .show_ui(ui, |ui| {
+                            for category in Category::ALL {
+                                if ui
+                                    .selectable_label(self.category == category, category.name())
+                                    .clicked()
+                                {
+                                    self.category = category;
+                                    self.model.selected = 0;
+                                }
+                            }
+                        });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.search)
+                            .hint_text("Search")
+                            .desired_width(120.0),
+                    );
+                }
+                if ui.button("Done").clicked() {
+                    self.model.closed = true;
+                }
             });
         });
-        self.model.closed
+    }
+
+    /// The note box, in a strip under the top bar so it is always on screen.
+    fn note_strip(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        let id = self.model.current().unwrap_or("").to_owned();
+        let Some(note) = self.model.note.as_mut() else {
+            return;
+        };
+        let mut edit_rect = None;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            ui.horizontal(|ui| {
+                ui.label(format!("Note for {id} (Enter saves, Esc cancels)"));
+                let room = (rect.right() - ui.cursor().left()).max(80.0) - 8.0;
+                let edit = ui.add(egui::TextEdit::singleline(note).desired_width(room));
+                edit.request_focus();
+                edit_rect = Some(edit.rect);
+            });
+        });
+        self.report.note = edit_rect;
+    }
+
+    /// The search box, the categories and the key hints.
+    fn category_list(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            ui.vertical(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.search)
+                        .hint_text("Search")
+                        .desired_width(rect.width() - 8.0),
+                );
+                for category in Category::ALL {
+                    if ui
+                        .selectable_label(self.category == category, category.name())
+                        .clicked()
+                    {
+                        self.category = category;
+                        self.model.selected = 0;
+                    }
+                }
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "Arrows move\nEnter enlarges\nB broken, K OK\nU clear, F next flagged\nEsc closes",
+                    )
+                    .small(),
+                );
+            });
+        });
+    }
+
+    /// The thumbnails, scrolled so the selected one stays in view.
+    fn grid(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        loaded: &Arc<Loaded>,
+        visible: &[usize],
+    ) {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            ui.spacing_mut().item_spacing = vec2(GRID_SPACING, GRID_SPACING);
+            let cell = THUMB as f32 + 8.0;
+            let stride = cell + GRID_SPACING;
+            // The room for thumbnails is the grid's width less its scroll bar.
+            let inner = rect.width() - ui.spacing().scroll.allocated_width();
+            let columns = (((inner + GRID_SPACING) / stride) as usize).max(1);
+            self.model.columns = columns;
+            self.report.columns = columns;
+            self.report.grid_inner_width = inner;
+            let rows = visible.len().div_ceil(columns);
+            // Scroll after anything that moves the selection, the category
+            // or the search, a resize, or a reload.
+            let seen = (
+                self.model.selected,
+                visible.len(),
+                self.category,
+                columns,
+                self.search.clone(),
+            );
+            let moved = self.grid_seen.as_ref() != Some(&seen);
+            self.grid_seen = Some(seen);
+            let mut area = egui::ScrollArea::vertical()
+                .id_salt("texture-grid")
+                .max_height(rect.height())
+                .auto_shrink([false, false]);
+            if moved && !visible.is_empty() {
+                let top = (self.model.selected / columns) as f32 * stride;
+                let view = rect.height();
+                let mut offset = self.grid_offset;
+                if top < offset {
+                    offset = top;
+                } else if top + cell > offset + view {
+                    offset = top + cell - view;
+                }
+                area = area.vertical_scroll_offset(offset.max(0.0));
+            }
+            let output = area.show_rows(ui, cell, rows, |ui, range| {
+                for row in range {
+                    ui.horizontal(|ui| {
+                        for col in 0..columns {
+                            let at = row * columns + col;
+                            let Some(&index) = visible.get(at) else { break };
+                            self.thumbnail(ui, &loaded.entries[index], at);
+                        }
+                    });
+                }
+            });
+            self.grid_offset = output.state.clamped_offset().y;
+            self.report.grid_view = Some(output.inner_rect);
+        });
     }
 
     fn thumbnail(&mut self, ui: &mut egui::Ui, entry: &Entry, at: usize) {
@@ -484,6 +636,9 @@ impl Viewer {
         let size = THUMB as f32 + 8.0;
         let (rect, response) = ui.allocate_exact_size(vec2(size, size), egui::Sense::click());
         let selected = at == self.model.selected;
+        if selected {
+            self.report.selected = Some(rect);
+        }
         let painter = ui.painter();
         painter.rect_filled(rect, 2.0, Color32::from_gray(30));
         if selected {
@@ -544,12 +699,94 @@ impl Viewer {
         response.on_hover_text(&entry.id);
     }
 
-    fn detail(&mut self, ui: &mut egui::Ui, loaded: &Arc<Loaded>, entry: &Entry) {
+    /// The right-hand column: the selected one's name, a large view sized
+    /// to the column, its controls, the raw texture and the flags, all in
+    /// a scroll area.
+    fn detail(&mut self, ui: &mut egui::Ui, rect: egui::Rect, loaded: &Arc<Loaded>, entry: &Entry) {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            egui::ScrollArea::vertical()
+                .id_salt("texture-detail")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let width =
+                        (rect.width() - ui.spacing().scroll.allocated_width() - 8.0).max(64.0);
+                    ui.set_max_width(width);
+                    ui.label(RichText::new(&entry.id).color(Color32::WHITE).strong());
+                    ui.label(format!("from: {}", entry.origin));
+                    let side = width.min(rect.height() * 0.55).max(64.0).floor();
+                    self.large_view(ui, loaded, entry, side, 512);
+                    self.controls(ui, entry);
+                    self.raw_texture(ui, loaded, entry, width);
+                    self.flags_and_mark(ui, entry);
+                });
+        });
+    }
+
+    /// Enter: the large view over the grid and the detail column, the
+    /// largest square that fits, with the raw texture beside it if there is
+    /// room and below it (scrolling) if not.
+    fn large_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        loaded: &Arc<Loaded>,
+        entry: &Entry,
+    ) {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            let bar = ui.spacing().scroll.allocated_width();
+            // Title line, then the square.
+            let header = 40.0;
+            let side = (rect.width() - bar)
+                .min(rect.height() - header)
+                .max(64.0)
+                .floor();
+            let beside = rect.width() - side - bar - 16.0 >= RAW_BESIDE_MIN;
+            egui::ScrollArea::both()
+                .id_salt("texture-large")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.label(RichText::new(&entry.id).color(Color32::WHITE).strong());
+                    ui.label(format!("from: {}", entry.origin));
+                    if beside {
+                        ui.horizontal_top(|ui| {
+                            ui.vertical(|ui| {
+                                self.large_view(ui, loaded, entry, side, 1024);
+                            });
+                            ui.vertical(|ui| {
+                                let w = rect.width() - side - bar - 24.0;
+                                ui.set_max_width(w);
+                                self.controls(ui, entry);
+                                self.raw_texture(ui, loaded, entry, w);
+                                self.flags_and_mark(ui, entry);
+                            });
+                        });
+                    } else {
+                        let w = rect.width() - bar - 8.0;
+                        self.large_view(ui, loaded, entry, side.min(w), 1024);
+                        self.controls(ui, entry);
+                        self.raw_texture(ui, loaded, entry, w);
+                        self.flags_and_mark(ui, entry);
+                    }
+                });
+        });
+    }
+
+    /// The 3D view, `side` points square, drawn at that size in physical
+    /// pixels (at most `cap`). Drag rotates; the wheel or a pinch zooms from
+    /// 1× to 8× around the pointer, clipped to the box; a double click
+    /// resets both. Zooming never changes the layout.
+    fn large_view(
+        &mut self,
+        ui: &mut egui::Ui,
+        loaded: &Arc<Loaded>,
+        entry: &Entry,
+        side: f32,
+        cap: u32,
+    ) {
         let ctx = ui.ctx().clone();
-        ui.label(RichText::new(&entry.id).color(Color32::WHITE).strong());
-        ui.label(format!("from: {}", entry.origin));
-        // The large 3D view: drag to rotate.
-        let size = if self.model.large { 480 } else { 256 };
+        let pixels = ((side * ctx.pixels_per_point()).round() as u32).clamp(64, cap);
         let animated = matches!(entry.subject, Subject::Mob { .. }) && self.anim != Anim::Idle;
         let time = self.started.elapsed().as_secs_f32();
         let key = (
@@ -557,7 +794,7 @@ impl Viewer {
             (self.yaw * 100.0) as i32,
             (self.pitch * 100.0) as i32,
             self.anim as u8 + 10 * u8::from(self.company),
-            self.model.large,
+            pixels,
         );
         if animated || self.large_image.as_ref().is_none_or(|(k, _)| *k != key) {
             let image = render_large(
@@ -568,23 +805,57 @@ impl Viewer {
                 self.anim,
                 self.company,
                 time,
-                size,
+                pixels,
             );
             self.large_image = Some((key, upload(&ctx, "large", &image)));
         }
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(side, side), egui::Sense::click_and_drag());
+        self.report.large = Some(rect);
+        if response.double_clicked() {
+            self.zoom = 1.0;
+            self.zoom_at = egui::Vec2::ZERO;
+            self.yaw = View::THREE_QUARTER.yaw;
+            self.pitch = View::THREE_QUARTER.pitch;
+        }
+        let drag = response.drag_delta();
+        self.yaw += drag.x * 0.01;
+        self.pitch = (self.pitch + drag.y * 0.01).clamp(-1.5, 1.5);
+        if response.hovered() {
+            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let factor = (scroll * 0.005).exp() * pinch;
+            if factor != 1.0
+                && let Some(pointer) = response.hover_pos()
+            {
+                let old = self.zoom;
+                let new = (old * factor).clamp(1.0, 8.0);
+                // The picture point under the pointer stays under it.
+                let fraction = (pointer - rect.min) / rect.size();
+                let at = self.zoom_at + fraction / old;
+                self.zoom = new;
+                self.zoom_at = at - fraction / new;
+                let room = 1.0 - 1.0 / new;
+                self.zoom_at = self.zoom_at.clamp(egui::Vec2::ZERO, vec2(room, room));
+            }
+        }
         if let Some((_, texture)) = &self.large_image {
-            let response = ui.add(
-                egui::Image::new((texture.id(), vec2(size as f32, size as f32)))
-                    .sense(egui::Sense::drag()),
+            let size = 1.0 / self.zoom;
+            let uv = egui::Rect::from_min_size(
+                egui::pos2(self.zoom_at.x, self.zoom_at.y),
+                vec2(size, size),
             );
-            let drag = response.drag_delta();
-            self.yaw += drag.x * 0.01;
-            self.pitch = (self.pitch + drag.y * 0.01).clamp(-1.5, 1.5);
+            ui.painter()
+                .with_clip_rect(rect)
+                .image(texture.id(), rect, uv, Color32::WHITE);
         }
         if animated {
             ctx.request_repaint();
         }
-        ui.horizontal(|ui| match entry.subject {
+    }
+
+    /// The animation buttons of a mob or the "next to grass" box of a block.
+    fn controls(&mut self, ui: &mut egui::Ui, entry: &Entry) {
+        ui.horizontal_wrapped(|ui| match entry.subject {
             Subject::Mob { .. } => {
                 for anim in Anim::ALL {
                     if ui
@@ -600,21 +871,33 @@ impl Viewer {
             }
             _ => {}
         });
-        // The raw texture, with the model's UV boxes over it.
-        if let Some(image) = raw_with_boxes(loaded, entry) {
-            let again = self.raw.as_ref().is_none_or(|(id, _)| *id != entry.id);
-            if again {
-                self.raw = Some((entry.id.clone(), upload(&ctx, "raw", &image)));
-            }
-            if let Some((_, t)) = &self.raw {
-                let scale = (200.0 / image.width().max(image.height()) as f32).max(1.0);
-                ui.label(RichText::new("raw texture and UV boxes").small());
-                ui.image((
-                    t.id(),
-                    vec2(image.width() as f32 * scale, image.height() as f32 * scale),
-                ));
-            }
+    }
+
+    /// The raw texture with the model's UV boxes over it, scaled to fit
+    /// `width` by whole numbers where it can (so its pixels stay sharp) and
+    /// never wider than `width`.
+    fn raw_texture(&mut self, ui: &mut egui::Ui, loaded: &Arc<Loaded>, entry: &Entry, width: f32) {
+        let ctx = ui.ctx().clone();
+        let Some(image) = raw_with_boxes(loaded, entry) else {
+            return;
+        };
+        if self.raw.as_ref().is_none_or(|(id, _)| *id != entry.id) {
+            self.raw = Some((entry.id.clone(), upload(&ctx, "raw", &image)));
         }
+        let Some((_, t)) = &self.raw else { return };
+        let longest = image.width().max(image.height()) as f32;
+        let fit = width / longest;
+        let scale = if fit >= 1.0 { fit.floor() } else { fit };
+        ui.label(RichText::new("raw texture and UV boxes").small());
+        let response = ui.image((
+            t.id(),
+            vec2(image.width() as f32 * scale, image.height() as f32 * scale),
+        ));
+        // What shows: the part the scroll area hasn't clipped away.
+        self.report.raw = Some(response.rect.intersect(ui.clip_rect()));
+    }
+
+    fn flags_and_mark(&mut self, ui: &mut egui::Ui, entry: &Entry) {
         for flag in &entry.flags {
             ui.label(
                 RichText::new(format!(
@@ -633,11 +916,73 @@ impl Viewer {
                 mark.verdict, mark.date, mark.note
             ));
         }
-        if let Some(note) = self.model.note.as_mut() {
-            ui.label("Note (Enter saves, Esc cancels):");
-            let edit = ui.add(egui::TextEdit::singleline(note).desired_width(260.0));
-            edit.request_focus();
-        }
+    }
+}
+
+/// Space between thumbnails.
+const GRID_SPACING: f32 = 4.0;
+/// The raw texture goes beside the enlarged view if at least this much
+/// width is left over.
+const RAW_BESIDE_MIN: f32 = 150.0;
+const BAR: f32 = 28.0;
+const GAP: f32 = 8.0;
+
+/// Where each region of the viewer goes inside `avail`, from the room
+/// there is, never from fixed sizes: a top bar; the category list (hidden
+/// behind a dropdown in the top bar when the window is small); a detail
+/// column of about 35% of the width (260 points to half); the grid gets the
+/// rest. Enlarged, the grid and the detail column are one region.
+#[derive(Debug, Clone, Copy)]
+pub struct Regions {
+    pub top: egui::Rect,
+    pub note: Option<egui::Rect>,
+    pub categories: Option<egui::Rect>,
+    pub grid: egui::Rect,
+    pub detail: egui::Rect,
+}
+
+pub fn regions(avail: egui::Rect, enlarged: bool, note: bool) -> Regions {
+    use egui::{Rect, pos2};
+    let compact = avail.width() < 700.0 || avail.height() < 300.0;
+    let top_h = if compact { BAR * 2.0 } else { BAR };
+    let top = Rect::from_min_size(avail.min, vec2(avail.width(), top_h.min(avail.height())));
+    let mut y = top.bottom() + 4.0;
+    let note_rect = note.then(|| {
+        let r = Rect::from_min_size(pos2(avail.left(), y), vec2(avail.width(), BAR));
+        y = r.bottom() + 4.0;
+        r
+    });
+    let body = Rect::from_min_max(pos2(avail.left(), y.min(avail.bottom())), avail.max);
+    let cat_w = if compact {
+        0.0
+    } else if avail.width() < 900.0 {
+        110.0
+    } else {
+        160.0
+    };
+    let categories = (!compact).then(|| Rect::from_min_size(body.min, vec2(cat_w, body.height())));
+    let left = body.left() + if compact { 0.0 } else { cat_w + GAP };
+    let rest = Rect::from_min_max(pos2(left.min(body.right()), body.top()), body.max);
+    let detail_w = (avail.width() * 0.35)
+        .clamp(260.0, (avail.width() * 0.5).max(260.0))
+        .min(rest.width() * 0.6);
+    let grid = Rect::from_min_max(rest.min, pos2(rest.right() - detail_w - GAP, rest.bottom()));
+    let detail = Rect::from_min_max(pos2(rest.right() - detail_w, rest.top()), rest.max);
+    if enlarged {
+        return Regions {
+            top,
+            note: note_rect,
+            categories,
+            grid: rest,
+            detail: rest,
+        };
+    }
+    Regions {
+        top,
+        note: note_rect,
+        categories,
+        grid,
+        detail,
     }
 }
 
@@ -648,12 +993,7 @@ impl Default for Viewer {
 }
 
 fn upload(ctx: &egui::Context, name: &str, image: &RgbaImage) -> TextureHandle {
-    let size = [image.width() as usize, image.height() as usize];
-    ctx.load_texture(
-        name.to_owned(),
-        egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
-        TextureOptions::NEAREST,
-    )
+    crate::startup::load_egui(ctx, name, image, TextureOptions::NEAREST)
 }
 
 /// The large view of `entry`.
@@ -868,7 +1208,7 @@ mod tests {
         viewer.model.set_path(dir.path().join("texture-marks.ron"));
         let ctx = egui::Context::default();
         let frame = |viewer: &mut Viewer| {
-            let _ = ctx.run_ui(
+            let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -880,6 +1220,7 @@ mod tests {
                     viewer.show(ui);
                 },
             );
+            out.textures_delta.clear();
         };
         let started = std::time::Instant::now();
         while viewer.loaded_in.is_none() {
@@ -905,5 +1246,243 @@ mod tests {
         frame(&mut viewer);
         assert_eq!(viewer.model.marks.counts("vanilla"), (1, 0));
         assert!(viewer.large_image.is_some() && viewer.raw.is_some());
+    }
+
+    const SIZES: [(f32, f32); 5] = [
+        (854.0, 480.0),
+        (1280.0, 720.0),
+        (1440.0, 900.0),
+        (1512.0, 982.0),
+        (1920.0, 1080.0),
+    ];
+
+    /// A viewer in a host (the title menu or the pause menu) that can be
+    /// drawn headless.
+    struct Host {
+        title: bool,
+        ctx: egui::Context,
+        menu: crate::ui::menu::Menu,
+        pause: crate::ui::pause::PauseMenu,
+        options: crate::options::Options,
+        difficulty: crate::level::Difficulty,
+        _dir: crate::world::save::TempDir,
+    }
+
+    impl Host {
+        fn new(title: bool) -> Self {
+            let dir = crate::world::save::TempDir::new("viewer-host");
+            let mut menu = crate::ui::menu::Menu::new(dir.path().join("saves"));
+            let mut pause = crate::ui::pause::PauseMenu::default();
+            if title {
+                menu.open_texture_viewer();
+            } else {
+                pause.viewer = Some(Box::default());
+            }
+            let mut host = Self {
+                title,
+                ctx: egui::Context::default(),
+                menu,
+                pause,
+                options: crate::options::Options::default(),
+                difficulty: crate::level::Difficulty::default(),
+                _dir: dir,
+            };
+            let path = host._dir.path().join("texture-marks.ron");
+            host.viewer().model.set_path(path);
+            let started = std::time::Instant::now();
+            while host.viewer().loaded_in.is_none() {
+                host.frame(vec2(1280.0, 720.0), 1.0);
+                assert!(started.elapsed().as_secs() < 90, "never loaded");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            host
+        }
+
+        fn viewer(&mut self) -> &mut Viewer {
+            if self.title {
+                self.menu.viewer_mut().unwrap()
+            } else {
+                self.pause.viewer_mut().unwrap()
+            }
+        }
+
+        /// One frame at `size` points and `ppp` pixels per point.
+        fn frame(&mut self, size: egui::Vec2, ppp: f32) {
+            self.ctx.set_pixels_per_point(ppp);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut out = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    if self.title {
+                        self.menu.show(ui, &mut self.options);
+                    } else {
+                        self.pause
+                            .show(ui.ctx(), &mut self.options, &mut self.difficulty);
+                    }
+                },
+            );
+            out.textures_delta.clear();
+        }
+
+        fn frames(&mut self, size: egui::Vec2, ppp: f32) {
+            for _ in 0..3 {
+                self.frame(size, ppp);
+            }
+        }
+    }
+
+    /// Draws the viewer in each host at each size and scale, a mob
+    /// selected, normal, with the note box open and enlarged, and returns
+    /// what is wrong: any region off the screen, or a grid whose columns
+    /// don't fill its width.
+    fn layout_report(print: bool) -> Vec<String> {
+        let mut bad = Vec::new();
+        for title in [true, false] {
+            let mut host = Host::new(title);
+            let name = if title { "title" } else { "pause" };
+            for ppp in [1.0f32, 2.0] {
+                for (w, h) in SIZES {
+                    let size = vec2(w, h);
+                    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                    for state in ["normal", "note", "enlarged"] {
+                        let v = host.viewer();
+                        v.model.large = false;
+                        v.model.note = None;
+                        v.focus(Category::Mobs, "pig");
+                        host.frames(size, ppp);
+                        let v = host.viewer();
+                        match state {
+                            "note" => v.model.key(Key::B),
+                            "enlarged" => v.model.key(Key::Enter),
+                            _ => {}
+                        }
+                        host.frames(size, ppp);
+                        let r = host.viewer().report.clone();
+                        let label = format!("{name} {w}x{h} @{ppp} {state}");
+                        let mut line = format!("{label}:");
+                        let wants_note = state == "note";
+                        for (region, rect) in [
+                            ("categories", r.categories),
+                            ("grid", r.grid),
+                            ("large", r.large),
+                            ("raw", r.raw),
+                            ("note", r.note),
+                        ] {
+                            let Some(rect) = rect else {
+                                let expected = match region {
+                                    "note" => wants_note,
+                                    "grid" => state != "enlarged",
+                                    "categories" => false,
+                                    _ => true,
+                                };
+                                if expected {
+                                    line += &format!(" {region}=MISSING");
+                                    bad.push(format!("{label}: {region} missing"));
+                                }
+                                continue;
+                            };
+                            let inside = screen.contains_rect(rect.shrink(0.5));
+                            line += &format!(
+                                " {region}=r{:.0}/b{:.0}{}",
+                                rect.right(),
+                                rect.bottom(),
+                                if inside { "" } else { " OUT" }
+                            );
+                            if !inside {
+                                bad.push(format!("{label}: {region} {rect:?} outside {screen:?}"));
+                            }
+                        }
+                        if let (Some(grid), "normal") = (r.grid, state) {
+                            let stride = THUMB as f32 + 8.0 + 4.0;
+                            let fit = ((r.grid_inner_width + 4.0) / stride) as usize;
+                            line += &format!(" columns={} (fit {fit})", r.columns);
+                            if r.columns != fit.max(1)
+                                || r.columns as f32 * stride - 4.0 > grid.width()
+                            {
+                                bad.push(format!(
+                                    "{label}: {} columns don't fill the grid",
+                                    r.columns
+                                ));
+                            }
+                        }
+                        if print {
+                            println!("{line}");
+                        }
+                    }
+                }
+            }
+        }
+        bad
+    }
+
+    /// Arrows to the last entry leave its thumbnail inside the grid.
+    #[test]
+    fn the_selected_thumbnail_stays_in_the_grid_after_arrows() {
+        if !crate::assets::dir()
+            .join("vanilla/assets/minecraft")
+            .is_dir()
+        {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let mut host = Host::new(true);
+        let size = vec2(1280.0, 720.0);
+        host.viewer().focus(Category::Blocks, "");
+        host.frames(size, 2.0);
+        let last = host.viewer().model.items.len() - 1;
+        assert!(last > 100, "a long list to scroll");
+        let columns = host.viewer().model.columns;
+        // Down to the last row, one frame per key, then to the end.
+        while host.viewer().model.selected + columns <= last {
+            host.viewer().model.key(Key::Down);
+            host.frame(size, 2.0);
+            check_selected_visible(&mut host);
+        }
+        while host.viewer().model.selected < last {
+            host.viewer().model.key(Key::Right);
+            host.frame(size, 2.0);
+        }
+        host.frames(size, 2.0);
+        assert_eq!(host.viewer().model.selected, last);
+        check_selected_visible(&mut host);
+        // And back up with F and Up.
+        while host.viewer().model.selected >= columns {
+            host.viewer().model.key(Key::Up);
+            host.frame(size, 2.0);
+        }
+        host.frames(size, 2.0);
+        check_selected_visible(&mut host);
+    }
+
+    fn check_selected_visible(host: &mut Host) {
+        let r = host.viewer().report.clone();
+        let (Some(selected), Some(view)) = (r.selected, r.grid_view) else {
+            panic!("the selected thumbnail wasn't drawn: {r:?}");
+        };
+        assert!(
+            view.contains_rect(selected.shrink(0.5)),
+            "selected {selected:?} not inside the grid {view:?}"
+        );
+    }
+
+    #[test]
+    fn every_region_is_on_screen_at_every_size() {
+        if !crate::assets::dir()
+            .join("vanilla/assets/minecraft")
+            .is_dir()
+        {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let bad = layout_report(true);
+        assert!(
+            bad.is_empty(),
+            "{} regions off screen:\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
     }
 }
