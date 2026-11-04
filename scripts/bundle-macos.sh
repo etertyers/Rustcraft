@@ -6,8 +6,13 @@
 #   scripts/bundle-macos.sh            # → target/release/bundle/Rustcraft.app
 #   scripts/bundle-macos.sh <out dir>  # → <out dir>/Rustcraft.app
 #
-# Needs only the Rust toolchain and tools every Mac has (qlmanage, sips,
-# iconutil, codesign).
+# Refuses to build when assets/vanilla lacks sounds, the font or textures
+# (scripts/check-vanilla.sh), warns when the packs or mod jars in
+# assets/downloads are missing (scripts/check-downloads.sh), and checks the
+# finished app against its sources (scripts/check-bundle.sh).
+#
+# Needs only the Rust toolchain, python3 and tools every Mac has (qlmanage,
+# sips, iconutil, codesign).
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -15,6 +20,16 @@ ICON_SVG=assets/rustcraft-app-icon-v1.svg
 OUT=${1:-target/release/bundle}
 APP="$OUT/Rustcraft.app"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+
+# A silent app is worse than no app: stop here if the vanilla layer is
+# incomplete.
+if ! scripts/check-vanilla.sh assets; then
+    echo "not building: complete assets/vanilla with scripts/fetch-vanilla-assets.sh first" >&2
+    exit 1
+fi
+if ! scripts/check-downloads.sh assets/downloads; then
+    echo "warning: building without the downloads listed above (Kenzo's packs and mod jars)" >&2
+fi
 
 cargo build --release
 
@@ -83,3 +98,4 @@ EOF
 # "damaged" warning once built here.
 codesign --force --sign - "$APP" >/dev/null 2>&1
 echo "built $APP"
+scripts/check-bundle.sh "$APP" assets

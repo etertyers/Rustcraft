@@ -16,7 +16,15 @@ fn main() -> Result<()> {
     }
     // Prints what the asset layers cover: textures and sounds still missing.
     if std::env::args().any(|arg| arg == "--asset-report") {
-        print!("{}", rustcraft::assets::report(&rustcraft::assets::dir())?);
+        let report = rustcraft::assets::report(&rustcraft::assets::dir())?;
+        print!("{}", report.text);
+        // `--exit`: a failing status when the build is incomplete.
+        if std::env::args().any(|arg| arg == "--exit") && !report.problems.is_empty() {
+            for problem in &report.problems {
+                eprintln!("asset problem: {problem}");
+            }
+            std::process::exit(1);
+        }
         return Ok(());
     }
     // Rewrites the placeholder blocks and items from vanilla's data in

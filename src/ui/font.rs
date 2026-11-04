@@ -428,6 +428,21 @@ fn sfnt(tables: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
 /// the text styles in whole multiples of the font's 8 pixels.
 pub fn install(ctx: &egui::Context, res: &Resources) {
     let glyphs = load(res);
+    if !has_glyphs(&glyphs) {
+        // No layer has a bitmap font (a build without assets/vanilla):
+        // keep egui's own so no text is ever invisible.
+        warn!("font: no bitmap font in any layer, drawing text with egui's built-in font");
+        let mut fonts = FontDefinitions::default();
+        let own = fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default();
+        fonts.families.insert(FontFamily::Name(BOLD.into()), own);
+        ctx.set_fonts(fonts);
+        size_text_styles(ctx);
+        return;
+    }
     info!("font: {} glyphs", glyphs.len());
     let tweak = FontTweak {
         hinting: Some(false),
@@ -456,6 +471,16 @@ pub fn install(ctx: &egui::Context, res: &Resources) {
     bold.extend(fallbacks);
     fonts.families.insert(FontFamily::Name(BOLD.into()), bold);
     ctx.set_fonts(fonts);
+    size_text_styles(ctx);
+}
+
+/// Whether `glyphs` holds anything to draw besides the space.
+pub fn has_glyphs(glyphs: &BTreeMap<char, Glyph>) -> bool {
+    glyphs.keys().any(|&ch| ch != ' ')
+}
+
+/// Sizes the text styles in whole multiples of the font's 8 pixels.
+fn size_text_styles(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         for (text_style, size) in [
             (TextStyle::Small, 8.0),
@@ -600,6 +625,29 @@ pub fn shadowed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn without_a_bitmap_font_text_falls_back_to_egui_and_bold_still_exists() {
+        // A layer stack with nothing in it: no default.json, no ascii.png.
+        let dir = crate::world::save::TempDir::new("no-font");
+        std::fs::create_dir_all(dir.path().join("data")).unwrap();
+        std::fs::write(dir.path().join("data/texture_names.ron"), "{}").unwrap();
+        let res = Resources::load_with(dir.path(), Vec::new(), false).unwrap();
+        let glyphs = load(&res);
+        assert!(!has_glyphs(&glyphs), "{} glyphs", glyphs.len());
+        let ctx = egui::Context::default();
+        install(&ctx, &res);
+        // Bold text must not panic, and must lay out real glyphs.
+        let mut width = 0.0;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let label = ui.label(
+                egui::RichText::new("Singleplayer")
+                    .font(FontId::new(16.0, FontFamily::Name(BOLD.into()))),
+            );
+            width = label.rect.width();
+        });
+        assert!(width > 20.0, "text has width {width}");
+    }
 
     /// A sheet of 16 × 16 cells of 8 pixels with an "A" 5 wide and an "i"
     /// 1 wide where ASCII puts them.

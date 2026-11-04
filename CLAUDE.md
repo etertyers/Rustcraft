@@ -70,11 +70,12 @@ cargo run --release -- --help        # every flag (note the `--`: without it car
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end, --underwater,
 #   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>],
-#   --name <player>, --join <ip:port>, --lan [port], --lan-test <n>, --help
+#   --name <player>, --join <ip:port>, --lan [port], --lan-test <n>, --assets <dir>, --help
 # Tools (usage text in --help): --spawn-test, --flower-test, --structure-test, --nether-map, --cave-test,
 #   --cave-openings, --cave-slice, --write-structures, --asset-report, --gen-placeholders
 cargo run --release -- --spawn-test --seed 12345   # one night in plains, prints monster and animal counts every 1,000 ticks
-scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
+scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg); refuses an incomplete assets/vanilla, then runs scripts/check-bundle.sh
+scripts/check-vanilla.sh       # is assets/vanilla complete (sounds, font, textures)?   scripts/check-downloads.sh   # are Kenzo's 5 packs and 9 mod jars in assets/downloads/?
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
 ```
 
@@ -95,7 +96,7 @@ Module map (`src/` unless noted). The full file list is `docs/architecture.md`; 
 main.rs, lib.rs, app.rs   # entry (flags and tools), the library the benches use, the winit loop and State
 cli.rs, bench.rs, shots.rs, lantest.rs   # flags and usage text; --bench; --shot scenes; --lan-test bots
 config.rs            # every constant: chunk size, world height, render distance, physics, combat
-assets.rs, options.rs, level.rs, worldlist.rs   # where assets and saves live; options.ron; a world folder's level.ron; the Select World list
+assets.rs, options.rs, level.rs, worldlist.rs   # the asset root (--assets, else the .app's Resources, else the repo; never the current folder), the asset report; where saves live; options.ron; a world folder's level.ron; the Select World list
 world/               # blocks, chunks, light, meshing, fluids, saves, redstone, pistons, dimensions, portals
   block.rs, blocks.rs, props.rs   # the registry, generated ID constants, block state properties
   chunk.rs, light.rs, mesh.rs, manager.rs   # 16x16x16 sections, light, chunk to vertices, load/unload and workers

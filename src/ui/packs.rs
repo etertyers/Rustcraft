@@ -28,6 +28,8 @@ struct Entry {
     name: String,
     description: String,
     compatibility: Compatibility,
+    /// From `assets/downloads/resourcepacks/`: can't be deleted.
+    builtin: bool,
     /// `pack.png`, decoded when first drawn.
     icon: Option<Vec<u8>>,
     texture: Option<TextureHandle>,
@@ -39,6 +41,7 @@ impl Entry {
             name: pack.name().to_owned(),
             description: pack.info.description.clone(),
             compatibility: pack.info.compatibility(),
+            builtin: pack.builtin,
             icon: pack.icon,
             id: pack.id,
             texture: None,
@@ -48,6 +51,8 @@ impl Entry {
 
 pub struct PackScreen {
     dir: PathBuf,
+    /// The built-in packs' folder, listed with `dir`'s.
+    builtin_dir: Option<PathBuf>,
     available: Vec<Entry>,
     /// Highest priority first.
     selected: Vec<Entry>,
@@ -64,6 +69,7 @@ impl PackScreen {
     pub fn new(dir: PathBuf, enabled: &[String]) -> Self {
         let mut screen = Self {
             dir,
+            builtin_dir: None,
             available: Vec::new(),
             selected: Vec::new(),
             scanned: None,
@@ -72,6 +78,13 @@ impl PackScreen {
         };
         screen.rescan(enabled);
         screen
+    }
+
+    /// Lists the packs in `dir` too, marked "Built in".
+    pub fn with_builtin(mut self, dir: PathBuf, enabled: &[String]) -> Self {
+        self.builtin_dir = Some(dir);
+        self.rescan(enabled);
+        self
     }
 
     /// Says which look's list is being edited.
@@ -83,7 +96,11 @@ impl PackScreen {
     /// Reads the folder again, keeping the current selection and order.
     fn rescan(&mut self, enabled: &[String]) {
         self.scanned = modified(&self.dir);
-        let mut packs: Vec<Entry> = pack::list(&self.dir).into_iter().map(Entry::of).collect();
+        let found = match &self.builtin_dir {
+            Some(builtin) => pack::list_with_builtin(&self.dir, builtin),
+            None => pack::list(&self.dir),
+        };
+        let mut packs: Vec<Entry> = found.into_iter().map(Entry::of).collect();
         self.selected = enabled
             .iter()
             .filter_map(|id| {
@@ -274,7 +291,12 @@ fn row(ui: &mut egui::Ui, entry: &mut Entry, buttons: &[(&str, Click)], click: &
             }
         }
         ui.vertical(|ui| {
-            ui.label(RichText::new(&entry.name).color(Color32::WHITE));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&entry.name).color(Color32::WHITE));
+                if entry.builtin {
+                    ui.label(RichText::new("Built in").small().color(GRAY));
+                }
+            });
             let first_line = entry.description.lines().next().unwrap_or_default();
             ui.label(RichText::new(first_line).small().color(GRAY));
             match entry.compatibility {
