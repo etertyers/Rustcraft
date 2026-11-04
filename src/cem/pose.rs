@@ -53,7 +53,14 @@ impl Runtime {
     fn rest(&mut self, model: &CemModel) {
         self.parts.clear();
         self.parts.extend(model.parts.iter().map(|p| PartState {
-            translate: p.translate,
+            // A top-level part's animated translate is an offset on its
+            // own (the part keeps its file translate as its place, added in
+            // `matrices`); a child's is its whole offset from its parent.
+            translate: if p.parent.is_none() {
+                [0.0; 3]
+            } else {
+                p.translate
+            },
             rotate: p.rotate,
             scale: p.scale,
             visible: p.visible,
@@ -142,9 +149,14 @@ impl Runtime {
             };
             out.push(parent.filter(|_| state.visible).map(|parent| {
                 let [rx, ry, rz] = state.rotate;
+                let place = if model.parts[i].parent.is_none() {
+                    Vec3::from(model.parts[i].translate)
+                } else {
+                    Vec3::ZERO
+                };
                 // Turned about z, then y, then x, like vanilla's parts.
                 parent
-                    * Mat4::from_translation(Vec3::from(state.translate))
+                    * Mat4::from_translation(Vec3::from(state.translate) + place)
                     * Mat4::from_rotation_z(rz)
                     * Mat4::from_rotation_y(ry)
                     * Mat4::from_rotation_x(rx)
@@ -446,5 +458,114 @@ mod tests {
         assert_eq!(run(7), run(7), "the same mob gets the same numbers");
         assert_ne!(run(7), run(8));
         assert!(run(7).iter().all(|v| (0.0..1.0).contains(v)));
+    }
+
+    /// A top-level part's animated translate is an offset from its file
+    /// translate; a child's is its whole offset from its parent. Fresh
+    /// Animations' pig: the body's `ty` of 16 on a file translate of -8
+    /// puts it at 24 (the ground), and the head's -12 under it at 12, where
+    /// vanilla's pig head pivots.
+    #[test]
+    fn a_top_level_parts_animation_adds_to_its_place_and_a_childs_replaces_its_own() {
+        let model = model::parse(
+            r#"{"textureSize": [64, 64], "models": [
+                {"part": "body", "id": "body", "invertAxis": "xy", "translate": [0, -8, 0],
+                 "animations": [{"body.ty": "16"}],
+                 "submodels": [
+                   {"id": "head2", "invertAxis": "xy", "translate": [0, 12, -6],
+                    "animations": [{"head2.ty": "-12"}],
+                    "boxes": [{"coordinates": [-4, -4, -8, 8, 8, 8], "textureOffset": [0, 0]}]}]},
+                {"part": "leg1", "id": "leg1", "invertAxis": "xy", "translate": [-3, 0, -7],
+                 "animations": [{"leg1.tx": "-3.2", "leg1.ty": "24", "leg1.tz": "7"}]}
+            ]}"#,
+            &|_| None,
+            &mut |_| {},
+        )
+        .unwrap();
+        let mut runtime = Runtime::new(&model, 1);
+        runtime.animate(&model, &EntityVars::default());
+        let at = |i: usize| {
+            runtime.matrices(&model)[i]
+                .unwrap()
+                .transform_point3(Vec3::ZERO)
+        };
+        assert!(
+            (at(0) - Vec3::new(0.0, 24.0, 0.0)).length() < 1e-4,
+            "body {}",
+            at(0)
+        );
+        assert!(
+            (at(1) - Vec3::new(0.0, 12.0, -6.0)).length() < 1e-4,
+            "head {}",
+            at(1)
+        );
+        // Unanimated, a top-level part sits at its file translate.
+        let rest = Runtime::new(&model, 1).matrices(&model)[0]
+            .unwrap()
+            .transform_point3(Vec3::ZERO);
+        assert!((rest - Vec3::new(0.0, 8.0, 0.0)).length() < 1e-4, "{rest}");
+        // The leg's offset lands on the file translate (3, 0, -7) too.
+        assert!(
+            (at(2) - Vec3::new(-0.2, 24.0, 0.0)).length() < 1e-4,
+            "leg {}",
+            at(2)
+        );
+    }
+
+    /// Prints a real pack's mob at rest and animated (run by hand).
+    #[test]
+    #[ignore]
+    fn dump_pack_mob() {
+        let (Ok(pack), Ok(name)) = (std::env::var("CEM_PACK"), std::env::var("CEM_MOB")) else {
+            return;
+        };
+        let file = std::fs::File::open(&pack).unwrap();
+        let mut zip = zip::ZipArchive::new(file).unwrap();
+        let names: Vec<String> = zip
+            .file_names()
+            .filter_map(Result::ok)
+            .map(|n| n.to_string())
+            .collect();
+        let mut read = |path: &str| {
+            use std::io::Read;
+            let mut text = String::new();
+            zip.by_name(&format!("assets/minecraft/{path}"))
+                .ok()?
+                .read_to_string(&mut text)
+                .ok()?;
+            Some(text)
+        };
+        let text = read(&format!("optifine/cem/{name}.jem")).unwrap();
+        let mut files = std::collections::HashMap::new();
+        for n in names.iter().filter(|n| n.ends_with(".jpm")) {
+            let rel = n.trim_start_matches("assets/minecraft/optifine/cem/");
+            if let Some(t) = read(&format!("optifine/cem/{rel}")) {
+                files.insert(rel.to_owned(), t);
+            }
+        }
+        let model = model::parse(&text, &|p| files.get(p).cloned(), &mut |l| {
+            println!("log: {l}")
+        })
+        .unwrap();
+        println!(
+            "texture {:?} size {:?} unknown {:?}",
+            model.texture, model.texture_size, model.unknown
+        );
+        let mut runtime = Runtime::new(&model, 1);
+        let rest = runtime.matrices(&model);
+        runtime.animate(&model, &EntityVars::default());
+        let posed = runtime.matrices(&model);
+        for (i, part) in model.parts.iter().enumerate() {
+            let at = |m: &Option<Mat4>| m.map(|m| m.transform_point3(Vec3::ZERO));
+            println!(
+                "{:2} {:28} parent {:?} rest {:?} anim {:?} boxes {}",
+                i,
+                part.name,
+                part.parent,
+                at(&rest[i]),
+                at(&posed[i]),
+                part.boxes.len()
+            );
+        }
     }
 }

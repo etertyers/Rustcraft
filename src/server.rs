@@ -1568,6 +1568,60 @@ mod tests {
         );
     }
 
+    /// Alice right-clicks the ground with a pig egg: the server spawns the
+    /// pig (one egg gone in survival) and both clients see the same pig.
+    #[test]
+    fn a_spawn_egg_spawns_its_mob_on_the_server_and_both_clients_see_it() {
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2
+                && c.iter().all(|(client, game)| {
+                    client.welcomed && block_at(game, IVec3::new(3, 63, 3)).is_some()
+                })
+        });
+        let pig = server.game.mob_defs().find("pig").unwrap();
+        server.game.with_player(0, |game| {
+            game.fly_to(DVec3::new(3.5, 64.0, 3.5));
+            game.player.mode = crate::player::mode::GameMode::Survival;
+            let egg = items::by_name("pig_spawn_egg").unwrap();
+            game.player
+                .inventory
+                .set(game.player.inventory.selected, Some(ItemStack::new(egg, 2)));
+        });
+        clients[0].1.player.camera.pitch = -1.2;
+        for pressed in [true, false] {
+            clients[0].0.send(ClientMsg::Action {
+                action: Action::Use,
+                pressed,
+                repeat: false,
+                grabbed: true,
+            });
+        }
+        let pigs = |game: &Game| game.mobs.iter().filter(|m| m.kind == pig).count();
+        run_until(&mut server, &mut clients, |s, c| {
+            pigs(&s.game) == 1 && c.iter().all(|(_, game)| pigs(game) == 1)
+        });
+        // The same pig, where the server put it, in front of the clicked face.
+        let at = server
+            .game
+            .mobs
+            .iter()
+            .find(|m| m.kind == pig)
+            .unwrap()
+            .feet();
+        for (_, game) in &clients {
+            let seen = game.mobs.iter().find(|m| m.kind == pig).unwrap().feet();
+            assert!((seen - at).length() < 0.5, "{seen} against {at}");
+        }
+        let left = server.game.with_player(0, |game| {
+            game.player
+                .inventory
+                .slot(game.player.inventory.selected)
+                .map_or(0, |s| s.count)
+        });
+        assert_eq!(left, 1, "one egg used in survival");
+    }
+
     #[test]
     fn two_lan_players_fish_side_by_side_and_both_see_both_bobbers() {
         let (mut server, mut clients) = world_with(&["Alice", "Bob"]);

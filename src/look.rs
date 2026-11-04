@@ -295,11 +295,25 @@ impl Look {
         let mob_names: Vec<&str> = mobs.iter().map(|(_, def)| def.name.as_str()).collect();
         let cem = crate::cem::Registry::load(&|path| res.bytes(path), &mob_names);
         for (name, model) in &cem.models {
-            let (Some(kind), Some(path)) = (mobs.find(name), &model.texture) else {
+            let Some(kind) = mobs.find(name) else {
                 continue;
             };
-            if let Some(image) = cem_texture(&res, path) {
-                mob_textures[mobs.texture_slot(kind, 0)] = image;
+            match &model.texture {
+                Some(path) => {
+                    if let Some(image) = cem_texture(&res, path) {
+                        mob_textures[mobs.texture_slot(kind, 0)] = image;
+                    }
+                }
+                // No texture of its own: the mob's usual one, but the one
+                // that fits this model's UVs (the pack's `textureSize`, not
+                // the size the built-in boxes declare).
+                None if !model.baby => {
+                    let size = (model.texture_size.0 as u32, model.texture_size.1 as u32);
+                    if let Some(image) = mob_texture(&res, &mobs.get(kind).texture, Some(size)) {
+                        mob_textures[mobs.texture_slot(kind, 0)] = image;
+                    }
+                }
+                None => {}
             }
         }
         mob_textures.push(armor_sheet(&res));
@@ -373,9 +387,11 @@ pub fn mob_texture(res: &Resources, name: &str, size: Option<(u32, u32)>) -> Opt
     // size (an older layout is a different size), a pack's may be any
     // multiple of it (an HD pack).
     let fits = |layer: usize, dims: (u32, u32)| {
-        if layer == res.vanilla_layer() || layer == 0 {
+        if layer == 0 {
             dims == found
         } else {
+            // A pack's or vanilla's may be any whole multiple (an HD pack,
+            // vanilla's ghast at twice its old size): same shape.
             dims.0 * found.1 == dims.1 * found.0
         }
     };
@@ -703,5 +719,92 @@ mod tests {
         let dir = crate::world::save::TempDir::new("open-packs");
         let packs = open_packs(dir.path(), &["gone.zip".to_owned()]);
         assert!(packs.is_empty());
+    }
+
+    fn png(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
+        let image = RgbaImage::from_pixel(width, height, image::Rgba(color));
+        let mut bytes = Vec::new();
+        image
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    }
+
+    /// A custom model without a texture of its own gets the mob's texture
+    /// that fits the model's `textureSize` (Fresh Animations' pig is 64×64
+    /// where the built-in boxes declared 64×32, so its texture used to be
+    /// refused and an older, wrong-sized one drawn).
+    #[test]
+    fn a_custom_model_gets_the_texture_that_fits_its_texture_size() {
+        use crate::pack::tests::{MCMETA, write_zip};
+        let dir = crate::world::save::TempDir::new("cem-texture-size");
+        let zip = dir.path().join("fa.zip");
+        write_zip(
+            &zip,
+            &[
+                ("pack.mcmeta", MCMETA),
+                (
+                    "assets/minecraft/optifine/cem/pig.jem",
+                    br#"{"textureSize": [128, 64], "models": [{"part": "body", "id": "body", "boxes": [{"coordinates": [-4, -4, -4, 8, 8, 8], "textureOffset": [0, 0]}]}]}"#,
+                ),
+                (
+                    "assets/minecraft/textures/entity/pig/pig_temperate.png",
+                    &png(128, 64, [200, 100, 100, 255]),
+                ),
+            ],
+        );
+        let mobs = mobs();
+        let look = Look::build(
+            &crate::assets::dir(),
+            vec![Pack::open(&zip).unwrap()],
+            &mobs,
+        )
+        .unwrap();
+        let pig = mobs.find("pig").unwrap();
+        let texture = &look.mob_textures[mobs.texture_slot(pig, 0)];
+        assert_eq!(texture.dimensions(), (128, 64));
+        assert_eq!(texture.get_pixel(3, 3).0, [200, 100, 100, 255]);
+    }
+
+    /// 26.3's pig and cow keep their old layout in the top half of a 64×64
+    /// canvas, and the bee is 64×64: the declared sizes are those, so the
+    /// vanilla file (not an older one from Rustcraft's own textures) is used.
+    #[test]
+    fn mobs_whose_canvas_grew_declare_it_and_use_the_vanilla_file() {
+        let assets = crate::assets::dir();
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let mobs = mobs();
+        let look = Look::build(&assets, Vec::new(), &mobs).unwrap();
+        for name in ["pig", "cow", "bee"] {
+            let kind = mobs.find(name).unwrap();
+            let texture = &look.mob_textures[mobs.texture_slot(kind, 0)];
+            assert_eq!(texture.dimensions(), (64, 64), "{name}");
+        }
+    }
+
+    /// Every mob's textures (and its variants' and layers') are in the
+    /// vanilla layer under 26.3's names, found through the name table, so a
+    /// build that has only the vanilla layer draws every mob.
+    #[test]
+    fn every_mob_texture_resolves_in_the_vanilla_layer_alone() {
+        let assets = crate::assets::dir();
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let res = Resources::load(&assets, Vec::new()).unwrap();
+        let mobs = mobs();
+        let missing: Vec<&str> = mobs
+            .textures()
+            .into_iter()
+            .filter(|name| res.texture_in(res.vanilla_layer(), name).is_none())
+            .collect();
+        assert!(missing.is_empty(), "not in vanilla: {missing:?}");
     }
 }

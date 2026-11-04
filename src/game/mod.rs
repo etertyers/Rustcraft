@@ -66,6 +66,7 @@ pub mod selector;
 mod shulkers;
 mod sleep;
 mod sounds;
+mod spawn_eggs;
 pub mod spawn_test;
 mod spawners;
 pub mod sync;

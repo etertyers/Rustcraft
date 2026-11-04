@@ -154,6 +154,11 @@ pub fn transparent_parts(mesh: &Mesh, texture: &RgbaImage, limit: f32) -> Vec<(u
                 ts.clone().fold(f32::MAX, f32::min),
                 ts.fold(f32::MIN, f32::max),
             );
+            // A face with no area (the wide side of a zero-thick box, like
+            // a bee's wing) isn't drawn: nothing to check.
+            if (u1 - u0) * w < 0.5 || (t1 - t0) * h < 0.5 {
+                continue;
+            }
             // A 6×6 grid of samples inside the face's UV rectangle.
             for j in 0..6 {
                 for i in 0..6 {
@@ -356,6 +361,19 @@ mod tests {
         assert_eq!(flagged.len(), 1);
         assert_eq!(flagged[0].0, 0);
         assert!(flagged[0].1 > 0.99);
+    }
+
+    #[test]
+    fn a_zero_thick_boxs_flat_faces_are_not_checked() {
+        // A wing: 9 wide, 6 deep, no thickness, on a texture that is clear
+        // along its edge rows. The edge faces have no UV area.
+        let texture = RgbaImage::from_pixel(32, 32, Rgba([0, 0, 0, 0]));
+        let mut uvs = Vec::new();
+        for _ in 0..6 {
+            // each face: a 9×0 strip
+            uvs.extend([[0.0, 0.5], [0.28, 0.5], [0.28, 0.5], [0.0, 0.5]]);
+        }
+        assert!(transparent_parts(&mesh_with_uvs(&uvs), &texture, 0.5).is_empty());
     }
 
     #[test]
