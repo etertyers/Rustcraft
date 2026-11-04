@@ -66,6 +66,8 @@ cargo bench                    # chunk generation, lighting, meshing and fluid b
 cargo run --release -- --end         # an unsaved test world in the End, dragon circling (also --nether)
 cargo run --release -- --creative    # a new creative world "Creative test", opened without the menu
 cargo run --release -- --world <name> [--creative] [--seed <n>]   # open that saved world, or create it
+cargo run --release -- --texture-audit [--mode vanilla|barebones|realistic]   # contact sheets + report in target/texture-audit/<mode>/ (git-ignored)
+cargo run --release -- --texture-viewer   # check textures by eye: B broken, K OK, U clear, F next flagged; marks go to texture-marks.ron (--texture-marks prints them); also Options → Video Settings → Texture Viewer, and /textures in a world
 cargo run --release -- --help        # every flag (note the `--`: without it cargo rejects the flag itself)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end, --underwater,
@@ -103,6 +105,7 @@ world/               # blocks, chunks, light, meshing, fluids, saves, redstone, 
   save.rs            # region files
   worldgen/          # climate and biomes, terrain, caves, ores, features, the Nether and the End (nested CLAUDE.md)
   structure/         # placement, templates (RON), jigsaw joining, loot, villages, fortresses, strongholds, End cities
+audit/               # the texture checker (M60): CPU rasterizer, detectors, contact sheets, marks, the Texture Viewer
 cem/                 # OptiFine custom entity models (.jem) and their animation expressions (M58)
 render/              # wgpu pipelines, atlas, camera, shaders (*.wgsl), models, hand, sky (nested CLAUDE.md)
 look.rs, figure.rs   # everything texture-derived (rebuilt on pack change); the player as drawn

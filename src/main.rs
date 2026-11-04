@@ -27,6 +27,24 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
+    // `--texture-audit [--mode <mode>]`: contact sheets and a report of every
+    // block, item, mob and sprite (M60); `--texture-marks` prints Kenzo's marks.
+    if std::env::args().any(|arg| arg == "--texture-audit") {
+        let args: Vec<String> = std::env::args().collect();
+        let mode = args
+            .iter()
+            .position(|a| a == "--mode")
+            .and_then(|i| args.get(i + 1))
+            .map_or("vanilla", String::as_str);
+        return rustcraft::audit::cli(mode);
+    }
+    if std::env::args().any(|arg| arg == "--texture-marks") {
+        print!(
+            "{}",
+            rustcraft::audit::marks::Marks::load(&rustcraft::audit::marks::marks_path()).table()
+        );
+        return Ok(());
+    }
     // Rewrites the placeholder blocks and items from vanilla's data in
     // assets/vanilla (see src/placeholders.rs) and docs/placeholders.md.
     if std::env::args().any(|arg| arg == "--gen-placeholders") {
