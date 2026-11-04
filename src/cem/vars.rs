@@ -6,6 +6,18 @@ use glam::DVec3;
 
 use crate::entity::mob::{Mob, angle_difference};
 
+/// `time` wraps after this many ticks (2 h 40 min of play): f32 keeps 1/64
+/// of a tick below 2^18 = 262,144 ticks, so animations stay smooth.
+pub const CLOCK_PERIOD: u64 = 24_000 * 8;
+
+/// `time` and `day_time` for a whole number of ticks and the fraction.
+pub fn clock(ticks: u64, alpha: f32) -> (f32, f32) {
+    (
+        (ticks % CLOCK_PERIOD) as f32 + alpha,
+        (ticks % 24_000) as f32 + alpha,
+    )
+}
+
 /// Every variable's name, in slot order.
 pub const NAMES: [&str; 48] = [
     "limb_swing",
@@ -103,8 +115,9 @@ impl Default for EntityVars {
 /// What the frame knows besides the mob.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Frame {
-    /// Game ticks since the world began, with the fraction of the tick.
-    pub time: f32,
+    /// Whole game ticks since the world began. Kept apart from the
+    /// fraction (`alpha`) so no precision is lost in an old world.
+    pub ticks: u64,
     /// Seconds since the last frame.
     pub frame_time: f32,
     pub frame_counter: u32,
@@ -172,8 +185,12 @@ impl EntityVars {
         set(&mut v, "player_pos_x", frame.player.x as f32);
         set(&mut v, "player_pos_y", frame.player.y as f32);
         set(&mut v, "player_pos_z", frame.player.z as f32);
-        set(&mut v, "time", frame.time);
-        set(&mut v, "day_time", frame.time % 24000.0);
+        // `time` wraps every `CLOCK_PERIOD` ticks before it becomes an f32
+        // (which is only exact to 1/8 tick past a million); `day_time` is
+        // exact because 24000 divides the period.
+        let (time, day_time) = clock(frame.ticks, frame.alpha);
+        set(&mut v, "time", time);
+        set(&mut v, "day_time", day_time);
         set(&mut v, "frame_time", frame.frame_time);
         set(&mut v, "frame_counter", frame.frame_counter as f32);
         set(&mut v, "variant", f32::from(mob.data.variant));

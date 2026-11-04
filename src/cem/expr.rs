@@ -414,6 +414,18 @@ fn binary_op(op: Op, a: f32, b: f32) -> f32 {
     }
 }
 
+/// A number in 0..1 that depends only on `seed`'s bits (a murmur-style
+/// finalizer), never on the frame or the mob's random sequence.
+pub fn seeded_random(seed: f32) -> f32 {
+    let mut h = seed.to_bits();
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    (h >> 8) as f32 / (1u32 << 24) as f32
+}
+
 fn call(func: Func, a: &[f32], random: &mut impl FnMut() -> f32) -> f32 {
     match func {
         Func::Sin => a[0].sin(),
@@ -444,7 +456,13 @@ fn call(func: Func, a: &[f32], random: &mut impl FnMut() -> f32) -> f32 {
             let p = a[0].powf(a[1]);
             if p.is_finite() { p } else { 0.0 }
         }
-        Func::Random => random(),
+        // random(seed) is the same number for the same seed, on every
+        // frame and every client (OptiFine's cem_animation.txt); only
+        // random() with no argument draws a fresh one.
+        Func::Random => match a.first() {
+            Some(seed) => seeded_random(*seed),
+            None => random(),
+        },
         Func::Round => a[0].round(),
         Func::Signum => {
             if a[0] > 0.0 {
@@ -880,5 +898,69 @@ mod tests {
         kept = 10.0;
         let mut read = |slot| if slot == Slot::Var(0) { kept } else { 0.0 };
         assert_eq!(program.eval(&mut read, &mut || 0.0), 21.0);
+    }
+
+    /// Evaluates `text` with a random() that counts up, as frames go by.
+    fn run_with_counter(text: &str, counter: &mut f32) -> f32 {
+        let program = Program::parse(text, &mut Test, &mut |_| {}).unwrap();
+        program.eval(
+            &mut |slot| match slot {
+                Slot::Entity(i) => [7.0, 2.0, 0.5, 1.0][usize::from(i)],
+                _ => 0.0,
+            },
+            &mut || {
+                *counter += 0.01;
+                *counter
+            },
+        )
+    }
+
+    #[test]
+    fn random_with_a_seed_is_the_same_every_frame_and_differs_by_seed() {
+        let mut counter = 0.0;
+        let first = run_with_counter("random(x)", &mut counter);
+        for _ in 0..50 {
+            assert_eq!(run_with_counter("random(x)", &mut counter), first);
+        }
+        assert_eq!(
+            counter, 0.0,
+            "a seeded random never draws from the sequence"
+        );
+        assert!((0.0..1.0).contains(&first));
+        let other = run_with_counter("random(y)", &mut counter);
+        assert_ne!(first, other);
+        // Every integer seed stays in 0..1 and they're spread out.
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..1000 {
+            let v = seeded_random(seed as f32);
+            assert!((0.0..1.0).contains(&v));
+            seen.insert(v.to_bits());
+        }
+        assert_eq!(seen.len(), 1000);
+        // With no argument it still changes frame to frame.
+        let a = run_with_counter("random()", &mut counter);
+        let b = run_with_counter("random()", &mut counter);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_seeded_wobble_moves_smoothly() {
+        let program = Program::parse("sin(t * (1 + random(x)))", &mut Test, &mut |_| {}).unwrap();
+        let at = |t: f32| {
+            program.eval(
+                &mut |slot| match slot {
+                    Slot::Entity(0) => 7.0,
+                    Slot::Entity(2) => t,
+                    _ => 0.0,
+                },
+                &mut || panic!("no draw wanted"),
+            )
+        };
+        let mut last = at(0.0);
+        for step in 1..200 {
+            let now = at(step as f32 * 0.01);
+            assert!((now - last).abs() < 0.05, "jumped at step {step}");
+            last = now;
+        }
     }
 }

@@ -2469,11 +2469,7 @@ impl App {
                 Some(crate::game::modes::Spectated::Mob(id)) => Some(*id),
                 _ => None,
             };
-            crate::cem::begin_frame(
-                game.time() as f32 + alpha,
-                alpha,
-                game.player.camera.position.as_dvec3(),
-            );
+            crate::cem::begin_frame(game.time(), alpha, game.player.camera.position.as_dvec3());
             for mob in game
                 .mobs
                 .iter()

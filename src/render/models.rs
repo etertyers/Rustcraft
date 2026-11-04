@@ -816,7 +816,7 @@ mod tests {
             })
             .collect();
         let frame = |n: u64| {
-            crate::cem::begin_frame(n as f32, 0.5, DVec3::ZERO);
+            crate::cem::begin_frame(n, 0.5, DVec3::ZERO);
             let mut mesh = Mesh::default();
             for mob in &herd {
                 add_mob_model_using(
@@ -887,5 +887,49 @@ mod tests {
         add_minecart(&mut turned, &cart, 1.0, (15, 0));
         let (min, max) = bounds(&turned);
         assert!((max.z - min.z - 1.25).abs() < 1e-3, "now along z");
+    }
+
+    /// How many times a frame animates each mob's model (Step 0 / M58 fix).
+    #[test]
+    fn a_mob_is_animated_once_a_frame_layers_included() {
+        let dir = crate::assets::dir().join("downloads/resourcepacks");
+        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|e| {
+            e.filter_map(|e| e.ok().map(|e| e.path()))
+                .find(|p| p.to_string_lossy().contains("FreshAnimations"))
+        }) else {
+            eprintln!("skipping: no Fresh Animations pack");
+            return;
+        };
+        let pack = crate::pack::Pack::open(&path).unwrap();
+        crate::cem::install(crate::cem::Registry::load(
+            &|p| pack.read(p),
+            &["pig", "sheep"],
+        ));
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let count = |name: &str, setup: &dyn Fn(&mut Mob)| -> u32 {
+            let kind = mobs.find(name).unwrap();
+            let def = mobs.get(kind);
+            let mut mob = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+            setup(&mut mob);
+            crate::cem::begin_frame(100, 0.5, DVec3::ZERO);
+            crate::cem::ANIMATED.with(|n| n.set(0));
+            let mut mesh = Mesh::default();
+            add_mob(&mut mesh, &mob, def, 0.5, (15, 0));
+            for layer in &def.layers {
+                if (layer.wool && mob.data.sheared) || (layer.saddle && !mob.data.saddled) {
+                    continue;
+                }
+                add_mob_model(&mut mesh, &mob, def, &layer.model, 0.5, (15, 0), [1.0; 3]);
+            }
+            crate::cem::ANIMATED.with(|n| n.get())
+        };
+        let plain_pig = count("pig", &|_| {});
+        let saddled_pig = count("pig", &|m| m.data.saddled = true);
+        let wool_sheep = count("sheep", &|_| {});
+        println!(
+            "with_state per frame: pig {plain_pig}, saddled pig {saddled_pig}, sheep with wool {wool_sheep}"
+        );
+        crate::cem::install(crate::cem::Registry::default());
+        assert_eq!((plain_pig, saddled_pig, wool_sheep), (1, 1, 1));
     }
 }
