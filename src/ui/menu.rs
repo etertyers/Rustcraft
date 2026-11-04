@@ -212,7 +212,7 @@ impl Menu {
     fn open_packs(&mut self, options: &Options, back: Screen) {
         let packs = PackScreen::new(crate::pack::packs_dir(), &options.resource_packs)
             .with_builtin(crate::pack::builtin_dir(), &options.resource_packs)
-            .for_look(options.visuals.look.name());
+            .for_look(options.visuals.style.name());
         self.screen = Screen::ResourcePacks(packs, Box::new(back));
     }
 

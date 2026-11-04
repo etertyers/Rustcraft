@@ -263,8 +263,31 @@ impl Resources {
 
     /// A texture from one layer only (`vanilla_layer` is the fallback).
     pub fn texture_in(&self, layer: usize, name: &str) -> Option<Texture> {
+        self.texture_from(layer, name, true)
+    }
+
+    /// Rustcraft's own texture `name` even where vanilla has one (for a
+    /// mob whose 26.x layout isn't modeled, so vanilla's can't be drawn).
+    pub fn own_texture(&self, name: &str) -> Option<Texture> {
+        self.texture_from(0, name, false)
+    }
+
+    fn texture_from(&self, layer: usize, name: &str, hide_base: bool) -> Option<Texture> {
         let pack = self.pack_at(layer)?;
         let (shown, vanilla) = self.tag(layer);
+        // Rustcraft's own textures (the base layer) fill in what vanilla
+        // doesn't have; they never replace a file vanilla has (v1.5: each
+        // style shows its own stack over vanilla, nothing else).
+        // (The GUI sheets are Rustcraft's own: vanilla 26.3 draws its GUI
+        // from sprites that Rustcraft composes into sheets.)
+        if layer == 0
+            && hide_base
+            && !location(name).starts_with("gui/")
+            && let Some(fallback) = &self.vanilla
+            && self.candidates(name).iter().any(|path| fallback.has(path))
+        {
+            return None;
+        }
         for path in self.candidates(name) {
             let Some(bytes) = pack.read(&path) else {
                 continue;
@@ -508,9 +531,19 @@ mod tests {
         assert!(res.has_vanilla());
         // In all three layers: the pack's.
         assert_eq!(red(res.texture("block/stone")), Some((200, 1)));
-        // In Kenzo's and vanilla: Kenzo's.
+        // In Kenzo's and vanilla: vanilla's (v1.5: Rustcraft's own textures
+        // fill in what vanilla lacks, they don't replace its files), though
+        // `own_texture` still has Kenzo's.
         let dirt = res.texture("block/dirt").unwrap();
-        assert_eq!((dirt.image.get_pixel(0, 0).0[0], dirt.vanilla), (3, false));
+        assert_eq!((dirt.image.get_pixel(0, 0).0[0], dirt.vanilla), (11, true));
+        assert_eq!(
+            res.own_texture("block/dirt")
+                .unwrap()
+                .image
+                .get_pixel(0, 0)
+                .0[0],
+            3
+        );
         // Only in vanilla: vanilla's, reported as the base layer.
         let sand = res.texture("block/sand").unwrap();
         assert_eq!((sand.image.get_pixel(0, 0).0[0], sand.vanilla), (12, true));

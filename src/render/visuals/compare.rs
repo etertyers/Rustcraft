@@ -9,45 +9,112 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use image::{Rgba, RgbaImage};
 
-use super::Quality;
+use super::{Quality, Style};
 
-/// Runs the two looks and joins them into `out`.
-pub fn run(args: &[String], out: &Path, quality: Option<Quality>) -> Result<()> {
+/// What `--compare` was asked to show: (style, shaders on) pairs, and how
+/// many go across.
+pub fn plan(spec: &str) -> Result<(Vec<(Style, bool)>, usize)> {
+    match spec.trim().to_ascii_lowercase().as_str() {
+        // Styles across, shaders off on top and on below.
+        "all" => Ok((
+            [false, true]
+                .into_iter()
+                .flat_map(|on| {
+                    [Style::Vanilla, Style::Barebones, Style::Realistic].map(|s| (s, on))
+                })
+                .collect(),
+            3,
+        )),
+        // The old comparison: Vanilla (no shaders) beside the Trailer look.
+        "" => Ok((vec![(Style::Vanilla, false), (Style::Barebones, true)], 2)),
+        list => {
+            let mut pairs = Vec::new();
+            for item in list.split(',') {
+                let (style, shaders) = item.split_once('/').unwrap_or((item, "off"));
+                let style = Style::parse(style)
+                    .with_context(|| format!("bad style in --compare {item:?}"))?;
+                let on = match shaders {
+                    "on" => true,
+                    "off" => false,
+                    other => bail!("bad shaders {other:?} in --compare (on or off)"),
+                };
+                pairs.push((style, on));
+            }
+            let columns = pairs.len().min(3);
+            Ok((pairs, columns))
+        }
+    }
+}
+
+/// "BAREBONES - SHADERS ON" (letters only: the label font has no digits).
+pub fn caption(style: Style, shaders: bool, quality: Quality) -> String {
+    let mut text = style.name().to_uppercase();
+    text += if shaders {
+        " - SHADERS ON"
+    } else {
+        " - SHADERS OFF"
+    };
+    if shaders {
+        text += &format!(" ({})", quality.name().to_uppercase());
+    }
+    text
+}
+
+/// Runs each pair in its own game and joins the pictures into `out`.
+pub fn run(args: &[String], spec: &str, out: &Path, quality: Option<Quality>) -> Result<()> {
     let exe = std::env::current_exe()?;
-    // This command line minus --compare, --out, --visuals and --quality.
+    // This command line minus --compare (and what it names), --out,
+    // --style, --shaders, --visuals and --quality.
     let mut rest = Vec::new();
-    let mut words = args.iter().skip(1);
+    let mut words = args.iter().skip(1).peekable();
     while let Some(word) = words.next() {
         match word.as_str() {
-            "--compare" => {}
-            "--out" | "--visuals" | "--quality" => {
+            "--compare" => {
+                if words.peek().is_some_and(|next| !next.starts_with("--")) {
+                    words.next();
+                }
+            }
+            "--out" | "--style" | "--shaders" | "--visuals" | "--quality" => {
                 words.next();
             }
             _ => rest.push(word.clone()),
         }
     }
     let quality = quality.unwrap_or_default();
+    let (pairs, columns) = plan(spec)?;
     let dir = std::env::temp_dir().join(format!("rustcraft-compare-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
-    let mut halves = Vec::new();
-    for look in ["vanilla", "trailer"] {
-        let path = dir.join(format!("{look}.png"));
+    let mut cells = Vec::new();
+    for (i, &(style, on)) in pairs.iter().enumerate() {
+        let path = dir.join(format!("{i}.png"));
         let status = Command::new(&exe)
             .args(&rest)
-            .args(["--visuals", look, "--quality", quality.name(), "--out"])
+            .args([
+                "--style",
+                style.key(),
+                "--shaders",
+                if on { "on" } else { "off" },
+                "--quality",
+                quality.name(),
+                "--out",
+            ])
             .arg(&path)
             .status()?;
         if !status.success() {
-            bail!("the {look} run failed: {status}");
+            bail!("the {} run failed: {status}", caption(style, on, quality));
         }
-        halves.push(
+        cells.push((
+            caption(style, on, quality),
             image::open(&path)
                 .with_context(|| format!("reading {}", path.display()))?
                 .to_rgba8(),
-        );
+        ));
     }
-    let label = format!("TRAILER ({})", quality.name().to_uppercase());
-    let joined = side_by_side(&halves[0], &halves[1], "VANILLA", &label);
+    let joined = if cells.len() == 2 && columns == 2 {
+        side_by_side(&cells[0].1, &cells[1].1, &cells[0].0, &cells[1].0)
+    } else {
+        grid(&cells, columns)
+    };
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -57,6 +124,30 @@ pub fn run(args: &[String], out: &Path, quality: Option<Quality>) -> Result<()> 
     let _ = std::fs::remove_dir_all(&dir);
     println!("{}", out.display());
     Ok(())
+}
+
+/// The pictures in rows of `columns`, a 4-pixel black seam between, each
+/// labeled at its top left.
+pub fn grid(cells: &[(String, RgbaImage)], columns: usize) -> RgbaImage {
+    const SEAM: u32 = 4;
+    let columns = columns.max(1);
+    let rows = cells.len().div_ceil(columns);
+    let (w, h) = cells
+        .first()
+        .map_or((1, 1), |(_, image)| image.dimensions());
+    let mut out = RgbaImage::from_pixel(
+        columns as u32 * w + (columns as u32 - 1) * SEAM,
+        rows as u32 * h + (rows as u32).saturating_sub(1) * SEAM,
+        Rgba([0, 0, 0, 255]),
+    );
+    let scale = (h / 180).max(2);
+    for (i, (text, image)) in cells.iter().enumerate() {
+        let x = (i % columns) as u32 * (w + SEAM);
+        let y = (i / columns) as u32 * (h + SEAM);
+        image::imageops::replace(&mut out, image, i64::from(x), i64::from(y));
+        label(&mut out, text, x + 8, y + 8, scale);
+    }
+    out
 }
 
 /// `left` and `right` next to each other with a 4-pixel black seam, each
@@ -151,6 +242,46 @@ fn glyph(c: char) -> [u8; 7] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compare_all_is_three_styles_across_with_shaders_off_then_on() {
+        let (pairs, columns) = plan("all").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(pairs.len(), 6);
+        assert_eq!(pairs[0], (Style::Vanilla, false));
+        assert_eq!(pairs[2], (Style::Realistic, false));
+        assert_eq!(pairs[3], (Style::Vanilla, true));
+        assert_eq!(pairs[5], (Style::Realistic, true));
+        let (list, _) = plan("barebones/on,realistic/off").unwrap();
+        assert_eq!(list, [(Style::Barebones, true), (Style::Realistic, false)]);
+        assert!(plan("fancy/on").is_err());
+        assert!(plan("vanilla/maybe").is_err());
+        assert_eq!(
+            caption(Style::Realistic, true, Quality::Medium),
+            "REALISTIC - SHADERS ON (MEDIUM)"
+        );
+    }
+
+    /// `--compare all` makes one 3×2 picture, each cell labeled.
+    #[test]
+    fn a_grid_of_six_is_three_across_and_two_down_with_labels() {
+        let cell = |c: u8| {
+            (
+                format!("CELL {c}"),
+                RgbaImage::from_pixel(120, 60, Rgba([c, c, c, 255])),
+            )
+        };
+        let cells: Vec<_> = (1..=6).map(|c| cell(c * 30)).collect();
+        let out = grid(&cells, 3);
+        assert_eq!(out.dimensions(), (3 * 120 + 2 * 4, 2 * 60 + 4));
+        assert_eq!(out.get_pixel(60, 55).0, [30, 30, 30, 255]);
+        assert_eq!(out.get_pixel(124 + 60, 55).0, [60, 60, 60, 255]);
+        assert_eq!(out.get_pixel(60, 64 + 55).0, [120, 120, 120, 255]);
+        assert_eq!(out.get_pixel(2 * 124 + 60, 64 + 55).0, [180, 180, 180, 255]);
+        let white =
+            (0..120).any(|x| (0..30).any(|y| out.get_pixel(x, y).0 == [255, 255, 255, 255]));
+        assert!(white, "labeled");
+    }
 
     #[test]
     fn the_halves_sit_side_by_side_with_labels() {

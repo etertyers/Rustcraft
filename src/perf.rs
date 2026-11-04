@@ -191,19 +191,24 @@ pub fn run_many(bench: &Bench, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The looks `--all-looks` measures: (--visuals, --quality, label suffix).
-pub const ALL_LOOKS: [(&str, &str, &str); 4] = [
-    ("vanilla", "medium", ""),
-    ("trailer", "low", "-trailer-low"),
-    ("trailer", "medium", "-trailer-medium"),
-    ("trailer", "high", "-trailer-high"),
+/// The rows `--all-looks` measures: (--style, --shaders, --quality, label
+/// suffix). The first is the reference the others' extra GPU time is over.
+pub const ALL_LOOKS: [(&str, &str, &str, &str); 8] = [
+    ("vanilla", "off", "medium", ""),
+    ("barebones", "off", "medium", "-barebones"),
+    ("realistic", "off", "medium", "-realistic"),
+    ("barebones", "on", "low", "-barebones-low"),
+    ("barebones", "on", "medium", "-barebones-medium"),
+    ("barebones", "on", "high", "-barebones-high"),
+    ("vanilla", "on", "medium", "-vanilla-medium"),
+    ("realistic", "on", "medium", "-realistic-medium"),
 ];
 
 /// `--perf-test --all-looks`: runs the perf test (with its `--runs`) once
-/// per look in child processes, writes `docs/perf/<label>[-trailer-<q>].json`
+/// per row in child processes, writes `docs/perf/<label>[-<row>].json`
 /// for each, adds each Trailer row's extra GPU time over Vanilla's
 /// (`gpu_extra_ms`, and `gpu_world_extra_ms` for the world pass), and
-/// writes all four tables into `docs/perf/<label>.md`.
+/// writes every table into `docs/perf/<label>.md`.
 pub fn run_all_looks(args: &[String]) -> Result<()> {
     let exe = std::env::current_exe()?;
     // This command line minus --all-looks, --visuals, --quality, --row
@@ -214,7 +219,7 @@ pub fn run_all_looks(args: &[String]) -> Result<()> {
     while let Some(word) = words.next() {
         match word.as_str() {
             "--all-looks" => {}
-            "--visuals" | "--quality" | "--row" => {
+            "--visuals" | "--style" | "--shaders" | "--quality" | "--row" => {
                 words.next();
             }
             "--label" => label = words.next().cloned(),
@@ -223,15 +228,24 @@ pub fn run_all_looks(args: &[String]) -> Result<()> {
     }
     let label = label.unwrap_or_else(|| format!("m{}", bench::PERF_MILESTONE));
     let mut all = Vec::new();
-    for (look, quality, suffix) in ALL_LOOKS {
+    for (style, shaders, quality, suffix) in ALL_LOOKS {
         let name = format!("{label}{suffix}");
-        println!("perf: {look} {quality} ({name})");
+        println!("perf: {style} shaders {shaders} {quality} ({name})");
         let status = Command::new(&exe)
             .args(&rest)
-            .args(["--visuals", look, "--quality", quality, "--label", &name])
+            .args([
+                "--style",
+                style,
+                "--shaders",
+                shaders,
+                "--quality",
+                quality,
+                "--label",
+                &name,
+            ])
             .status()?;
         if !status.success() {
-            bail!("{look} {quality} failed: {status}");
+            bail!("{style} shaders {shaders} {quality} failed: {status}");
         }
         let path = format!("docs/perf/{name}.json");
         let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;

@@ -136,7 +136,8 @@ actions! {
     Fullscreen, "key.fullscreen", "Toggle Fullscreen", Misc, Some(Key(K::F11));
     HideGui, "key.hideGui", "Hide GUI", Misc, Some(Key(K::F1));
     DebugOverlay, "key.debug.overlay", "Debug Screen", Misc, Some(Key(K::F3));
-    ToggleVisuals, "key.rustcraft.toggleVisuals", "Toggle Visuals", Misc, Some(Key(K::F12));
+    ToggleVisuals, "key.rustcraft.toggleVisuals", "Toggle Shaders (Shift: Style)", Misc, Some(Key(K::F12));
+    CycleStyle, "key.rustcraft.cycleStyle", "Cycle Style", Misc, None;
     DevFlight, "key.debug.flight", "Toggle Dev Flight", Debug, Some(Key(K::F4));
     DevKit, "key.debug.kit", "Give Dev Kit", Debug, Some(Key(K::F6));
     SkipHour, "key.debug.skipHour", "Skip an Hour", Debug, Some(Key(K::F7));

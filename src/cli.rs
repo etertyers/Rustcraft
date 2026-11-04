@@ -8,7 +8,7 @@ use crate::{
     bench,
     game::view::ViewMode,
     player::mode::GameMode,
-    render::visuals::{LookKind, Quality},
+    render::visuals::{Quality, Style},
     shots,
 };
 
@@ -29,12 +29,16 @@ pub struct Cli {
     pub lan: Option<u16>,
     /// `--size <w>x<h>`: the window's size in pixels (for `--shot`).
     pub size: Option<(u32, u32)>,
-    /// `--visuals vanilla|trailer` and `--quality low|medium|high`: the
-    /// look this run, without saving it.
-    pub visuals: Option<LookKind>,
+    /// `--style vanilla|barebones|realistic`, `--shaders on|off` and
+    /// `--quality low|medium|high`: the graphics this run, without saving
+    /// them. (`--visuals vanilla|trailer` is the old name: Vanilla is the
+    /// Vanilla style without shaders, Trailer is Barebones with them.)
+    pub style: Option<Style>,
+    pub shaders: Option<bool>,
     pub quality: Option<Quality>,
-    /// `--shot <name> --compare`: the scene once per look, side by side.
-    pub compare: bool,
+    /// `--shot <name> --compare [all|style/shaders,...]`: the scene once per
+    /// style and shaders setting, side by side.
+    pub compare: Option<String>,
     /// `--perf-test --all-looks`: Vanilla and Trailer Low, Medium and High.
     pub all_looks: bool,
 }
@@ -62,14 +66,20 @@ Usage: cargo run --release -- [flags]
   --perf-test           the performance gate (writes docs/perf/<label>.md and .json); --underwater flies in the sea
     --runs <n>            ...n flights in one launch; the report has each measure's median and spread
     --label <name>        ...name the results <name> (default m<N>, with -nether, -end or -underwater)
-    --row <name>          ...which baseline row the results are for (default vanilla,
-                            or trailer-<quality> with --visuals trailer)
-    --all-looks           ...Vanilla, then Trailer at Low, Medium and High (one results file each)
+    --row <name>          ...which baseline row the results are for (default vanilla; with
+                            --style and --shaders: <style>, or <style>-<quality> with shaders on)
+    --all-looks           ...every row of the gate (one results file each): Vanilla, Barebones and
+                            Realistic with shaders off; Barebones with shaders on at Low, Medium and
+                            High; Vanilla and Realistic with shaders on at Medium
   --shot <name> [--out <file>]   capture a scripted scene (--shot list)
     --size <w>x<h>        ...at this size in pixels (default 1280x720)
-    --compare             ...once per look, Vanilla left and Trailer right, in one picture
-  --visuals vanilla|trailer   draw with this look this time (F12 switches in game)
-  --quality low|medium|high   the Trailer look's quality this time
+    --compare [all|vanilla/off,barebones/on,...]   ...once per style and shaders setting in one picture
+                            (all: a labeled 3x2, styles across, shaders off and on down)
+  --style vanilla|barebones|realistic   wear this style this time (Shift+F12 switches in game)
+  --shaders on|off      Shaders on or off this time (F12 switches in game)
+  --visuals vanilla|trailer   the old name: vanilla is --style vanilla --shaders off, trailer is
+                        --style barebones --shaders on (deprecated)
+  --quality low|medium|high   the Shaders' quality this time
   --name <player>       play as this name this time (Options keeps yours)
   --join <ip:port>      join a world open to LAN
   --lan [port]          open the world to LAN as soon as it's up
@@ -134,7 +144,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let mut view = ViewMode::First;
     let (mut name, mut join, mut lan) = (None, None, None);
     let mut size = None;
-    let (mut visuals, mut quality, mut compare, mut all_looks) = (None, None, false, false);
+    let (mut style, mut shaders, mut quality, mut compare, mut all_looks) =
+        (None, None, None, None, false);
     fn value(
         args: &mut impl Iterator<Item = String>,
         flag: &str,
@@ -159,13 +170,49 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                 })?);
             }
             "--out" => out = Some(value(&mut args, "--out", "a file")?.into()),
-            "--compare" => compare = true,
+            "--compare" => {
+                // Optionally followed by what to compare ("all" or a list).
+                compare = Some(match args.peek() {
+                    Some(next) if !next.starts_with("--") => args.next().unwrap_or_default(),
+                    _ => String::new(),
+                });
+            }
             "--all-looks" => all_looks = true,
+            "--style" => {
+                let text = value(&mut args, "--style", "vanilla, barebones or realistic")?;
+                style = Some(Style::parse(&text).ok_or_else(|| {
+                    CliError::wrong(format!(
+                        "bad style {text:?} (vanilla, barebones or realistic)"
+                    ))
+                })?);
+            }
+            "--shaders" => {
+                let text = value(&mut args, "--shaders", "on or off")?;
+                shaders = Some(match text.to_ascii_lowercase().as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(CliError::wrong(format!("bad shaders {text:?} (on or off)"))),
+                });
+            }
             "--visuals" => {
                 let text = value(&mut args, "--visuals", "vanilla or trailer")?;
-                visuals = Some(LookKind::parse(&text).ok_or_else(|| {
-                    CliError::wrong(format!("bad visuals {text:?} (vanilla or trailer)"))
-                })?);
+                eprintln!(
+                    "--visuals is the old name: use --style and --shaders ({text} is {})",
+                    if text.eq_ignore_ascii_case("vanilla") {
+                        "--style vanilla --shaders off"
+                    } else {
+                        "--style barebones --shaders on"
+                    }
+                );
+                match text.to_ascii_lowercase().as_str() {
+                    "vanilla" => (style, shaders) = (Some(Style::Vanilla), Some(false)),
+                    "trailer" => (style, shaders) = (Some(Style::Barebones), Some(true)),
+                    _ => {
+                        return Err(CliError::wrong(format!(
+                            "bad visuals {text:?} (vanilla or trailer)"
+                        )));
+                    }
+                }
             }
             "--quality" => {
                 let text = value(&mut args, "--quality", "low, medium or high")?;
@@ -315,9 +362,17 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         bench.underwater = underwater && dimension == Dimension::Overworld;
         bench.runs = runs;
         bench.label = label;
-        bench.row = row.unwrap_or_else(|| match visuals {
-            Some(LookKind::Trailer) => quality.unwrap_or_default().row(),
-            _ => bench.row.clone(),
+        // A performance run is Vanilla without shaders unless told otherwise.
+        let (style, shaders) = match (style, shaders) {
+            (None, None) => (Some(Style::Vanilla), Some(false)),
+            other => other,
+        };
+        bench.row = row.unwrap_or_else(|| {
+            crate::render::visuals::row_name(
+                style.unwrap_or_default(),
+                shaders.unwrap_or(true),
+                quality.unwrap_or_default(),
+            )
         });
         bench.run_out = perf_out;
         // Each dimension's report has its own file.
@@ -337,9 +392,10 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             join: None,
             lan: None,
             size: None,
-            visuals,
+            style,
+            shaders,
             quality,
-            compare: false,
+            compare: None,
             all_looks,
         });
     }
@@ -369,7 +425,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         join,
         lan,
         size,
-        visuals,
+        style,
+        shaders,
         quality,
         compare,
         all_looks: false,
@@ -416,13 +473,35 @@ mod tests {
             format!("m{}-nether", bench::PERF_MILESTONE)
         );
         assert!(parse_words(&["--perf-test", "--runs", "0"]).is_err());
-        let trailer =
-            parse_words(&["--perf-test", "--visuals", "trailer", "--quality", "high"]).unwrap();
-        assert_eq!(trailer.bench.unwrap().row, "trailer-high");
-        assert_eq!(trailer.visuals, Some(LookKind::Trailer));
+        let trailer = parse_words(&[
+            "--perf-test",
+            "--style",
+            "barebones",
+            "--shaders",
+            "on",
+            "--quality",
+            "high",
+        ])
+        .unwrap();
+        assert_eq!(trailer.bench.unwrap().row, "barebones-high");
+        assert_eq!(trailer.style, Some(Style::Barebones));
+        assert_eq!(trailer.shaders, Some(true));
+        // The old flag still works: Trailer is Barebones with shaders.
+        let old = parse_words(&["--perf-test", "--visuals", "trailer"]).unwrap();
+        assert_eq!(
+            (old.style, old.shaders),
+            (Some(Style::Barebones), Some(true))
+        );
+        let off =
+            parse_words(&["--perf-test", "--style", "realistic", "--shaders", "off"]).unwrap();
+        assert_eq!(off.bench.unwrap().row, "realistic");
+        assert!(parse_words(&["--style", "fancy"]).is_err());
+        assert!(parse_words(&["--shaders", "maybe"]).is_err());
         let shot =
             parse_words(&["--shot", "forest-noon", "--compare", "--size", "640x360"]).unwrap();
-        assert!(shot.compare && shot.size == Some((640, 360)));
+        assert!(shot.compare.is_some() && shot.size == Some((640, 360)));
+        let all = parse_words(&["--shot", "forest-noon", "--compare", "all"]).unwrap();
+        assert_eq!(all.compare.as_deref(), Some("all"));
         assert!(parse_words(&["--visuals", "fancy"]).is_err());
         assert!(
             parse_words(&["--perf-test", "--all-looks"])

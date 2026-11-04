@@ -287,49 +287,81 @@ impl Options {
         std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
     }
 
-    /// Sets up each look's pack list the first time (options from before
-    /// v1.4: Vanilla's starts empty, Trailer's is the packs chosen until
-    /// now), puts Trailer packs found in `available` (file name,
-    /// description) on the Trailer list once each, and makes
-    /// `resource_packs` the list of the look that's on.
-    pub fn set_up_packs(&mut self, available: &[(String, String)]) {
+    /// Moves options from before v1.5 to styles the first time, and makes
+    /// `resource_packs` the extra packs of the style that's on.
+    ///
+    /// v1.4's Vanilla look becomes the Vanilla style with Shaders off; its
+    /// Trailer look becomes Barebones with Shaders on at the quality it had.
+    /// Vanilla's pack list goes to Vanilla and the Trailer list to
+    /// Barebones, minus the three packs Barebones now brings itself. Options
+    /// from before v1.4 (the packs chosen, no looks) get Barebones with
+    /// Shaders on, those packs as its extras.
+    pub fn set_up_packs(&mut self, _available: &[(String, String)]) {
+        use crate::render::visuals::{LookKind, Style, packs::identify};
         let v = &mut self.visuals;
-        if !v.packs_set_up {
+        if !v.style_set_up {
+            v.style_set_up = true;
+            let own = |list: &[String]| -> Vec<String> {
+                list.iter()
+                    .filter(|name| identify(name, "").is_none())
+                    .cloned()
+                    .collect()
+            };
+            if v.packs_set_up {
+                v.style = if v.look == LookKind::Vanilla {
+                    Style::Vanilla
+                } else {
+                    Style::Barebones
+                };
+                v.style_packs
+                    .insert(Style::Vanilla, std::mem::take(&mut v.vanilla_packs));
+                let trailer = std::mem::take(&mut v.trailer_packs);
+                v.style_packs.insert(Style::Barebones, own(&trailer));
+            } else {
+                v.style = Style::Barebones;
+                v.style_packs
+                    .insert(Style::Barebones, own(&self.resource_packs));
+            }
+            v.offered.clear();
             v.packs_set_up = true;
-            v.vanilla_packs = Vec::new();
-            v.trailer_packs = self.resource_packs.clone();
         } else {
-            // The list being edited is the one of the look that's on.
-            *v.packs_mut(v.look) = self.resource_packs.clone();
+            // The list being edited is the one of the style that's on.
+            *v.packs_mut(v.style) = self.resource_packs.clone();
         }
-        let (list, missing) = crate::render::visuals::packs::trailer_list(
-            &v.trailer_packs,
-            available,
-            &mut v.offered,
-        );
-        v.trailer_packs = list;
-        for pack in missing {
-            log::info!(
-                "{} isn't in resourcepacks/, so the Trailer look goes without it",
-                pack.title()
-            );
-        }
-        self.resource_packs = v.packs(v.look).clone();
+        self.resource_packs = v.packs(v.style).clone();
     }
 
-    /// Keeps the list being edited (`resource_packs`) as the look's own.
+    /// Keeps the list being edited (`resource_packs`) as the style's own.
     pub fn store_packs(&mut self) {
-        let look = self.visuals.look;
-        *self.visuals.packs_mut(look) = self.resource_packs.clone();
+        let style = self.visuals.style;
+        *self.visuals.packs_mut(style) = self.resource_packs.clone();
     }
 
-    /// Switches to `look`, keeping each look's pack list: the list being
-    /// edited is stored for the old look and the new look's comes in.
+    /// Shaders on or off. The style, its packs and the quality stay.
     pub fn set_look(&mut self, look: crate::render::visuals::LookKind) {
+        self.visuals.look = look;
+    }
+
+    /// Switches to `style`, keeping each style's own extra packs: the list
+    /// being edited is stored for the old style and the new one's comes in.
+    pub fn set_style(&mut self, style: crate::render::visuals::Style) {
         let v = &mut self.visuals;
-        *v.packs_mut(v.look) = std::mem::take(&mut self.resource_packs);
-        v.look = look;
-        self.resource_packs = v.packs(look).clone();
+        *v.packs_mut(v.style) = std::mem::take(&mut self.resource_packs);
+        v.style = style;
+        self.resource_packs = v.packs(style).clone();
+    }
+
+    /// The packs the look is built from, highest priority first: the
+    /// player's extras for this style, then the style's own stack from the
+    /// built-in packs in `builtin`.
+    pub fn active_packs(&self, builtin: &std::path::Path) -> Vec<String> {
+        let mut packs = self.resource_packs.clone();
+        for own in crate::pack::style_stack(self.visuals.style, builtin) {
+            if !packs.contains(&own) {
+                packs.push(own);
+            }
+        }
+        packs
     }
 
     /// Every value inside its slider's range.
@@ -377,49 +409,149 @@ mod tests {
     use crate::world::save::TempDir;
 
     #[test]
-    fn visuals_round_trip_and_an_m53_file_gets_the_trailer_look() {
-        use crate::render::visuals::{Effect, LookKind, Quality};
-        let dir = TempDir::new("options-visuals");
+    fn graphics_round_trip_and_a_new_file_gets_barebones_with_shaders_on_at_medium() {
+        use crate::render::visuals::{Effect, Quality, Style};
+        let dir = TempDir::new("options-graphics");
         let path = dir.path().join("options.ron");
-        // An M53 options file: packs chosen, no visuals.
+        // A file from before v1.4: packs chosen, no looks.
         std::fs::write(
             &path,
-            r#"(render_distance: 9, resource_packs: ["Ashen_1.8.3.zip"])"#,
+            r#"(render_distance: 9, resource_packs: ["Ashen_1.8.3.zip", "Bare Bones 1.21.zip"])"#,
         )
         .unwrap();
         let mut options = Options::load(&path);
-        assert_eq!(options.visuals.look, LookKind::Trailer);
+        options.set_up_packs(&[]);
+        assert_eq!(options.visuals.style, Style::Barebones);
+        assert!(options.visuals.shaders());
         assert_eq!(options.visuals.quality, Quality::Medium);
-        let available = [
-            ("Ashen_1.8.3.zip".to_owned(), String::new()),
-            ("FreshAnimations_v1.9.4.zip".to_owned(), String::new()),
-            ("Bare Bones 1.21.zip".to_owned(), String::new()),
-        ];
-        options.set_up_packs(&available);
-        assert!(options.visuals.vanilla_packs.is_empty());
-        assert_eq!(
-            options.resource_packs,
-            [
-                "FreshAnimations_v1.9.4.zip",
-                "Bare Bones 1.21.zip",
-                "Ashen_1.8.3.zip"
-            ]
-        );
-        // Vanilla's own list, edited while Vanilla is on.
-        options.set_look(LookKind::Vanilla);
+        // The packs it chose are the style's extras, minus Bare Bones,
+        // which Barebones brings itself.
+        assert_eq!(options.resource_packs, ["Ashen_1.8.3.zip"]);
+        // Each style keeps its own extras.
+        options.set_style(Style::Realistic);
         assert!(options.resource_packs.is_empty());
-        options.resource_packs.push("Ashen_1.8.3.zip".to_owned());
+        options.resource_packs.push("Mine.zip".to_owned());
         options.visuals.quality = Quality::High;
         options.visuals.set(Effect::Bloom, false);
         options.save(&path).unwrap();
         let mut back = Options::load(&path);
         assert_eq!(back, options);
-        back.set_up_packs(&available);
-        assert_eq!(back.resource_packs, ["Ashen_1.8.3.zip"]);
-        back.set_look(LookKind::Trailer);
-        assert_eq!(back.resource_packs.len(), 3, "Trailer's list kept");
+        back.set_up_packs(&[]);
+        assert_eq!(back.resource_packs, ["Mine.zip"]);
+        back.set_style(Style::Barebones);
+        assert_eq!(
+            back.resource_packs,
+            ["Ashen_1.8.3.zip"],
+            "Barebones' list kept"
+        );
         assert!(!back.visuals.enabled(Effect::Bloom));
         assert_eq!(back.visuals.quality, Quality::High);
+    }
+
+    /// A v1.4 file: its Vanilla look becomes the Vanilla style with shaders
+    /// off and its list; its Trailer look becomes Barebones with shaders on
+    /// at the quality it had, its extra packs kept and the three Trailer
+    /// packs dropped from the list (the style brings them).
+    #[test]
+    fn a_v1_4_file_migrates_both_looks() {
+        use crate::render::visuals::{Quality, Style};
+        let v14 = |look: &str| {
+            format!(
+                r#"(resource_packs: ["Ashen_1.8.3.zip"], visuals: (look: {look}, quality: High,
+                   vanilla_packs: ["Ashen_1.8.3.zip"],
+                   trailer_packs: ["FreshAnimations_v1.9.4.zip", "Bare Bones 1.21.zip", "Mine.zip"],
+                   offered: ["freshanimations"], packs_set_up: true))"#
+            )
+        };
+        let dir = TempDir::new("options-v14");
+        let path = dir.path().join("options.ron");
+        std::fs::write(&path, v14("Vanilla")).unwrap();
+        let mut vanilla = Options::load(&path);
+        vanilla.set_up_packs(&[]);
+        assert_eq!(vanilla.visuals.style, Style::Vanilla);
+        assert!(!vanilla.visuals.shaders());
+        assert_eq!(vanilla.resource_packs, ["Ashen_1.8.3.zip"]);
+        assert_eq!(vanilla.visuals.packs(Style::Barebones), &["Mine.zip"]);
+        std::fs::write(&path, v14("Trailer")).unwrap();
+        let mut trailer = Options::load(&path);
+        trailer.set_up_packs(&[]);
+        assert_eq!(trailer.visuals.style, Style::Barebones);
+        assert!(trailer.visuals.shaders());
+        assert_eq!(trailer.visuals.quality, Quality::High, "its old quality");
+        assert_eq!(trailer.resource_packs, ["Mine.zip"]);
+        assert_eq!(trailer.visuals.packs(Style::Vanilla), &["Ashen_1.8.3.zip"]);
+        // A second time changes nothing.
+        let before = trailer.clone();
+        trailer.set_up_packs(&[]);
+        assert_eq!(trailer, before);
+    }
+
+    /// Each style's stack (the built-in packs, top first) with all, some
+    /// and none of its packs there, named like the real downloads.
+    #[test]
+    fn each_styles_stack_with_all_some_and_none_of_its_packs() {
+        use crate::render::visuals::Style;
+        let dir = TempDir::new("style-stacks");
+        let all = [
+            "Bare Bones 1.21.11.zip",
+            "Bare Bones x Fresh Animations 1.10.4.zip",
+            "Barebones+Leaves+Add-on+main.zip",
+            "FreshAnimations_v1.11.2_26.1+.zip",
+            "Patrix_26.3_32x_basic.zip",
+        ];
+        for name in all {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let stack = |s| crate::pack::style_stack(s, dir.path());
+        assert!(
+            stack(Style::Vanilla).is_empty(),
+            "Vanilla has nothing over vanilla"
+        );
+        assert_eq!(
+            stack(Style::Barebones),
+            [
+                "Bare Bones x Fresh Animations 1.10.4.zip",
+                "FreshAnimations_v1.11.2_26.1+.zip",
+                "Barebones+Leaves+Add-on+main.zip",
+                "Bare Bones 1.21.11.zip"
+            ]
+        );
+        assert_eq!(stack(Style::Realistic), ["Patrix_26.3_32x_basic.zip"]);
+        // Some missing: the style still works, and says what is missing.
+        std::fs::remove_file(dir.path().join("FreshAnimations_v1.11.2_26.1+.zip")).unwrap();
+        std::fs::remove_file(dir.path().join("Patrix_26.3_32x_basic.zip")).unwrap();
+        assert_eq!(stack(Style::Barebones).len(), 3);
+        assert!(stack(Style::Realistic).is_empty());
+        let missing = crate::pack::missing_for(Style::Realistic, dir.path());
+        assert_eq!(missing[0].0, "Patrix 32x");
+        assert!(missing[0].1.contains("patrix-32x"));
+        assert_eq!(
+            crate::pack::missing_for(Style::Barebones, dir.path())[0].0,
+            "Fresh Animations"
+        );
+        // None at all.
+        let none = TempDir::new("style-stacks-none");
+        for style in [Style::Vanilla, Style::Barebones, Style::Realistic] {
+            assert!(crate::pack::style_stack(style, none.path()).is_empty());
+        }
+        assert_eq!(
+            crate::pack::missing_for(Style::Barebones, none.path()).len(),
+            4
+        );
+        // The look is built from the player's extras, then the stack.
+        let options = Options {
+            resource_packs: vec!["Mine.zip".to_owned()],
+            ..Options::default()
+        };
+        assert_eq!(
+            options.active_packs(dir.path()),
+            [
+                "Mine.zip",
+                "Bare Bones x Fresh Animations 1.10.4.zip",
+                "Barebones+Leaves+Add-on+main.zip",
+                "Bare Bones 1.21.11.zip"
+            ]
+        );
     }
 
     #[test]

@@ -52,7 +52,7 @@ impl ClickSound for egui::Response {
 }
 
 /// World and renderer numbers shown in the F3 overlay.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct DebugStats {
     /// Chunk meshes drawn after frustum culling.
     pub chunks_drawn: usize,
@@ -72,7 +72,7 @@ pub struct DebugStats {
     pub dimension: crate::world::dimension::Dimension,
     /// The look and its quality (v1.4), and in Trailer the GPU profiler's
     /// per-pass times, averaged over 60 frames.
-    pub look: &'static str,
+    pub look: String,
     pub gpu: GpuTimes,
 }
 
@@ -1213,11 +1213,14 @@ mod tests {
             mode: GameMode::Creative,
             time: 6000,
             dimension: Default::default(),
-            look: "Trailer (Medium)",
+            look: "Barebones + Shaders (Medium)".to_owned(),
             gpu: GpuTimes::from_averages(&[("world", 3.5), ("post", 0.2)], 3.7),
         };
         let text = debug_text(59.6, &camera, &stats);
-        assert!(text.contains("Visuals: Trailer (Medium)"), "{text}");
+        assert!(
+            text.contains("Visuals: Barebones + Shaders (Medium)"),
+            "{text}"
+        );
         assert!(
             text.contains("GPU 3.70 ms") && text.contains("  post: 0.20 ms"),
             "{text}"
