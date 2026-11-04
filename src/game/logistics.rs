@@ -216,6 +216,9 @@ impl Game {
                 .is_none()
                 .then_some(Used::Gone);
         }
+        if self.dispense_spawn_egg(front, &one) {
+            return Some(Used::Gone);
+        }
         self.throw_out(front, facing, one);
         Some(Used::Gone)
     }

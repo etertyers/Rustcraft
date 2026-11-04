@@ -31,7 +31,7 @@ impl View {
     };
     /// A mob from the front, the side and the back, slightly from above.
     pub const FRONT: Self = Self {
-        yaw: 0.0,
+        yaw: std::f32::consts::PI,
         pitch: 0.2,
     };
     pub const SIDE: Self = Self {
@@ -39,7 +39,7 @@ impl View {
         pitch: 0.2,
     };
     pub const BACK: Self = Self {
-        yaw: std::f32::consts::PI,
+        yaw: 0.0,
         pitch: 0.2,
     };
 }

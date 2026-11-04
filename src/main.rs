@@ -36,7 +36,12 @@ fn main() -> Result<()> {
             .position(|a| a == "--mode")
             .and_then(|i| args.get(i + 1))
             .map_or("vanilla", String::as_str);
-        return rustcraft::audit::cli(mode);
+        let entry = args
+            .iter()
+            .position(|a| a == "--entry")
+            .and_then(|i| args.get(i + 1))
+            .map(String::as_str);
+        return rustcraft::audit::cli(mode, entry);
     }
     if std::env::args().any(|arg| arg == "--texture-marks") {
         print!(
