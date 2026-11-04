@@ -144,8 +144,13 @@ pub struct Look {
 /// Opens the packs named in `ids` (highest priority first) from `dir`;
 /// ones that are gone or broken are skipped with a warning.
 pub fn open_packs(dir: &Path, ids: &[String]) -> Vec<Pack> {
+    open_packs_in(dir, &pack::builtin_dir(), ids)
+}
+
+/// Like [`open_packs`], with the built-in packs' folder given.
+pub fn open_packs_in(dir: &Path, builtin: &Path, ids: &[String]) -> Vec<Pack> {
     ids.iter()
-        .filter_map(|id| match Pack::open(&dir.join(id)) {
+        .filter_map(|id| match Pack::open(&pack::find(dir, builtin, id)) {
             Ok(pack) => Some(pack),
             Err(err) => {
                 warn!("skipping resource pack {id:?}: {err:#}");

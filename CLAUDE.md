@@ -70,11 +70,12 @@ cargo run --release -- --help        # every flag (note the `--`: without it car
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end, --underwater,
 #   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>],
-#   --name <player>, --join <ip:port>, --lan [port], --lan-test <n>, --help
+#   --name <player>, --join <ip:port>, --lan [port], --lan-test <n>, --assets <dir>, --help
 # Tools (usage text in --help): --spawn-test, --flower-test, --structure-test, --nether-map, --cave-test,
 #   --cave-openings, --cave-slice, --write-structures, --asset-report, --gen-placeholders
 cargo run --release -- --spawn-test --seed 12345   # one night in plains, prints monster and animal counts every 1,000 ticks
-scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg)
+scripts/bundle-macos.sh        # build target/release/bundle/Rustcraft.app (icon from assets/*.svg); refuses an incomplete assets/vanilla, then runs scripts/check-bundle.sh
+scripts/check-vanilla.sh       # is assets/vanilla complete (sounds, font, textures)?   scripts/check-downloads.sh   # are Kenzo's 5 packs and 9 mod jars in assets/downloads/?
 screencapture -x docs/screenshots/m<N>-<what>.png   # milestone screenshots (or --shot, which works with the screen locked)
 ```
 
@@ -95,7 +96,7 @@ Module map (`src/` unless noted). The full file list is `docs/architecture.md`; 
 main.rs, lib.rs, app.rs   # entry (flags and tools), the library the benches use, the winit loop and State
 cli.rs, bench.rs, shots.rs, lantest.rs   # flags and usage text; --bench; --shot scenes; --lan-test bots
 config.rs            # every constant: chunk size, world height, render distance, physics, combat
-assets.rs, options.rs, level.rs, worldlist.rs   # where assets and saves live; options.ron; a world folder's level.ron; the Select World list
+assets.rs, options.rs, level.rs, worldlist.rs   # the asset root (--assets, else the .app's Resources, else the repo; never the current folder), the asset report; where saves live; options.ron; a world folder's level.ron; the Select World list
 world/               # blocks, chunks, light, meshing, fluids, saves, redstone, pistons, dimensions, portals
   block.rs, blocks.rs, props.rs   # the registry, generated ID constants, block state properties
   chunk.rs, light.rs, mesh.rs, manager.rs   # 16x16x16 sections, light, chunk to vertices, load/unload and workers
@@ -168,6 +169,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | released (`v1.2.0`) |
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
+| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | in progress (Checkpoint L: M59–M62) |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`.
 
@@ -245,3 +247,17 @@ Every numeric target in a milestone says where it comes from: vanilla code or da
 - Rustcraft doesn't load OptiFine/Iris shader packs: they target vanilla's OpenGL pipeline and would need a compatibility layer that is slower and months of work. The look is written natively in WGSL instead. Resource packs with OptiFine CEM models and animations (Fresh Animations) are supported (M58).
 - Each look has its own resource pack list. The Trailer list starts with Fresh Animations, Barebones Better Leaves and Bare Bones if they're in resourcepacks/; none of the three is ever bundled or committed (their licenses forbid redistribution).
 - Frame-rate budgets on Kenzo's Mac mini M1 at 1080p, render distance 9: Vanilla within 3% of M53; Trailer Low ≥ 100 FPS average / 50 at the 1% low; Medium ≥ 75 / 45; High ≥ 60 / 40. Each Trailer effect has a GPU-time share, measured with timestamps every milestone.
+
+### v1.5 (assets, styles, mods, caves and speed)
+
+- v1.5 (M59–M69) fixes Kenzo's v1.4 playtest and builds the Barebones style: assets in the .app, broken textures, three styles with one Shaders switch, native versions of the trailer-look mods, the Mods screen, caves that keep the grass, and speed on Apple silicon.
+- Vanilla's files (minecraft-assets 26.3) have every texture, sound and the font, so Rustcraft draws no replacement art. Missing assets are a lookup or bundling bug, or a download to ask Kenzo for. Mojang's files, the packs and the mod jars stay git-ignored and are bundled only into Kenzo's own .app.
+- The game finds its assets from the executable's location (the .app's Contents/Resources), never the current directory. scripts/bundle-macos.sh refuses to build without the vanilla layer's sounds and font, and scripts/check-bundle.sh verifies every build (M59).
+- Kenzo's downloads live in assets/downloads/ (resourcepacks/ and mods/, git-ignored). When something needed is missing, the session stops and asks Kenzo with links, never downloads packs or mods itself and never works around a missing file.
+- Kenzo checks textures with the Texture Viewer (Options → Video Settings → Texture Viewer, or /textures). His marks in texture-marks.ron are the input for texture fixes (M60).
+- Three built-in styles, grouped by performance: Barebones (Bare Bones, Barebones Better Leaves, Fresh Animations, Bare Bones x Fresh Animations), Vanilla, and Realistic (Patrix 32x, plus Fresh Animations if its mobs fit), with one Shaders switch (Low/Medium/High) that works with any style. Barebones and Realistic have the same extras. F12 toggles Shaders and Shift+F12 cycles the style. The default is Barebones with Shaders on at Medium. Rustcraft supports the OptiFine features Patrix uses (connected, natural and random textures, emissive) but not PBR maps (M62).
+- The Barebones style includes every mod from lowresbones' "Make Minecraft look like the trailer (UPDATED)" video except BSL Shaders, Better Combat and Nyf's Spiders. Each is rebuilt natively (Rustcraft doesn't run Java mods), from its behavior, never its code, with its assets read from its jar. Client-side mods are on by default in the Barebones and Realistic styles. Better Combat and Nyf's Spiders were removed because they change gameplay: every extra is client-side, and gameplay stays vanilla (M63–M65).
+- The Mods screen recognizes what a file is. It routes resource packs (like Fresh Animations) to Resource Packs and data packs to worlds; Java mods and shader packs get a plain "not supported" (M66).
+- Surface rules run after noise caves and use stone_depth floors with above_preliminary_surface. Carvers turn exposed dirt under removed grass into the top block, as vanilla does. Checked against chunks from Mojang's own server on the same seed (M67).
+- Render Scale defaults to Auto (the world at no more than about 4 million pixels, the UI always at full resolution). The game runs at the display's full refresh rate, including 120 Hz ProMotion (M68). v1.5's budgets are measured on Kenzo's M4.
+- Distant Horizons is rebuilt natively as Distant Terrain: LOD terrain to 32–512 chunks (default 128 in Barebones and Realistic, Off in Vanilla), built by the server in the background and cached per world (M69).
