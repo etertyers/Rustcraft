@@ -847,9 +847,13 @@ pub fn report(res: &Resources) -> Report {
         events: table.len(),
         ..Report::default()
     };
+    // A mod jar's sound (`namespace:path`) lives in its jar, not in a layer;
+    // `extras::jar`'s tests check those.
     let has = |entry: &Entry| {
-        res.layer_of(&format!("sounds/{}.ogg", entry.name))
-            .is_some()
+        entry.name.contains(':')
+            || res
+                .layer_of(&format!("sounds/{}.ogg", entry.name))
+                .is_some()
     };
     for event in table.events() {
         let entries = table.entries(event);

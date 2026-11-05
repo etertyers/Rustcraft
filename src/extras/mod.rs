@@ -138,6 +138,10 @@ impl Extra {
 pub struct Toggles {
     /// `"barebones:cave_dust"` → on or off.
     overrides: BTreeMap<String, bool>,
+    /// Every extra on or off for this run (`--extras on|off` in a
+    /// performance run); never saved.
+    #[serde(skip)]
+    pub force: Option<bool>,
 }
 
 impl Toggles {
@@ -150,6 +154,9 @@ impl Toggles {
     }
 
     pub fn enabled(&self, style: Style, extra: Extra) -> bool {
+        if let Some(on) = self.force {
+            return on;
+        }
         self.overrides
             .get(&Self::slot(style, extra))
             .copied()

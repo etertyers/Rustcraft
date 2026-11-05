@@ -479,6 +479,7 @@ impl App {
         if let Some(distance) = bench.as_ref().and_then(|bench| bench.distance) {
             self.options.render_distance = distance;
         }
+        self.options.extras.force = bench.as_ref().and_then(|b| b.extras);
         self.bench = bench;
         self
     }
@@ -1948,6 +1949,16 @@ impl App {
             },
             on,
         );
+        if tick.is_multiple_of(200) && !fx.particles().is_empty() {
+            log::debug!(
+                "extras: {} particles ({} rain, {} wake, {} bubble, {} visual)",
+                fx.particles().len(),
+                fx.count(crate::extras::fx::Kind::Rain),
+                fx.count(crate::extras::fx::Kind::Wake),
+                fx.count(crate::extras::fx::Kind::Bubble),
+                fx.count(crate::extras::fx::Kind::Visual),
+            );
+        }
         // A popped bubble makes a small pop, at Make Bubbles Pop's default
         // 10% volume (at most a few a tick).
         for (n, at) in fx.pops.iter().take(3).enumerate() {
@@ -2330,6 +2341,9 @@ impl App {
                 world.teleport(glam::DVec3::from_array(start), 0.0, -0.35);
             }
             world.glide(bench::SPEED * dt as f64, bench.height());
+            if bench.storm {
+                bench::stage_storm(world);
+            }
             // This client looks where the flight does.
             game.player.camera.yaw = world.player.camera.yaw;
             game.player.camera.pitch = world.player.camera.pitch;

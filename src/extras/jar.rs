@@ -210,4 +210,32 @@ mod tests {
             assert_eq!(image.width(), image.height(), "{name} is a square frame");
         }
     }
+
+    #[test]
+    fn the_sound_jars_give_their_events_and_ogg_files_when_downloaded() {
+        let dir = crate::assets::dir().join("downloads/mods");
+        if find_jar_in(&dir, "PresenceFootsteps-").is_none()
+            || find_jar_in(&dir, "AmbientSounds_").is_none()
+        {
+            eprintln!("skipped: no sound jars");
+            return;
+        }
+        set_dir(&dir);
+        let layers = sounds_json_layers();
+        assert_eq!(layers.len(), 2, "both jars have a sounds.json");
+        // Every file the first events name is in a jar and is an ogg.
+        let mut checked = 0;
+        for layer in &layers {
+            let json: serde_json::Value = serde_json::from_str(layer).unwrap();
+            for (_, event) in json.as_object().unwrap().iter().take(40) {
+                for sound in event["sounds"].as_array().into_iter().flatten() {
+                    let name = sound.as_str().or_else(|| sound["name"].as_str()).unwrap();
+                    let bytes = sound_bytes(name).unwrap_or_else(|| panic!("{name} missing"));
+                    assert_eq!(&bytes[..4], b"OggS", "{name}");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 20, "{checked}");
+    }
 }
