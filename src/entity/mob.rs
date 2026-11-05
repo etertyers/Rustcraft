@@ -115,6 +115,17 @@ pub struct Mob {
     pub limb_swing: f32,
     pub limb_amount: f32,
     prev_limb_amount: f32,
+    /// A chicken's flapping (vanilla's `flap`, `flapSpeed`, `flapping`).
+    pub flap: f32,
+    pub prev_flap: f32,
+    pub flap_speed: f32,
+    pub prev_flap_speed: f32,
+    flapping: f32,
+    /// A slime's squash (vanilla's `squish`, `oSquish`, `targetSquish`).
+    pub squish: f32,
+    pub prev_squish: f32,
+    target_squish: f32,
+    was_on_ground: bool,
     pub ai: AiState,
     /// Its drops have been dropped (once, however it died).
     pub looted: bool,
@@ -200,6 +211,15 @@ impl Mob {
             limb_swing: 0.0,
             limb_amount: 0.0,
             prev_limb_amount: 0.0,
+            flap: 0.0,
+            prev_flap: 0.0,
+            flap_speed: 0.0,
+            prev_flap_speed: 0.0,
+            flapping: 1.0,
+            squish: 0.0,
+            prev_squish: 0.0,
+            target_squish: 0.0,
+            was_on_ground: false,
             ai: AiState::default(),
             looted: false,
             data,
@@ -264,6 +284,20 @@ impl Mob {
         let yaw = self.prev_yaw + angle_difference(self.yaw, self.prev_yaw) * alpha;
         let amount = self.prev_limb_amount + (self.limb_amount - self.prev_limb_amount) * alpha;
         (feet, yaw, amount)
+    }
+
+    /// The walk animation `alpha` of the way through the tick, as vanilla's
+    /// `WalkAnimationState` gives it: (position, speed). The position is
+    /// the tick's end position taken back by the unspent part of the tick's
+    /// speed, so legs move smoothly at any frame rate; babies step three
+    /// times as fast; the speed stays in 0–1.
+    pub fn limbs(&self, alpha: f32) -> (f32, f32) {
+        let amount = self.prev_limb_amount + (self.limb_amount - self.prev_limb_amount) * alpha;
+        let scale = if self.data.age < 0 { 3.0 } else { 1.0 };
+        (
+            (self.limb_swing - self.limb_amount * (1.0 - alpha)) * scale,
+            amount.clamp(0.0, 1.0),
+        )
     }
 
     /// Hits the mob for `amount` from `attacker` (a position, for
@@ -344,6 +378,28 @@ impl Mob {
         let speed = (moved.x.hypot(moved.z) * 4.0).min(1.0) as f32;
         self.limb_amount += (speed - self.limb_amount) * 0.4;
         self.limb_swing += self.limb_amount;
+        // Vanilla's Chicken.aiStep: flapping builds up in the air and dies
+        // away on the ground.
+        self.prev_flap = self.flap;
+        self.prev_flap_speed = self.flap_speed;
+        let on_ground = self.body.on_ground;
+        self.flap_speed =
+            (self.flap_speed + if on_ground { -1.0 } else { 4.0 } * 0.3).clamp(0.0, 1.0);
+        if !on_ground && self.flapping < 1.0 {
+            self.flapping = 1.0;
+        }
+        self.flapping *= 0.9;
+        self.flap += self.flapping * 2.0;
+        // Vanilla's Slime.tick: squash on landing, stretch on take-off.
+        self.squish += (self.target_squish - self.squish) * 0.5;
+        self.prev_squish = self.squish;
+        if on_ground && !self.was_on_ground {
+            self.target_squish = -0.5;
+        } else if !on_ground && self.was_on_ground {
+            self.target_squish = 1.0;
+        }
+        self.was_on_ground = on_ground;
+        self.target_squish *= 0.6;
     }
 
     /// What it drops on death: each drop 0–2 (or its range), cooked if it

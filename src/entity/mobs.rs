@@ -38,6 +38,9 @@ pub struct MobDef {
     /// What it holds in its main hand when it spawns (a skeleton's bow).
     #[serde(default)]
     pub holds: Option<ItemId>,
+    /// Largest swing of its arms and legs in radians (an enderman's 0.4).
+    #[serde(default)]
+    pub limb_limit: Option<f32>,
     /// How far it notices a player it can see, and how far its paths
     /// reach (modern `FOLLOW_RANGE`: 35 for the zombie family, else 16).
     #[serde(default = "follow_range")]
@@ -371,6 +374,20 @@ pub enum Role {
     /// Legs swinging with walking, opposite each other.
     LegA,
     LegB,
+    /// One of a cat's four legs (0 hind left, 1 hind right, 2 front left,
+    /// 3 front right): vanilla's ocelot gait, offset in phase.
+    CatLeg(u8),
+    /// A ghast's tentacle 0–8, swaying with its age.
+    GhastTentacle(u8),
+    /// A blaze's rod 0–11, circling in three rings.
+    BlazeRod(u8),
+    /// A magma cube's slice 0–7, spreading as it squashes.
+    Slice(u8),
+    /// A silverfish's body segment 0–6 (or the layer over one), swaying
+    /// as it crawls.
+    Segment(u8),
+    /// A rabbit's legs: 0 the rear pair, 1 the front pair, together.
+    Hop(u8),
     /// Arms swinging with walking, opposite the legs.
     ArmA,
     ArmB,

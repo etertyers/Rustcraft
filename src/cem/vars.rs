@@ -132,14 +132,15 @@ impl EntityVars {
     /// synced state and the tick, so two clients agree.
     pub fn of(mob: &Mob, max_health: f32, frame: &Frame) -> Self {
         let mut v = [0.0f32; COUNT];
-        let (feet, yaw, limb_amount) = mob.pose(frame.alpha);
+        let (feet, yaw, _) = mob.pose(frame.alpha);
+        let (limb_swing, limb_amount) = mob.limbs(frame.alpha);
         let set = |v: &mut [f32; COUNT], name: &str, value: f32| {
             if let Some(i) = slot(name) {
                 v[usize::from(i)] = value;
             }
         };
         let flag = |b: bool| f32::from(b);
-        set(&mut v, "limb_swing", mob.limb_swing);
+        set(&mut v, "limb_swing", limb_swing);
         set(&mut v, "limb_speed", limb_amount);
         set(&mut v, "age", mob.age as f32 + frame.alpha);
         // Degrees, turned the way OptiFine's are (positive to the left).
