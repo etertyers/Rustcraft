@@ -66,7 +66,9 @@ Usage: cargo run --release -- [flags]
                         Contents/Resources, else the source tree; never the current folder)
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
   --perf-test           the performance gate (writes docs/perf/<label>.md and .json); --underwater flies in the sea;
-                        --storm flies in a thunderstorm with boats and mobs being hit; --extras on|off sets every extra
+                        --storm flies in a thunderstorm with boats and mobs being hit; --extras on|off sets every extra;
+                        --native flies full screen at the display's real resolution, with vsync as in the options or --vsync on|off,
+                        and reports the share of frames that missed the display's refresh
     --runs <n>            ...n flights in one launch; the report has each measure's median and spread
     --label <name>        ...name the results <name> (default m<N>, with -nether, -end or -underwater)
     --row <name>          ...which baseline row the results are for (default vanilla; with
@@ -144,6 +146,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
     let mut nether = false;
     let mut underwater = false;
     let mut storm = false;
+    let mut native = false;
+    let mut vsync: Option<bool> = None;
     let mut extras: Option<bool> = None;
     let mut end = false;
     let (mut runs, mut label, mut row, mut perf_out) = (1u32, None, None, None);
@@ -328,6 +332,19 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             "--nether" => nether = true,
             "--underwater" => underwater = true,
             "--storm" => storm = true,
+            "--native" => native = true,
+            "--vsync" => {
+                let word = value(&mut args, "--vsync", "on or off")?;
+                vsync = Some(match word.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    other => {
+                        return Err(CliError::wrong(format!(
+                            "--vsync takes on or off, not {other}"
+                        )));
+                    }
+                });
+            }
             "--extras" => {
                 let word = value(&mut args, "--extras", "on or off")?;
                 extras = Some(match word.as_str() {
@@ -382,6 +399,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
         bench.underwater = underwater && dimension == Dimension::Overworld;
         bench.storm = storm && !bench.underwater && dimension == Dimension::Overworld;
         bench.extras = extras;
+        bench.native = native;
+        bench.vsync = vsync;
         bench.runs = runs;
         bench.label = label;
         // A performance run is Vanilla without shaders unless told otherwise.

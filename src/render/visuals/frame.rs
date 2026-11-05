@@ -102,6 +102,8 @@ pub struct TrailerFrame {
     /// The tone-mapped picture, for FXAA to read (when FXAA is on).
     ldr: Option<(wgpu::Texture, wgpu::TextureView)>,
     ldr_size: (u32, u32),
+    /// FXAA's output when Render Scale is under 100% (the upscale reads it).
+    ldr_b: Option<(wgpu::Texture, wgpu::TextureView)>,
     sampler: wgpu::Sampler,
     /// A black 1 × 1, for a bloom or shafts that isn't drawn.
     dummy: wgpu::TextureView,
@@ -256,6 +258,7 @@ impl TrailerFrame {
             generation: 0,
             ldr: None,
             ldr_size: (0, 0),
+            ldr_b: None,
             sampler,
             dummy,
             hdr_format,
@@ -297,32 +300,53 @@ impl TrailerFrame {
     }
 
     /// The tone-mapped picture's texture (made, or dropped when `on` is
-    /// false), for FXAA to read.
-    pub fn prepare_ldr(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat, on: bool) {
+    /// false), for FXAA to read or the upscale to stretch; `second` makes
+    /// FXAA's output texture too (FXAA under a Render Scale below 100%).
+    pub fn prepare_ldr(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        on: bool,
+        second: bool,
+    ) {
         if !on {
             self.ldr = None;
+            self.ldr_b = None;
             return;
         }
-        if self.ldr.is_some() && self.ldr_size == self.size {
+        if !second {
+            self.ldr_b = None;
+        }
+        if self.ldr.is_some() && self.ldr_size == self.size && self.ldr_b.is_some() == second {
             return;
         }
         self.ldr_size = self.size;
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ldr"),
-            size: wgpu::Extent3d {
-                width: self.size.0,
-                height: self.size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-        self.ldr = Some((texture, view));
+        let make = |label: &str| {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: self.size.0,
+                    height: self.size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&Default::default());
+            (texture, view)
+        };
+        self.ldr = Some(make("ldr"));
+        self.ldr_b = second.then(|| make("ldr b"));
+    }
+
+    /// FXAA's output when Render Scale is under 100%.
+    pub fn ldr_b_view(&self) -> Option<&wgpu::TextureView> {
+        self.ldr_b.as_ref().map(|(_, v)| v)
     }
 
     /// The tone-mapped picture, when FXAA is on.

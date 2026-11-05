@@ -917,6 +917,24 @@ fn graphics_section(screen: &mut OptionsScreen, ui: &mut Ui, options: &mut Optio
             options.visuals.quality = quality.next();
         }
         cell(ui);
+        let (window_w, window_h) = crate::render::visuals::scale::window();
+        let response = ui.add_enabled(
+            shaders,
+            Button::new(format!(
+                "Render Scale: {}",
+                crate::render::visuals::scale::label(
+                    options.visuals.render_scale,
+                    window_w,
+                    window_h
+                )
+            ))
+            .min_size(HALF.into()),
+        );
+        if screen.clicked(&response) {
+            options.visuals.render_scale =
+                crate::render::visuals::scale::next(options.visuals.render_scale);
+        }
+        cell(ui);
         let response = ui.add_enabled(
             shaders,
             Button::new("Shader Settings...").min_size(HALF.into()),

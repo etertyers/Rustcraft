@@ -59,6 +59,8 @@ git config core.hooksPath .githooks   # once per clone: the pre-commit hook runs
 RUST_LOG=rustcraft=debug cargo run --release
 cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight, prints fps
 cargo run --release -- --perf-test [--runs <n>] [--label <name>] [--row <name>] [--nether|--end|--underwater]   # writes docs/perf/<label>.md and .json
+cargo run --release -- --perf-test --native [--vsync on|off] --row barebones-native --style barebones --shaders on --quality medium   # full screen at the display's real resolution; reports the share of frames that missed the refresh (M68)
+RUSTCRAFT_RENDER_SCALE=auto|50..100 / RUSTCRAFT_EFFECTS_OFF=bloom,light shafts cargo run --release -- --bench 20   # measuring aids: Render Scale and per-effect cost (M68)
 scripts/add_bench.py docs/perf/m<N>.json   # adds cargo bench's medians to the results
 scripts/perf_gate.py docs/perf/m<N>.json    # compares with docs/perf/baseline.json; the exit code is the gate
 UPDATE_GOLDEN=1 cargo test --test golden   # rewrite tests/golden/hashes.ron (only per the golden rule in §7)
