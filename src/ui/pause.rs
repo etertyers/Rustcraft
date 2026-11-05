@@ -17,6 +17,8 @@ const BUTTON: [f32; 2] = [260.0, 32.0];
 pub enum PauseAction {
     Resume,
     SaveAndQuit,
+    /// Save, quit and start the game again (Mods: Restart now).
+    Restart,
     /// Start LAN World: guests play in `mode`, may cheat or not, on `port`
     /// (any free one if `None`).
     OpenToLan {
@@ -150,8 +152,12 @@ impl PauseMenu {
                         return;
                     }
                     if let Some(mods) = self.mods.as_mut() {
-                        if mods.show(ui) {
-                            self.mods = None;
+                        match mods.show(ui, options) {
+                            Some(super::mods::ModsAction::Done) => self.mods = None,
+                            Some(super::mods::ModsAction::Restart) => {
+                                action = Some(PauseAction::Restart);
+                            }
+                            None => {}
                         }
                         return;
                     }

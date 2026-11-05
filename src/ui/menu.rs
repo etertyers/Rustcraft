@@ -26,6 +26,8 @@ use crate::{
 /// What the player chose.
 pub enum MenuAction {
     Quit,
+    /// Start the game again (the Mods screen's Restart now).
+    Restart,
     Open(WorldDir),
     Create {
         name: String,
@@ -151,12 +153,14 @@ impl Menu {
                         Screen::CreateWorld => self.create_world(ui),
                         Screen::Multiplayer(_) => self.multiplayer(ui),
                         Screen::ConfirmMods(..) => self.confirm_mods(ui),
-                        Screen::Mods(mods) => {
-                            if mods.show(ui) {
+                        Screen::Mods(mods) => match mods.show(ui, options) {
+                            Some(super::mods::ModsAction::Done) => {
                                 self.screen = Screen::Title;
+                                None
                             }
-                            None
-                        }
+                            Some(super::mods::ModsAction::Restart) => Some(MenuAction::Restart),
+                            None => None,
+                        },
                         Screen::TextureViewer(_) => None,
                     };
                     if let Some(error) = &self.error {
@@ -188,6 +192,24 @@ impl Menu {
     }
 
     /// Opens the Texture Viewer (Options, or `--texture-viewer`).
+    /// A file dropped on the window: the Mods screen asks where it goes.
+    /// Not while a screen that takes typing or a viewer is up.
+    pub fn dropped(&mut self, path: std::path::PathBuf) {
+        if matches!(self.screen, Screen::TextureViewer(_) | Screen::CreateWorld) {
+            return;
+        }
+        if !matches!(self.screen, Screen::Mods(_)) {
+            self.open_mods();
+        }
+        if let Screen::Mods(mods) = &mut self.screen {
+            mods.dropped(path);
+        }
+    }
+
+    pub fn open_mods(&mut self) {
+        self.screen = Screen::Mods(super::mods::ModsScreen::new());
+    }
+
     pub fn open_texture_viewer(&mut self) {
         self.screen = Screen::TextureViewer(Box::default());
     }
