@@ -98,6 +98,7 @@ Tools: --texture-audit [--mode vanilla|barebones|realistic] (contact sheets in t
        --nether-map [--seed <n>] [--chunks <side>] (basalt pillars and columns by Nether biome)
        --cave-test [--seed <n>] [--chunks <n>] (the underground in numbers)
        --cave-openings [--seed <n>] [--side <chunks>] (surface openings by source)
+       --grass-test [--seed <n>] [--side <chunks>] (exposed dirt by cause, and the openings)
        --cave-slice --seed <n> --x <x> --z <z> --size 256 --out <file> (a cross-section picture)
        --structure-test [--seed <n>] (20 ruined portals, 20 geodes and 5 fortresses checked)
 ";
