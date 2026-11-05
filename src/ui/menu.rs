@@ -188,6 +188,10 @@ impl Menu {
     }
 
     /// Opens the Texture Viewer (Options, or `--texture-viewer`).
+    pub fn open_mods(&mut self) {
+        self.screen = Screen::Mods(super::mods::ModsScreen::new());
+    }
+
     pub fn open_texture_viewer(&mut self) {
         self.screen = Screen::TextureViewer(Box::default());
     }

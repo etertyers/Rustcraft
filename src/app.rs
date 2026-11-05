@@ -334,6 +334,8 @@ pub struct ShotRun {
 
 /// The `--shot` that captures the Texture Viewer, not a world.
 const TEXTURE_VIEWER_SHOT: &str = "texture-viewer";
+/// The Mods screen shot (M66): also a menu screen, not a world.
+const MODS_SHOT: &str = "mods-screen";
 
 /// Frames drawn after staging a scene before capturing it, so remeshed
 /// chunks and the UI catch up.
@@ -428,7 +430,7 @@ impl App {
     pub fn with_shot(mut self, shot: &'static shots::Shot, out: std::path::PathBuf) -> Self {
         // Every scene is seen at the standard render distance.
         self.options.render_distance = config::RENDER_DISTANCE;
-        if shot.name == TEXTURE_VIEWER_SHOT {
+        if shot.name == TEXTURE_VIEWER_SHOT || shot.name == MODS_SHOT {
             // A menu screen: no world.
         } else if self.world_kind.is_none() || shot.world.is_some() {
             self.world_kind = Some(shot.world.clone().unwrap_or(WorldKind::Flat));
@@ -632,6 +634,13 @@ impl App {
                         .is_some_and(|run| run.shot.name == TEXTURE_VIEWER_SHOT)
                 {
                     menu.open_texture_viewer();
+                }
+                if self
+                    .shot
+                    .as_ref()
+                    .is_some_and(|run| run.shot.name == MODS_SHOT)
+                {
+                    menu.open_mods();
                 }
                 self.menu = Some(menu);
             }
@@ -3342,6 +3351,14 @@ impl App {
                 }
                 Some(frames) => run.staged = Some(frames + 1),
                 None => {}
+            }
+        }
+        if let Some(run) = self.shot.as_mut().filter(|run| run.shot.name == MODS_SHOT) {
+            let frames = run.staged.unwrap_or(0);
+            run.staged = Some(frames + 1);
+            if frames >= SHOT_SETTLE_FRAMES {
+                renderer.capture_next_frame(run.out.clone());
+                capturing = true;
             }
         }
         let (ui, action) = debug_ui.menu_frame(window, menu, &mut self.options);
