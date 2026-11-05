@@ -3420,6 +3420,7 @@ dependencies = [
  "glam 0.34.1",
  "image",
  "kira",
+ "libc",
  "log",
  "lz4_flex",
  "mlua",

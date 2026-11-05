@@ -21,6 +21,8 @@ pub const HEIGHT: f64 = 100.0;
 /// Feet height for `--underwater`: the eyes are 5–6 blocks under the sea
 /// surface (Y 63).
 pub const UNDERWATER_HEIGHT: f64 = 56.4;
+/// Feet height for `--storm`: just over the sea.
+pub const STORM_HEIGHT: f64 = 66.0;
 
 impl Bench {
     /// Feet height for this dimension's flight: the Nether's caverns are
@@ -29,6 +31,7 @@ impl Bench {
         use crate::world::dimension::Dimension;
         match self.dimension {
             Dimension::Overworld if self.underwater => UNDERWATER_HEIGHT,
+            Dimension::Overworld if self.storm => STORM_HEIGHT,
             Dimension::Overworld => HEIGHT,
             Dimension::Nether => 72.0,
             Dimension::End => 90.0,
@@ -42,7 +45,9 @@ impl Bench {
         use crate::world::dimension::Dimension;
         match self.dimension {
             Dimension::End => Some([27.5, self.height(), -550.0]),
-            Dimension::Overworld if self.underwater => Some([1248.5, self.height(), 1248.5]),
+            Dimension::Overworld if self.underwater || self.storm => {
+                Some([1248.5, self.height(), 1248.5])
+            }
             _ => None,
         }
     }
@@ -92,6 +97,11 @@ pub struct Bench {
     /// `--underwater` (M51): the Overworld flight runs 6 blocks under the
     /// surface of a deep ocean, so the water's fog and overlay are drawn.
     pub underwater: bool,
+    /// `--storm` (M65): a thunderstorm over the ocean with three boats sailing
+    /// and mobs being hit, so the extras are working while it's measured.
+    pub storm: bool,
+    /// `--extras on|off`: every extra on or off for this run.
+    pub extras: Option<bool>,
     /// `--runs <n>`: how many flights `--perf-test` makes (the report has the
     /// median of each measure).
     pub runs: u32,
@@ -118,6 +128,8 @@ impl Bench {
             perf_report: None,
             dimension: Default::default(),
             underwater: false,
+            storm: false,
+            extras: None,
             runs: 1,
             label: None,
             row: "vanilla".to_owned(),
@@ -243,6 +255,7 @@ impl Bench {
         use crate::world::dimension::Dimension;
         match self.dimension {
             Dimension::Overworld if self.underwater => "-underwater",
+            Dimension::Overworld if self.storm => "-storm",
             Dimension::Overworld => "",
             Dimension::Nether => "-nether",
             Dimension::End => "-end",
@@ -258,6 +271,7 @@ impl Bench {
             f.average_fps >= MIN_AVERAGE_FPS && f.one_percent_low_fps >= MIN_ONE_PERCENT_LOW_FPS;
         let flag = match self.dimension {
             crate::world::dimension::Dimension::Overworld if self.underwater => " --underwater",
+            crate::world::dimension::Dimension::Overworld if self.storm => " --storm",
             crate::world::dimension::Dimension::Overworld => "",
             crate::world::dimension::Dimension::Nether => " --nether",
             crate::world::dimension::Dimension::End => " --end",
@@ -360,6 +374,66 @@ fn summary(frames: &[FrameTimes]) -> String {
         mean_ms(|f| f.chunks),
         mean_ms(|f| f.draw),
     )
+}
+
+/// `--storm`: keeps the scene going once a game tick: thunder, three boats
+/// sailing ahead of the flight on the sea, and chickens and skeletons that
+/// are hit every half second, so every extra has work to do.
+pub fn stage_storm(game: &mut crate::game::Game) {
+    use crate::entity::boat::{Boat, BoatKind};
+    use glam::DVec3;
+    game.weather = crate::game::weather::Weather::Thunder;
+    game.weather_ticks = 1_000_000;
+    let at = game.player.body_state().position();
+    let kind = BoatKind::of_item("oak_boat").unwrap_or(BoatKind {
+        wood: 0,
+        chest: false,
+    });
+    for i in 0..3u64 {
+        let id = 7_000_000 + i;
+        let pos = DVec3::new(
+            at.x + (i as f64 - 1.0) * 7.0,
+            62.2,
+            at.z - 16.0 - i as f64 * 4.0,
+        );
+        match game.boats.iter_mut().find(|b| b.id == id) {
+            Some(boat) => {
+                boat.position = pos;
+                boat.prev_position = pos;
+                boat.velocity = DVec3::new(0.0, 0.0, -0.2);
+            }
+            None => {
+                let mut boat = Boat::new(id, kind, pos, 0.0);
+                boat.velocity = DVec3::new(0.0, 0.0, -0.2);
+                game.boats.push(boat);
+            }
+        }
+    }
+    // Six mobs near the boats, hit every ten ticks.
+    let near = game
+        .mobs
+        .iter()
+        .filter(|m| m.feet().distance(at) < 60.0)
+        .count();
+    if near < 6 {
+        for (i, name) in [
+            "chicken", "skeleton", "chicken", "skeleton", "chicken", "chicken",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if let Some(kind) = game.mob_defs().find(name) {
+                let pos = DVec3::new(at.x - 9.0 + i as f64 * 3.0, 64.0, at.z - 22.0);
+                let mob = game.new_mob(kind, pos, 0.0);
+                game.add_mob(mob);
+            }
+        }
+    }
+    if game.time().is_multiple_of(10) {
+        for mob in &mut game.mobs {
+            mob.hurt_time = 10;
+        }
+    }
 }
 
 #[cfg(test)]

@@ -3,8 +3,12 @@
 //! Barebones and Realistic and off in Vanilla, and each can be switched in
 //! any style. None changes what the server decides.
 
+pub mod ambient;
+pub mod footsteps;
 pub mod fx;
 pub mod jar;
+pub mod live;
+pub mod physics;
 
 use std::collections::BTreeMap;
 
@@ -40,16 +44,25 @@ pub enum Extra {
     BubblePop,
     /// Wakes.
     Wakes,
+    /// Presence Footsteps.
+    FootstepsByMaterial,
+    /// Sound Physics Remastered.
+    SoundPhysics,
+    /// Ambient Sounds.
+    AmbientSounds,
 }
 
 impl Extra {
-    pub const ALL: [Extra; 6] = [
+    pub const ALL: [Extra; 9] = [
         Extra::PlayerAnimations,
         Extra::VisualParticles,
         Extra::CaveDust,
         Extra::RainParticles,
         Extra::BubblePop,
         Extra::Wakes,
+        Extra::FootstepsByMaterial,
+        Extra::SoundPhysics,
+        Extra::AmbientSounds,
     ];
 
     /// The toggle's label, named after what it does.
@@ -61,6 +74,9 @@ impl Extra {
             Extra::RainParticles => "Rain and Snow Particles",
             Extra::BubblePop => "Rising, Popping Bubbles",
             Extra::Wakes => "Water Wakes",
+            Extra::FootstepsByMaterial => "Footsteps by Material",
+            Extra::SoundPhysics => "Sound Physics",
+            Extra::AmbientSounds => "Ambient Sounds",
         }
     }
 
@@ -85,6 +101,18 @@ impl Extra {
                 "Wakes behind boats, swimmers and mobs, and splashes when something falls into \
                  water. (Wakes)"
             }
+            Extra::FootstepsByMaterial => {
+                "Every foot makes its own sound from the block it lands on, layered, for the \
+                 player and walking mobs. (Presence Footsteps)"
+            }
+            Extra::SoundPhysics => {
+                "Echo in caves and rooms, muffling through walls, dull distant sounds and \
+                 muffling under water. (Sound Physics Remastered)"
+            }
+            Extra::AmbientSounds => {
+                "Birds, crickets, wind, water and cave sounds that fade in and out with the \
+                 place and the time. (Ambient Sounds)"
+            }
         }
     }
 
@@ -96,6 +124,9 @@ impl Extra {
             Extra::RainParticles => "rain_particles",
             Extra::BubblePop => "bubble_pop",
             Extra::Wakes => "wakes",
+            Extra::FootstepsByMaterial => "footsteps",
+            Extra::SoundPhysics => "sound_physics",
+            Extra::AmbientSounds => "ambient_sounds",
         }
     }
 }
@@ -107,6 +138,10 @@ impl Extra {
 pub struct Toggles {
     /// `"barebones:cave_dust"` → on or off.
     overrides: BTreeMap<String, bool>,
+    /// Every extra on or off for this run (`--extras on|off` in a
+    /// performance run); never saved.
+    #[serde(skip)]
+    pub force: Option<bool>,
 }
 
 impl Toggles {
@@ -119,6 +154,9 @@ impl Toggles {
     }
 
     pub fn enabled(&self, style: Style, extra: Extra) -> bool {
+        if let Some(on) = self.force {
+            return on;
+        }
         self.overrides
             .get(&Self::slot(style, extra))
             .copied()

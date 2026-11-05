@@ -115,6 +115,7 @@ impl Resources {
         if !vanilla {
             return Ok(res);
         }
+        crate::extras::jar::set_dir(&assets.join("downloads/mods"));
         res.extra = crate::extras::jar::load(&assets.join("downloads/mods"));
         res.vanilla = Pack::vanilla(&assets.join("vanilla"));
         if res.vanilla.is_none() {

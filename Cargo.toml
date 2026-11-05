@@ -42,6 +42,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 # The performance gate's benchmarks (`cargo bench`), from M14 on.
 [dev-dependencies]
 criterion = "0.8.2"
+libc = "0.2.191"
 
 [[bench]]
 name = "world"

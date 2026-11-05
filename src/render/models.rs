@@ -908,6 +908,8 @@ mod tests {
 
     /// 100 animated mobs on screen: building their meshes and running
     /// their animations takes at most 1.0 ms a frame on the M1 (release).
+    /// Measured in this thread's CPU time, so a parallel run of the other
+    /// tests can't fail it.
     #[test]
     fn a_hundred_animated_mobs_take_under_a_millisecond_a_frame() {
         let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
@@ -957,19 +959,20 @@ mod tests {
         for n in 0..20 {
             frame(n); // warm up
         }
-        let started = std::time::Instant::now();
+        let started = crate::testutil::thread_cpu_time();
         let frames = 200;
         let mut quads = 0;
         for n in 0..frames {
             quads = frame(100 + n).indices.len() / 6;
         }
-        let each = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+        let each =
+            (crate::testutil::thread_cpu_time() - started).as_secs_f64() * 1000.0 / frames as f64;
         println!("100 animated mobs: {each:.3} ms a frame ({quads} quads)");
         assert_eq!(quads, 100 * 12 * 6);
         // Debug test builds are slower than the release the milestone
         // measures (1.0 ms on the M1).
         // What the same 100 mobs cost with the plain models, for scale.
-        let started = std::time::Instant::now();
+        let started = crate::testutil::thread_cpu_time();
         for n in 0..frames {
             let mut mesh = Mesh::default();
             for mob in &herd {
@@ -986,7 +989,8 @@ mod tests {
             }
             assert!(mesh.indices.len() / 6 > 0 && n < frames);
         }
-        let plain = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+        let plain =
+            (crate::testutil::thread_cpu_time() - started).as_secs_f64() * 1000.0 / frames as f64;
         println!("the same 100 mobs with the plain pig model: {plain:.3} ms a frame");
         let allowed = if cfg!(debug_assertions) { 12.0 } else { 1.0 };
         assert!(each < allowed, "{each:.3} ms a frame");
