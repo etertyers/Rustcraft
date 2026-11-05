@@ -626,10 +626,10 @@ impl Fx {
                     p.snow = true;
                     p.yaw = self.range(0.0, std::f32::consts::TAU);
                 } else {
-                    p = FxParticle::base(at, Kind::Rain, Sprite::Puff, 0.03, 40);
+                    p = FxParticle::base(at, Kind::Rain, Sprite::Puff, 0.05, 40);
                     p.vel = DVec3::new(wind.x, -f64::from(self.range(0.8, 1.0)), wind.z);
-                    p.stretch = 14.0;
-                    p.tint = [0.62, 0.72, 1.0];
+                    p.stretch = 12.0;
+                    p.tint = [0.8, 0.88, 1.0];
                 }
                 p.falls = true;
                 self.push(p);

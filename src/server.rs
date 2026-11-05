@@ -830,6 +830,29 @@ mod tests {
         game.chunks.world().block(at.x, at.y, at.z)
     }
 
+    /// M64: rain is drawn on every client, so the weather travels with the
+    /// entities.
+    #[test]
+    fn clients_follow_the_servers_weather() {
+        use crate::game::weather::Weather;
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 2
+        });
+        server.game.weather = Weather::Thunder;
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients
+                .iter()
+                .all(|(_, game)| game.weather == Weather::Thunder)
+        });
+        server.game.weather = Weather::Clear;
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients
+                .iter()
+                .all(|(_, game)| game.weather == Weather::Clear)
+        });
+    }
+
     /// M64: wakes are made on each client from the boats it's told about,
     /// so two clients agree on where a moving boat's wake is.
     #[test]
