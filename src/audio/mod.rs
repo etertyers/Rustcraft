@@ -20,6 +20,10 @@ use kira::{
     },
 };
 use log::{debug, info, warn};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crate::pack::Resources;
 pub use table::SoundTable;
@@ -134,6 +138,25 @@ impl crate::options::Volumes {
             Category::Voice => self.voice,
         }
     }
+}
+
+static MUTE_STEPS: AtomicBool = AtomicBool::new(false);
+
+/// Footsteps by Material is on: vanilla's step sounds are dropped (the
+/// extra makes its own).
+pub fn set_mute_steps(on: bool) {
+    MUTE_STEPS.store(on, Ordering::Relaxed);
+}
+
+/// Whether a cue is played: vanilla's steps are dropped while Footsteps
+/// by Material is on, everything else always plays.
+pub fn keeps(cue: &Cue, mute_steps: bool) -> bool {
+    !(mute_steps && is_step(&cue.event))
+}
+
+/// Whether an event is one of vanilla's footsteps.
+pub fn is_step(event: &str) -> bool {
+    event.ends_with(".step")
 }
 
 /// Cues waiting for the next `Audio::update`; no more than this are kept.
@@ -308,6 +331,26 @@ pub struct Audio {
     record_near: bool,
     /// Files already reported missing.
     reported: std::collections::HashSet<String>,
+    /// Sound Physics: the worker, the blocks it looks at, whether the
+    /// listener is underwater, and the sounds waiting for its answer.
+    physics: Option<crate::extras::physics::Physics>,
+    physics_world: Option<Arc<dyn crate::extras::physics::Solids>>,
+    underwater: bool,
+    in_flight: Option<Vec<Playback>>,
+    /// The four reverb sizes' send tracks, made when first needed.
+    sends: Option<Vec<kira::track::SendTrackHandle>>,
+    /// Ambient Sounds' beds that are sounding, by key.
+    beds: HashMap<String, PlayingBed>,
+}
+
+/// A bed of ambient sound: the file playing now, how long it has played
+/// and how long it should, and the pause before the next.
+struct PlayingBed {
+    handle: Option<StreamingSoundHandle<kira::sound::FromFileError>>,
+    played: f32,
+    cut_at: Option<f32>,
+    pause: f32,
+    volume: f32,
 }
 
 impl Audio {
@@ -331,6 +374,12 @@ impl Audio {
             records: HashMap::new(),
             record_near: false,
             reported: Default::default(),
+            physics: None,
+            physics_world: None,
+            underwater: false,
+            in_flight: None,
+            sends: None,
+            beds: HashMap::new(),
         };
         audio.reload(res);
         audio
@@ -341,6 +390,128 @@ impl Audio {
         self.table = build_table(res);
         self.cache.clear();
         info!("sound: {} events", self.table.len());
+    }
+
+    /// Turns Sound Physics on or off and gives it the blocks around the
+    /// listener (a cheap snapshot of chunk handles) and whether the
+    /// listener is underwater.
+    pub fn set_physics(
+        &mut self,
+        on: bool,
+        world: Option<Arc<dyn crate::extras::physics::Solids>>,
+        underwater: bool,
+    ) {
+        if on && self.physics.is_none() {
+            self.physics = Some(crate::extras::physics::Physics::spawn());
+        }
+        if !on {
+            self.physics = None;
+            self.in_flight = None;
+        }
+        self.physics_world = world;
+        self.underwater = underwater;
+    }
+
+    /// Keeps Ambient Sounds' beds going: each bed that should sound plays
+    /// its files one after another (cut short at its `length`, with its
+    /// `pause` between), fading to its volume; beds that no longer fit fade
+    /// out. `slider` is the Ambient volume; `dt` seconds since the last call.
+    pub fn update_ambient(&mut self, beds: &[crate::extras::ambient::Bed], slider: f32, dt: f32) {
+        let Some(_) = &self.manager else { return };
+        // Beds that no longer fit fade out and go.
+        let wanted: std::collections::HashSet<&str> = beds.iter().map(|b| b.key.as_str()).collect();
+        let gone: Vec<String> = self
+            .beds
+            .keys()
+            .filter(|k| !wanted.contains(k.as_str()))
+            .cloned()
+            .collect();
+        for key in gone {
+            if let Some(mut bed) = self.beds.remove(&key)
+                && let Some(handle) = &mut bed.handle
+            {
+                handle.stop(Tween {
+                    duration: Duration::from_secs(3),
+                    ..Tween::default()
+                });
+            }
+        }
+        for bed in beds {
+            let playing = self.beds.entry(bed.key.clone()).or_insert(PlayingBed {
+                handle: None,
+                played: 0.0,
+                cut_at: None,
+                pause: 0.0,
+                volume: 0.0,
+            });
+            playing.played += dt;
+            let finished = playing
+                .handle
+                .as_ref()
+                .is_some_and(|h| h.state() == PlaybackState::Stopped);
+            let cut = playing.cut_at.is_some_and(|c| playing.played >= c);
+            if finished || cut {
+                if cut && let Some(h) = &mut playing.handle {
+                    h.stop(Tween {
+                        duration: Duration::from_secs_f32(bed.transition.max(0.1)),
+                        ..Tween::default()
+                    });
+                }
+                playing.handle = None;
+                let r = self.random.next();
+                playing.pause = bed.pause.map_or(0.0, |(lo, hi)| lo + (hi - lo) * r);
+            }
+            if playing.handle.is_none() {
+                playing.pause -= dt;
+                if playing.pause <= 0.0 && !bed.files.is_empty() {
+                    let r = self.random.next();
+                    let event = &bed.files[(r * bed.files.len() as f32) as usize % bed.files.len()];
+                    let Some(entry) = self.table.pick(event, self.random.next()) else {
+                        continue;
+                    };
+                    let Some(bytes) = crate::extras::jar::sound_bytes(&entry.name) else {
+                        if self.reported.insert(entry.name.clone()) {
+                            warn!("ambient sound {} is missing from its jar", entry.name);
+                        }
+                        continue;
+                    };
+                    match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
+                        Ok(data) => {
+                            if let Some(manager) = &mut self.manager
+                                && let Ok(mut handle) = manager.play(data.volume(decibels(0.0001)))
+                            {
+                                handle.set_volume(
+                                    decibels(bed.volume * slider * 0.6),
+                                    Tween {
+                                        duration: Duration::from_secs_f32(bed.transition.max(0.3)),
+                                        ..Tween::default()
+                                    },
+                                );
+                                playing.handle = Some(handle);
+                                playing.played = 0.0;
+                                playing.volume = bed.volume;
+                                playing.cut_at = bed
+                                    .length
+                                    .map(|(lo, hi)| lo + (hi - lo) * self.random.next());
+                            }
+                        }
+                        Err(err) => warn!("can't stream {}: {err}", entry.name),
+                    }
+                }
+            }
+            if let Some(handle) = &mut playing.handle
+                && (playing.volume - bed.volume).abs() > 0.02
+            {
+                playing.volume = bed.volume;
+                handle.set_volume(
+                    decibels(bed.volume * slider * 0.6),
+                    Tween {
+                        duration: Duration::from_secs(2),
+                        ..Tween::default()
+                    },
+                );
+            }
+        }
     }
 
     pub fn table(&self) -> &Table {
@@ -356,7 +527,8 @@ impl Audio {
         master: f32,
         volumes: &crate::options::Volumes,
     ) {
-        let cues = drain();
+        let mute = MUTE_STEPS.load(Ordering::Relaxed);
+        let cues: Vec<Cue> = drain().into_iter().filter(|cue| keeps(cue, mute)).collect();
         if let Some(manager) = &mut self.manager {
             manager
                 .main_track()
@@ -366,6 +538,18 @@ impl Audio {
             return;
         }
         self.update_records(res, listener, volumes.of(Category::Records));
+        // Sounds that waited a frame for Sound Physics play shaped now.
+        if let (Some(physics), Some(waiting)) = (&self.physics, self.in_flight.take()) {
+            match physics.latest() {
+                Some(answer) if answer.shapings.len() == waiting.len() => {
+                    for (playback, shaping) in waiting.into_iter().zip(answer.shapings) {
+                        self.play_shaped(res, playback, Some(shaping));
+                    }
+                }
+                _ => self.in_flight = Some(waiting),
+            }
+        }
+        let mut waiting: Vec<(Playback, DVec3)> = Vec::new();
         // The queue is bounded, but a burst (an explosion) doesn't need all of it.
         for cue in cues.iter().rev().take(24) {
             let r = self.random.next();
@@ -373,7 +557,24 @@ impl Audio {
             let Some(playback) = plan(&self.table, cue, listener, r, volume) else {
                 continue;
             };
-            self.play(res, playback);
+            match (cue.at, &self.physics, &self.physics_world) {
+                (Some(at), Some(_), Some(_)) if self.in_flight.is_none() => {
+                    waiting.push((playback, at));
+                }
+                _ => self.play_shaped(res, playback, None),
+            }
+        }
+        if let (false, Some(physics), Some(world)) =
+            (waiting.is_empty(), &self.physics, &self.physics_world)
+        {
+            let sources = waiting.iter().map(|(_, at)| *at).collect();
+            if physics.submit(world.clone(), listener.position, self.underwater, sources) {
+                self.in_flight = Some(waiting.into_iter().map(|(p, _)| p).collect());
+            } else {
+                for (playback, _) in waiting {
+                    self.play_shaped(res, playback, None);
+                }
+            }
         }
     }
 
@@ -432,21 +633,103 @@ impl Audio {
 
     fn sound(&mut self, res: &Resources, name: &str) -> Option<StaticSoundData> {
         if !self.cache.contains_key(name) {
-            let data = res.bytes(&format!("sounds/{name}.ogg")).and_then(|bytes| {
-                match StaticSoundData::from_cursor(Cursor::new(bytes)) {
-                    Ok(data) => Some(data),
-                    Err(err) => {
-                        warn!("can't decode sounds/{name}.ogg: {err}");
-                        None
-                    }
-                }
+            let bytes = res.bytes(&format!("sounds/{name}.ogg")).or_else(|| {
+                // `namespace:path`: a mod jar's sound.
+                name.contains(':')
+                    .then(|| crate::extras::jar::sound_bytes(name))
+                    .flatten()
             });
+            let data =
+                bytes.and_then(
+                    |bytes| match StaticSoundData::from_cursor(Cursor::new(bytes)) {
+                        Ok(data) => Some(data),
+                        Err(err) => {
+                            warn!("can't decode sounds/{name}.ogg: {err}");
+                            None
+                        }
+                    },
+                );
             if data.is_none() && self.reported.insert(name.to_owned()) {
                 debug!("no sound file sounds/{name}.ogg");
             }
             self.cache.insert(name.to_owned(), data);
         }
         self.cache[name].clone()
+    }
+
+    /// Plays a sound, shaped by Sound Physics if it has been: quieter,
+    /// low-passed and sent to the reverbs.
+    fn play_shaped(
+        &mut self,
+        res: &Resources,
+        playback: Playback,
+        shaping: Option<crate::extras::physics::Shaping>,
+    ) {
+        let Some(shaping) = shaping else {
+            self.play(res, playback);
+            return;
+        };
+        if playback.entry.stream {
+            return;
+        }
+        let Some(data) = self.sound(res, &playback.entry.name) else {
+            return;
+        };
+        let data = data
+            .volume(decibels(playback.gain * shaping.gain))
+            .panning(playback.pan)
+            .playback_rate(playback.rate);
+        let Some(manager) = &mut self.manager else {
+            return;
+        };
+        if self.sends.is_none() {
+            use kira::{Mix, effect::reverb::ReverbBuilder, track::SendTrackBuilder};
+            // Small to huge: how long it rings and how dull it gets.
+            let rooms = [(0.55, 0.5), (0.7, 0.4), (0.82, 0.3), (0.9, 0.2)];
+            let made: Vec<_> = rooms
+                .iter()
+                .filter_map(|&(feedback, damping)| {
+                    manager
+                        .add_send_track(
+                            SendTrackBuilder::new().with_effect(
+                                ReverbBuilder::new()
+                                    .feedback(feedback)
+                                    .damping(damping)
+                                    .mix(Mix::WET),
+                            ),
+                        )
+                        .ok()
+                })
+                .collect();
+            self.sends = Some(made);
+        }
+        use kira::{
+            effect::filter::{FilterBuilder, FilterMode},
+            track::TrackBuilder,
+        };
+        let mut builder = TrackBuilder::new().persist_until_sounds_finish(true);
+        if shaping.cutoff < 19_000.0 {
+            builder = builder.with_effect(
+                FilterBuilder::new()
+                    .mode(FilterMode::LowPass)
+                    .cutoff(f64::from(shaping.cutoff)),
+            );
+        }
+        if let Some(sends) = &self.sends {
+            for (send, weight) in sends.iter().zip(shaping.reverb.0) {
+                if weight > 0.02 {
+                    builder = builder.with_send(send, decibels(weight * 0.6));
+                }
+            }
+        }
+        match manager.add_sub_track(builder) {
+            Ok(mut track) => {
+                if let Err(err) = track.play(data) {
+                    debug!("can't play {}: {err}", playback.entry.name);
+                }
+            }
+            Err(err) => debug!("no room for a track: {err}"),
+        }
     }
 
     fn play(&mut self, res: &Resources, playback: Playback) {
@@ -533,11 +816,14 @@ impl Audio {
 /// The merged table for `res`: vanilla's `sounds.json`, then each layer's
 /// above it.
 pub fn build_table(res: &Resources) -> Table {
-    let layers: Vec<String> = res
-        .all_bytes("sounds.json")
-        .iter()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .collect();
+    // The mod jars' events (`presencefootsteps:…`) go under everything:
+    // their names are their own.
+    let mut layers: Vec<String> = crate::extras::jar::sounds_json_layers();
+    layers.extend(
+        res.all_bytes("sounds.json")
+            .iter()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned()),
+    );
     Table::from_layers(layers.iter().map(String::as_str))
 }
 

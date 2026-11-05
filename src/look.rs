@@ -1018,3 +1018,46 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod memory_report {
+    use super::*;
+
+    /// What each style's look holds in texture memory (run with
+    /// `--ignored --nocapture`): the atlas and the mob textures.
+    #[test]
+    #[ignore = "a report, not a check"]
+    fn texture_memory_by_style() {
+        let assets = crate::assets::dir();
+        let dir = assets.join("downloads/resourcepacks");
+        for style in [
+            crate::render::visuals::Style::Vanilla,
+            crate::render::visuals::Style::Barebones,
+            crate::render::visuals::Style::Realistic,
+        ] {
+            let stack = crate::pack::style_stack(style, &dir);
+            let mobs = MobRegistry::load(&assets.join("data/mobs.ron")).unwrap();
+            let look = Look::build(
+                &assets,
+                open_packs_in(&crate::pack::packs_dir(), &dir, &stack),
+                &mobs,
+            )
+            .unwrap();
+            let atlas = look.atlas.image();
+            let mob_bytes: usize = look
+                .mob_textures
+                .iter()
+                .map(|i| i.width() as usize * i.height() as usize * 4)
+                .sum();
+            println!(
+                "MEM {style:?}: packs {stack:?}; atlas {}x{} = {:.1} MiB, {} mob textures = {:.1} MiB, {} custom models",
+                atlas.width(),
+                atlas.height(),
+                (atlas.width() * atlas.height() * 4) as f64 / 1048576.0,
+                look.mob_textures.len(),
+                mob_bytes as f64 / 1048576.0,
+                look.cem.models.len(),
+            );
+        }
+    }
+}
