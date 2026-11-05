@@ -219,6 +219,7 @@ impl Look {
         let items = item::registry();
 
         let overrides = BlockOverrides::load(&res, blocks);
+        let json_models = crate::pack::blockmodel::JsonModels::load(&res, blocks);
         let item_models = ItemModels::load(
             &res,
             items.iter().map(|item| {
@@ -241,6 +242,7 @@ impl Look {
                 .filter_map(|item| item_models.texture(&item.name))
                 .map(str::to_owned),
         );
+        textures.extend(json_models.textures());
         textures.extend((0..crack::STAGES).map(crack::texture));
         textures.insert(entities::CRIT_TEXTURE.to_owned());
         textures.insert(entities::SHADOW_TEXTURE.to_owned());
@@ -255,13 +257,20 @@ impl Look {
             warn!("{err:#}; using default biome colors");
             BiomeColors::uniform()
         });
-        let models = Arc::new(BlockModels::with_packs(
-            blocks,
-            |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
-            atlas.uv_rect(MISSING_TILE),
-            colors,
-            &overrides,
-        ));
+        let models = Arc::new(
+            BlockModels::with_packs(
+                blocks,
+                |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
+                atlas.uv_rect(MISSING_TILE),
+                colors,
+                &overrides,
+            )
+            .with_json_models(
+                &json_models,
+                |name| atlas.get(name).map(|tile| atlas.uv_rect(tile)),
+                atlas.uv_rect(MISSING_TILE),
+            ),
+        );
         let icons = ItemIcons::new(&atlas, models.clone(), items, &item_models);
         let crack_uvs = (0..crack::STAGES)
             .map(|i| atlas.uv_or_missing(&crack::texture(i)))

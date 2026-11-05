@@ -82,6 +82,23 @@ pub struct BlockModel {
     /// Faces of each of `boxes` when they have textures of their own (a
     /// model's elements); otherwise every box takes `faces`.
     pub part_faces: Vec<[FaceTexture; 6]>,
+    /// The faces of the block's own model JSON (`pack::blockmodel`), if it
+    /// is drawn from one: they replace everything above in the mesher.
+    pub quads: Option<Arc<Vec<ModelQuad>>>,
+}
+
+/// One face of a model JSON, ready for the mesher.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelQuad {
+    /// Block-relative, bottom-left first.
+    pub corners: [[f32; 3]; 4],
+    /// Atlas coordinates per corner.
+    pub uvs: [[f32; 2]; 4],
+    pub cull: Option<Face>,
+    pub tint: FaceTint,
+    pub shade: f32,
+    /// The side it looks toward (for the light it takes).
+    pub toward: Face,
 }
 
 /// Block models for every block state, resolved against the texture atlas.
@@ -149,6 +166,51 @@ impl BlockModels {
             choices,
             colors,
         }
+    }
+
+    /// Draws the states `json` covers from their model JSON.
+    pub fn with_json_models(
+        mut self,
+        json: &crate::pack::blockmodel::JsonModels,
+        uv: impl Fn(&str) -> Option<[f32; 4]>,
+        missing_uv: [f32; 4],
+    ) -> Self {
+        for state in self.registry.states() {
+            let index = self.registry.state_index(state);
+            let Some(raw) = json.get(index) else { continue };
+            let tint = state.def().tint_for(state).for_face(Face::North);
+            let quads: Vec<ModelQuad> = raw
+                .iter()
+                .map(|q| {
+                    let [u0, v0, u1, v1] = uv(&q.texture).unwrap_or(missing_uv);
+                    let [a, b, c, _] = q.corners.map(glam::Vec3::from);
+                    let n = (b - a).cross(c - a);
+                    let toward = if n.x.abs() >= n.y.abs() && n.x.abs() >= n.z.abs() {
+                        if n.x > 0.0 { Face::East } else { Face::West }
+                    } else if n.y.abs() >= n.z.abs() {
+                        if n.y > 0.0 { Face::Top } else { Face::Bottom }
+                    } else if n.z > 0.0 {
+                        Face::South
+                    } else {
+                        Face::North
+                    };
+                    ModelQuad {
+                        corners: q.corners,
+                        uvs: q.uvs.map(|[u, v]| [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]),
+                        cull: q.cull,
+                        tint: if q.tinted { tint } else { FaceTint::None },
+                        shade: q.shade,
+                        toward,
+                    }
+                })
+                .collect();
+            let quads = Arc::new(quads);
+            self.models[index].quads = Some(quads.clone());
+            for (_, model) in &mut self.choices[index] {
+                model.quads = Some(quads.clone());
+            }
+        }
+        self
     }
 
     /// sRGB color for a face tint on an item icon or a dropped item, which
@@ -298,6 +360,7 @@ fn build_model(
         faces,
         boxes: shape::render_boxes(state),
         part_faces,
+        quads: None,
     }
 }
 
@@ -1280,6 +1343,55 @@ fn mesh_box(
     }
 }
 
+/// A block drawn from its model JSON: every face not hidden by a
+/// neighbor, lit by its own cell (or, in an opaque block, the cell it
+/// looks into).
+#[allow(clippy::too_many_arguments)]
+fn mesh_model_quads(
+    mesh: &mut Mesh,
+    models: &BlockModels,
+    area: &ChunkArea,
+    light: &ChunkLight,
+    cell: [i32; 3],
+    origin: [f32; 3],
+    tints: &Tints,
+    block: BlockState,
+    model: &BlockModel,
+    quads: &[ModelQuad],
+) {
+    let [x, y, z] = cell;
+    for quad in quads {
+        if let Some(face) = quad.cull {
+            let [dx, dy, dz] = face.normal();
+            if !face_visible(
+                models,
+                block,
+                model,
+                area.get(x + dx, y + dy, z + dz),
+                area.fast_leaves,
+            ) {
+                continue;
+            }
+        }
+        let [lx, ly, lz] = if model.opacity >= 15 {
+            let [dx, dy, dz] = quad.toward.normal();
+            [x + dx, y + dy, z + dz]
+        } else {
+            cell
+        };
+        let l = light.get(
+            lx.clamp(-1, CHUNK_SIZE as i32),
+            ly,
+            lz.clamp(-1, CHUNK_SIZE as i32),
+        );
+        let lit = [l.0 as f32, l.1 as f32];
+        let colors = tints
+            .corners(quad.tint, x, z, quad.corners)
+            .map(|c| c.map(|v| v * quad.shade));
+        mesh.quad_uvs(translate(quad.corners, origin), quad.uvs, colors, [lit; 4]);
+    }
+}
+
 /// Cactus (Minecraft's model): a cube whose sides are drawn a pixel in.
 fn mesh_cactus(
     mesh: &mut Mesh,
@@ -1464,6 +1576,21 @@ pub fn mesh_chunk(models: &BlockModels, area: &ChunkArea, light: &ChunkLight) ->
                     // Plants take the light of their own cell.
                     let own = light.get(x as i32, y, z as i32);
                     let own_light = [own.0 as f32, own.1 as f32];
+                    if let Some(quads) = &model.quads {
+                        mesh_model_quads(
+                            &mut mesh,
+                            models,
+                            area,
+                            light,
+                            [x as i32, y, z as i32],
+                            origin,
+                            &tints,
+                            block,
+                            model,
+                            quads,
+                        );
+                        continue;
+                    }
                     match model.shape {
                         Shape::None => {}
                         Shape::Cross => {

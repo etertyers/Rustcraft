@@ -73,6 +73,8 @@ impl Model {
 
     /// Where the marks are saved (tests use a temp file).
     pub fn set_path(&mut self, path: PathBuf) {
+        // The marks are the new file's, not the player's.
+        self.marks = Marks::load(&path);
         self.path = Some(path);
     }
 

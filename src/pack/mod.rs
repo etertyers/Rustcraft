@@ -4,6 +4,7 @@
 //! base layer under every pack (see `Resources`).
 
 pub mod anim;
+pub mod blockmodel;
 pub mod model;
 mod resources;
 
