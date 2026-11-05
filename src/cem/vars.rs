@@ -215,4 +215,31 @@ mod tests {
         assert!(known_but_unsupported("is_swimming"));
         assert!(!known_but_unsupported("limb_swing"));
     }
+
+    /// Fresh Animations reads the same walk values as the vanilla models:
+    /// the smooth position and the 0–1 speed, a baby's steps tripled.
+    #[test]
+    fn limb_swing_and_limb_speed_are_the_vanilla_walk_values() {
+        let mobs =
+            crate::entity::mobs::MobRegistry::load(&crate::assets::dir().join("data/mobs.ron"))
+                .unwrap();
+        let kind = mobs.find("cow").unwrap();
+        let mut cow = Mob::new(kind, mobs.get(kind), DVec3::ZERO, 0.0);
+        cow.limb_swing = 12.0;
+        cow.limb_amount = 0.5;
+        let frame = Frame {
+            ticks: 0,
+            frame_time: 0.016,
+            frame_counter: 0,
+            player: DVec3::ZERO,
+            alpha: 0.5,
+        };
+        let at = |cow: &Mob| EntityVars::of(cow, 10.0, &frame).0;
+        let v = at(&cow);
+        // 12 less half of the tick's 0.5 speed, not the raw 12.
+        assert!((v[0] - 11.75).abs() < 1e-5, "{}", v[0]);
+        assert!(v[usize::from(slot("limb_speed").unwrap())] <= 1.0);
+        cow.data.age = -10;
+        assert!((at(&cow)[0] - 35.25).abs() < 1e-4);
+    }
 }
