@@ -16,7 +16,7 @@ use crate::{
     player::raycast,
     render::{
         camera::{Camera, ViewBob},
-        player::{ArmPose, PlayerPose},
+        player::{ArmPose, BodyAction, PlayerPose},
     },
 };
 
@@ -122,6 +122,14 @@ pub struct ViewState {
     fov: f32,
     prev_eye: f32,
     eye: f32,
+    /// The arm and body actions the model shows, which lag the real ones
+    /// while they ease in and out (Not Enough Animations).
+    shown_right: ArmPose,
+    shown_left: ArmPose,
+    shown_body: BodyAction,
+    prev_fade: f32,
+    fade: f32,
+    action_age: u32,
 }
 
 /// An angle wrapped to −π..π.
@@ -168,6 +176,42 @@ impl ViewState {
             fov: 1.0,
             prev_eye: crate::config::EYE_HEIGHT as f32,
             eye: crate::config::EYE_HEIGHT as f32,
+            shown_right: ArmPose::Empty,
+            shown_left: ArmPose::Empty,
+            shown_body: BodyAction::None,
+            prev_fade: 0.0,
+            fade: 0.0,
+            action_age: 0,
+        }
+    }
+
+    /// Eases the model toward the arm and body actions the player is doing:
+    /// out of the old one in a few ticks, then into the new one. `moving`
+    /// advances a cycle (climbing, rowing).
+    pub fn set_actions(&mut self, right: ArmPose, left: ArmPose, body: BodyAction, moving: bool) {
+        const STEP: f32 = 0.25;
+        let target = (right, left, body);
+        let shown = (self.shown_right, self.shown_left, self.shown_body);
+        let plain = |a: (ArmPose, ArmPose, BodyAction)| {
+            a.0.base() == a.0 && a.1.base() == a.1 && a.2 == BodyAction::None
+        };
+        self.prev_fade = self.fade;
+        if target == shown {
+            self.fade = (self.fade - STEP).max(0.0);
+        } else if plain(shown) {
+            (self.shown_right, self.shown_left, self.shown_body) = target;
+            self.fade = 1.0 - STEP;
+            self.prev_fade = 1.0;
+        } else {
+            self.fade = (self.fade + STEP).min(1.0);
+            if self.fade >= 1.0 {
+                (self.shown_right, self.shown_left, self.shown_body) = target;
+            }
+        }
+        if body == BodyAction::None {
+            self.action_age = 0;
+        } else if moving {
+            self.action_age += 1;
         }
     }
 
@@ -452,6 +496,65 @@ impl Game {
             eye_height: self.player.body.eye_height(),
         };
         self.player.view.tick(&info);
+        let (right, left, body) = self.target_actions();
+        let moving = info.moved.length_squared() > 1e-6;
+        self.player.view.set_actions(right, left, body, moving);
+    }
+
+    /// The arm poses (right, left) and body action the player is doing now.
+    fn target_actions(&self) -> (ArmPose, ArmPose, BodyAction) {
+        use crate::inventory::items;
+        let eating = self.player.eating.is_some();
+        let drawing = self.player.drawing.is_some();
+        let blocking = self.is_blocking();
+        let map = |hand: Hand| {
+            self.player
+                .inventory
+                .hand_stack(hand)
+                .is_some_and(|stack| stack.id == items::FILLED_MAP)
+        };
+        let off_holds = self.player.inventory.hand_stack(Hand::Off).is_some();
+        let arm = |hand: Hand| {
+            let holding = self.player.inventory.hand_stack(hand).is_some();
+            if drawing && self.player.drawing_hand == hand {
+                ArmPose::Bow
+            } else if blocking && self.player.shield_hand == Some(hand) {
+                ArmPose::Block
+            } else if eating && self.player.use_hand == hand {
+                ArmPose::Eat
+            } else if map(hand) {
+                ArmPose::Map
+            } else if holding {
+                ArmPose::Item
+            } else {
+                ArmPose::Empty
+            }
+        };
+        let (mut main, mut off) = (arm(Hand::Main), arm(Hand::Off));
+        // A map in the main hand is held in both unless the off hand is busy.
+        if main == ArmPose::Map && !off_holds {
+            off = ArmPose::Map;
+        }
+        if drawing {
+            (main, off) = (ArmPose::Bow, ArmPose::Bow);
+        }
+        let (right, left) = if self.player.left_handed {
+            (off, main)
+        } else {
+            (main, off)
+        };
+        let body = if self.is_sleeping() {
+            BodyAction::Sleep
+        } else if self.player.boat.is_some() {
+            BodyAction::Row
+        } else if self.player.mounted.is_some() {
+            BodyAction::Horse
+        } else if self.player.body.on_climbable && !self.player.body.on_ground {
+            BodyAction::Climb
+        } else {
+            BodyAction::None
+        };
+        (right, left, body)
     }
 
     /// Swimming: sprinting in water after putting the head under (modern
@@ -546,29 +649,6 @@ impl Game {
         let body_yaw = view.body_yaw(alpha);
         let (limb_swing, limb_amount) = view.limbs(alpha);
         let eating = self.player.eating.map(|(_, ticks)| ticks as f32);
-        let drawing = self.player.drawing.is_some();
-        let blocking = self.is_blocking();
-        let arm = |hand: Hand| {
-            let holding = self.player.inventory.hand_stack(hand).is_some();
-            if drawing && self.player.drawing_hand == hand {
-                ArmPose::Bow
-            } else if blocking && self.player.shield_hand == Some(hand) {
-                ArmPose::Block
-            } else if eating.is_some() && self.player.use_hand == hand {
-                ArmPose::Eat
-            } else if holding {
-                ArmPose::Item
-            } else {
-                ArmPose::Empty
-            }
-        };
-        let (main, off) = (arm(Hand::Main), arm(Hand::Off));
-        // A left-handed player holds the main hand's item on the left.
-        let (right, left) = if self.player.left_handed {
-            (off, main)
-        } else {
-            (main, off)
-        };
         PlayerPose {
             limb_swing,
             limb_amount,
@@ -586,8 +666,11 @@ impl Game {
             attack: view.attack_anim(alpha),
             swing_left: self.player.left_handed,
             riding: self.is_riding(),
-            right: if drawing { ArmPose::Bow } else { right },
-            left: if drawing { ArmPose::Bow } else { left },
+            right: view.shown_right,
+            left: view.shown_left,
+            body: view.shown_body,
+            action_phase: view.action_age as f32 + alpha,
+            fade: lerp(alpha, view.prev_fade, view.fade),
             use_time: eating.map_or(0.0, |t| t + alpha),
         }
     }
@@ -1003,9 +1086,11 @@ mod tests {
         game.player
             .inventory
             .set(0, Some(ItemStack::new(items::IRON_SWORD, 1)));
+        game.run_ticks(1);
         let pose = game.player_pose();
         assert_eq!((pose.right, pose.left), (ArmPose::Item, ArmPose::Empty));
         game.player.left_handed = true;
+        game.run_ticks(1);
         let pose = game.player_pose();
         assert_eq!((pose.right, pose.left), (ArmPose::Empty, ArmPose::Item));
         assert!(pose.swing_left);
@@ -1040,6 +1125,7 @@ mod tests {
             )),
         );
         game.player.inventory.selected = 0;
+        game.run_ticks(1);
         assert_eq!(game.player_pose().right, ArmPose::Item);
     }
 
@@ -1182,5 +1268,37 @@ mod tests {
                 ViewMode::First
             ]
         );
+    }
+
+    #[test]
+    fn actions_ease_in_and_out_over_a_few_ticks() {
+        let mut view = ViewState::new(0.0, 0.0, None);
+        let (map, none) = (ArmPose::Map, BodyAction::None);
+        // From plain to a map: shown at once, fully faded, then in.
+        view.set_actions(map, map, none, false);
+        assert_eq!(view.shown_right, ArmPose::Map);
+        let first = view.fade;
+        assert!(first > 0.5, "{first}");
+        for _ in 0..4 {
+            view.set_actions(map, map, none, false);
+        }
+        assert_eq!(view.fade, 0.0);
+        // Out of it: the map stays while it fades, then the plain pose.
+        view.set_actions(ArmPose::Item, ArmPose::Empty, none, false);
+        assert_eq!(view.shown_right, ArmPose::Map);
+        assert!(view.fade > 0.0 && view.fade < 1.0);
+        for _ in 0..4 {
+            view.set_actions(ArmPose::Item, ArmPose::Empty, none, false);
+        }
+        assert_eq!(
+            (view.shown_right, view.shown_left),
+            (ArmPose::Item, ArmPose::Empty)
+        );
+        assert_eq!(view.shown_body, BodyAction::None);
+        // The cycle only runs while moving.
+        view.set_actions(ArmPose::Item, ArmPose::Item, BodyAction::Climb, false);
+        view.set_actions(ArmPose::Item, ArmPose::Item, BodyAction::Climb, true);
+        view.set_actions(ArmPose::Item, ArmPose::Item, BodyAction::Climb, true);
+        assert_eq!(view.action_age, 2);
     }
 }
