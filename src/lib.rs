@@ -33,6 +33,8 @@ pub mod render;
 pub mod server;
 pub mod shots;
 pub mod startup;
+#[cfg(test)]
+pub(crate) mod testutil;
 pub mod ui;
 pub mod world;
 pub mod worldlist;
