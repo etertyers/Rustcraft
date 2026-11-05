@@ -2046,4 +2046,63 @@ mod tests {
         assert!(pig.feet().distance(start) > 3.0, "ran off: {}", pig.feet());
         assert_eq!(pig.stats.health, 9.0);
     }
+
+    /// M63 Step 0: every walking mob walks 80 ticks on a flat floor at its
+    /// own speed; prints blocks per tick, limb amount and swing, and the
+    /// peak leg angle (vanilla: cos(position × 0.6662) × 1.4 × speed).
+    #[test]
+    fn step0_walk_animation_numbers() {
+        let reg = registry();
+        let grid = Grid::floor();
+        for name in [
+            "zombie", "cow", "pig", "chicken", "spider", "villager", "skeleton", "enderman",
+        ] {
+            let Some(kind) = reg.find(name) else { continue };
+            let def = reg.get(kind);
+            let mut mob = Mob::new(
+                kind,
+                def,
+                DVec3::new(-20.0, 64.0, 0.0),
+                -std::f32::consts::FRAC_PI_2,
+            );
+            let mut peak = 0.0f32;
+            let mut last = None;
+            for tick in 0..60 {
+                let before = mob.feet();
+                mob.tick(
+                    &MoveInput {
+                        forward: def.speed,
+                        ..MoveInput::default()
+                    },
+                    &grid,
+                    false,
+                );
+                let moved = (mob.feet() - before).length();
+                let leg = (mob.limb_swing * 0.6662).cos() * 1.4 * mob.limb_amount;
+                if tick > 30 {
+                    peak = peak.max(leg.abs());
+                }
+                if tick % 20 == 19 {
+                    last = Some((tick, moved, mob.limb_amount, mob.limb_swing));
+                    println!(
+                        "STEP0 {name} tick {tick}: moved {moved:.3} b/t, amount {:.3}, swing {:.2}",
+                        mob.limb_amount, mob.limb_swing
+                    );
+                }
+            }
+            // Vanilla's WalkAnimationState: the steady speed is min(blocks per
+            // tick × 4, 1) and the leg peaks at 1.4 × speed.
+            let (_, moved, ..) = last.unwrap();
+            let expected = 1.4 * (moved as f32 * 4.0).min(1.0);
+            assert!(
+                (peak - expected).abs() <= expected * 0.1,
+                "{name}: {peak} vs {expected}"
+            );
+            println!(
+                "STEP0 {name}: speed {} peak leg angle {peak:.2} rad ({:?})",
+                def.speed,
+                last.map(|l| l.1)
+            );
+        }
+    }
 }
