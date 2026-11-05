@@ -213,6 +213,9 @@ pub struct Entities {
     pub crystals: Vec<crate::entity::crystal::EndCrystal>,
     pub dragon_fireballs: Vec<crate::entity::breath::DragonFireball>,
     pub breath: Vec<crate::entity::breath::BreathCloud>,
+    /// The weather (0 clear, 1 rain, 2 thunder), so clients draw rain.
+    #[serde(default)]
+    pub weather: u8,
 }
 
 /// Chunks travel in their save format (their own compact encoding).

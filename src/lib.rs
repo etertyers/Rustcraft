@@ -15,6 +15,7 @@ pub mod client;
 pub mod config;
 pub mod credits;
 pub mod entity;
+pub mod extras;
 pub mod figure;
 pub mod game;
 pub mod inventory;

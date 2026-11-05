@@ -49,6 +49,8 @@ pub struct Resources {
     aliases: HashMap<String, Vec<String>>,
     /// Textures that older layouts keep on a shared sheet.
     slices: HashMap<String, Slice>,
+    /// Pictures the extras read from their mod .jars, as `fx/<mod>/<name>`.
+    extra: HashMap<String, RgbaImage>,
 }
 
 /// A shield's picture for the inventory: the plate on the front of its
@@ -113,6 +115,7 @@ impl Resources {
         if !vanilla {
             return Ok(res);
         }
+        res.extra = crate::extras::jar::load(&assets.join("downloads/mods"));
         res.vanilla = Pack::vanilla(&assets.join("vanilla"));
         if res.vanilla.is_none() {
             static WARNED: std::sync::Once = std::sync::Once::new();
@@ -208,7 +211,14 @@ impl Resources {
             vanilla: None,
             aliases,
             slices: HashMap::new(),
+            extra: HashMap::new(),
         }
+    }
+
+    /// Adds the extras' pictures (`fx/<mod>/<name>`).
+    pub fn with_images(mut self, images: HashMap<String, RgbaImage>) -> Self {
+        self.extra = images;
+        self
     }
 
     /// Bottom (the base) first.
@@ -248,6 +258,14 @@ impl Resources {
     /// A texture by its modern location (`block/stone`), from the highest
     /// layer that has it.
     pub fn texture(&self, name: &str) -> Option<Texture> {
+        if let Some(image) = self.extra.get(name) {
+            return Some(Texture {
+                image: image.clone(),
+                animation: None,
+                layer: 0,
+                vanilla: false,
+            });
+        }
         self.priority()
             .find_map(|layer| self.texture_in(layer, name))
     }

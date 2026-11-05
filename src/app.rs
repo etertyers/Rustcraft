@@ -173,6 +173,12 @@ pub struct App {
     /// A look being built with these packs on a background thread.
     /// Splashes and waterfall foam, Trailer look only.
     splashes: crate::game::splashes::Splashes,
+    /// The particle extras (M64): pool, sprite pictures and the tick they
+    /// last ran, and each mob's hurt flash a tick ago.
+    fx: crate::extras::fx::Fx,
+    fx_uvs: crate::extras::fx::FxUvs,
+    fx_tick: Option<u64>,
+    fx_hurt: std::collections::HashMap<u64, u32>,
     pending_look: Option<(Vec<String>, crossbeam_channel::Receiver<Result<Look>>)>,
     /// When texture animations started.
     animation_start: Instant,
@@ -387,6 +393,10 @@ impl App {
             shift_down: false,
             measure: None,
             splashes: Default::default(),
+            fx: Default::default(),
+            fx_uvs: Default::default(),
+            fx_tick: None,
+            fx_hurt: Default::default(),
             pending_look: None,
             animation_start: Instant::now(),
             catalog: Vec::new(),
@@ -1628,6 +1638,7 @@ impl App {
         self.models = Some(look.models);
         self.crack_uvs = look.crack_uvs;
         self.effect_uvs = look.effect_uvs;
+        self.fx_uvs = look.fx_uvs.clone();
         self.atlas = Some(look.atlas);
         self.item_models = Some(look.item_models);
         self.skin_slim = look.skin_slim;
@@ -1866,6 +1877,68 @@ impl App {
             &|x, y, z| world.block(x, y, z),
             &collider,
         );
+    }
+
+    /// The particle extras, once per game tick: made from what this client
+    /// sees (the world around the camera, the bodies in view, mobs just
+    /// hurt), for the extras that are on in this style.
+    fn tick_fx(
+        options: &Options,
+        fx: &mut crate::extras::fx::Fx,
+        last_tick: &mut Option<u64>,
+        hurt: &mut std::collections::HashMap<u64, u32>,
+        game: &Game,
+    ) {
+        use crate::extras::{
+            Extra,
+            fx::{Enabled, Input, Sky},
+        };
+        let tick = game.time();
+        if *last_tick == Some(tick) {
+            return;
+        }
+        *last_tick = Some(tick);
+        let style = options.visuals.style;
+        let t = &options.extras;
+        let on = Enabled {
+            visual: t.enabled(style, Extra::VisualParticles),
+            dust: t.enabled(style, Extra::CaveDust),
+            rain: t.enabled(style, Extra::RainParticles),
+            bubbles: t.enabled(style, Extra::BubblePop),
+            wakes: t.enabled(style, Extra::Wakes),
+        };
+        if on == Enabled::default() {
+            fx.clear();
+            return;
+        }
+        let world = FxWorld(game);
+        let (bodies, hits) = crate::extras::bodies_and_hits(game, hurt);
+        let sky = match game.weather {
+            crate::game::weather::Weather::Clear => Sky::Clear,
+            crate::game::weather::Weather::Rain => Sky::Rain,
+            crate::game::weather::Weather::Thunder => Sky::Thunder,
+        };
+        fx.tick(
+            &world,
+            &Input {
+                tick,
+                camera: game.player.camera.position.as_dvec3(),
+                sky,
+                bodies: &bodies,
+                hits: &hits,
+            },
+            on,
+        );
+        // A popped bubble makes a small pop, at Make Bubbles Pop's default
+        // 10% volume (at most a few a tick).
+        for (n, at) in fx.pops.iter().take(3).enumerate() {
+            crate::audio::play_at(
+                "block.bubble_column.bubble_pop",
+                *at,
+                0.1,
+                0.9 + 0.1 * n as f32,
+            );
+        }
     }
 
     /// F12: Shaders on or off for the style that's on, and says so.
@@ -2286,6 +2359,17 @@ impl App {
         }
         let uploaded = Instant::now();
         Self::tick_splashes(&self.options, &mut self.splashes, game);
+        crate::extras::set_player_animations(self.options.extras.enabled(
+            self.options.visuals.style,
+            crate::extras::Extra::PlayerAnimations,
+        ));
+        Self::tick_fx(
+            &self.options,
+            &mut self.fx,
+            &mut self.fx_tick,
+            &mut self.fx_hurt,
+            game,
+        );
         let center = ChunkPos::of_block(x, z);
         let mut capturing = false;
         if let Some(run) = self.shot.as_mut() {
@@ -2430,6 +2514,14 @@ impl App {
                     &mut mesh,
                     &game.particles,
                     models,
+                    &view_camera,
+                    game.tick_alpha(),
+                    light_at,
+                );
+                crate::render::entities::add_fx(
+                    &mut mesh,
+                    self.fx.particles(),
+                    &self.fx_uvs,
                     &view_camera,
                     game.tick_alpha(),
                     light_at,
@@ -3587,6 +3679,21 @@ fn advancements_view(
         current,
         nodes,
     })
+}
+
+/// What the particle extras see of a game's world.
+struct FxWorld<'a>(&'a Game);
+
+impl crate::extras::fx::World for FxWorld<'_> {
+    fn block(&self, x: i32, y: i32, z: i32) -> Option<crate::world::block::BlockState> {
+        self.0.chunks.world().block(x, y, z)
+    }
+    fn light(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        self.0.chunks.light_at(x, y, z).unwrap_or((0, 0))
+    }
+    fn biome(&self, x: i32, y: i32, z: i32) -> Option<crate::world::biome::Biome> {
+        self.0.chunks.world().biome_at_block(x, y, z)
+    }
 }
 
 #[cfg(test)]

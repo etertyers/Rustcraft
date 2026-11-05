@@ -462,15 +462,30 @@ impl OptionsScreen {
     /// The Extras page: the video's mods, one toggle each (built in
     /// M63–M65), on by default in Barebones and Realistic, off in Vanilla.
     fn extras(&mut self, ui: &mut Ui, options: &mut Options) {
+        use crate::extras::Extra;
+        let style = options.visuals.style;
         ui.label(
             RichText::new(format!(
-                "Style: {}. The extras (footsteps by material, cave dust, wakes, rain particles, \
-                 player animations, sound physics, ambient sounds...) are built in the next \
-                 milestones and will be switched here, on by default in Barebones and Realistic.",
-                options.visuals.style.name()
+                "Style: {}. Each extra is on by default in Barebones and Realistic and off in \
+                 Vanilla; switch any of them here for this style (* differs from the default). \
+                 Footsteps, sound physics and ambient sounds come in the next milestone.",
+                style.name()
             ))
             .color(GRAY),
         );
+        pairs(ui, "options-extras", |ui, cell| {
+            for extra in Extra::ALL {
+                cell(ui);
+                let mut on = options.extras.enabled(style, extra);
+                let changed = options.extras.changed(style, extra);
+                let label = format!("{}{}", extra.name(), if changed { "*" } else { "" });
+                let before = on;
+                self.toggle_with_tip(ui, &label, &mut on, extra.tooltip());
+                if on != before {
+                    options.extras.set(style, extra, on);
+                }
+            }
+        });
     }
 
     fn trailer(&mut self, ui: &mut Ui, options: &mut Options) {
@@ -678,6 +693,15 @@ impl OptionsScreen {
     fn toggle(&self, ui: &mut Ui, label: &str, on: &mut bool) {
         let text = format!("{label}: {}", if *on { "ON" } else { "OFF" });
         let response = ui.add_sized(HALF, Button::new(text));
+        if self.clicked(&response) {
+            *on = !*on;
+        }
+    }
+
+    /// `toggle` with a tooltip.
+    fn toggle_with_tip(&self, ui: &mut Ui, label: &str, on: &mut bool, tip: &str) {
+        let text = format!("{label}: {}", if *on { "ON" } else { "OFF" });
+        let response = ui.add_sized(HALF, Button::new(text)).on_hover_text(tip);
         if self.clicked(&response) {
             *on = !*on;
         }

@@ -11,6 +11,19 @@ pub enum Weather {
 }
 
 impl Weather {
+    /// For the wire: 0 clear, 1 rain, 2 thunder.
+    pub fn to_byte(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_byte(byte: u8) -> Self {
+        match byte {
+            1 => Weather::Rain,
+            2 => Weather::Thunder,
+            _ => Weather::Clear,
+        }
+    }
+
     pub fn parse(word: &str) -> Option<Self> {
         match word {
             "clear" => Some(Weather::Clear),

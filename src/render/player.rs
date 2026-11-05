@@ -163,6 +163,14 @@ pub enum BodyAction {
 }
 
 impl ArmPose {
+    /// What vanilla draws for it: the extras' poses are an item held out.
+    pub fn vanilla(self) -> Self {
+        match self {
+            Self::Map | Self::Spyglass | Self::Horn | Self::Throw | Self::Crossbow => Self::Item,
+            other => other,
+        }
+    }
+
     /// The plain pose an action blends from and to: the item held out.
     pub fn base(self) -> Self {
         match self {
@@ -259,6 +267,15 @@ fn lerp(t: f32, a: f32, b: f32) -> f32 {
 /// body actions ease in and out: `fade` blends from the pose with the
 /// action to the one without.
 pub fn rig(pose: &PlayerPose, slim: bool) -> Rig {
+    // With Player Animations off, only vanilla's own poses show.
+    if !crate::extras::player_animations() {
+        return rig_with(
+            pose,
+            slim,
+            (pose.right.vanilla(), pose.left.vanilla()),
+            BodyAction::None,
+        );
+    }
     let full = rig_with(pose, slim, (pose.right, pose.left), pose.body);
     if pose.fade <= 0.0 {
         return full;
