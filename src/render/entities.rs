@@ -518,6 +518,68 @@ pub fn add_particles(
     }
 }
 
+/// Adds the extras' particles (M64): camera-facing sprites, rain stretched
+/// along its fall, and decals lying flat on the water. Cut-out ones are lit
+/// and tinted; blended ones carry their own alpha (the entity-shadow path,
+/// which is unlit, so they dim where it's dark).
+pub fn add_fx(
+    mesh: &mut Mesh,
+    particles: &[crate::extras::fx::FxParticle],
+    uvs: &crate::extras::fx::FxUvs,
+    camera: &Camera,
+    alpha: f64,
+    light_at: impl Fn(DVec3) -> (u8, u8),
+) {
+    use crate::extras::fx::Draw;
+    let right = Vec3::new(camera.yaw.cos(), 0.0, camera.yaw.sin());
+    let up = right.cross(camera.forward()).normalize();
+    for p in particles {
+        let frames = uvs.frames(p.sprite);
+        if frames.is_empty() {
+            continue;
+        }
+        let [u0, v0, u1, v1] = frames[p.frame(frames.len())];
+        let center = p.position_between_ticks(alpha);
+        let (sky, block) = light_at(center);
+        let half = p.width(alpha as f32) * 0.5;
+        let c = center.as_vec3();
+        let (r, u) = if p.flat {
+            let (s, k) = p.yaw.sin_cos();
+            (Vec3::new(k, 0.0, -s) * half, Vec3::new(s, 0.0, k) * half)
+        } else {
+            (right * half, up * half * p.stretch)
+        };
+        // Counter-clockwise seen from the front (above, for a decal).
+        let corners = if p.flat {
+            [c - r + u, c + r + u, c + r - u, c - r - u]
+        } else {
+            [c - r - u, c + r - u, c + r + u, c - r + u]
+        };
+        let corners = corners.map(|v| v.to_array());
+        match p.draw {
+            Draw::Cutout => {
+                mesh.quad(
+                    corners,
+                    [u0, v0, u1, v1],
+                    [p.tint; 4],
+                    [[f32::from(sky), f32::from(block)]; 4],
+                );
+            }
+            Draw::Alpha => {
+                let dim = (f32::from(sky.max(block)) / 15.0).clamp(0.3, 1.0);
+                let a = p.alpha_now() * dim;
+                let uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+                let uv = if p.flat {
+                    [uv[3], uv[2], uv[1], uv[0]]
+                } else {
+                    uv
+                };
+                mesh.translucent_quad(corners, uv, [[a, 0.0, 0.0]; 4], [[SHADOW_FLAG, 0.0]; 4]);
+            }
+        }
+    }
+}
+
 /// Where the combat effects' pictures are in the atlas.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EffectUvs {

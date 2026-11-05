@@ -207,6 +207,8 @@ pub struct Options {
     /// each look's resource packs (v1.4). Options from before v1.4 have
     /// none, so they get the Trailer look on first run.
     pub visuals: crate::render::visuals::Visuals,
+    /// The extras (the video's mods) the player switched, per style.
+    pub extras: crate::extras::Toggles,
 }
 
 impl Default for Options {
@@ -244,6 +246,7 @@ impl Default for Options {
             glint_speed: 0.5,
             glint_strength: 0.75,
             visuals: Default::default(),
+            extras: Default::default(),
         }
     }
 }
