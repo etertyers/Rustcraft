@@ -227,22 +227,27 @@ pub struct DebugUi {
     ctx: egui::Context,
     textures: GuiTextures,
     state: egui_winit::State,
+    /// Texture changes from the pass that told egui the GPU's limit, sent
+    /// with the first frame.
+    pending_textures: egui::TexturesDelta,
     fps: FpsCounter,
     /// Whether the F3 overlay is shown.
     visible: bool,
 }
 
 impl DebugUi {
-    /// `atlas` is the block and item texture atlas, for item icons; GUI
-    /// images come from `res`.
+    /// `ctx` is the egui context the GUI images were loaded into
+    /// (`startup::egui_context`, which knows the GPU's texture limit, and
+    /// the texture changes it returned);
+    /// `textures` are those images, and `res` the look's resources for the
+    /// font.
     pub fn new(
         window: &Window,
-        atlas: &image::RgbaImage,
-        figure: crate::look::FigureImages,
+        ctx: egui::Context,
+        pending_textures: egui::TexturesDelta,
+        textures: GuiTextures,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<Self> {
-        let ctx = egui::Context::default();
-        let textures = GuiTextures::load(&ctx, atlas, figure, res)?;
         font::install(&ctx, res);
         let state = egui_winit::State::new(
             ctx.clone(),
@@ -250,12 +255,13 @@ impl DebugUi {
             window,
             Some(window.scale_factor() as f32),
             None,
-            None,
+            Some(crate::startup::gpu_limit() as usize),
         );
         Ok(Self {
             ctx,
             textures,
             state,
+            pending_textures,
             fps: FpsCounter::new(Instant::now()),
             visible: false,
         })
@@ -268,7 +274,10 @@ impl DebugUi {
         figure: crate::look::FigureImages,
         res: &crate::pack::Resources,
     ) -> anyhow::Result<()> {
-        self.textures = GuiTextures::load(&self.ctx, atlas, figure, res)?;
+        // A panic in a bad pack's images must leave the old ones in place.
+        let textures = crate::startup::guard(|| GuiTextures::load(&self.ctx, atlas, figure, res))
+            .map_err(|reason| anyhow::anyhow!(reason))?;
+        self.textures = textures;
         font::install(&self.ctx, res);
         Ok(())
     }
@@ -477,10 +486,17 @@ impl DebugUi {
         (self.paint(output), action)
     }
 
-    fn paint(&self, output: egui::FullOutput) -> UiPaint {
+    fn paint(&mut self, output: egui::FullOutput) -> UiPaint {
+        let mut textures = output.textures_delta;
+        if !self.pending_textures.is_empty() {
+            // The first pass's changes come first; later ones come after.
+            let mut first = std::mem::take(&mut self.pending_textures);
+            first.append(textures);
+            textures = first;
+        }
         UiPaint {
             primitives: self.ctx.tessellate(output.shapes, output.pixels_per_point),
-            textures: output.textures_delta,
+            textures,
             pixels_per_point: output.pixels_per_point,
         }
     }

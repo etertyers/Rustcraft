@@ -60,6 +60,8 @@ Usage: cargo run --release -- [flags]
   --nether | --end      an unsaved test world in the Nether or the End
   --view first|back|front   the view to start in (F5 cycles it)
   --pack <name>         play with this resource pack once (repeatable)
+  --safe-mode           start with no extra resource packs (the style's own stay); they
+                        stay off if you change an option, and come back from Resource Packs
   --assets <dir>        read the game's assets from this folder (default: the app's
                         Contents/Resources, else the source tree; never the current folder)
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
@@ -299,7 +301,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             "--assets" => {
                 value(&mut args, "--assets", "a folder")?;
             }
-            "--exit" | "--texture-audit" | "--texture-marks" | "--texture-viewer" => {}
+            "--exit" | "--texture-audit" | "--texture-marks" | "--texture-viewer"
+            | "--safe-mode" => {}
             "--entry" => {
                 value(&mut args, "--entry", "block/<name> or mob/<name>")?;
             }

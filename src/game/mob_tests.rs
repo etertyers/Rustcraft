@@ -1222,3 +1222,34 @@ fn a_death_is_told_with_who_did_it() {
     assert_eq!(game.chat_out.len(), 1, "told once");
     assert_eq!(super::mob_acts::display_name("cave_spider"), "Cave Spider");
 }
+
+/// M63 Step 0, in the real game loop: a chasing zombie's limb swing grows
+/// by its limb amount once per tick, and the amount follows vanilla's
+/// min(blocks per tick × 4, 1).
+#[test]
+fn step0_a_chasing_zombie_swings_its_legs_once_per_tick() {
+    let mut game = night_game(GameMode::Survival);
+    let id = spawn(&mut game, "zombie", 12.5, 0.5);
+    let mut last = (mob(&game, id).feet(), mob(&game, id).limb_swing);
+    let mut checked = 0;
+    for tick in 0..60 {
+        run(&mut game, 1);
+        let m = mob(&game, id);
+        let moved = (m.feet() - last.0).length();
+        let swing = m.limb_swing - last.1;
+        if tick > 20 && tick < 50 {
+            println!(
+                "STEP0 game zombie tick {tick}: moved {moved:.3}, swing +{swing:.3}, amount {:.3}",
+                m.limb_amount
+            );
+            assert!(
+                (swing - m.limb_amount).abs() < 1e-4,
+                "swing {swing} vs amount {}",
+                m.limb_amount
+            );
+            checked += 1;
+        }
+        last = (m.feet(), m.limb_swing);
+    }
+    assert!(checked > 20);
+}

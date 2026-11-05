@@ -110,7 +110,7 @@ thread_local! {
     /// frame took.
     static FRAME: RefCell<(vars::Frame, u64, Option<std::time::Instant>)> = const { RefCell::new((
         vars::Frame {
-            time: 0.0,
+            ticks: 0,
             frame_time: 0.0,
             frame_counter: 0,
             player: glam::DVec3::ZERO,
@@ -121,6 +121,12 @@ thread_local! {
     )) };
     /// What each mob keeps of its model, by mob id and model name.
     static STATES: RefCell<HashMap<(u64, String), Runtime>> = RefCell::new(HashMap::new());
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times a mob's model was animated (a test counts them).
+    pub static ANIMATED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Runs `f` on `mob_id`'s state for `model`, made if it's new, after
@@ -143,14 +149,15 @@ pub fn with_state<T>(
             .entry((mob_id, name.to_owned()))
             .or_insert_with(|| Runtime::new(model, mob_id));
         runtime.last_used = frame;
+        #[cfg(test)]
+        ANIMATED.with(|n| n.set(n.get() + 1));
         runtime.animate(model, entity);
         f(runtime)
     })
 }
 
-/// Starts a frame of drawing mobs: `time` in game ticks with the part of
-/// the tick, `alpha` of the way between ticks, the player's position.
-pub fn begin_frame(time: f32, alpha: f32, player: glam::DVec3) {
+/// Starts a frame of drawing mobs: `ticks` whole game ticks, `alpha` of the way between ticks, the player's position.
+pub fn begin_frame(ticks: u64, alpha: f32, player: glam::DVec3) {
     FRAME.with(|f| {
         let mut f = f.borrow_mut();
         let now = std::time::Instant::now();
@@ -159,7 +166,7 @@ pub fn begin_frame(time: f32, alpha: f32, player: glam::DVec3) {
         f.2 = Some(now);
         f.1 += 1;
         f.0 = vars::Frame {
-            time,
+            ticks,
             frame_time: dt,
             frame_counter: f.1 as u32,
             player,
@@ -275,5 +282,140 @@ mod tests {
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
         println!("{} Fresh Animations models load", jems.len());
+    }
+
+    /// Fresh Animations' registry, or None (with a message) without the pack.
+    fn fresh_animations() -> Option<Registry> {
+        let dir = crate::assets::dir().join("downloads/resourcepacks");
+        let path = std::fs::read_dir(&dir)
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .find(|p| {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                identify(name, "") == Some(TrailerPack::FreshAnimations)
+            });
+        let Some(path) = path else {
+            eprintln!("skipping: no Fresh Animations pack in {}", dir.display());
+            return None;
+        };
+        let pack = crate::pack::Pack::open(&path).ok()?;
+        Some(Registry::load(
+            &|p| pack.read(p),
+            &["pig", "cow", "zombie", "villager", "sheep"],
+        ))
+    }
+
+    /// Idle entity variables at game time `time` (ticks with the fraction).
+    fn idle_vars(ticks: u64, alpha: f32, frame: u32) -> vars::EntityVars {
+        let (time, day_time) = vars::clock(ticks, alpha);
+        let mut v = vars::EntityVars::default();
+        let mut set = |name: &str, value: f32| v.0[usize::from(vars::slot(name).unwrap())] = value;
+        set("time", time);
+        set("day_time", day_time);
+        set("age", (ticks % 1000) as f32 + alpha);
+        set("frame_time", 1.0 / 60.0);
+        set("frame_counter", frame as f32);
+        set("is_on_ground", 1.0);
+        set("is_alive", 1.0);
+        set("health", 10.0);
+        set("max_health", 10.0);
+        set("id", 4242.0);
+        v
+    }
+
+    /// Each part's largest change between consecutive frames of an idle
+    /// mob over 120 frames at 60 FPS (3 frames to a tick... 20 ticks/s):
+    /// (name, degrees, pixels).
+    fn idle_jitter(model: &CemModel, start_ticks: u64) -> Vec<(String, f32, f32)> {
+        let mut runtime = pose::Runtime::new(model, 4242);
+        let mut last: Option<Vec<pose::PartState>> = None;
+        let mut worst = vec![(0.0f32, 0.0f32); model.parts.len()];
+        for frame in 0..120u32 {
+            // 60 frames a second, 20 ticks a second: a third of a tick.
+            let ticks = start_ticks + u64::from(frame / 3);
+            let alpha = (frame % 3) as f32 / 3.0;
+            runtime.animate(model, &idle_vars(ticks, alpha, frame));
+            if let Some(last) = &last {
+                for (i, (a, b)) in last.iter().zip(&runtime.parts).enumerate() {
+                    let turn = (0..3)
+                        .map(|k| (a.rotate[k] - b.rotate[k]).to_degrees().abs())
+                        .fold(0.0, f32::max);
+                    let slide = (0..3)
+                        .map(|k| (a.translate[k] - b.translate[k]).abs())
+                        .fold(0.0, f32::max);
+                    worst[i].0 = worst[i].0.max(turn);
+                    worst[i].1 = worst[i].1.max(slide);
+                }
+            }
+            last = Some(runtime.parts.clone());
+        }
+        model
+            .parts
+            .iter()
+            .zip(worst)
+            .map(|(p, (turn, slide))| (p.name.clone(), turn, slide))
+            .collect()
+    }
+
+    /// Idle mobs hold still between frames (Fresh Animations, if present).
+    #[test]
+    fn idle_mobs_do_not_jitter() {
+        let Some(registry) = fresh_animations() else {
+            return;
+        };
+        let mut bad = Vec::new();
+        for name in ["pig", "cow", "zombie", "villager"] {
+            let Some(model) = registry.find(name, false) else {
+                bad.push(format!("{name}: no model"));
+                continue;
+            };
+            for start in [0u64, 2_000_000] {
+                let rows = idle_jitter(model, start);
+                for (part, turn, slide) in rows.iter().filter(|r| r.1 > 0.01 || r.2 > 0.01) {
+                    println!("{name} t={start}: {part}: {turn:.2} deg, {slide:.2} px");
+                    if *turn > 3.0 || *slide > 0.5 {
+                        bad.push(format!(
+                            "{name} t={start} {part}: {turn:.1} deg {slide:.2} px"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// Step 0: how many random() calls with and without an argument.
+    #[test]
+    fn count_random_calls_in_fresh_animations() {
+        let dir = crate::assets::dir().join("downloads/resourcepacks");
+        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|e| {
+            e.filter_map(|e| e.ok().map(|e| e.path())).find(|p| {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                identify(name, "") == Some(TrailerPack::FreshAnimations)
+            })
+        }) else {
+            return;
+        };
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let (mut bare, mut seeded) = (0, 0);
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i).unwrap();
+            let name = file.name().map(|n| n.into_owned()).unwrap_or_default();
+            if !(name.ends_with(".jem") || name.ends_with(".jpm")) {
+                continue;
+            }
+            let mut text = String::new();
+            if std::io::Read::read_to_string(&mut file, &mut text).is_err() {
+                continue;
+            }
+            for (at, _) in text.match_indices("random(") {
+                if text[at + 7..].starts_with(')') {
+                    bare += 1;
+                } else {
+                    seeded += 1;
+                }
+            }
+        }
+        println!("random(): {bare} without an argument, {seeded} with one");
     }
 }

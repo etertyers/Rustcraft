@@ -662,6 +662,18 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: end_credits,
     },
+    // Checkpoint L's fix: a menu screen, not a world (the app special-cases
+    // its name).
+    Shot {
+        name: "texture-viewer",
+        about: "the Texture Viewer with the pig selected in the vanilla set (a menu, not a world; --size 2560x1440 makes 1280x720 points on a Retina screen)",
+        world: None,
+        view: None,
+        time: None,
+        mode: None,
+        overlay: false,
+        stage: nothing,
+    },
     // v1.4 (M54): the reference scenes the Vanilla look is checked
     // against, all on seed 12345 (tests/reference/vanilla/).
     Shot {

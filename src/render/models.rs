@@ -33,17 +33,8 @@ pub fn add_mob(mesh: &mut Mesh, mob: &Mob, def: &MobDef, alpha: f32, light: (u8,
 /// the model has no hand.
 pub fn hand_mount(mob: &Mob, def: &MobDef, alpha: f32) -> Option<Mat4> {
     let part = def.model.parts.iter().find(|part| part.hand)?;
-    let (feet, yaw, limb_amount) = mob.pose(alpha);
-    let pose = Pose {
-        swing: mob.limb_swing,
-        amount: limb_amount,
-        head_yaw: angle_difference(mob.head_yaw, yaw),
-        pitch: mob.pitch,
-        time: mob.age as f32 + alpha,
-        aggressive: mob.aggressive,
-        airborne: !mob.body.on_ground,
-        sitting: mob.data.sitting,
-    };
+    let (feet, yaw, _) = mob.pose(alpha);
+    let pose = Pose::of(mob, def, alpha, angle_difference(mob.head_yaw, yaw));
     let death = if mob.is_dead() {
         let f = ((mob.death_time as f32 + alpha - 1.0) / DEATH_TICKS as f32 * 1.6)
             .max(0.0)
@@ -126,7 +117,7 @@ pub fn vanilla_part_names(model: &crate::entity::mobs::Model) -> Vec<String> {
                 "left_leg"
             }
             .to_owned(),
-            Role::LegA | Role::LegB => {
+            Role::LegA | Role::LegB | Role::CatLeg(_) => {
                 legs += 1;
                 [
                     "right_hind_leg",
@@ -146,7 +137,10 @@ pub fn vanilla_part_names(model: &crate::entity::mobs::Model) -> Vec<String> {
             Role::Lid => "lid".to_owned(),
             Role::Tail => "tail".to_owned(),
             Role::SpiderLeg(n) => format!("leg{}", n + 1),
-            Role::Tentacle(n) => format!("tentacle{}", n + 1),
+            Role::Tentacle(n) | Role::GhastTentacle(n) => format!("tentacle{}", n + 1),
+            Role::BlazeRod(n) | Role::Slice(n) | Role::Segment(n) | Role::Hop(n) => {
+                format!("part{i}_{n}")
+            }
         })
         .collect()
 }
@@ -159,8 +153,69 @@ struct Pose {
     pitch: f32,
     time: f32,
     aggressive: bool,
-    airborne: bool,
     sitting: bool,
+    /// Wing angle this frame (chickens, bees, phantoms).
+    wing: f32,
+    /// A squid's tentacle angle this frame.
+    tentacle: f32,
+    /// Largest swing of arms and legs.
+    limit: f32,
+    /// A slime's squash this frame.
+    squish: f32,
+}
+
+impl Pose {
+    fn of(mob: &Mob, def: &MobDef, alpha: f32, head_yaw: f32) -> Self {
+        let (swing, amount) = mob.limbs(alpha);
+        let time = mob.age as f32 + alpha;
+        Self {
+            swing,
+            amount,
+            head_yaw,
+            pitch: mob.pitch,
+            time,
+            aggressive: mob.aggressive,
+            sitting: mob.data.sitting,
+            wing: wing_angle(mob, &def.name, time, alpha),
+            tentacle: tentacle_angle(time + mob.id as f32 * 7.0),
+            limit: def.limb_limit.unwrap_or(f32::MAX),
+            squish: mob.prev_squish + (mob.squish - mob.prev_squish) * alpha,
+        }
+    }
+}
+
+/// How far a wing is raised, as vanilla's models have it: a chicken by its
+/// flapping state, a bee by its age while off the ground, a phantom by its
+/// age.
+fn wing_angle(mob: &Mob, name: &str, time: f32, alpha: f32) -> f32 {
+    use std::f32::consts::PI;
+    match name {
+        "chicken" => {
+            let flap = mob.prev_flap + (mob.flap - mob.prev_flap) * alpha;
+            let speed = mob.prev_flap_speed + (mob.flap_speed - mob.prev_flap_speed) * alpha;
+            (flap.sin() + 1.0) * speed
+        }
+        "bee" if !mob.body.on_ground => (time * 2.1).cos() * PI * 0.15,
+        "bee" => 0.0,
+        "phantom" => {
+            ((time + mob.id as f32 * 3.0) * 7.448_451_f32.to_radians()).cos()
+                * 16.0_f32.to_radians()
+        }
+        _ => 0.0,
+    }
+}
+
+/// A squid's tentacle swing: a pulse, then still (vanilla's
+/// `tentacleMovement`).
+fn tentacle_angle(time: f32) -> f32 {
+    use std::f32::consts::PI;
+    let movement = (time * 0.04) % (2.0 * PI);
+    if movement < PI {
+        let t = movement / PI;
+        (t * t * PI).sin() * PI * 0.25
+    } else {
+        0.0
+    }
 }
 
 /// Adds one of `def`'s models (its body or a layer) posed for `mob`,
@@ -196,18 +251,9 @@ pub fn add_mob_model_using(
     tint: [f32; 3],
     custom: Option<std::sync::Arc<crate::cem::CemModel>>,
 ) {
-    let (feet, yaw, limb_amount) = mob.pose(alpha);
+    let (feet, yaw, _) = mob.pose(alpha);
     let head_yaw = angle_difference(mob.head_yaw, yaw);
-    let pose = Pose {
-        swing: mob.limb_swing,
-        amount: limb_amount,
-        head_yaw,
-        pitch: mob.pitch,
-        time: mob.age as f32 + alpha,
-        aggressive: mob.aggressive,
-        airborne: !mob.body.on_ground,
-        sitting: mob.data.sitting,
-    };
+    let pose = Pose::of(mob, def, alpha, head_yaw);
     // Dead mobs tip over onto their side over 20 ticks (1.0.0's rotateCorpse).
     let death = if mob.is_dead() {
         let f = ((mob.death_time as f32 + alpha - 1.0) / DEATH_TICKS as f32 * 1.6)
@@ -235,6 +281,12 @@ pub fn add_mob_model_using(
     let own_baby = baby && custom.as_ref().is_some_and(|m| m.baby);
     if baby && !own_baby {
         scale *= 0.5;
+    }
+    if mob.data.size > 0 {
+        // SlimeRenderer.scale: squashed wide on landing, tall in the air.
+        let size = f32::from(mob.data.size.max(1));
+        let g = 1.0 / (pose.squish / (size * 0.5 + 1.0) + 1.0);
+        scale *= Vec3::new(g, 1.0 / g, g);
     }
     let swell = mob.swell_amount(alpha);
     if swell > 0.0 {
@@ -463,11 +515,7 @@ fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
     let stride = pose.swing * 0.6662;
     let (rest_x, rest_y, rest_z) = (part.rest, part.rest_y, part.rest_z);
     let amount = pose.amount;
-    let flap = if pose.airborne {
-        (pose.time * 1.1).sin().abs() * 1.0 + 0.4
-    } else {
-        0.0
-    };
+    let limit = pose.limit;
     match part.role {
         Role::None => (rest_x, rest_y, rest_z, pivot),
         Role::Head => (rest_x + pose.pitch, rest_y + pose.head_yaw, rest_z, pivot),
@@ -475,7 +523,7 @@ fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
             if pose.sitting {
                 rest_x
             } else {
-                stride.cos() * 1.4 * amount
+                (stride.cos() * 1.4 * amount).clamp(-limit, limit)
             },
             rest_y,
             rest_z,
@@ -485,14 +533,99 @@ fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
             if pose.sitting {
                 rest_x
             } else {
-                (stride + PI).cos() * 1.4 * amount
+                ((stride + PI).cos() * 1.4 * amount).clamp(-limit, limit)
             },
             rest_y,
             rest_z,
             pivot,
         ),
-        Role::ArmA => ((stride + PI).cos() * amount, rest_y, rest_z, pivot),
-        Role::ArmB => (stride.cos() * amount, rest_y, rest_z, pivot),
+        Role::GhastTentacle(i) => (
+            0.2 * (pose.time * 0.3 + f32::from(i)).sin() + 0.4,
+            rest_y,
+            rest_z,
+            pivot,
+        ),
+        Role::BlazeRod(i) => {
+            // Vanilla's BlazeModel: three rings of four rods, bobbing and
+            // turning with the age.
+            let i = f32::from(i);
+            let ring = (i / 4.0).floor();
+            let k = i % 4.0;
+            let t = pose.time;
+            let (angle, radius, y) = match ring as u8 {
+                0 => (
+                    t * PI * -0.1 + k * FRAC_PI_2,
+                    9.0,
+                    -2.0 + ((k * 2.0 + t) * 0.25).cos(),
+                ),
+                1 => (
+                    FRAC_PI_4 + t * PI * 0.03 + k * FRAC_PI_2,
+                    7.0,
+                    2.0 + (((k + 4.0) * 2.0 + t) * 0.25).cos(),
+                ),
+                _ => (
+                    0.471_238_9 + t * PI * -0.05 + k * FRAC_PI_2,
+                    5.0,
+                    11.0 + (((k + 8.0) * 1.5 + t) * 0.5).cos(),
+                ),
+            };
+            (
+                rest_x,
+                rest_y,
+                rest_z,
+                Vec3::new(angle.cos() * radius, y, angle.sin() * radius),
+            )
+        }
+        Role::Slice(i) => (
+            rest_x,
+            rest_y,
+            rest_z,
+            pivot - Vec3::Y * ((4.0 - f32::from(i)) * pose.squish.max(0.0) * 1.7),
+        ),
+        Role::Segment(i) => {
+            let i = f32::from(i);
+            let phase = pose.time * 0.9 + i * 0.15 * PI;
+            let away = (i - 2.0).abs();
+            (
+                rest_x,
+                rest_y + phase.cos() * PI * 0.05 * (1.0 + away),
+                rest_z,
+                pivot + Vec3::X * (phase.sin() * PI * 0.2 * away),
+            )
+        }
+        Role::Hop(i) => {
+            // Both legs of a pair move together; the front pair opposes.
+            let swing = stride.cos() * amount;
+            (
+                rest_x + if i == 0 { swing } else { -swing * 0.6 },
+                rest_y,
+                rest_z,
+                pivot,
+            )
+        }
+        Role::CatLeg(i) => {
+            // Vanilla's ocelot gait: 1.0 × speed, hind left and right a
+            // little apart, the front pair opposite.
+            let phase = [0.0, 0.3, PI + 0.3, PI][usize::from(i.min(3))];
+            let angle = if pose.sitting {
+                rest_x
+            } else {
+                (stride + phase).cos() * amount
+            };
+            (angle, rest_y, rest_z, pivot)
+        }
+        Role::ArmA => (
+            ((stride + PI).cos() * amount).clamp(-limit, limit),
+            rest_y,
+            rest_z,
+            pivot,
+        ),
+        Role::ArmB => (
+            (stride.cos() * amount).clamp(-limit, limit),
+            rest_y,
+            rest_z,
+            pivot,
+        ),
         Role::Reaching => (
             -FRAC_PI_2 + (pose.time * 0.067).sin() * 0.05,
             rest_y,
@@ -513,8 +646,8 @@ fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
             rest_z,
             pivot - Vec3::Y * if pose.aggressive { 10.0 } else { 0.0 },
         ),
-        Role::WingA => (rest_x, rest_y, rest_z + wing_beat(pose, flap), pivot),
-        Role::WingB => (rest_x, rest_y, rest_z - wing_beat(pose, flap), pivot),
+        Role::WingA => (rest_x, rest_y, rest_z + pose.wing, pivot),
+        Role::WingB => (rest_x, rest_y, rest_z - pose.wing, pivot),
         Role::Tail => (rest_x, rest_y + stride.cos() * 1.4 * amount, rest_z, pivot),
         Role::SpiderLeg(i) => {
             let i = usize::from(i.min(7));
@@ -535,24 +668,13 @@ fn animate(part: &Part, pose: &Pose) -> (f32, f32, f32, Vec3) {
         }
         Role::Tentacle(i) => {
             let angle = f32::from(i) * PI * 2.0 / 8.0;
-            let swing = pose.time * 0.2 + f32::from(i);
             (
-                swing.sin() * 0.5 + 0.2,
+                pose.tentacle,
                 -angle + FRAC_PI_2,
                 rest_z,
                 Vec3::new(angle.cos() * 5.0, pivot.y, angle.sin() * 5.0),
             )
         }
-    }
-}
-
-/// How far a wing is raised: bees and phantoms beat all the time, birds
-/// only when off the ground.
-fn wing_beat(pose: &Pose, flap: f32) -> f32 {
-    if pose.aggressive && !pose.airborne {
-        0.0
-    } else {
-        flap
     }
 }
 
@@ -816,7 +938,7 @@ mod tests {
             })
             .collect();
         let frame = |n: u64| {
-            crate::cem::begin_frame(n as f32, 0.5, DVec3::ZERO);
+            crate::cem::begin_frame(n, 0.5, DVec3::ZERO);
             let mut mesh = Mesh::default();
             for mob in &herd {
                 add_mob_model_using(
@@ -887,5 +1009,195 @@ mod tests {
         add_minecart(&mut turned, &cart, 1.0, (15, 0));
         let (min, max) = bounds(&turned);
         assert!((max.z - min.z - 1.25).abs() < 1e-3, "now along z");
+    }
+
+    /// How many times a frame animates each mob's model (Step 0 / M58 fix).
+    #[test]
+    fn a_mob_is_animated_once_a_frame_layers_included() {
+        let dir = crate::assets::dir().join("downloads/resourcepacks");
+        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|e| {
+            e.filter_map(|e| e.ok().map(|e| e.path()))
+                .find(|p| p.to_string_lossy().contains("FreshAnimations"))
+        }) else {
+            eprintln!("skipping: no Fresh Animations pack");
+            return;
+        };
+        let pack = crate::pack::Pack::open(&path).unwrap();
+        crate::cem::install(crate::cem::Registry::load(
+            &|p| pack.read(p),
+            &["pig", "sheep"],
+        ));
+        let mobs = MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap();
+        let count = |name: &str, setup: &dyn Fn(&mut Mob)| -> u32 {
+            let kind = mobs.find(name).unwrap();
+            let def = mobs.get(kind);
+            let mut mob = Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0);
+            setup(&mut mob);
+            crate::cem::begin_frame(100, 0.5, DVec3::ZERO);
+            crate::cem::ANIMATED.with(|n| n.set(0));
+            let mut mesh = Mesh::default();
+            add_mob(&mut mesh, &mob, def, 0.5, (15, 0));
+            for layer in &def.layers {
+                if (layer.wool && mob.data.sheared) || (layer.saddle && !mob.data.saddled) {
+                    continue;
+                }
+                add_mob_model(&mut mesh, &mob, def, &layer.model, 0.5, (15, 0), [1.0; 3]);
+            }
+            crate::cem::ANIMATED.with(|n| n.get())
+        };
+        let plain_pig = count("pig", &|_| {});
+        let saddled_pig = count("pig", &|m| m.data.saddled = true);
+        let wool_sheep = count("sheep", &|_| {});
+        println!(
+            "with_state per frame: pig {plain_pig}, saddled pig {saddled_pig}, sheep with wool {wool_sheep}"
+        );
+        crate::cem::install(crate::cem::Registry::default());
+        assert_eq!((plain_pig, saddled_pig, wool_sheep), (1, 1, 1));
+    }
+
+    fn mob_of(name: &str) -> (Mob, &'static MobDef) {
+        let mobs: &'static MobRegistry = Box::leak(Box::new(
+            MobRegistry::load(&crate::assets::dir().join("data/mobs.ron")).unwrap(),
+        ));
+        let kind = mobs.find(name).unwrap();
+        let def = mobs.get(kind);
+        (Mob::new(kind, def, DVec3::new(0.5, 64.0, 0.5), 0.0), def)
+    }
+
+    #[test]
+    fn the_walk_position_moves_smoothly_between_ticks_like_vanilla() {
+        let (mut mob, _) = mob_of("cow");
+        mob.limb_swing = 10.0;
+        mob.limb_amount = 0.5;
+        let (start, _) = mob.limbs(0.0);
+        let (end, speed) = mob.limbs(1.0);
+        assert!((end - 10.0).abs() < 1e-6 && (start - 9.5).abs() < 1e-6);
+        assert!((speed - 0.5).abs() < 1e-6);
+        // Babies take three times the steps; the speed never passes 1.
+        mob.data.age = -100;
+        assert!((mob.limbs(1.0).0 - 30.0).abs() < 1e-5);
+        mob.limb_amount = 3.0;
+        assert_eq!(mob.limbs(1.0).1, 1.0);
+    }
+
+    #[test]
+    fn an_endermans_limbs_stop_at_0_4_and_a_cats_front_and_hind_legs_oppose() {
+        let (mut mob, def) = mob_of("enderman");
+        mob.limb_swing = 0.0;
+        mob.limb_amount = 1.0;
+        let pose = Pose::of(&mob, def, 1.0, 0.0);
+        let leg = def
+            .model
+            .parts
+            .iter()
+            .find(|p| p.role == Role::LegA)
+            .unwrap();
+        assert!((animate(leg, &pose).0 - 0.4).abs() < 1e-6);
+        let (mut cat, def) = mob_of("cat");
+        cat.limb_amount = 0.5;
+        let pose = Pose::of(&cat, def, 1.0, 0.0);
+        let angle = |i| {
+            let part = def
+                .model
+                .parts
+                .iter()
+                .find(|p| p.role == Role::CatLeg(i))
+                .unwrap();
+            animate(part, &pose).0
+        };
+        // Peak 1.0 × speed, not the 1.4 of the other walkers.
+        assert!(angle(0).abs() <= 0.5 + 1e-6 && (angle(0) - 0.5).abs() < 1e-6);
+        assert!(angle(2) < 0.0 && angle(3) < 0.0);
+    }
+
+    #[test]
+    fn a_chicken_flaps_only_after_being_airborne_and_settles_on_the_ground() {
+        let (mut chicken, def) = mob_of("chicken");
+        let wing = |m: &Mob| Pose::of(m, def, 1.0, 0.0).wing;
+        assert_eq!(wing(&chicken), 0.0);
+        let grid = crate::entity::path::tests::Grid::default();
+        // Falling with nothing below: the flapping builds.
+        chicken.body.on_ground = false;
+        for _ in 0..6 {
+            chicken.tick(&crate::player::physics::MoveInput::default(), &grid, false);
+        }
+        assert!(chicken.flap_speed > 0.9, "{}", chicken.flap_speed);
+        // Back on a floor the flapping dies away within a few ticks.
+        let (mut chicken, _) = mob_of("chicken");
+        chicken.flap_speed = 1.0;
+        let floor = crate::entity::path::tests::Grid::floor();
+        for _ in 0..8 {
+            chicken.tick(&crate::player::physics::MoveInput::default(), &floor, false);
+        }
+        assert_eq!(chicken.flap_speed, 0.0);
+        assert!(wing(&chicken).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_squids_tentacles_pulse_then_rest() {
+        assert_eq!(tentacle_angle(0.0), 0.0);
+        let peak = (0..2000)
+            .map(|t| tentacle_angle(t as f32 * 0.5))
+            .fold(0.0f32, f32::max);
+        assert!(peak > 0.5 && peak <= std::f32::consts::FRAC_PI_4 + 1e-4);
+        // The second half of the cycle is still.
+        assert_eq!(tentacle_angle(std::f32::consts::PI * 1.5 / 0.04), 0.0);
+    }
+
+    fn role_part(def: &MobDef, role: Role) -> &Part {
+        def.model.parts.iter().find(|p| p.role == role).unwrap()
+    }
+
+    #[test]
+    fn blaze_rods_circle_ghast_tentacles_sway_and_silverfish_crawl() {
+        let (mut blaze, def) = mob_of("blaze");
+        blaze.age = 17;
+        let pose = Pose::of(&blaze, def, 0.0, 0.0);
+        for i in 0..12 {
+            let (.., pivot) = animate(role_part(def, Role::BlazeRod(i)), &pose);
+            let radius = pivot.x.hypot(pivot.z);
+            assert!(
+                [9.0, 7.0, 5.0].iter().any(|r| (radius - r).abs() < 1e-3),
+                "{i}: {radius}"
+            );
+        }
+        let (ghast, def) = mob_of("ghast");
+        let pose = Pose::of(&ghast, def, 0.0, 0.0);
+        let x = animate(role_part(def, Role::GhastTentacle(0)), &pose).0;
+        assert!((0.2..=0.6).contains(&x));
+        let (mut fish, def) = mob_of("silverfish");
+        let mut ends = |age| {
+            fish.age = age;
+            let pose = Pose::of(&fish, def, 0.0, 0.0);
+            (
+                animate(role_part(def, Role::Segment(2)), &pose).3.x,
+                animate(role_part(def, Role::Segment(6)), &pose).3.x,
+            )
+        };
+        // The middle segment (2) holds still sideways; the tail sways.
+        let (a, b) = (ends(5), ends(9));
+        assert!(a.0.abs() < 1e-6 && a.1.abs() > 0.1);
+        assert_ne!(a.1, b.1);
+    }
+
+    #[test]
+    fn a_slime_squashes_on_landing_stretches_in_the_air_and_a_rabbits_legs_hop_together() {
+        let (mut slime, _) = mob_of("slime");
+        slime.data.size = 2;
+        let floor = crate::entity::path::tests::Grid::floor();
+        let none = crate::player::physics::MoveInput::default();
+        // Dropped from a little above the floor: it lands and squashes.
+        slime.body.on_ground = false;
+        slime.tick(&none, &floor, false);
+        for _ in 0..12 {
+            slime.tick(&none, &floor, false);
+        }
+        assert!(slime.squish.abs() > 1e-3 || slime.prev_squish.abs() > 1e-3);
+        let (mut rabbit, def) = mob_of("rabbit");
+        rabbit.limb_amount = 0.5;
+        let pose = Pose::of(&rabbit, def, 1.0, 0.0);
+        let rear = animate(role_part(def, Role::Hop(0)), &pose).0;
+        let front = animate(role_part(def, Role::Hop(1)), &pose).0;
+        assert!(rear * front <= 0.0 && rear != 0.0);
     }
 }

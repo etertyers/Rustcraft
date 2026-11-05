@@ -817,6 +817,10 @@ pub struct BlockDef {
     /// `docs/placeholders.md`).
     #[serde(default)]
     pub placeholder: bool,
+    /// Drawn from vanilla's model JSON elements instead of its built-in
+    /// shape (`pack::blockmodel`). `Shape::Model` blocks always are.
+    #[serde(default)]
+    pub json_model: bool,
     /// Its name as shown ("Andesite Slab"), where the name made readable
     /// isn't enough (placeholders take theirs from vanilla's language file).
     #[serde(default)]

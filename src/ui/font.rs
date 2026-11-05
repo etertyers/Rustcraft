@@ -639,13 +639,14 @@ mod tests {
         install(&ctx, &res);
         // Bold text must not panic, and must lay out real glyphs.
         let mut width = 0.0;
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
             let label = ui.label(
                 egui::RichText::new("Singleplayer")
                     .font(FontId::new(16.0, FontFamily::Name(BOLD.into()))),
             );
             width = label.rect.width();
         });
+        output.textures_delta.clear();
         assert!(width > 20.0, "text has width {width}");
     }
 

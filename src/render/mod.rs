@@ -280,6 +280,9 @@ pub struct Renderer {
     texture_layout: wgpu::BindGroupLayout,
     /// The atlas, kept to copy animation frames into.
     atlas_texture: wgpu::Texture,
+    /// The atlas was over the GPU's limit and went up shrunk, so animated
+    /// tiles can't be written into it.
+    atlas_scaled: bool,
     atlas_bind_group: wgpu::BindGroup,
     /// Bumped each time the packs change the atlas.
     atlas_generation: u32,
@@ -468,12 +471,22 @@ impl Renderer {
                 "yes"
             }
         );
+        // The adapter's own texture limit (wgpu's default asks for 8192),
+        // which the GUI is told too.
+        let max_side = adapter.limits().max_texture_dimension_2d;
+        let required_limits = wgpu::Limits {
+            max_texture_dimension_2d: max_side,
+            ..wgpu::Limits::default()
+        };
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("rustcraft device"),
                 required_features: features,
+                required_limits,
                 ..Default::default()
             }))?;
+        let device_limit = device.limits().max_texture_dimension_2d;
+        crate::startup::set_gpu_limit(device_limit);
 
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -666,6 +679,11 @@ impl Renderer {
             hand_item: None,
             texture_layout,
             atlas_texture,
+            atlas_scaled: crate::startup::shrink_factor(
+                atlas.image().width(),
+                atlas.image().height(),
+                device_limit,
+            ) > 1,
             atlas_bind_group,
             atlas_generation: 0,
             old_atlases: Vec::new(),
@@ -715,6 +733,11 @@ impl Renderer {
         let (device, queue, layout) = (&self.device, &self.queue, &self.texture_layout);
         let (texture, bind_group) = create_texture(device, queue, layout, "atlas", atlas.image());
         self.atlas_texture = texture;
+        self.atlas_scaled = crate::startup::shrink_factor(
+            atlas.image().width(),
+            atlas.image().height(),
+            self.device.limits().max_texture_dimension_2d,
+        ) > 1;
         let old = std::mem::replace(&mut self.atlas_bind_group, bind_group);
         self.old_atlases.push((self.atlas_generation, old));
         self.atlas_generation += 1;
@@ -755,6 +778,9 @@ impl Renderer {
 
     /// Copies animation frames into the atlas: (x, y, picture) per tile.
     pub fn update_atlas(&self, tiles: &[(u32, u32, RgbaImage)]) {
+        if self.atlas_scaled {
+            return;
+        }
         for (x, y, picture) in tiles {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -2181,6 +2207,9 @@ fn create_texture(
     label: &str,
     image: &RgbaImage,
 ) -> (wgpu::Texture, wgpu::BindGroup) {
+    // Over the device's limit, the picture is shrunk by a whole number
+    // (a warning names it); wgpu would panic otherwise.
+    let image = crate::startup::fit_gpu(label, image, device.limits().max_texture_dimension_2d);
     let texture = device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {

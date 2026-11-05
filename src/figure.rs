@@ -198,17 +198,7 @@ pub fn add_body(
         crate::render::player::add_elytra(&mut meshes.elytra, pose, feet, yaw, light);
     }
     let worn = worn_armor(&wearer.armor);
-    let rows = crate::look::ARMOR_MATERIALS.len() * 2;
-    add_armor(
-        &mut meshes.armor,
-        pose,
-        fig.slim,
-        feet,
-        yaw,
-        &worn,
-        rows,
-        light,
-    );
+    add_armor(&mut meshes.armor, pose, fig.slim, feet, yaw, &worn, light);
     let glinting: Vec<_> = worn.iter().copied().filter(|piece| piece.glint).collect();
     add_armor(
         &mut meshes.armor_glint,
@@ -217,7 +207,6 @@ pub fn add_body(
         feet,
         yaw,
         &glinting,
-        rows,
         light,
     );
     let frame = model_matrix(&body_frame(pose, yaw), feet);
@@ -301,22 +290,22 @@ pub fn worn_armor(armor: &[Option<ItemStack>; 4]) -> Vec<WornArmor> {
         if material == "leather" {
             let c = LEATHER_COLOR;
             let tint = [(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF].map(|v| v as f32 / 255.0);
-            worn.extend(row("leather").map(|row| WornArmor {
+            worn.extend(row("leather").map(|cell| WornArmor {
                 slot,
-                row,
+                cell,
                 tint,
                 glint,
             }));
-            worn.extend(row("leather_overlay").map(|row| WornArmor {
+            worn.extend(row("leather_overlay").map(|cell| WornArmor {
                 slot,
-                row,
+                cell,
                 tint: [1.0; 3],
                 glint: false,
             }));
         } else {
-            worn.extend(row(material).map(|row| WornArmor {
+            worn.extend(row(material).map(|cell| WornArmor {
                 slot,
-                row,
+                cell,
                 tint: [1.0; 3],
                 glint,
             }));
@@ -751,7 +740,7 @@ mod tests {
         let worn = worn_armor(&game.wearer().armor);
         assert_eq!(worn.len(), 3, "{worn:?}");
         let legs = worn.iter().find(|w| w.slot == ArmorSlot::Legs).unwrap();
-        assert_eq!(Some(legs.row), crate::look::armor_row("iron", 1));
+        assert_eq!(Some(legs.cell), crate::look::armor_row("iron", 1));
         let caps: Vec<_> = worn.iter().filter(|w| w.slot == ArmorSlot::Head).collect();
         assert_eq!(caps[0].tint, [160.0 / 255.0, 101.0 / 255.0, 64.0 / 255.0]);
         assert!(caps[0].glint);

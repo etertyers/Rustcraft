@@ -61,6 +61,8 @@ pub struct PackScreen {
     checked: Instant,
     /// The look whose list this is (each look has its own, v1.4).
     look: Option<&'static str>,
+    /// Why the last pack chosen didn't load, shown at the top.
+    error: Option<String>,
 }
 
 impl PackScreen {
@@ -75,6 +77,7 @@ impl PackScreen {
             scanned: None,
             checked: Instant::now(),
             look: None,
+            error: None,
         };
         screen.rescan(enabled);
         screen
@@ -84,6 +87,12 @@ impl PackScreen {
     pub fn with_builtin(mut self, dir: PathBuf, enabled: &[String]) -> Self {
         self.builtin_dir = Some(dir);
         self.rescan(enabled);
+        self
+    }
+
+    /// Shows why the pack chosen last couldn't be used.
+    pub fn with_error(mut self, error: String) -> Self {
+        self.error = Some(error);
         self
     }
 
@@ -164,6 +173,9 @@ impl PackScreen {
                 .size(32.0)
                 .color(Color32::WHITE),
         );
+        if let Some(error) = &self.error {
+            ui.colored_label(Color32::from_rgb(0xff, 0x60, 0x60), error);
+        }
         ui.label(RichText::new("Packs on top override the ones below them").color(GRAY));
         if let Some(look) = self.look {
             ui.label(
@@ -270,11 +282,10 @@ fn row(ui: &mut egui::Ui, entry: &mut Entry, buttons: &[(&str, Click)], click: &
         match image::load_from_memory(&bytes) {
             Ok(image) => {
                 let image = image.into_rgba8();
-                let size = [image.width() as usize, image.height() as usize];
-                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-                entry.texture = Some(ui.ctx().load_texture(
-                    format!("pack-{}", entry.id),
-                    pixels,
+                entry.texture = Some(crate::startup::load_egui(
+                    ui.ctx(),
+                    &format!("pack-{}", entry.id),
+                    &image,
                     egui::TextureOptions::NEAREST,
                 ));
             }

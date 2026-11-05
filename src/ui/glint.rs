@@ -77,15 +77,20 @@ thread_local! {
 /// pattern (none: nothing glints).
 pub fn install(ctx: &egui::Context, atlas: &RgbaImage, pattern: Option<RgbaImage>) {
     let state = pattern.map(|pattern| {
-        let size = [pattern.width() as usize, pattern.height() as usize];
         let bytes: Vec<u8> = pattern
             .pixels()
             .flat_map(|p| [p[0], p[1], p[2], 0])
             .collect();
-        let image = ColorImage::from_rgba_premultiplied(size, &bytes);
+        let image =
+            RgbaImage::from_raw(pattern.width(), pattern.height(), bytes).expect("same size");
         State {
             atlas: atlas.clone(),
-            texture: ctx.load_texture("glint", image, TextureOptions::NEAREST_REPEAT),
+            texture: crate::startup::load_egui_premultiplied(
+                ctx,
+                "glint",
+                &image,
+                TextureOptions::NEAREST_REPEAT,
+            ),
             pattern,
             frame: 0,
             overlays: HashMap::new(),
@@ -137,12 +142,13 @@ pub fn overlay(tile: &RgbaImage, pattern: &RgbaImage, seconds: f64) -> ColorImag
 /// The mask the inventory figure's armor glint is drawn through: white
 /// where the armor has a pixel, nothing elsewhere, with no alpha, so the
 /// pattern is added only to the armor itself.
-pub fn mask(image: &RgbaImage) -> ColorImage {
+/// (Premultiplied bytes: load it with `startup::load_egui_premultiplied`.)
+pub fn mask(image: &RgbaImage) -> RgbaImage {
     let bytes: Vec<u8> = image
         .pixels()
         .flat_map(|p| if p[3] > 0 { [255, 255, 255, 0] } else { [0; 4] })
         .collect();
-    ColorImage::from_rgba_premultiplied([image.width() as usize, image.height() as usize], &bytes)
+    RgbaImage::from_raw(image.width(), image.height(), bytes).expect("same size")
 }
 
 /// Paints the pattern over `mesh`'s small triangles (already projected
@@ -330,10 +336,7 @@ mod tests {
         let mut armor = RgbaImage::new(2, 1);
         armor.put_pixel(0, 0, image::Rgba([10, 20, 30, 255]));
         let mask = mask(&armor);
-        assert_eq!(
-            mask.pixels[0],
-            Color32::from_rgba_premultiplied(255, 255, 255, 0)
-        );
-        assert_eq!(mask.pixels[1], Color32::TRANSPARENT);
+        assert_eq!(mask.get_pixel(0, 0).0, [255, 255, 255, 0]);
+        assert_eq!(mask.get_pixel(1, 0).0, [0; 4]);
     }
 }

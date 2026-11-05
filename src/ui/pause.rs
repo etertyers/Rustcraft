@@ -51,6 +51,11 @@ pub struct LanScreen {
 }
 
 impl PauseMenu {
+    /// The Texture Viewer, while it's open.
+    pub fn viewer_mut(&mut self) -> Option<&mut crate::audit::viewer::Viewer> {
+        self.viewer.as_deref_mut()
+    }
+
     /// Escape: from Resource Packs back to Options without applying, up
     /// the Options pages to the menu, from the menu back to the game.
     pub fn back(&mut self) -> Option<PauseAction> {
@@ -89,17 +94,31 @@ impl PauseMenu {
         ));
         painter.rect_filled(full, 0.0, Color32::from_black_alpha(140));
         let mut action = None;
+        // The Texture Viewer gets the whole window, not the centered menu.
+        if let Some(viewer) = self.viewer.as_mut() {
+            let margin = 16.0;
+            let mut close = false;
+            egui::Area::new(egui::Id::NULL.with("pause-viewer"))
+                .fixed_pos(full.min)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::new().inner_margin(margin).show(ui, |ui| {
+                        let room = full.size() - egui::vec2(margin * 2.0, margin * 2.0);
+                        ui.set_min_size(room);
+                        ui.set_max_size(room);
+                        close = viewer.show(ui);
+                    });
+                });
+            if close {
+                self.viewer = None;
+            }
+            return None;
+        }
         egui::Area::new(egui::Id::unique("pause-menu"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .fade_in(false)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    if let Some(viewer) = self.viewer.as_mut() {
-                        if viewer.show(ui) {
-                            self.viewer = None;
-                        }
-                        return;
-                    }
                     if let Some(packs) = self.packs.as_mut() {
                         if let Some(selection) = packs.show(ui) {
                             options.resource_packs = selection;
