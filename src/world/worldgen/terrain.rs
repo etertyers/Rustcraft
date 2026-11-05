@@ -79,6 +79,9 @@ pub struct Column {
     pub slope: i32,
     /// The preliminary surface (the shape's offset) at the quart's corner.
     pub offset: f64,
+    /// Vanilla's preliminary surface level at the quart's corner: surface
+    /// rules only apply from 8 blocks under it (plus the surface depth).
+    pub prelim: i32,
 }
 
 impl Column {
@@ -147,6 +150,7 @@ struct Corners {
     row: usize,
     levels: Vec<Levels>,
     offsets: Vec<f64>,
+    prelims: Vec<i32>,
     /// The climate at each corner (what its quart's biome comes from).
     climates: Vec<Climate>,
 }
@@ -177,6 +181,12 @@ impl Corners {
     /// The offset of the corner at the quart holding (x, z).
     fn offset(&self, x: i32, z: i32) -> f64 {
         self.offsets[self.index(x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ))]
+    }
+
+    /// The preliminary surface level of the corner at the quart holding
+    /// (x, z).
+    fn prelim(&self, x: i32, z: i32) -> i32 {
+        self.prelims[self.index(x.div_euclid(CELL_XZ), z.div_euclid(CELL_XZ))]
     }
 }
 
@@ -211,6 +221,29 @@ fn top_of(levels: &Levels) -> i32 {
 
 const BAND_COUNT: usize = 64;
 
+/// Vanilla's `preliminary_surface_level` (`find_top_surface` in the
+/// overworld noise router, 1.21.11): the highest cell level, every 8
+/// blocks from Y 256 down, where the land's density without the 3D noise
+/// and jaggedness (under the two slides, less 0.390625) is solid. The
+/// shape's `pulled` is Rustcraft's own `(offset − y) × factor`.
+pub fn preliminary_surface(offset: f64, factor: f64) -> i32 {
+    let gradient = |y: f64, y0: f64, y1: f64, from: f64, to: f64| {
+        from + (to - from) * ((y - y0) / (y1 - y0)).clamp(0.0, 1.0)
+    };
+    let density = |y: i32| {
+        let fy = f64::from(y);
+        let pulled = ((offset - fy) * factor - 0.703_125).clamp(-64.0, 64.0);
+        let top = gradient(fy, 240.0, 256.0, 1.0, 0.0) * (0.078_125 + pulled);
+        let bottom = gradient(fy, -64.0, -40.0, 0.0, 1.0) * (-0.117_187_5 + (-0.078_125 + top));
+        -0.390_625 + (0.117_187_5 + bottom)
+    };
+    (0..=((256 - MIN_Y) / CELL_Y))
+        .rev()
+        .map(|k| MIN_Y + k * CELL_Y)
+        .find(|&y| density(y) > 0.0)
+        .unwrap_or(MIN_Y)
+}
+
 impl Terrain {
     pub fn new(seed: u64) -> Self {
         let fbm = |index, octaves, wavelength: f64| {
@@ -244,7 +277,7 @@ impl Terrain {
     /// (block x = gx × 4), and its offset: `(offset − y) × factor`, pulled
     /// toward the offset plus jagged peaks, moved by the 3D noise where it
     /// could matter.
-    fn corner(&self, gx: i32, gz: i32, c: &Climate) -> (Levels, f64) {
+    fn corner(&self, gx: i32, gz: i32, c: &Climate) -> (Levels, f64, i32) {
         let (x, z) = (gx * CELL_XZ, gz * CELL_XZ);
         let shape = self.shaper.shape(c);
         let ridge = 1.0
@@ -274,14 +307,18 @@ impl Terrain {
             ]);
             pulled + amplitude * noise.clamp(-1.0, 1.0)
         });
-        (levels, shape.offset)
+        (
+            levels,
+            shape.offset,
+            preliminary_surface(shape.offset, shape.factor),
+        )
     }
 
     /// The climate at a corner and its `corner`, remembered per thread: the
     /// areas of neighboring chunks, the cells and the entrance flags all
     /// ask for the same corners.
-    fn corner_memo(&self, gx: i32, gz: i32) -> (Levels, f64, Climate) {
-        type Memo = (u64, HashMap<(i32, i32), (Levels, f64, Climate)>);
+    fn corner_memo(&self, gx: i32, gz: i32) -> (Levels, f64, Climate, i32) {
+        type Memo = (u64, HashMap<(i32, i32), (Levels, f64, Climate, i32)>);
         thread_local! {
             static MEMO: std::cell::RefCell<Memo> = std::cell::RefCell::new((0, HashMap::new()));
         }
@@ -296,8 +333,8 @@ impl Terrain {
             return found;
         }
         let c = self.climate.sample(gx * CELL_XZ, gz * CELL_XZ);
-        let (levels, offset) = self.corner(gx, gz, &c);
-        let found = (levels, offset, c);
+        let (levels, offset, prelim) = self.corner(gx, gz, &c);
+        let found = (levels, offset, c, prelim);
         MEMO.with(|memo| {
             let mut memo = memo.borrow_mut();
             if memo.1.len() > 32768 {
@@ -315,12 +352,14 @@ impl Terrain {
         let row = (gx1 - gx0 + 1) as usize;
         let mut levels = Vec::with_capacity(row * (gz1 - gz0 + 1) as usize);
         let mut offsets = Vec::with_capacity(levels.capacity());
+        let mut prelims = Vec::with_capacity(levels.capacity());
         let mut climates = Vec::with_capacity(levels.capacity());
         for gz in gz0..=gz1 {
             for gx in gx0..=gx1 {
-                let (l, o, c) = self.corner_memo(gx, gz);
+                let (l, o, c, p) = self.corner_memo(gx, gz);
                 levels.push(l);
                 offsets.push(o);
+                prelims.push(p);
                 climates.push(c);
             }
         }
@@ -330,6 +369,7 @@ impl Terrain {
             row,
             levels,
             offsets,
+            prelims,
             climates,
         }
     }
@@ -340,13 +380,14 @@ impl Terrain {
         Lay {
             height: top_of(&corners.levels(x, z)),
             offset: corners.offset(x, z),
+            prelim: corners.prelim(x, z),
         }
     }
 
     /// The surface height and biome at the corner column of grid point
     /// (gx, gz) (block x = gx × 4), for maps.
     pub fn corner_surface(&self, gx: i32, gz: i32) -> (i32, Biome) {
-        let (levels, _, c) = self.corner_memo(gx, gz);
+        let (levels, _, c, _) = self.corner_memo(gx, gz);
         (top_of(&levels), biome_source::surface(&c))
     }
 
@@ -411,6 +452,7 @@ impl Terrain {
             cave,
             slope,
             offset: lay.offset,
+            prelim: lay.prelim,
         }
     }
 
@@ -510,6 +552,7 @@ impl Terrain {
                 lays.push(Lay {
                     height: top_of(&corners.levels(x, z)),
                     offset: corners.offset(x, z),
+                    prelim: corners.prelim(x, z),
                 });
             }
         }
@@ -788,22 +831,44 @@ impl Terrain {
         &self,
         chunk: &mut Chunk,
         aquifer: &mut Aquifer<'_, impl FnMut(i32, i32) -> i32>,
-        x: usize,
-        y: i32,
-        z: usize,
+        (x, y, z): (usize, i32, usize),
+        top: BlockState,
+        water_above: bool,
     ) {
         let block = chunk.get(x, y, z);
         if block == BEDROCK || block.id() == blocks::WATER || block.id() == blocks::LAVA {
             return;
         }
         // Never into the floor of water: that would drain the sea.
-        if y < MAX_Y && chunk.get(x, y + 1, z).id() == blocks::WATER {
+        if water_above {
             return;
         }
         let (min_x, min_z) = chunk.pos.min_block();
         let (wx, wz) = (min_x + x as i32, min_z + z as i32);
-        if let Some(block) = aquifer.substance(wx, y, wz, 0.0).block() {
-            chunk.set(x, y, z, block);
+        if let Some(carved) = aquifer.substance(wx, y, wz, 0.0).block() {
+            chunk.set(x, y, z, carved);
+            Self::hand_on_top_material(chunk, (x, y, z), block, carved, top);
+        }
+    }
+
+    /// Vanilla's top-material check (`WorldCarver.carveBlock`): a carved
+    /// grass block or mycelium (`was`) that had dirt under it leaves the
+    /// biome's top block there (`top`; dirt if `carved` is a fluid), not a
+    /// bare dirt floor. Carving goes top down, so the block under it passes
+    /// the top material on in turn.
+    fn hand_on_top_material(
+        chunk: &mut Chunk,
+        (x, y, z): (usize, i32, usize),
+        was: BlockState,
+        carved: BlockState,
+        top: BlockState,
+    ) {
+        if matches!(was.id(), blocks::GRASS_BLOCK | blocks::MYCELIUM)
+            && y > MIN_Y
+            && chunk.get(x, y - 1, z).id() == blocks::DIRT
+        {
+            let under_fluid = !carved.is_air();
+            chunk.set(x, y - 1, z, Self::top_material(top, under_fluid));
         }
     }
 
@@ -844,13 +909,21 @@ impl Terrain {
                                 if dx * dx + dz * dz >= 1.0 {
                                     continue;
                                 }
-                                for y in y0..=top {
+                                // Top down, as vanilla's carvers go: a carved grass
+                                // block hands its top material to the dirt under it,
+                                // which the next block down then hands on.
+                                let (lx, lz) = ((wx - min_x) as usize, (wz - min_z) as usize);
+                                // What lay above each block before this step carved it:
+                                // water there protects the block under it.
+                                let mut above = chunk.get(lx, top + 1, lz);
+                                for y in (y0..=top).rev() {
+                                    let here = chunk.get(lx, y, lz);
                                     let dy = (y as f64 + 0.5 - py) / up;
-                                    if !worm.carves(dx, dy, dz, y) {
-                                        continue;
+                                    if worm.carves(dx, dy, dz, y) {
+                                        let wet = above.id() == blocks::WATER;
+                                        self.carve(chunk, aquifer, (lx, y, lz), column.top, wet);
                                     }
-                                    let (lx, lz) = ((wx - min_x) as usize, (wz - min_z) as usize);
-                                    self.carve(chunk, aquifer, lx, y, lz);
+                                    above = here;
                                 }
                             }
                         }
@@ -927,17 +1000,20 @@ impl Terrain {
 
     fn fill_from(&self, chunk: &mut Chunk, area: &Area) {
         let mut aquifer = self.aquifer(area);
-        self.fill_with(chunk, area, &mut aquifer);
+        let depths = self.noise_step(chunk, area, &mut aquifer);
+        self.surface_step(chunk, area, &depths);
     }
 
-    /// Fills the chunk from the density, asking `aquifer` what each open
-    /// block holds.
-    fn fill_with(
+    /// The noise step: fills the chunk from the density (terrain, noise
+    /// caves and entrances together), asking `aquifer` what each open block
+    /// holds. Solid blocks are stone (deepslate low down); the surface rules
+    /// come after, in `surface_step`. Returns each column's surface depth.
+    fn noise_step(
         &self,
         chunk: &mut Chunk,
         area: &Area,
         aquifer: &mut Aquifer<'_, impl FnMut(i32, i32) -> i32>,
-    ) {
+    ) -> Vec<i32> {
         const SIDE: usize = CHUNK_SIZE / CELL_XZ as usize + 1;
         let (min_x, min_z) = chunk.pos.min_block();
         let mut rng = Rng::for_chunk(self.seed, chunk.pos.x, chunk.pos.z, 0xBED);
@@ -949,6 +1025,7 @@ impl Terrain {
             .max()
             .unwrap_or(0);
         let grid = self.density_grid(area, min_x, min_z, top);
+        let mut depths = vec![0; CHUNK_SIZE * CHUNK_SIZE];
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
                 let (wx, wz) = (min_x + x as i32, min_z + z as i32);
@@ -970,6 +1047,7 @@ impl Terrain {
                     }
                 }
                 let depth = 3 + (self.surface_noise(wx, wz, 8.0, 7.3) * 1.5 + 1.5) as i32;
+                depths[z * CHUNK_SIZE + x] = depth;
                 // Solid wherever the density, blended between the corners
                 // of its cell, is above zero; the surface layers follow the
                 // topmost solid block of the land, overhangs and caves leave
@@ -1010,15 +1088,11 @@ impl Terrain {
                         d = f64::MIN_POSITIVE;
                     }
                     if d > 0.0 {
-                        let block = self.layer(&column, wx, y, wz, depth, &mut rng);
-                        chunk.set(x, y, z, block);
+                        chunk.set(x, y, z, Self::base_block(y, &mut rng));
                         continue;
                     }
                     match aquifer.substance(wx, y, wz, d) {
-                        Fill::Rock => {
-                            let block = self.layer(&column, wx, y, wz, depth, &mut rng);
-                            chunk.set(x, y, z, block);
-                        }
+                        Fill::Rock => chunk.set(x, y, z, Self::base_block(y, &mut rng)),
                         // The top of a sea or river bed is the sea's: an
                         // opening there is flooded, never a hole under water.
                         Fill::Air if column.height < SEA_LEVEL && y > column.height - 3 => {
@@ -1053,54 +1127,25 @@ impl Terrain {
                 }
             }
         }
+        depths
     }
 
-    /// The block at height `y` in a column: the top, the layers under it,
-    /// then stone, or deepslate low down.
-    fn layer(
-        &self,
-        column: &Column,
-        x: i32,
-        y: i32,
-        z: i32,
-        depth: i32,
-        rng: &mut Rng,
-    ) -> BlockState {
-        let below_top = column.height - y;
-        let top = column.top;
-        if below_top == 0 {
-            return top;
-        }
-        let filler = match top.id() {
-            blocks::GRASS_BLOCK | blocks::PODZOL | blocks::MYCELIUM | blocks::COARSE_DIRT => {
-                Some((DIRT, depth))
+    /// The surface step: vanilla's surface rules on every column of what the
+    /// noise step made.
+    fn surface_step(&self, chunk: &mut Chunk, area: &Area, depths: &[i32]) {
+        let (min_x, min_z) = chunk.pos.min_block();
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let (wx, wz) = (min_x + x as i32, min_z + z as i32);
+                let column = *area.get(wx, wz);
+                self.surface_column(chunk, &column, (x, z), (wx, wz), depths[z * CHUNK_SIZE + x]);
             }
-            // Beaches and deserts: 3 or 4 sand, then sandstone.
-            blocks::SAND => Some((SAND, 3 + depth % 2)),
-            // Pools in swamps lie on their mud or dirt.
-            blocks::WATER if column.biome == Biome::MangroveSwamp => Some((MUD, depth)),
-            blocks::WATER => Some((DIRT, depth)),
-            blocks::RED_SAND => Some((RED_SAND, 2)),
-            blocks::GRAVEL | blocks::CLAY | blocks::MUD | blocks::PACKED_ICE | blocks::ICE => {
-                Some((top, depth.min(3)))
-            }
-            blocks::SNOW_BLOCK => Some((SNOW_BLOCK, 2)),
-            _ => None,
-        };
-        let mut used = 0;
-        if let Some((block, n)) = filler {
-            if below_top < n {
-                return block;
-            }
-            used = n;
         }
-        // Sand lies on sandstone; badlands on bands of terracotta.
-        if top == SAND && column.biome != Biome::River && below_top < used + 3 {
-            return SANDSTONE;
-        }
-        if column.biome == Biome::Badlands && (top.id() != blocks::STONE) && y > SEA_LEVEL - 8 {
-            return self.band(x, y, z);
-        }
+    }
+
+    /// What the noise step makes solid: stone, or deepslate low down, a
+    /// noisy blend from Y 0 to 8 (vanilla's vertical gradient).
+    fn base_block(y: i32, rng: &mut Rng) -> BlockState {
         if y < DEEPSLATE_LEVEL
             || (y < DEEPSLATE_LEVEL + DEEPSLATE_BLEND
                 && (rng.below(DEEPSLATE_BLEND as u32) as i32) >= y - DEEPSLATE_LEVEL)
@@ -1108,6 +1153,137 @@ impl Terrain {
             DEEPSLATE
         } else {
             STONE
+        }
+    }
+
+    /// The surface rules for one column (vanilla `SurfaceSystem`), run on
+    /// the noise step's result before the carvers.
+    ///
+    /// Going down from the sky, each solid block counts the solid blocks
+    /// above it since the last air or fluid (`stone_depth`): 1 is a floor,
+    /// the first solid block under air or water. The rules only apply from
+    /// 8 blocks under the preliminary surface level plus the surface depth
+    /// (`above_preliminary_surface`); a floor deeper than that, such as the
+    /// bottom of a deep cave, stays stone. Floors get the biome's top block
+    /// (grass), and the blocks under a floor within the surface depth the
+    /// filler (dirt), wherever the noise left a floor: on a hill, in a
+    /// cave entrance or on an overhang. Ceilings are never grass.
+    fn surface_column(
+        &self,
+        chunk: &mut Chunk,
+        column: &Column,
+        (x, z): (usize, usize),
+        (wx, wz): (i32, i32),
+        depth: i32,
+    ) {
+        let min_surface = column.prelim + depth - 8;
+        // The badlands bands reach down to the sea in any case.
+        let badlands = column.biome == Biome::Badlands && column.top.id() != blocks::STONE;
+        let lowest = if badlands {
+            min_surface.min(SEA_LEVEL - 7)
+        } else {
+            min_surface
+        }
+        .max(MIN_Y + 1);
+        let mut above = 0;
+        let mut fluid_top: Option<i32> = None;
+        for y in (lowest..=column.height.max(SEA_LEVEL)).rev() {
+            let block = chunk.get(x, y, z);
+            if block.is_air() {
+                above = 0;
+                fluid_top = None;
+                continue;
+            }
+            if matches!(block.id(), blocks::WATER | blocks::LAVA) {
+                fluid_top.get_or_insert(y + 1);
+                above = 0;
+                continue;
+            }
+            above += 1;
+            if !matches!(block.id(), blocks::STONE | blocks::DEEPSLATE) {
+                continue;
+            }
+            if let Some(new) = self.surface_block(
+                column,
+                (wx, y, wz),
+                above - 1,
+                fluid_top.is_some(),
+                y >= min_surface,
+                depth,
+            ) {
+                chunk.set(x, y, z, new);
+            }
+        }
+    }
+
+    /// What the surface rules make of the solid block `below_floor` blocks
+    /// under its floor (0 is the floor), or `None` for plain stone.
+    /// `under_fluid`: water or lava lies right over the floor.
+    fn surface_block(
+        &self,
+        column: &Column,
+        (x, y, z): (i32, i32, i32),
+        below_floor: i32,
+        under_fluid: bool,
+        reaches: bool,
+        depth: i32,
+    ) -> Option<BlockState> {
+        let top = Self::top_material(column.top, under_fluid);
+        let mut used = 0;
+        if reaches {
+            if below_floor == 0 {
+                return Some(top);
+            }
+            let filler = match top.id() {
+                blocks::GRASS_BLOCK
+                | blocks::PODZOL
+                | blocks::MYCELIUM
+                | blocks::COARSE_DIRT
+                | blocks::DIRT => Some((DIRT, depth)),
+                // Beaches and deserts: 3 or 4 sand, then sandstone.
+                blocks::SAND => Some((SAND, 3 + depth % 2)),
+                // Pools in swamps lie on their mud or dirt.
+                blocks::WATER if column.biome == Biome::MangroveSwamp => Some((MUD, depth)),
+                blocks::WATER => Some((DIRT, depth)),
+                blocks::RED_SAND => Some((RED_SAND, 2)),
+                blocks::GRAVEL | blocks::CLAY | blocks::MUD | blocks::PACKED_ICE | blocks::ICE => {
+                    Some((top, depth.min(3)))
+                }
+                blocks::SNOW_BLOCK => Some((SNOW_BLOCK, 2)),
+                _ => None,
+            };
+            if let Some((block, n)) = filler {
+                if below_floor < n {
+                    return Some(block);
+                }
+                used = n;
+            }
+            // Sand lies on sandstone.
+            if top == SAND && column.biome != Biome::River && below_floor < used + 3 {
+                return Some(SANDSTONE);
+            }
+        }
+        // Badlands: bands of terracotta.
+        if column.biome == Biome::Badlands && column.top.id() != blocks::STONE && y > SEA_LEVEL - 8
+        {
+            return Some(self.band(x, y, z));
+        }
+        None
+    }
+
+    /// The top block a surface rule gives a floor: the column's top, except
+    /// that under water or lava the grassy ground is plain dirt (vanilla's
+    /// `water` condition before grass).
+    fn top_material(top: BlockState, under_fluid: bool) -> BlockState {
+        if under_fluid
+            && matches!(
+                top.id(),
+                blocks::GRASS_BLOCK | blocks::PODZOL | blocks::MYCELIUM | blocks::COARSE_DIRT
+            )
+        {
+            DIRT
+        } else {
+            top
         }
     }
 
@@ -1141,20 +1317,71 @@ impl Terrain {
         chunk.shallow = false;
     }
 
-    /// Generates a chunk: terrain, caves, ores, underground features, trees
-    /// and plants.
-    pub fn generate(&self, pos: ChunkPos) -> Chunk {
+    /// A chunk as it stands after the noise and surface steps (`carvers`
+    /// false) or with the worm carvers too (`carvers` true), before ores,
+    /// underground features and plants. For `--grass-test`, which asks what
+    /// each step does to the grass.
+    pub fn generate_until(&self, pos: ChunkPos, carvers: bool) -> Chunk {
+        self.generate_steps(
+            pos,
+            |_| {},
+            |step| match step {
+                Step::Carvers => !carvers,
+                Step::Features => true,
+                _ => false,
+            },
+        )
+    }
+
+    /// Generates a chunk: the noise step (terrain and noise caves), the
+    /// surface rules, the carvers, then ores, underground features,
+    /// structures, trees and plants, in vanilla's order. `seen` is told each
+    /// step as it starts; generation ends before the step `stop_at` says yes
+    /// to (for `generate_until`).
+    fn generate_steps(
+        &self,
+        pos: ChunkPos,
+        mut seen: impl FnMut(Step),
+        stop_at: impl Fn(Step) -> bool,
+    ) -> Chunk {
         let area = self.area(pos);
         let mut chunk = Chunk::new(pos);
         let mut aquifer = self.aquifer(&area);
-        self.fill_with(&mut chunk, &area, &mut aquifer);
+        seen(Step::Noise);
+        let depths = self.noise_step(&mut chunk, &area, &mut aquifer);
+        seen(Step::Surface);
+        self.surface_step(&mut chunk, &area, &depths);
+        if stop_at(Step::Carvers) {
+            return chunk;
+        }
+        seen(Step::Carvers);
         self.carve_worms(&mut chunk, &area, &mut aquifer);
+        if stop_at(Step::Features) {
+            return chunk;
+        }
+        seen(Step::Features);
         super::ores::populate(self, &area, &mut chunk);
         super::underground::populate(self, &area, &mut chunk);
         let keep_out = crate::world::structure::place(self, &mut chunk);
         super::features::populate(self, &area, &mut chunk, &keep_out);
         chunk
     }
+
+    /// Generates a chunk: terrain, caves, ores, underground features, trees
+    /// and plants.
+    pub fn generate(&self, pos: ChunkPos) -> Chunk {
+        self.generate_steps(pos, |_| {}, |_| false)
+    }
+}
+
+/// The steps of generating a chunk, in order (vanilla's: noise, surface,
+/// carvers, then features).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Noise,
+    Surface,
+    Carvers,
+    Features,
 }
 
 /// Trilinear blend of a cell's corners, indexed `[y][z][x]`.
@@ -1586,6 +1813,189 @@ pub(crate) mod tests {
         }
         assert!(checked > 60);
         assert!(walls * 10 <= checked, "{walls} of {checked}");
+    }
+
+    /// A stone column up to `height` with a grassy top, as the noise step
+    /// leaves it, for the surface rules.
+    fn stone_chunk(height: i32) -> Chunk {
+        let mut chunk = Chunk::new(ChunkPos::new(0, 0));
+        for y in MIN_Y + 1..=height {
+            for z in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    chunk.set(x, y, z, STONE);
+                }
+            }
+        }
+        chunk
+    }
+
+    fn grassy_column(height: i32, prelim: i32) -> Column {
+        Column {
+            biome: Biome::Plains,
+            height,
+            top: GRASS,
+            entrance: false,
+            cave: None,
+            slope: 0,
+            offset: f64::from(height),
+            prelim,
+        }
+    }
+
+    /// A shaft of air from `floor + 1` up through the top of the column at
+    /// (4, 4), as a cave opening cuts.
+    fn shaft(chunk: &mut Chunk, floor: i32, height: i32) {
+        for y in floor + 1..=height {
+            chunk.set(4, y, 4, BlockState::AIR);
+        }
+    }
+
+    #[test]
+    fn a_cave_cut_through_grassy_ground_gets_grass_on_its_floor() {
+        let terrain = Terrain::new(1);
+        let (height, depth) = (80, 4);
+        let mut chunk = stone_chunk(height);
+        shaft(&mut chunk, height - 7, height);
+        // The shaft sits at the preliminary surface: the rules reach it.
+        let column = grassy_column(height, height - 10);
+        terrain.surface_column(&mut chunk, &column, (4, 4), (4, 4), depth);
+        assert_eq!(chunk.get(4, height - 7, 4), GRASS, "the cave floor");
+        for below in 1..depth {
+            assert_eq!(chunk.get(4, height - 7 - below, 4), DIRT, "{below} under");
+        }
+        assert_eq!(chunk.get(4, height - 7 - depth, 4), STONE);
+        // Untouched columns need no surface step here; the same rules on a
+        // whole hill give grass on the top.
+        terrain.surface_column(&mut chunk, &column, (5, 5), (5, 5), depth);
+        assert_eq!(chunk.get(5, height, 5), GRASS);
+    }
+
+    #[test]
+    fn a_floor_far_below_the_preliminary_surface_stays_stone() {
+        let terrain = Terrain::new(1);
+        let (height, depth) = (80, 4);
+        let mut chunk = stone_chunk(height);
+        shaft(&mut chunk, height - 30, height);
+        // The preliminary surface is 6 under the top: the rules reach down
+        // to prelim + depth - 8 = 70; a floor at 50 is out of reach.
+        let column = grassy_column(height, height - 6);
+        terrain.surface_column(&mut chunk, &column, (4, 4), (4, 4), depth);
+        let floor = chunk.get(4, height - 30, 4);
+        assert_eq!(floor, STONE, "20 under the preliminary surface");
+        assert_eq!(chunk.get(4, height - 31, 4), STONE);
+    }
+
+    #[test]
+    fn ceilings_are_never_grass() {
+        let terrain = Terrain::new(1);
+        let depth = 4;
+        // A slab 5 thick over a cave 5 high, on stone, under open sky.
+        let mut chunk = stone_chunk(80);
+        for y in 70..=74 {
+            chunk.set(8, y, 8, BlockState::AIR);
+        }
+        let column = grassy_column(80, 70);
+        terrain.surface_column(&mut chunk, &column, (8, 8), (8, 8), depth);
+        for y in MIN_Y + 1..=80 {
+            if chunk.get(8, y, 8) == GRASS {
+                assert!(
+                    !chunk.get(8, y - 1, 8).is_air(),
+                    "grass at {y} hangs over air"
+                );
+            }
+        }
+        // The cave's floor and the slab's top are floors.
+        assert_eq!(chunk.get(8, 69, 8), GRASS);
+        assert_eq!(chunk.get(8, 80, 8), GRASS);
+        assert_ne!(chunk.get(8, 75, 8), GRASS, "the slab's underside");
+    }
+
+    #[test]
+    fn a_floor_under_water_gets_dirt_not_grass() {
+        let terrain = Terrain::new(1);
+        let mut chunk = stone_chunk(70);
+        for y in 66..=70 {
+            chunk.set(6, y, 6, WATER);
+        }
+        let column = grassy_column(70, 62);
+        terrain.surface_column(&mut chunk, &column, (6, 6), (6, 6), 4);
+        assert_eq!(chunk.get(6, 65, 6), DIRT);
+    }
+
+    #[test]
+    fn a_carved_grass_block_hands_its_top_material_down_through_the_dirt() {
+        let mut chunk = stone_chunk(80);
+        // Grass over three dirt, as the surface step makes it.
+        chunk.set(2, 80, 2, GRASS);
+        for y in 77..80 {
+            chunk.set(2, y, 2, DIRT);
+        }
+        // A carver takes the top three blocks, top down.
+        for y in (78..=80).rev() {
+            let was = chunk.get(2, y, 2);
+            chunk.set(2, y, 2, BlockState::AIR);
+            Terrain::hand_on_top_material(&mut chunk, (2, y, 2), was, BlockState::AIR, GRASS);
+        }
+        assert_eq!(chunk.get(2, 77, 2), GRASS, "the new floor, not bare dirt");
+        assert!(chunk.get(2, 78, 2).is_air());
+        // Under water the floor is dirt.
+        let mut wet = stone_chunk(80);
+        wet.set(3, 80, 3, GRASS);
+        wet.set(3, 79, 3, DIRT);
+        Terrain::hand_on_top_material(&mut wet, (3, 80, 3), GRASS, WATER, GRASS);
+        assert_eq!(wet.get(3, 79, 3), DIRT);
+        // Only grass and mycelium hand it on.
+        let mut sand = stone_chunk(80);
+        sand.set(1, 79, 1, DIRT);
+        Terrain::hand_on_top_material(&mut sand, (1, 80, 1), SAND, BlockState::AIR, GRASS);
+        assert_eq!(sand.get(1, 79, 1), DIRT);
+    }
+
+    #[test]
+    fn chunks_are_made_in_the_order_noise_surface_carvers_features() {
+        let terrain = Terrain::new(12345);
+        let mut order = Vec::new();
+        let _ = terrain.generate_steps(ChunkPos::new(3, -2), |step| order.push(step), |_| false);
+        assert_eq!(
+            order,
+            [Step::Noise, Step::Surface, Step::Carvers, Step::Features]
+        );
+        // Stopping before the carvers leaves out the carvers and what follows.
+        let mut early = Vec::new();
+        let _ = terrain.generate_steps(
+            ChunkPos::new(3, -2),
+            |step| early.push(step),
+            |step| step == Step::Carvers,
+        );
+        assert_eq!(early, [Step::Noise, Step::Surface]);
+    }
+
+    /// The surface rules reach the top of every column: its heightmap block
+    /// is within `prelim + depth - 8` and up, so the ground keeps its grass.
+    #[test]
+    fn the_preliminary_surface_is_under_every_columns_top() {
+        let terrain = Terrain::new(12345);
+        let mut checked = 0;
+        for cz in -6..6 {
+            for cx in -6..6 {
+                let area = terrain.area(ChunkPos::new(cx * 5, cz * 5));
+                let (x0, z0) = ChunkPos::new(cx * 5, cz * 5).min_block();
+                for z in (0..16).step_by(3) {
+                    for x in (0..16).step_by(3) {
+                        let c = area.get(x0 + x, z0 + z);
+                        // The deepest the surface depth gets is 3 + 3.
+                        assert!(
+                            c.height >= c.prelim + 3 - 8,
+                            "{c:?} at {} {}",
+                            x0 + x,
+                            z0 + z
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000);
     }
 
     #[test]

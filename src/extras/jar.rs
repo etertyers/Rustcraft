@@ -220,17 +220,30 @@ mod tests {
             eprintln!("skipped: no sound jars");
             return;
         }
-        set_dir(&dir);
-        let layers = sounds_json_layers();
+        // Read from `dir` directly: the global folder is set by other
+        // tests running at the same time.
+        let in_jar = |namespace: &str, path: &str| {
+            let jar = find_jar_in(&dir, sound_jar(namespace)?)?;
+            read_in(&jar, path)
+        };
+        let layers: Vec<(&str, String)> = ["presencefootsteps", "ambientsounds"]
+            .into_iter()
+            .filter_map(|namespace| {
+                let bytes = in_jar(namespace, &format!("assets/{namespace}/sounds.json"))?;
+                Some((namespace, String::from_utf8(bytes).ok()?))
+            })
+            .collect();
         assert_eq!(layers.len(), 2, "both jars have a sounds.json");
         // Every file the first events name is in a jar and is an ogg.
         let mut checked = 0;
-        for layer in &layers {
+        for (_, layer) in &layers {
             let json: serde_json::Value = serde_json::from_str(layer).unwrap();
             for (_, event) in json.as_object().unwrap().iter().take(40) {
                 for sound in event["sounds"].as_array().into_iter().flatten() {
                     let name = sound.as_str().or_else(|| sound["name"].as_str()).unwrap();
-                    let bytes = sound_bytes(name).unwrap_or_else(|| panic!("{name} missing"));
+                    let (namespace, path) = name.split_once(':').unwrap();
+                    let bytes = in_jar(namespace, &format!("assets/{namespace}/sounds/{path}.ogg"))
+                        .unwrap_or_else(|| panic!("{name} missing"));
                     assert_eq!(&bytes[..4], b"OggS", "{name}");
                     checked += 1;
                 }

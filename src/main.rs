@@ -109,6 +109,13 @@ fn main() -> Result<()> {
         rustcraft::world::worldgen::opening_stats::print_stats(seed, number("--side", 63)? as i32);
         return Ok(());
     }
+    // `--grass-test [--seed <n>] [--side <chunks>]`: the bare dirt the
+    // surface leaves exposed, by cause, and the openings (M67).
+    if args.iter().any(|arg| arg == "--grass-test") {
+        let seed = number("--seed", 12345)? as u64;
+        rustcraft::world::worldgen::grass_stats::print_stats(seed, number("--side", 63)? as i32);
+        return Ok(());
+    }
     if args.iter().any(|arg| arg == "--cave-test") {
         let seed = number("--seed", 12345)? as u64;
         rustcraft::world::worldgen::cave_stats::print_stats(

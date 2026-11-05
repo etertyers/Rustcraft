@@ -2241,6 +2241,48 @@ mod tests {
         assert_eq!(clients[1].0.records.len(), 2, "Bob heard nothing");
     }
 
+    /// M67: the surface rules and carvers run on the server; two clients
+    /// joined to a generated world see the same blocks as the server.
+    #[test]
+    fn two_clients_see_the_same_new_chunks_of_a_generated_world() {
+        let source = ChunkSource::Terrain(Box::new(crate::world::worldgen::terrain::Terrain::new(
+            12345,
+        )));
+        let (mut server, mut clients) = world_on(source, &["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        // Let the chunks round spawn travel to both.
+        let start = server.game.time();
+        run_until(&mut server, &mut clients, |s, _| s.game.time() > start + 60);
+        let mut compared = 0;
+        let mut grass = 0;
+        for x in -20..20 {
+            for z in -20..20 {
+                for y in (40..120).step_by(2) {
+                    let at = IVec3::new(x, y, z);
+                    let theirs = clients
+                        .iter()
+                        .map(|(_, g)| block_at(g, at))
+                        .collect::<Vec<_>>();
+                    let Some(ours) = block_at(&server.game, at) else {
+                        continue;
+                    };
+                    if theirs.iter().any(Option::is_none) {
+                        continue;
+                    }
+                    for (i, block) in theirs.into_iter().enumerate() {
+                        assert_eq!(block, Some(ours), "client {i} at {at}");
+                    }
+                    compared += 1;
+                    grass += usize::from(ours.id() == blocks::GRASS_BLOCK);
+                }
+            }
+        }
+        assert!(compared > 20_000, "only {compared} blocks compared");
+        assert!(grass > 100, "no grass in the compared area: {grass}");
+    }
+
     #[test]
     fn a_locate_result_goes_only_to_the_player_who_ran_it() {
         let source = ChunkSource::Terrain(Box::new(crate::world::worldgen::terrain::Terrain::new(

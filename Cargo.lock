@@ -3417,6 +3417,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "env_logger",
+ "flate2",
  "glam 0.34.1",
  "image",
  "kira",
