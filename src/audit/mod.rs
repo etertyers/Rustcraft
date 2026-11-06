@@ -1134,7 +1134,7 @@ pub fn cli(mode: &str, entry: Option<&str>) -> anyhow::Result<()> {
     let stack = stack(mode, &dir)
         .ok_or_else(|| anyhow::anyhow!("unknown mode {mode:?} (vanilla, barebones, realistic)"))?;
     if let Some(id) = entry {
-        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let out = crate::assets::repo_root()
             .join("target/texture-audit")
             .join(mode)
             .join(format!("entry-{}.png", id.replace(['/', '#'], "_")));
@@ -1145,7 +1145,7 @@ pub fn cli(mode: &str, entry: Option<&str>) -> anyhow::Result<()> {
     }
     let started = std::time::Instant::now();
     let audit = run(&assets, &stack, None)?;
-    let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let out = crate::assets::repo_root()
         .join("target/texture-audit")
         .join(mode);
     let sheets = audit.write(&out)?;

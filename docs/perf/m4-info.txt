@@ -1,0 +1,4 @@
+      Model Name: MacBook Air
+      Chip: Apple M4
+      Chipset Model: Apple M4
+          Resolution: 2560 x 1664 Retina

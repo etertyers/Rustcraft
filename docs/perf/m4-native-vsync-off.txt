@@ -1,0 +1,7 @@
+display: drawable 2940x1846, window 2940x1846 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 75%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 281 frames (36 off screen), 56 fps average, 1% low 21 fps, worst 823.4 ms (game 1.8, chunks 0.0, draw 470.4), 5 over 33 ms; per frame: game 0.54 ms, chunks 0.25 ms, draw 13.26 ms (egui 0.04, acquire 8.69, encode 0.18, submit 0.79, present or GPU wait 1.81)
+  flight  8598 frames (0 off screen), 143 fps average, 1% low 60 fps, worst 91.6 ms (game 0.8, chunks 0.0, draw 1.3), 2 over 33 ms; per frame: game 0.16 ms, chunks 0.03 ms, draw 6.78 ms (egui 0.02, acquire 5.70, encode 0.15, submit 0.70, present or GPU wait 0.01)
+  ended at [64, 102, -628], 441 chunks loaded, 219 drawn
+wrote docs/perf/m58.json
+wrote docs/perf/m58.md

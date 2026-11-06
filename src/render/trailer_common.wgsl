@@ -220,6 +220,10 @@ fn world_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 // depth: rgb (linear) of what it hits in the scene copy and, in w, how
 // sure the hit is (0: nothing, the ray left the screen or the sky).
 fn screen_reflection(origin: vec3<f32>, dir: vec3<f32>, steps: u32, jitter: f32) -> vec4<f32> {
+    // High keeps the full march below; Medium's is the cheaper one.
+    if steps < 32u {
+        return screen_reflection_medium(origin, dir, steps, jitter);
+    }
     let size = trailer.scene.xy;
     let eye = globals.camera.xyz;
     var growth = 1.35;
@@ -274,6 +278,70 @@ fn screen_reflection(origin: vec3<f32>, dir: vec3<f32>, steps: u32, jitter: f32)
     }
     let p = origin + dir * hi;
     let clip = globals.view_proj * vec4<f32>(p, 1.0);
+    let ndc = clip.xyz / clip.w;
+    let uv = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    let color = textureSampleLevel(scene_color, scene_sampler, uv, 0.0).rgb;
+    return vec4<f32>(color, smoothstep(0.0, 0.08, edge));
+}
+
+// Medium's march (M68): the same rays, but each step costs a few multiplies.
+// The ray's clip position is linear in t, so it is stepped, not recomputed
+// with a matrix per step, and the hit test compares view depths (clip w)
+// instead of rebuilding the scene point's world position and distances. The
+// refine pass bisects three times. A hit lands within a few centimetres of
+// where High's march puts it.
+fn screen_reflection_medium(origin: vec3<f32>, dir: vec3<f32>, steps: u32, jitter: f32) -> vec4<f32> {
+    let size = trailer.scene.xy;
+    let c0 = globals.view_proj * vec4<f32>(origin, 1.0);
+    let cd = globals.view_proj * vec4<f32>(dir, 0.0);
+    let m = globals.inverse_view_proj;
+    let row_w = vec4<f32>(m[0].w, m[1].w, m[2].w, m[3].w);
+    var t = 0.25 + jitter * 0.35;
+    var step_length = 0.55;
+    var last = 0.0;
+    var hit_t = -1.0;
+    for (var i = 0u; i < steps; i = i + 1u) {
+        let clip = c0 + cd * t;
+        if clip.w <= 0.0 {
+            break;
+        }
+        let ndc = clip.xyz / clip.w;
+        let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        if uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0 {
+            break;
+        }
+        let d = textureLoad(scene_depth, vec2<i32>(uv * size), 0);
+        if d < 1.0 {
+            let scene_w = 1.0 / dot(row_w, vec4<f32>(ndc.xy, d, 1.0));
+            let gap = clip.w - scene_w;
+            if gap > 0.0 && gap < 0.6 + t * 0.15 {
+                hit_t = t;
+                break;
+            }
+        }
+        last = t;
+        t = t + step_length;
+        step_length = step_length * 1.45;
+    }
+    if hit_t < 0.0 {
+        return vec4<f32>(0.0);
+    }
+    var lo = last;
+    var hi = hit_t;
+    for (var i = 0; i < 3; i = i + 1) {
+        let mid = (lo + hi) * 0.5;
+        let clip = c0 + cd * mid;
+        let ndc = clip.xyz / clip.w;
+        let uv = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.0), vec2<f32>(0.999));
+        let d = textureLoad(scene_depth, vec2<i32>(uv * size), 0);
+        if clip.w > 1.0 / dot(row_w, vec4<f32>(ndc.xy, d, 1.0)) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let clip = c0 + cd * hi;
     let ndc = clip.xyz / clip.w;
     let uv = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
     let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));

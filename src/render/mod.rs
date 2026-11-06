@@ -194,6 +194,17 @@ struct ChunkBuffers {
     y_range: (f32, f32),
 }
 
+/// Where the CPU's time went in one frame of `Renderer::render` (M68):
+/// waiting for the next drawable, encoding the passes, submitting them, and
+/// presenting (or, off screen, waiting for the GPU).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CpuSplit {
+    pub acquire: std::time::Duration,
+    pub encode: std::time::Duration,
+    pub submit: std::time::Duration,
+    pub present: std::time::Duration,
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     /// Draw into `offscreen` when the window has no frame to give (it's
@@ -203,6 +214,8 @@ pub struct Renderer {
     offscreen: Option<wgpu::Texture>,
     /// The last frame went to `offscreen`.
     drew_offscreen: bool,
+    /// Where the CPU's time went in the last frame (M68).
+    cpu: CpuSplit,
     /// Where to save the next frame as a PNG (for `--shot`).
     capture: Option<std::path::PathBuf>,
     /// The Clouds option isn't off.
@@ -268,6 +281,13 @@ pub struct Renderer {
     shaft_color: [f32; 3],
     /// The depth and HDR textures can be copied from (see `create_depth_view`).
     copy_usage: bool,
+    /// The size the depth buffer and the world's targets are drawn at
+    /// (Render Scale, M68): the window's, or a share of it with shaders on.
+    scene_size: (u32, u32),
+    /// The present modes the surface offers (for vsync on and off).
+    present_modes: Vec<wgpu::PresentMode>,
+    /// Stretches the world to the window when Render Scale is under 100%.
+    upscale: visuals::upscale::Upscale,
     glint_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
@@ -496,11 +516,14 @@ impl Renderer {
         if let Some(format) = caps.formats.iter().find(|f| f.is_srgb()) {
             config.format = *format;
         }
-        config.present_mode = wgpu::PresentMode::AutoVsync;
+        let present_modes = caps.present_modes.clone();
+        config.present_mode = choose_present_mode(true, &present_modes);
+        config.desired_maximum_frame_latency = MAX_FRAME_LATENCY;
         // egui blends in gamma space, so it draws through a non-sRGB view of the frame.
         config.view_formats = vec![config.format.remove_srgb_suffix()];
         surface.configure(&device, &config);
-        let (depth_texture, depth_view) = create_depth_view(&device, &config, false);
+        let (depth_texture, depth_view) =
+            create_depth_view(&device, (config.width, config.height), false);
 
         let layouts = Layouts::new(&device);
         let globals_layout = &layouts.globals;
@@ -615,6 +638,9 @@ impl Renderer {
             &trailer_shader!(device, "visuals/shafts.wgsl"),
         );
         let fxaa = visuals::fxaa::Fxaa::new(&device, &queue, config.format);
+        let upscale = visuals::upscale::Upscale::new(&device, config.format);
+        let scene_size = (config.width, config.height);
+        visuals::scale::set_window(config.width, config.height);
         let scene = SceneCopies::new(&device, hdr_format, 1, 1);
         let cloud_view = cloud_texture.create_view(&Default::default());
         let shadows = visuals::shadow::ShadowMaps::new(
@@ -634,6 +660,7 @@ impl Renderer {
             capture: None,
             clouds: true,
             drew_offscreen: false,
+            cpu: CpuSplit::default(),
             device,
             queue,
             config,
@@ -670,6 +697,9 @@ impl Renderer {
             fxaa_active: false,
             shaft_color: [0.0; 3],
             copy_usage: false,
+            scene_size,
+            present_modes,
+            upscale,
             glint_bind_group,
             globals_buffer,
             globals_bind_group,
@@ -1063,11 +1093,7 @@ impl Renderer {
 
     /// Waits for the display's refresh (vsync) or not.
     pub fn set_vsync(&mut self, vsync: bool) {
-        self.config.present_mode = if vsync {
-            wgpu::PresentMode::AutoVsync
-        } else {
-            wgpu::PresentMode::AutoNoVsync
-        };
+        self.config.present_mode = choose_present_mode(vsync, &self.present_modes);
         self.surface.configure(&self.device, &self.config);
     }
 
@@ -1077,9 +1103,33 @@ impl Renderer {
         }
         self.config.width = size.width;
         self.config.height = size.height;
+        visuals::scale::set_window(size.width, size.height);
         self.surface.configure(&self.device, &self.config);
+        self.scene_size = self.scene_size_for(self.visuals.trailer());
         (self.depth_texture, self.depth_view) =
-            create_depth_view(&self.device, &self.config, self.copy_usage);
+            create_depth_view(&self.device, self.scene_size, self.copy_usage);
+    }
+
+    /// The size the world is drawn at: the window's, or with shaders on a
+    /// share of it (Render Scale, M68).
+    fn scene_size_for(&self, shaders: bool) -> (u32, u32) {
+        visuals::scale::sizes(
+            (self.config.width, self.config.height),
+            shaders,
+            self.visuals.render_scale,
+        )
+        .scene
+    }
+
+    /// The share of the window the world is drawn at, in percent (100 with
+    /// shaders off).
+    pub fn render_percent(&self) -> u32 {
+        let (w, h) = (self.config.width, self.config.height);
+        if self.visuals.trailer() {
+            visuals::scale::percent(self.visuals.render_scale, w, h)
+        } else {
+            100
+        }
     }
 
     /// Draws a frame. Returns false if the surface wasn't ready and the frame was skipped.
@@ -1113,6 +1163,38 @@ impl Renderer {
     /// Whether the last frame was drawn off screen.
     pub fn drew_offscreen(&self) -> bool {
         self.drew_offscreen
+    }
+
+    /// What the surface was set up with, for the log and `--perf-test`:
+    /// the drawable against the window's size and scale, the present mode and
+    /// frame latency, and the display's refresh rate as winit reports it.
+    pub fn display_report(&self, window: &Window) -> String {
+        let refresh = window
+            .current_monitor()
+            .and_then(|m| m.refresh_rate_millihertz())
+            .map_or_else(
+                || "unknown".to_owned(),
+                |mhz| format!("{:.1} Hz", f64::from(mhz) / 1000.0),
+            );
+        let inner = window.inner_size();
+        format!(
+            "display: drawable {}x{}, window {}x{} pixels at scale factor {}, refresh {refresh}; \
+             present mode {:?} (offered {:?}), frame latency {}, render scale {}%",
+            self.config.width,
+            self.config.height,
+            inner.width,
+            inner.height,
+            window.scale_factor(),
+            self.config.present_mode,
+            self.present_modes,
+            self.config.desired_maximum_frame_latency,
+            self.render_percent(),
+        )
+    }
+
+    /// Where the CPU's time went in the last frame.
+    pub fn cpu_split(&self) -> CpuSplit {
+        self.cpu
     }
 
     /// Draws the next frame off screen and saves it to `path` as a PNG
@@ -1239,6 +1321,7 @@ impl Renderer {
 
     fn draw(&mut self, camera: &Camera, environment: &Environment, ui: &UiPaint) -> Result<bool> {
         let capture = self.capture.take();
+        let started = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             _ if capture.is_some() => None,
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -1257,6 +1340,7 @@ impl Renderer {
             }
             wgpu::CurrentSurfaceTexture::Validation => bail!("surface validation error"),
         };
+        let acquired = std::time::Instant::now();
         self.drew_offscreen = frame.is_none();
         let target = match (&frame, &capture) {
             (Some(frame), _) => frame.texture.clone(),
@@ -1300,18 +1384,22 @@ impl Renderer {
         let plan = visuals::planned_passes(&self.visuals);
         let copy = trailer
             && (plan.contains(&"water") || plan.contains(&"shafts") || plan.contains(&"fxaa"));
-        if copy != self.copy_usage {
+        let scene = self.scene_size_for(trailer);
+        if copy != self.copy_usage || scene != self.scene_size {
             self.copy_usage = copy;
-            (self.depth_texture, self.depth_view) =
-                create_depth_view(&self.device, &self.config, copy);
+            self.scene_size = scene;
+            (self.depth_texture, self.depth_view) = create_depth_view(&self.device, scene, copy);
         }
+        // Under 100% the world is drawn small and stretched to the window.
+        let scaled = trailer && scene != (self.config.width, self.config.height);
         if trailer {
             self.trailer_frame
-                .prepare(&self.device, self.config.width, self.config.height, copy);
+                .prepare(&self.device, scene.0, scene.1, copy);
             self.trailer_frame.prepare_ldr(
                 &self.device,
                 self.config.format,
-                plan.contains(&"fxaa"),
+                plan.contains(&"fxaa") || scaled,
+                plan.contains(&"fxaa") && scaled,
             );
         }
         // The sun's light and shadow maps (before the world is drawn).
@@ -1412,7 +1500,7 @@ impl Renderer {
         }
 
         if trailer {
-            let size = (self.config.width, self.config.height);
+            let size = scene;
             // Glow round what's brighter than white.
             let mut bloom: Vec<&wgpu::TextureView> = Vec::new();
             if plan.contains(&"bloom")
@@ -1458,8 +1546,9 @@ impl Renderer {
             if shafts.is_some() {
                 params = params.with_shafts(self.shaft_color);
             }
-            // With FXAA the picture goes to a texture first.
-            let target = match (self.fxaa_active, self.trailer_frame.ldr_view()) {
+            // With FXAA, or a Render Scale under 100%, the picture goes to
+            // a texture first.
+            let target = match (self.fxaa_active || scaled, self.trailer_frame.ldr_view()) {
                 (true, Some(ldr)) => ldr,
                 _ => &view,
             };
@@ -1477,14 +1566,33 @@ impl Renderer {
                 && let Some(ldr) = self.trailer_frame.ldr_view()
             {
                 let timestamps = profiler.as_mut().and_then(|p| p.pass("fxaa"));
+                let out = if scaled {
+                    self.trailer_frame.ldr_b_view().unwrap_or(&view)
+                } else {
+                    &view
+                };
                 self.fxaa.run(
                     &self.device,
                     &mut encoder,
                     ldr,
                     &self.scene.depth_view,
-                    &view,
+                    out,
                     timestamps,
                 );
+            }
+            // The world, drawn small, stretched to the window; the UI
+            // follows at full resolution.
+            if scaled {
+                let source = if self.fxaa_active {
+                    self.trailer_frame.ldr_b_view()
+                } else {
+                    self.trailer_frame.ldr_view()
+                };
+                if let Some(source) = source {
+                    let timestamps = profiler.as_mut().and_then(|p| p.pass("upscale"));
+                    self.upscale
+                        .run(&self.device, &mut encoder, source, &view, timestamps);
+                }
             }
         }
 
@@ -1526,11 +1634,13 @@ impl Renderer {
         let readback = capture
             .as_ref()
             .map(|_| self.copy_out(&mut encoder, &target));
+        let encoded = std::time::Instant::now();
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
         if let Some(profiler) = profiler.as_mut() {
             profiler.after_submit();
         }
+        let submitted = std::time::Instant::now();
         if let (Some(path), Some((buffer, padded))) = (capture, readback) {
             self.save_capture(&buffer, padded, &path)?;
         }
@@ -1546,6 +1656,12 @@ impl Renderer {
             profiler.collect(&self.device);
         }
         self.profiler = profiler;
+        self.cpu = CpuSplit {
+            acquire: acquired - started,
+            encode: encoded - acquired,
+            submit: submitted - encoded,
+            present: submitted.elapsed(),
+        };
         Ok(true)
     }
 
@@ -1830,12 +1946,12 @@ impl Renderer {
         // The water reads a copy of the opaque scene on Medium and High.
         let ssr_steps = match quality {
             Quality::Low => 0,
-            Quality::Medium => 16,
+            Quality::Medium => 12,
             Quality::High => 32,
         } * u32::from(on(Effect::Reflections));
         let refraction = on(Effect::Refraction);
         self.split_world = ssr_steps > 0 || refraction;
-        let size = (self.config.width, self.config.height);
+        let size = self.scene_size_for(true);
         let mut rebind = self.shadows.config != config;
         let need_scene = self.split_world || self.shafts_active || self.fxaa_active;
         if need_scene && self.scene.size != size {
@@ -2542,19 +2658,39 @@ fn create_sky_pipeline(
     })
 }
 
+/// Frames the GPU may be behind the CPU (wgpu's `desired_maximum_frame_latency`):
+/// 2 keeps the CPU a frame ahead of the display without queueing more
+/// (M68).
+pub const MAX_FRAME_LATENCY: u32 = 2;
+
+/// The present mode for vsync on or off from what the surface offers:
+/// vsync on waits for the display's refresh (Fifo, which runs at the
+/// display's full rate, 120 Hz on a ProMotion screen); off takes
+/// Immediate, else Mailbox, and falls back to Fifo.
+pub fn choose_present_mode(vsync: bool, offered: &[wgpu::PresentMode]) -> wgpu::PresentMode {
+    use wgpu::PresentMode::*;
+    if vsync {
+        return Fifo;
+    }
+    [Immediate, Mailbox]
+        .into_iter()
+        .find(|mode| offered.contains(mode))
+        .unwrap_or(Fifo)
+}
+
 /// The depth buffer; with `copy` it can be copied out for the water
 /// (Trailer, Medium and High). The flag costs speed on Apple GPUs, so
 /// it's only set while a frame needs the copy.
 fn create_depth_view(
     device: &wgpu::Device,
-    config: &wgpu::SurfaceConfiguration,
+    (width, height): (u32, u32),
     copy: bool,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth"),
         size: wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -2635,6 +2771,55 @@ fn srgb_to_linear(c: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No blocking readback on the main thread (M68): the GPU profiler polls
+    /// without waiting and reads results frames later; the only waits in the
+    /// renderer are for a screenshot's copy and for a frame drawn off screen
+    /// (when the window can't take one).
+    #[test]
+    fn nothing_but_captures_and_offscreen_frames_waits_for_the_gpu() {
+        let profiler = include_str!("visuals/profiler.rs");
+        assert!(
+            !profiler.contains("wait_indefinitely"),
+            "the profiler waits"
+        );
+        assert!(!profiler.contains("PollType::Wait"), "the profiler waits");
+        assert!(profiler.contains("PollType::Poll"));
+        let renderer = include_str!("mod.rs");
+        // The two waits: `save_capture` and the offscreen branch of `draw`.
+        let production = renderer.split("#[cfg(test)]").next().unwrap();
+        assert_eq!(
+            production.matches("wait_indefinitely").count(),
+            2,
+            "a new wait in the renderer: is it a capture or an offscreen frame?"
+        );
+        for file in [
+            "visuals/bloom.rs",
+            "visuals/shafts.rs",
+            "visuals/water.rs",
+            "visuals/shadow.rs",
+        ] {
+            let text = match file {
+                "visuals/bloom.rs" => include_str!("visuals/bloom.rs"),
+                "visuals/shafts.rs" => include_str!("visuals/shafts.rs"),
+                "visuals/water.rs" => include_str!("visuals/water.rs"),
+                _ => include_str!("visuals/shadow.rs"),
+            };
+            assert!(!text.contains("map_async"), "{file} reads back");
+        }
+    }
+
+    #[test]
+    fn vsync_off_takes_immediate_when_the_surface_has_it() {
+        use wgpu::PresentMode::*;
+        assert_eq!(choose_present_mode(false, &[Fifo, Immediate]), Immediate);
+        assert_eq!(choose_present_mode(false, &[Fifo, Mailbox]), Mailbox);
+        assert_eq!(choose_present_mode(false, &[Fifo]), Fifo);
+        assert_eq!(choose_present_mode(false, &[]), Fifo);
+        // Vsync on is always Fifo: the display's own rate, whatever it is.
+        assert_eq!(choose_present_mode(true, &[Fifo, Immediate, Mailbox]), Fifo);
+        assert_eq!(MAX_FRAME_LATENCY, 2);
+    }
 
     /// A device with no window, or None where there's no GPU (CI).
     pub(crate) fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {

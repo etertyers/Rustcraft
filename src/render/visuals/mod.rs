@@ -13,10 +13,12 @@ pub mod frame;
 pub mod fxaa;
 pub mod packs;
 pub mod profiler;
+pub mod scale;
 pub mod shadow;
 pub mod shafts;
 pub mod sun;
 pub mod sway;
+pub mod upscale;
 pub mod water;
 
 use std::collections::BTreeMap;
@@ -282,6 +284,8 @@ pub struct Visuals {
     pub look: LookKind,
     pub style: Style,
     pub quality: Quality,
+    /// Render Scale (M68): `scale::AUTO` or 50 to 100 percent.
+    pub render_scale: u32,
     /// Effects the player turned on or off against the profile.
     pub effects: BTreeMap<Effect, bool>,
     /// v1.4's lists, one per look; moved to `style_packs` the first time
@@ -352,10 +356,30 @@ impl Visuals {
 
     /// What the renderer needs this frame.
     pub fn frame(&self) -> FrameVisuals {
+        // A measuring aid (M68): RUSTCRAFT_EFFECTS_OFF=bloom,fxaa turns the
+        // named effects off for this run, to find what each one costs.
+        let off = std::env::var("RUSTCRAFT_EFFECTS_OFF").unwrap_or_default();
+        let off: Vec<String> = off
+            .split(',')
+            .map(|n| n.trim().to_lowercase().replace([' ', '-'], ""))
+            .filter(|n| !n.is_empty())
+            .collect();
+        let forced_off = |e: Effect| {
+            let name = e.name().to_lowercase().replace([' ', '-'], "");
+            off.iter()
+                .any(|n| *n == name || (n == "all" && e != Effect::Shadows))
+        };
+        // RUSTCRAFT_RENDER_SCALE=auto|50..100 sets the scale for a run.
+        let render_scale = match std::env::var("RUSTCRAFT_RENDER_SCALE") {
+            Ok(text) if text.eq_ignore_ascii_case("auto") => scale::AUTO,
+            Ok(text) => text.parse().unwrap_or(self.render_scale),
+            Err(_) => self.render_scale,
+        };
         FrameVisuals {
             look: self.look,
             quality: self.quality,
-            effects: Effect::ALL.map(|e| self.enabled(e)),
+            render_scale,
+            effects: Effect::ALL.map(|e| self.enabled(e) && !forced_off(e)),
         }
     }
 }
@@ -395,6 +419,8 @@ pub fn planned_passes(v: &FrameVisuals) -> Vec<&'static str> {
 pub struct FrameVisuals {
     pub look: LookKind,
     pub quality: Quality,
+    /// Render Scale (M68): `scale::AUTO` or 50 to 100 percent.
+    pub render_scale: u32,
     /// Indexed like `Effect::ALL`.
     effects: [bool; Effect::ALL.len()],
 }
