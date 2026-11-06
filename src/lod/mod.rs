@@ -12,6 +12,7 @@
 pub mod colors;
 pub mod data;
 pub mod sample;
+pub mod store;
 
 use crate::config::CHUNK_SIZE;
 
