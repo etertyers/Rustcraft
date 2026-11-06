@@ -526,8 +526,15 @@ impl App {
         };
         let attrs = Window::default_attributes().with_title(config::WINDOW_TITLE);
         let native = self.bench.as_ref().is_some_and(|b| b.native);
+        // The bench's 1080p is 1080p pixels on every screen: a logical
+        // 1920×1080 window on a scale-2 display is 3840×2160 pixels, which
+        // macOS clamps to the screen (2940×1678 on a MacBook Air), so M4
+        // "1080p" rows measured another resolution and Auto's Render Scale.
         let attrs = match self.window_size {
             Some((w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+            None if self.bench.is_some() => {
+                attrs.with_inner_size(winit::dpi::PhysicalSize::new(width, height))
+            }
             None => attrs.with_inner_size(LogicalSize::new(width, height)),
         };
         // `--perf-test --native` flies full screen at the display's size.

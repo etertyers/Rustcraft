@@ -1,0 +1,370 @@
+perf: vanilla shaders off medium (m58)
+display: drawable 2940x1678, window 2940x1678 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 100%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 210 frames (2 off screen), 42 fps average, 1% low 51 fps, worst 1030.2 ms (game 0.9, chunks 0.0, draw 481.5), 2 over 33 ms; per frame: game 1.14 ms, chunks 0.33 ms, draw 17.07 ms (egui 0.10, acquire 13.02, encode 0.36, submit 1.02, present or GPU wait 0.11)
+  flight  3604 frames (0 off screen), 60 fps average, 1% low 53 fps, worst 33.3 ms (game 2.4, chunks 0.0, draw 2.1), 0 over 33 ms; per frame: game 1.01 ms, chunks 0.11 ms, draw 15.49 ms (egui 0.10, acquire 13.17, encode 0.42, submit 1.25, present or GPU wait 0.06)
+  ended at [64, 102, -628], 441 chunks loaded, 224 drawn
+wrote docs/perf/m58.json
+wrote docs/perf/m58.md
+perf: barebones shaders off medium (m58-barebones)
+display: drawable 2940x1678, window 2940x1678 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 100%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 228 frames (2 off screen), 46 fps average, 1% low 19 fps, worst 770.6 ms (game 1.2, chunks 0.0, draw 471.0), 3 over 33 ms; per frame: game 1.12 ms, chunks 0.33 ms, draw 16.77 ms (egui 0.10, acquire 12.99, encode 0.31, submit 0.95, present or GPU wait 0.10)
+  flight  3603 frames (0 off screen), 60 fps average, 1% low 53 fps, worst 50.2 ms (game 1.0, chunks 0.0, draw 0.9), 1 over 33 ms; per frame: game 1.01 ms, chunks 0.11 ms, draw 15.48 ms (egui 0.10, acquire 13.10, encode 0.43, submit 1.23, present or GPU wait 0.06)
+  ended at [64, 102, -628], 441 chunks loaded, 222 drawn
+wrote docs/perf/m58-barebones.json
+wrote docs/perf/m58-barebones.md
+perf: realistic shaders off medium (m58-realistic)
+display: drawable 2940x1678, window 2940x1678 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 100%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 221 frames (2 off screen), 44 fps average, 1% low 22 fps, worst 907.8 ms (game 0.7, chunks 0.0, draw 453.2), 3 over 33 ms; per frame: game 1.08 ms, chunks 0.32 ms, draw 16.87 ms (egui 0.10, acquire 12.88, encode 0.31, submit 0.94, present or GPU wait 0.12)
+  flight  3603 frames (0 off screen), 60 fps average, 1% low 54 fps, worst 56.2 ms (game 23.2, chunks 0.0, draw 1.3), 1 over 33 ms; per frame: game 0.89 ms, chunks 0.11 ms, draw 15.61 ms (egui 0.10, acquire 13.31, encode 0.44, submit 1.17, present or GPU wait 0.06)
+  ended at [64, 102, -628], 441 chunks loaded, 224 drawn
+wrote docs/perf/m58-realistic.json
+wrote docs/perf/m58-realistic.md
+perf: barebones shaders on low (m58-barebones-low)
+display: drawable 2940x1680, window 2940x1680 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 75%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 231 frames (2 off screen), 46 fps average, 1% low 15 fps, worst 716.9 ms (game 0.9, chunks 0.0, draw 458.6), 3 over 33 ms; per frame: game 0.93 ms, chunks 0.31 ms, draw 16.97 ms (egui 0.08, acquire 13.24, encode 0.32, submit 1.13, present or GPU wait 0.12)
+  flight  3601 frames (0 off screen), 60 fps average, 1% low 51 fps, worst 33.6 ms (game 2.1, chunks 0.0, draw 1.3), 1 over 33 ms; per frame: game 0.80 ms, chunks 0.09 ms, draw 15.74 ms (egui 0.07, acquire 13.14, encode 0.50, submit 1.52, present or GPU wait 0.05)
+  ended at [64, 102, -628], 441 chunks loaded, 222 drawn
+wrote docs/perf/m58-barebones-low.json
+wrote docs/perf/m58-barebones-low.md
+perf: barebones shaders on medium (m58-barebones-medium)
+display: drawable 2940x1680, window 2940x1680 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 75%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 232 frames (2 off screen), 46 fps average, 1% low 17 fps, worst 705.8 ms (game 0.8, chunks 0.0, draw 461.2), 3 over 33 ms; per frame: game 0.61 ms, chunks 0.28 ms, draw 17.36 ms (egui 0.03, acquire 14.57, encode 0.10, submit 0.50, present or GPU wait 0.09)
+  flight  3601 frames (0 off screen), 60 fps average, 1% low 54 fps, worst 31.9 ms (game 0.7, chunks 0.8, draw 2.3), 0 over 33 ms; per frame: game 0.35 ms, chunks 0.06 ms, draw 16.24 ms (egui 0.02, acquire 15.36, encode 0.12, submit 0.56, present or GPU wait 0.01)
+  ended at [64, 102, -628], 441 chunks loaded, 222 drawn
+wrote docs/perf/m58-barebones-medium.json
+wrote docs/perf/m58-barebones-medium.md
+perf: barebones shaders on high (m58-barebones-high)
+display: drawable 2940x1682, window 2940x1682 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 75%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 232 frames (2 off screen), 46 fps average, 1% low 18 fps, worst 729.3 ms (game 0.8, chunks 0.0, draw 456.0), 4 over 33 ms; per frame: game 0.61 ms, chunks 0.30 ms, draw 17.24 ms (egui 0.04, acquire 14.34, encode 0.12, submit 0.61, present or GPU wait 0.11)
+  flight  3601 frames (0 off screen), 60 fps average, 1% low 56 fps, worst 32.4 ms (game 0.8, chunks 0.0, draw 1.9), 0 over 33 ms; per frame: game 0.29 ms, chunks 0.06 ms, draw 16.30 ms (egui 0.02, acquire 15.51, encode 0.10, submit 0.52, present or GPU wait 0.01)
+  ended at [64, 102, -628], 441 chunks loaded, 222 drawn
+wrote docs/perf/m58-barebones-high.json
+wrote docs/perf/m58-barebones-high.md
+perf: vanilla shaders on medium (m58-vanilla-medium)
+display: drawable 2940x1682, window 2940x1682 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 75%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 220 frames (2 off screen), 44 fps average, 1% low 17 fps, worst 893.4 ms (game 0.7, chunks 0.0, draw 458.4), 3 over 33 ms; per frame: game 0.74 ms, chunks 0.34 ms, draw 17.24 ms (egui 0.05, acquire 13.96, encode 0.18, submit 0.84, present or GPU wait 0.10)
+  flight  3601 frames (0 off screen), 60 fps average, 1% low 58 fps, worst 30.3 ms (game 0.1, chunks 0.0, draw 3.3), 0 over 33 ms; per frame: game 0.28 ms, chunks 0.07 ms, draw 16.31 ms (egui 0.02, acquire 15.64, encode 0.08, submit 0.44, present or GPU wait 0.01)
+  ended at [64, 102, -628], 441 chunks loaded, 224 drawn
+wrote docs/perf/m58-vanilla-medium.json
+wrote docs/perf/m58-vanilla-medium.md
+perf: realistic shaders on medium (m58-realistic-medium)
+display: drawable 2940x1682, window 2940x1682 pixels at scale factor 2, refresh 60.0 Hz; present mode Immediate (offered [Fifo, Immediate]), frame latency 2, render scale 75%
+bench: render distance 9, 1920×1080, 60 s at 10.9 blocks/s
+  warm-up 219 frames (2 off screen), 44 fps average, 1% low 17 fps, worst 901.8 ms (game 0.6, chunks 0.0, draw 456.8), 3 over 33 ms; per frame: game 0.62 ms, chunks 0.30 ms, draw 17.49 ms (egui 0.03, acquire 14.68, encode 0.10, submit 0.50, present or GPU wait 0.09)
+  flight  3603 frames (0 off screen), 60 fps average, 1% low 57 fps, worst 32.2 ms (game 0.1, chunks 0.6, draw 3.2), 0 over 33 ms; per frame: game 0.30 ms, chunks 0.06 ms, draw 16.28 ms (egui 0.02, acquire 15.50, encode 0.10, submit 0.49, present or GPU wait 0.01)
+  ended at [64, 102, -628], 441 chunks loaded, 223 drawn
+wrote docs/perf/m58-realistic-medium.json
+wrote docs/perf/m58-realistic-medium.md
+# m58 performance, every look
+
+## m58 performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `vanilla`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.05 | 0.0% |
+| chunk_generation_ms | 6.51 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1588.00 | 0.0% |
+| cpu_acquire_ms | 13.17 | 0.0% |
+| cpu_chunks_ms | 0.11 | 0.0% |
+| cpu_draw_ms | 15.49 | 0.0% |
+| cpu_egui_ms | 0.10 | 0.0% |
+| cpu_encode_ms | 0.42 | 0.0% |
+| cpu_game_ms | 1.01 | 0.0% |
+| cpu_present_ms | 0.06 | 0.0% |
+| cpu_submit_ms | 1.25 | 0.0% |
+| frames | 3604.00 | 0.0% |
+| frames_over_33ms | 0.00 | 0.0% |
+| frames_over_50ms | 0.00 | 0.0% |
+| gpu_hand_ms | 5.41 | 0.0% |
+| gpu_total_ms | 10.19 | 0.0% |
+| gpu_ui_ms | 0.05 | 0.0% |
+| gpu_world_ms | 10.00 | 0.0% |
+| light_mesh_ms | 5.74 | 0.0% |
+| memory_mib | 636.19 | 0.0% |
+| missed_frame_pct | 0.33 | 0.0% |
+| one_percent_low_fps | 53.35 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 33.25 | 0.0% |
+
+## m58-barebones performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `barebones`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.03 | 0.0% |
+| chunk_generation_ms | 6.39 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1652.00 | 0.0% |
+| cpu_acquire_ms | 13.10 | 0.0% |
+| cpu_chunks_ms | 0.11 | 0.0% |
+| cpu_draw_ms | 15.48 | 0.0% |
+| cpu_egui_ms | 0.10 | 0.0% |
+| cpu_encode_ms | 0.43 | 0.0% |
+| cpu_game_ms | 1.01 | 0.0% |
+| cpu_present_ms | 0.06 | 0.0% |
+| cpu_submit_ms | 1.23 | 0.0% |
+| frames | 3603.00 | 0.0% |
+| frames_over_33ms | 1.00 | 0.0% |
+| frames_over_50ms | 1.00 | 0.0% |
+| gpu_extra_ms | 0.00 | 0.0% |
+| gpu_hand_ms | 5.40 | 0.0% |
+| gpu_total_ms | 10.18 | 0.0% |
+| gpu_ui_ms | 0.07 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 9.98 | 0.0% |
+| light_mesh_ms | 5.92 | 0.0% |
+| memory_mib | 655.20 | 0.0% |
+| missed_frame_pct | 0.31 | 0.0% |
+| one_percent_low_fps | 52.98 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 50.21 | 0.0% |
+
+## m58-realistic performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `realistic`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.03 | 0.0% |
+| chunk_generation_ms | 6.53 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1587.00 | 0.0% |
+| cpu_acquire_ms | 13.31 | 0.0% |
+| cpu_chunks_ms | 0.11 | 0.0% |
+| cpu_draw_ms | 15.61 | 0.0% |
+| cpu_egui_ms | 0.10 | 0.0% |
+| cpu_encode_ms | 0.44 | 0.0% |
+| cpu_game_ms | 0.89 | 0.0% |
+| cpu_present_ms | 0.06 | 0.0% |
+| cpu_submit_ms | 1.17 | 0.0% |
+| frames | 3603.00 | 0.0% |
+| frames_over_33ms | 1.00 | 0.0% |
+| frames_over_50ms | 1.00 | 0.0% |
+| gpu_extra_ms | 0.00 | 0.0% |
+| gpu_hand_ms | 5.45 | 0.0% |
+| gpu_total_ms | 10.06 | 0.0% |
+| gpu_ui_ms | 0.04 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 9.86 | 0.0% |
+| light_mesh_ms | 5.71 | 0.0% |
+| memory_mib | 557.73 | 0.0% |
+| missed_frame_pct | 0.28 | 0.0% |
+| one_percent_low_fps | 54.19 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 56.16 | 0.0% |
+
+## m58-barebones-low performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `barebones-low`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.00 | 0.0% |
+| chunk_generation_ms | 5.83 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1618.00 | 0.0% |
+| cpu_acquire_ms | 13.14 | 0.0% |
+| cpu_chunks_ms | 0.09 | 0.0% |
+| cpu_draw_ms | 15.74 | 0.0% |
+| cpu_egui_ms | 0.07 | 0.0% |
+| cpu_encode_ms | 0.50 | 0.0% |
+| cpu_game_ms | 0.80 | 0.0% |
+| cpu_present_ms | 0.05 | 0.0% |
+| cpu_submit_ms | 1.52 | 0.0% |
+| frames | 3601.00 | 0.0% |
+| frames_over_33ms | 1.00 | 0.0% |
+| frames_over_50ms | 0.00 | 0.0% |
+| gpu_bloom_ms | 14.68 | 0.0% |
+| gpu_extra_ms | 2.22 | 0.0% |
+| gpu_hand_ms | 4.18 | 0.0% |
+| gpu_post_ms | 4.51 | 0.0% |
+| gpu_shadow_ms | 0.16 | 0.0% |
+| gpu_total_ms | 12.41 | 0.0% |
+| gpu_ui_ms | 0.06 | 0.0% |
+| gpu_upscale_ms | 1.10 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 8.22 | 0.0% |
+| light_mesh_ms | 5.23 | 0.0% |
+| memory_mib | 670.03 | 0.0% |
+| missed_frame_pct | 0.36 | 0.0% |
+| one_percent_low_fps | 50.94 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 33.56 | 0.0% |
+
+## m58-barebones-medium performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `barebones-medium`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.00 | 0.0% |
+| chunk_generation_ms | 4.89 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1603.00 | 0.0% |
+| cpu_acquire_ms | 15.36 | 0.0% |
+| cpu_chunks_ms | 0.06 | 0.0% |
+| cpu_draw_ms | 16.24 | 0.0% |
+| cpu_egui_ms | 0.02 | 0.0% |
+| cpu_encode_ms | 0.12 | 0.0% |
+| cpu_game_ms | 0.35 | 0.0% |
+| cpu_present_ms | 0.01 | 0.0% |
+| cpu_submit_ms | 0.56 | 0.0% |
+| frames | 3601.00 | 0.0% |
+| frames_over_33ms | 0.00 | 0.0% |
+| frames_over_50ms | 0.00 | 0.0% |
+| gpu_bloom_ms | 20.88 | 0.0% |
+| gpu_extra_ms | 1.99 | 0.0% |
+| gpu_fxaa_ms | 4.58 | 0.0% |
+| gpu_hand_ms | 4.45 | 0.0% |
+| gpu_post_ms | 4.44 | 0.0% |
+| gpu_shadow_ms | 0.32 | 0.0% |
+| gpu_shafts_ms | 8.79 | 0.0% |
+| gpu_total_ms | 12.18 | 0.0% |
+| gpu_ui_ms | 0.00 | 0.0% |
+| gpu_upscale_ms | 0.32 | 0.0% |
+| gpu_water_ms | 5.03 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 3.03 | 0.0% |
+| light_mesh_ms | 4.30 | 0.0% |
+| memory_mib | 596.56 | 0.0% |
+| missed_frame_pct | 0.28 | 0.0% |
+| one_percent_low_fps | 53.83 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 31.93 | 0.0% |
+
+## m58-barebones-high performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `barebones-high`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.00 | 0.0% |
+| chunk_generation_ms | 4.31 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1694.00 | 0.0% |
+| cpu_acquire_ms | 15.51 | 0.0% |
+| cpu_chunks_ms | 0.06 | 0.0% |
+| cpu_draw_ms | 16.30 | 0.0% |
+| cpu_egui_ms | 0.02 | 0.0% |
+| cpu_encode_ms | 0.10 | 0.0% |
+| cpu_game_ms | 0.29 | 0.0% |
+| cpu_present_ms | 0.01 | 0.0% |
+| cpu_submit_ms | 0.52 | 0.0% |
+| frames | 3601.00 | 0.0% |
+| frames_over_33ms | 0.00 | 0.0% |
+| frames_over_50ms | 0.00 | 0.0% |
+| gpu_bloom_ms | 31.52 | 0.0% |
+| gpu_extra_ms | 3.29 | 0.0% |
+| gpu_fxaa_ms | 6.79 | 0.0% |
+| gpu_hand_ms | 6.39 | 0.0% |
+| gpu_post_ms | 6.72 | 0.0% |
+| gpu_shadow_ms | 0.70 | 0.0% |
+| gpu_shafts_ms | 13.58 | 0.0% |
+| gpu_total_ms | 13.48 | 0.0% |
+| gpu_ui_ms | 0.00 | 0.0% |
+| gpu_upscale_ms | 0.29 | 0.0% |
+| gpu_water_ms | 7.23 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 4.21 | 0.0% |
+| light_mesh_ms | 4.21 | 0.0% |
+| memory_mib | 669.97 | 0.0% |
+| missed_frame_pct | 0.28 | 0.0% |
+| one_percent_low_fps | 56.09 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 32.42 | 0.0% |
+
+## m58-vanilla-medium performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `vanilla-medium`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.00 | 0.0% |
+| chunk_generation_ms | 5.39 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1732.00 | 0.0% |
+| cpu_acquire_ms | 15.64 | 0.0% |
+| cpu_chunks_ms | 0.07 | 0.0% |
+| cpu_draw_ms | 16.31 | 0.0% |
+| cpu_egui_ms | 0.02 | 0.0% |
+| cpu_encode_ms | 0.08 | 0.0% |
+| cpu_game_ms | 0.28 | 0.0% |
+| cpu_present_ms | 0.01 | 0.0% |
+| cpu_submit_ms | 0.44 | 0.0% |
+| frames | 3601.00 | 0.0% |
+| frames_over_33ms | 0.00 | 0.0% |
+| frames_over_50ms | 0.00 | 0.0% |
+| gpu_bloom_ms | 19.82 | 0.0% |
+| gpu_extra_ms | 0.00 | 0.0% |
+| gpu_fxaa_ms | 4.09 | 0.0% |
+| gpu_hand_ms | 4.05 | 0.0% |
+| gpu_post_ms | 3.99 | 0.0% |
+| gpu_shadow_ms | 0.31 | 0.0% |
+| gpu_shafts_ms | 7.91 | 0.0% |
+| gpu_total_ms | 9.77 | 0.0% |
+| gpu_ui_ms | 0.00 | 0.0% |
+| gpu_upscale_ms | 0.14 | 0.0% |
+| gpu_water_ms | 4.66 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 2.94 | 0.0% |
+| light_mesh_ms | 4.82 | 0.0% |
+| memory_mib | 707.45 | 0.0% |
+| missed_frame_pct | 0.11 | 0.0% |
+| one_percent_low_fps | 58.04 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 30.32 | 0.0% |
+
+## m58-realistic-medium performance
+
+1 flights of 60 s (seed 20111118, render distance 9), median and spread (max − min as % of the median). Measured on Mac16,12 (Apple M4), commit , row `realistic-medium`.
+
+| Measure | Median | Spread |
+|---|---|---|
+| average_fps | 60.03 | 0.0% |
+| chunk_generation_ms | 4.41 | 0.0% |
+| chunks_generated | 1344.00 | 0.0% |
+| chunks_meshed | 1584.00 | 0.0% |
+| cpu_acquire_ms | 15.50 | 0.0% |
+| cpu_chunks_ms | 0.06 | 0.0% |
+| cpu_draw_ms | 16.28 | 0.0% |
+| cpu_egui_ms | 0.02 | 0.0% |
+| cpu_encode_ms | 0.10 | 0.0% |
+| cpu_game_ms | 0.30 | 0.0% |
+| cpu_present_ms | 0.01 | 0.0% |
+| cpu_submit_ms | 0.49 | 0.0% |
+| frames | 3603.00 | 0.0% |
+| frames_over_33ms | 0.00 | 0.0% |
+| frames_over_50ms | 0.00 | 0.0% |
+| gpu_bloom_ms | 19.70 | 0.0% |
+| gpu_extra_ms | 0.33 | 0.0% |
+| gpu_fxaa_ms | 4.29 | 0.0% |
+| gpu_hand_ms | 4.22 | 0.0% |
+| gpu_post_ms | 4.17 | 0.0% |
+| gpu_shadow_ms | 0.32 | 0.0% |
+| gpu_shafts_ms | 8.27 | 0.0% |
+| gpu_total_ms | 10.53 | 0.0% |
+| gpu_ui_ms | 0.00 | 0.0% |
+| gpu_upscale_ms | 0.19 | 0.0% |
+| gpu_water_ms | 4.83 | 0.0% |
+| gpu_world_extra_ms | 0.00 | 0.0% |
+| gpu_world_ms | 3.02 | 0.0% |
+| light_mesh_ms | 4.39 | 0.0% |
+| memory_mib | 668.33 | 0.0% |
+| missed_frame_pct | 0.14 | 0.0% |
+| one_percent_low_fps | 56.73 | 0.0% |
+| refresh_hz | 60.00 | 0.0% |
+| worst_frame_ms | 32.19 | 0.0% |
+
+
+wrote docs/perf/m58.md
