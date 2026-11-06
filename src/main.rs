@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     // Rewrites the placeholder blocks and items from vanilla's data in
     // assets/vanilla (see src/placeholders.rs) and docs/placeholders.md.
     if std::env::args().any(|arg| arg == "--gen-placeholders") {
-        let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
+        let docs = rustcraft::assets::repo_root().join("docs");
         let found = rustcraft::placeholders::generate(&rustcraft::assets::dir(), &docs)?;
         println!(
             "wrote {} placeholder blocks and {} items",

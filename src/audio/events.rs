@@ -521,7 +521,7 @@ mod played {
             return;
         }
         let table = build_table(&Resources::load(&assets, Vec::new()).unwrap());
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let src = crate::assets::repo_root().join("src");
         let mut events = BTreeSet::new();
         literal_events(&src, &mut events);
         named_events(&src, &mut events);

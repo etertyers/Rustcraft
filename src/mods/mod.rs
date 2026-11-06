@@ -437,7 +437,7 @@ static ERRORS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 pub fn active() -> &'static ModSet {
     ACTIVE.get_or_init(|| {
         if cfg!(test) {
-            let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let root = &crate::assets::repo_root();
             let dirs = [root.join("mods"), root.join("examples/mods")];
             let found = discover(&dirs, Some(&dirs[0]));
             ModSet::choose(found, &Config::default())
