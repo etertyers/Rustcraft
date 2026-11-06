@@ -386,6 +386,42 @@ impl OptionsScreen {
                         format!("Render Distance: {v} chunks")
                     });
                     cell(ui);
+                    // Distant Terrain (M69): Off, or 32 to 512 chunks.
+                    let vanilla = options.visuals.style == crate::render::visuals::Style::Vanilla;
+                    let mut steps = options.distant.effective(vanilla) / crate::lod::MIN_DISTANCE;
+                    if int_slider(
+                        ui,
+                        &mut steps,
+                        0..=crate::lod::MAX_DISTANCE / crate::lod::MIN_DISTANCE,
+                        |v| match v {
+                            0 => "Distant Terrain: Off".to_owned(),
+                            v => {
+                                format!("Distant Terrain: {} chunks", v * crate::lod::MIN_DISTANCE)
+                            }
+                        },
+                    ) {
+                        options.distant.distance = Some(steps * crate::lod::MIN_DISTANCE);
+                    }
+                    cell(ui);
+                    let quality = options.distant.quality;
+                    let response = ui.add_sized(
+                        HALF,
+                        Button::new(format!("Distant Quality: {}", quality.name())),
+                    );
+                    if self.clicked(&response) {
+                        let all = crate::lod::Quality::ALL;
+                        let next = all.iter().position(|q| *q == quality).map_or(0, |i| i + 1);
+                        options.distant.quality = all[next % all.len()];
+                    }
+                    cell(ui);
+                    let mut threads = options.distant.threads as i32;
+                    if int_slider(ui, &mut threads, 0..=16, |v| match v {
+                        0 => "Distant Threads: Auto".to_owned(),
+                        v => format!("Distant Threads: {v}"),
+                    }) {
+                        options.distant.threads = threads as usize;
+                    }
+                    cell(ui);
                     self.toggle(ui, "Smooth Lighting", &mut options.smooth_lighting);
                     cell(ui);
                     let mut rate = options.max_framerate as i32;

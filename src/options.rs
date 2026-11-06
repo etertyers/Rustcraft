@@ -209,6 +209,8 @@ pub struct Options {
     pub visuals: crate::render::visuals::Visuals,
     /// The extras (the video's mods) the player switched, per style.
     pub extras: crate::extras::Toggles,
+    /// Distant Terrain (M69): LOD distance, quality and threads.
+    pub distant: crate::lod::DistantTerrain,
 }
 
 impl Default for Options {
@@ -247,6 +249,7 @@ impl Default for Options {
             glint_strength: 0.75,
             visuals: Default::default(),
             extras: Default::default(),
+            distant: Default::default(),
         }
     }
 }

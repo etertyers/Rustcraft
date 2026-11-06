@@ -283,7 +283,7 @@ impl Biome {
         matches!(self, Biome::LushCaves | Biome::DripstoneCaves)
     }
 
-    fn index(self) -> usize {
+    pub fn index(self) -> usize {
         self as usize
     }
 

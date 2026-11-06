@@ -2,7 +2,7 @@
 //! and telling each connected client what they see. Single player runs one
 //! in the same process with a single client, so there's one way to play.
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use glam::DVec3;
 use log::{info, warn};
@@ -37,6 +37,12 @@ struct Lan {
     cheats: bool,
 }
 
+/// Distant Terrain: tiles a client may have queued, tiles worked on ahead
+/// for each, and the bytes per second sent to each client (M69).
+const LOD_QUEUE_MAX: usize = 256;
+const LOD_AHEAD: usize = 32;
+pub const LOD_BYTES_PER_SECOND: f32 = 256.0 * 1024.0;
+
 /// A connection that hasn't logged in yet.
 struct Pending {
     conn: ServerConnection,
@@ -56,6 +62,10 @@ struct Remote {
     dimension: Dimension,
     /// The player's skin (PNG) and arm width, once sent.
     skin: Option<(Vec<u8>, bool)>,
+    /// Distant Terrain tiles asked for and not yet sent, and the bytes
+    /// this client may still be sent now (M69).
+    lod_queue: VecDeque<crate::lod::data::TileKey>,
+    lod_credit: f32,
 }
 
 pub struct Server {
@@ -77,6 +87,10 @@ pub struct Server {
     kicked: Vec<usize>,
     /// `/stop` was run: whoever runs the server should save and close.
     pub stopping: bool,
+    /// Distant Terrain: makes tiles for the clients that ask (M69).
+    lod: Option<crate::lod::maker::LodMaker>,
+    lod_flush: f32,
+    lod_clock: Instant,
 }
 
 impl Server {
@@ -96,6 +110,9 @@ impl Server {
             lan: None,
             kicked: Vec::new(),
             stopping: false,
+            lod: None,
+            lod_flush: 0.0,
+            lod_clock: Instant::now(),
         }
     }
 
@@ -129,6 +146,9 @@ impl Server {
             ));
         }
         self.lan = None;
+        if let Some(lod) = &self.lod {
+            lod.flush();
+        }
     }
 
     /// The port the world is open to LAN on, if it is.
@@ -283,6 +303,15 @@ impl Server {
             let centers = self.game.player_chunks();
             let changes = self.game.chunks.update_around(&centers);
             self.game.on_chunks_loaded(&changes.loaded);
+            if dimension == Dimension::Overworld
+                && let Some(lod) = &self.lod
+            {
+                for pos in &changes.loaded {
+                    if let Some(chunk) = self.game.chunks.world().get(*pos) {
+                        lod.observe(chunk.clone());
+                    }
+                }
+            }
         }
         self.home();
         let ticks = self.game.clock(dt);
@@ -291,6 +320,7 @@ impl Server {
         }
         // Chunks that finished loading since the last tick go out at once.
         self.send_chunks();
+        self.pump_lod();
         // A stopped world (paused, or a scene being set up) still shows its
         // changes, and a screen's click shows before the next tick.
         if ticks == 0 && (dt == 0.0 || self.changed) {
@@ -319,6 +349,77 @@ impl Server {
         }
         self.send_chunks();
         self.publish(heard);
+    }
+
+    /// Distant Terrain (M69): starts the tiles clients asked for, and sends
+    /// the finished ones within each client's share of `LOD_BYTES_PER_SECOND`.
+    fn pump_lod(&mut self) {
+        // Real time, so a paused game (or a scene being set up) still gets
+        // its tiles at the same rate.
+        let dt = self.lod_clock.elapsed().as_secs_f32().min(1.0);
+        self.lod_clock = Instant::now();
+        if self.lod.is_none() {
+            if self.remotes.iter().all(|r| r.lod_queue.is_empty()) {
+                return;
+            }
+            let Some(seed) = self.game.chunks.seed() else {
+                return;
+            };
+            let dir = self
+                .game
+                .world_dir_for_packs
+                .clone()
+                .unwrap_or_else(|| std::env::temp_dir().join("rustcraft-unsaved"))
+                .join("lod");
+            let Ok(store) = crate::lod::store::LodStore::open(&dir, crate::lod::DEFAULT_DISK_CAP)
+            else {
+                return;
+            };
+            let colors = Arc::new(crate::lod::colors::ColorTable::new(
+                None,
+                crate::world::biome::BiomeColors::uniform(),
+            ));
+            let threads = crate::lod::manager::LodSettings {
+                distance: 0,
+                quality: crate::lod::Quality::Medium,
+                threads: 0,
+            }
+            .worker_count();
+            self.lod = Some(crate::lod::maker::LodMaker::new(
+                Arc::new(crate::world::worldgen::terrain::Terrain::new(seed)),
+                colors,
+                threads,
+                store,
+            ));
+        }
+        let Some(lod) = self.lod.as_mut() else {
+            return;
+        };
+        lod.poll();
+        self.lod_flush += dt;
+        if self.lod_flush > 10.0 {
+            self.lod_flush = 0.0;
+            lod.flush();
+        }
+        for remote in &mut self.remotes {
+            remote.lod_credit =
+                (remote.lod_credit + LOD_BYTES_PER_SECOND * dt).min(LOD_BYTES_PER_SECOND);
+            let mut sent = Vec::new();
+            for (n, key) in remote.lod_queue.iter().enumerate() {
+                lod.request(*key);
+                if n >= LOD_AHEAD {
+                    break;
+                }
+                if let Some(bytes) = lod.get(*key)
+                    && remote.lod_credit > 0.0
+                {
+                    remote.lod_credit -= bytes.len() as f32;
+                    remote.conn.send(ServerMsg::LodTile(bytes.as_ref().clone()));
+                    sent.push(*key);
+                }
+            }
+            remote.lod_queue.retain(|k| !sent.contains(k));
+        }
     }
 
     /// Sends each player their snapshot and the sounds they hear.
@@ -490,6 +591,8 @@ impl Server {
             view_distance: config::RENDER_DISTANCE,
             dimension,
             skin: None,
+            lod_queue: VecDeque::new(),
+            lod_credit: 0.0,
         });
         self.announce(format!("{name} joined the game"));
         let player = self.game.player_info(index);
@@ -587,6 +690,14 @@ impl Server {
             } => self.game.with_player(index, |game| {
                 game.on_action(action, pressed, repeat, grabbed);
             }),
+            ClientMsg::LodRequest(keys) => {
+                let queue = &mut self.remotes[index].lod_queue;
+                *queue = keys
+                    .into_iter()
+                    .filter(|k| k.level <= crate::lod::MAX_LEVEL)
+                    .take(LOD_QUEUE_MAX)
+                    .collect();
+            }
             ClientMsg::SelectSlot(slot) => self.game.with_player(index, |game| {
                 game.player.inventory.selected =
                     slot.min(crate::inventory::player::HOTBAR_SLOTS - 1);
@@ -2432,5 +2543,56 @@ mod tests {
             }
         }
         assert!(compared >= 100, "only {compared} ticks could be compared");
+    }
+
+    /// Distant Terrain (M69): two clients ask for the same tiles and get the
+    /// same bytes, within the per-client rate.
+    #[test]
+    fn two_clients_receive_the_same_distant_terrain_tiles() {
+        use crate::lod::data::{Tile, TileKey};
+        let source = ChunkSource::Terrain(Box::new(crate::world::worldgen::terrain::Terrain::new(
+            12345,
+        )));
+        let (mut server, mut clients) = world_on(source, &["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |s, c| {
+            s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
+        });
+        let keys: Vec<TileKey> = (0..6).map(|i| TileKey::new(3, i - 3, 0)).collect();
+        for (client, _) in clients.iter_mut() {
+            client.send(ClientMsg::LodRequest(keys.clone()));
+        }
+        let mut got: Vec<Vec<Tile>> = vec![Vec::new(), Vec::new()];
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(60);
+        while got.iter().any(|g| g.len() < keys.len()) {
+            assert!(
+                Instant::now() < deadline,
+                "tiles never came: {:?}",
+                got.iter().map(Vec::len).collect::<Vec<_>>()
+            );
+            for (n, (client, game)) in clients.iter_mut().enumerate() {
+                client.advance(game, 0.05);
+                client.receive(game);
+                for bytes in std::mem::take(&mut client.lod_tiles) {
+                    got[n].push(Tile::decode(&bytes).expect("a good tile"));
+                }
+            }
+            server.advance(0.05);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut a: Vec<_> = got[0].iter().map(|t| (t.key, t.encode())).collect();
+        let mut b: Vec<_> = got[1].iter().map(|t| (t.key, t.encode())).collect();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), keys.len());
+        // The rate limit: no client was sent more than its share (plus the
+        // one-second burst) in the time that passed, in game seconds.
+        let bytes: usize = a.iter().map(|(_, b)| b.len()).sum();
+        let game_seconds = 0.05 * (started.elapsed().as_secs_f32() / 0.002).max(1.0);
+        assert!(
+            (bytes as f32) <= LOD_BYTES_PER_SECOND * (game_seconds + 1.0) + 64.0 * 1024.0,
+            "{bytes} bytes"
+        );
     }
 }

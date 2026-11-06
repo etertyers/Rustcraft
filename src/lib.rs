@@ -21,6 +21,7 @@ pub mod game;
 pub mod inventory;
 pub mod lantest;
 pub mod level;
+pub mod lod;
 pub mod look;
 pub mod mods;
 pub mod net;

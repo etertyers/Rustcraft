@@ -172,7 +172,9 @@ impl Game {
                 view,
                 self.eye_in(),
             ),
-            Dimension::Overworld => self.overworld_environment(biome, view),
+            Dimension::Overworld => {
+                self.overworld_environment(biome, self.lod_view.unwrap_or(view))
+            }
         };
         // Night vision lights everything, flickering in its last 10 s
         // (modern `GameRenderer.getNightVisionScale`).
