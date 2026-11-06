@@ -103,6 +103,12 @@ pub struct LodManager {
     asked: HashSet<TileKey>,
     shown: HashMap<TileKey, Shown>,
     selected: Vec<TileKey>,
+    selected_set: HashSet<TileKey>,
+    /// Something may need doing: set by arrivals and moves, cleared when a
+    /// pass leaves nothing waiting. Idle frames cost almost nothing.
+    busy: bool,
+    /// Bumped whenever what is drawn or asked for changes.
+    changes: u64,
     last_view: Option<(i32, i32, i32, LodSettings)>,
     dirty: bool,
     in_flight: usize,
@@ -149,6 +155,9 @@ impl LodManager {
             asked: HashSet::new(),
             shown: HashMap::new(),
             selected: Vec::new(),
+            selected_set: HashSet::new(),
+            busy: true,
+            changes: 0,
             last_view: None,
             dirty: true,
             in_flight: 0,
@@ -197,6 +206,8 @@ impl LodManager {
         self.asked.clear();
         self.shown.clear();
         self.selected.clear();
+        self.selected_set.clear();
+        self.busy = true;
         self.last_view = None;
         gone
     }
@@ -237,6 +248,7 @@ impl LodManager {
     }
 
     fn accept(&mut self, tile: Tile) {
+        self.changes += 1;
         let key = tile.key;
         self.tiles.insert(key, Arc::new(tile));
         self.touch(key);
@@ -244,6 +256,7 @@ impl LodManager {
 
     /// Tiles around `key` need new meshes.
     fn touch(&mut self, key: TileKey) {
+        self.busy = true;
         let (tx, tz) = (key.tx, key.tz);
         for (dx, dz) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
             let k = TileKey::new(key.level, tx + dx, tz + dz);
@@ -251,7 +264,6 @@ impl LodManager {
                 shown.epoch = 0;
             }
         }
-        self.dirty = true;
     }
 
     /// Advances one frame. `eye` is the viewer in blocks; `loaded` the
@@ -259,6 +271,9 @@ impl LodManager {
     pub fn update(&mut self, eye: (f32, f32), center: ChunkPos, loaded: i32) -> Frame {
         let mut frame = Frame::default();
         self.drain(&mut frame);
+        if !frame.uploads.is_empty() {
+            self.changes += 1;
+        }
         let view = (center.x, center.z, loaded, self.settings);
         if self.last_view != Some(view) {
             self.last_view = Some(view);
@@ -268,7 +283,13 @@ impl LodManager {
             self.dirty = false;
             let hole = hole_for(center, loaded);
             self.selected = select(eye, loaded, self.settings, hole);
-            let keep: HashSet<TileKey> = self.selected.iter().copied().collect();
+            // Nearest first, kept for the passes below.
+            self.selected
+                .sort_by(|a, b| distance(eye, *a).total_cmp(&distance(eye, *b)));
+            self.selected_set = self.selected.iter().copied().collect();
+            self.busy = true;
+            self.changes += 1;
+            let keep = &self.selected_set;
             let stale: Vec<TileKey> = self
                 .shown
                 .keys()
@@ -283,17 +304,17 @@ impl LodManager {
             self.tiles.retain(|k, _| keep.contains(k));
             self.asked.retain(|k| keep.contains(k));
         }
+        if !self.busy {
+            return frame;
+        }
         let hole = hole_for(center, loaded);
-        // Nearest first.
-        let mut order = self.selected.clone();
-        order.sort_by(|a, b| {
-            let da = distance(eye, *a);
-            let db = distance(eye, *b);
-            da.total_cmp(&db)
-        });
         let budget = self.settings.worker_count() * 3;
-        for key in order {
+        // Set again below if anything is left waiting.
+        self.busy = false;
+        for n in 0..self.selected.len() {
+            let key = self.selected[n];
             if self.in_flight >= budget {
+                self.busy = true;
                 break;
             }
             if !self.tiles.contains_key(&key) {
@@ -305,6 +326,8 @@ impl LodManager {
                         self.accept(tile);
                         self.asked.remove(&key);
                     }
+                } else {
+                    self.busy = true;
                 }
                 continue;
             }
@@ -312,7 +335,7 @@ impl LodManager {
             let around = neighbors(key);
             let coming = around
                 .iter()
-                .any(|k| self.selected.contains(k) && !self.tiles.contains_key(k));
+                .any(|k| self.selected_set.contains(k) && !self.tiles.contains_key(k));
             if coming {
                 continue;
             }
@@ -360,6 +383,7 @@ impl LodManager {
     fn drain(&mut self, frame: &mut Frame) {
         while let Ok(done) = self.done.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
+            self.busy = true;
             match done {
                 Done::Mesh {
                     key,
@@ -416,6 +440,31 @@ impl LodManager {
             .iter()
             .copied()
             .filter(|k| self.shown.get(k).is_some_and(|s| s.uploaded))
+    }
+
+    /// A line saying what is left (for the log while a scene waits).
+    pub fn progress(&self) -> String {
+        format!(
+            "{} selected, {} drawn, {} tiles held, {} asked, {} in flight",
+            self.selected.len(),
+            self.visible().count(),
+            self.tiles.len(),
+            self.asked.len(),
+            self.in_flight
+        )
+    }
+
+    /// Whether every selected tile is drawn and nothing is on its way.
+    pub fn settled(&self) -> bool {
+        !self.selected.is_empty()
+            && self.in_flight == 0
+            && self.asked.is_empty()
+            && self.visible().count() == self.selected.len()
+    }
+
+    /// Changes whenever the visible tiles or the outstanding ones may have.
+    pub fn changes(&self) -> u64 {
+        self.changes
     }
 
     pub fn selected(&self) -> &[TileKey] {

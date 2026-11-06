@@ -2,7 +2,7 @@
 //! and telling each connected client what they see. Single player runs one
 //! in the same process with a single client, so there's one way to play.
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use glam::DVec3;
 use log::{info, warn};
@@ -89,6 +89,8 @@ pub struct Server {
     pub stopping: bool,
     /// Distant Terrain: makes tiles for the clients that ask (M69).
     lod: Option<crate::lod::maker::LodMaker>,
+    lod_flush: f32,
+    lod_clock: Instant,
 }
 
 impl Server {
@@ -109,6 +111,8 @@ impl Server {
             kicked: Vec::new(),
             stopping: false,
             lod: None,
+            lod_flush: 0.0,
+            lod_clock: Instant::now(),
         }
     }
 
@@ -142,6 +146,9 @@ impl Server {
             ));
         }
         self.lan = None;
+        if let Some(lod) = &self.lod {
+            lod.flush();
+        }
     }
 
     /// The port the world is open to LAN on, if it is.
@@ -313,7 +320,7 @@ impl Server {
         }
         // Chunks that finished loading since the last tick go out at once.
         self.send_chunks();
-        self.pump_lod(dt);
+        self.pump_lod();
         // A stopped world (paused, or a scene being set up) still shows its
         // changes, and a screen's click shows before the next tick.
         if ticks == 0 && (dt == 0.0 || self.changed) {
@@ -346,7 +353,11 @@ impl Server {
 
     /// Distant Terrain (M69): starts the tiles clients asked for, and sends
     /// the finished ones within each client's share of `LOD_BYTES_PER_SECOND`.
-    fn pump_lod(&mut self, dt: f32) {
+    fn pump_lod(&mut self) {
+        // Real time, so a paused game (or a scene being set up) still gets
+        // its tiles at the same rate.
+        let dt = self.lod_clock.elapsed().as_secs_f32().min(1.0);
+        self.lod_clock = Instant::now();
         if self.lod.is_none() {
             if self.remotes.iter().all(|r| r.lod_queue.is_empty()) {
                 return;
@@ -385,6 +396,11 @@ impl Server {
             return;
         };
         lod.poll();
+        self.lod_flush += dt;
+        if self.lod_flush > 10.0 {
+            self.lod_flush = 0.0;
+            lod.flush();
+        }
         for remote in &mut self.remotes {
             remote.lod_credit =
                 (remote.lod_credit + LOD_BYTES_PER_SECOND * dt).min(LOD_BYTES_PER_SECOND);

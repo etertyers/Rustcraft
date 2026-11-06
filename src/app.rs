@@ -126,6 +126,9 @@ struct LodView {
     manager: Option<(u64, crate::lod::manager::LodManager)>,
     colors: Option<Arc<crate::lod::colors::ColorTable>>,
     asked: Vec<crate::lod::data::TileKey>,
+    /// The manager's `changes` and the water state last shown.
+    seen: u64,
+    underwater: bool,
 }
 
 pub struct App {
@@ -447,6 +450,10 @@ impl App {
     pub fn with_shot(mut self, shot: &'static shots::Shot, out: std::path::PathBuf) -> Self {
         // Every scene is seen at the standard render distance.
         self.options.render_distance = config::RENDER_DISTANCE;
+        // The distant terrain scene shows it at the default distance.
+        if shot.name == "m69-distant-terrain" && self.options.distant.distance.is_none() {
+            self.options.distant.distance = Some(crate::lod::DEFAULT_DISTANCE);
+        }
         if shot.name == TEXTURE_VIEWER_SHOT || shot.name == MODS_SHOT {
             // A menu screen: no world.
         } else if self.world_kind.is_none() || shot.world.is_some() {
@@ -1771,27 +1778,38 @@ impl App {
             radius,
         );
         renderer.lod_apply(frame);
-        if let Some(link) = link {
+        let mut link = link;
+        if let Some(link) = link.as_deref_mut() {
             for bytes in std::mem::take(&mut link.lod_tiles) {
                 if let Some(tile) = crate::lod::data::Tile::decode(&bytes) {
                     lod.insert_tile(tile);
                 }
             }
-            let want = lod.outstanding((p.x, p.z));
-            if want != view.asked {
-                view.asked = want.clone();
-                link.send(crate::net::protocol::ClientMsg::LodRequest(want));
-            }
         }
         let underwater = game.eye_in().is_some();
+        let changes = lod.changes();
+        if changes != view.seen || underwater != view.underwater {
+            view.seen = changes;
+            view.underwater = underwater;
+            if underwater {
+                renderer.lod_show(None, []);
+            } else {
+                renderer.lod_show(
+                    Some((radius * crate::config::CHUNK_SIZE as i32) as f32),
+                    lod.visible(),
+                );
+            }
+            if let Some(link) = link {
+                let want = lod.outstanding((p.x, p.z));
+                if want != view.asked {
+                    view.asked = want.clone();
+                    link.send(crate::net::protocol::ClientMsg::LodRequest(want));
+                }
+            }
+        }
         if underwater {
-            renderer.lod_show(None, []);
             game.lod_view = None;
         } else {
-            renderer.lod_show(
-                Some((radius * crate::config::CHUNK_SIZE as i32) as f32),
-                lod.visible(),
-            );
             game.lod_view = Some((distance * crate::config::CHUNK_SIZE as i32) as f32);
         }
     }
@@ -2639,10 +2657,18 @@ impl App {
             game,
         );
         let center = ChunkPos::of_block(x, z);
+        // A scene with distant terrain waits for its tiles too.
+        let lod_settled = self.lod.manager.as_ref().is_none_or(|(_, m)| m.settled());
+        if self.shot.is_some()
+            && !lod_settled
+            && let Some((_, m)) = &self.lod.manager
+        {
+            log::debug!("waiting for distant terrain: {}", m.progress());
+        }
         let mut capturing = false;
         if let Some(run) = self.shot.as_mut() {
             match run.staged {
-                None if game.chunks.settled(center) => {
+                None if game.chunks.settled(center) && lod_settled => {
                     match self.server.as_mut() {
                         Some(server) => (run.shot.stage)(&mut server.game),
                         None => (run.shot.stage)(game),
@@ -2652,7 +2678,11 @@ impl App {
                         self.client_mods.key_pressed("fullbright:toggle");
                     }
                 }
-                Some(frames) if frames >= SHOT_SETTLE_FRAMES && game.chunks.settled(center) => {
+                Some(frames)
+                    if frames >= SHOT_SETTLE_FRAMES
+                        && game.chunks.settled(center)
+                        && lod_settled =>
+                {
                     // Where the light is along the view, for checking the
                     // Trailer look's sun against the levels (M55 Step 0).
                     let eye = game.player.camera.position;

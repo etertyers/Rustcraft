@@ -497,4 +497,22 @@ mod tests {
             }
         }
     }
+
+    /// Prints the highest ground near the origin of seed 12345 (for the
+    /// distant terrain scene): `cargo test --lib find_the_peak -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn find_the_peak() {
+        let terrain = Terrain::new(12345);
+        let mut best = (0, 0, 0);
+        for x in (-1500..1500).step_by(6) {
+            for z in (-1500..1500).step_by(6) {
+                let h = terrain.height(x, z);
+                if h > best.0 {
+                    best = (h, x, z);
+                }
+            }
+        }
+        eprintln!("peak {best:?}");
+    }
 }
