@@ -22,6 +22,8 @@ noise = "0.9.0"
 pollster = "1.0.1"
 ron = "0.12.2"
 serde = { version = "1.0.229", features = ["derive"] }
+# Low-priority threads for distant terrain (M69; already in the lock file).
+libc = "0.2.191"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 thiserror = "2.0.21"
 wgpu = "30.0.1"
@@ -43,7 +45,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 [dev-dependencies]
 criterion = "0.8.2"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
-libc = "0.2.191"
 
 [[bench]]
 name = "world"

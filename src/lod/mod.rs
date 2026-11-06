@@ -11,6 +11,8 @@
 
 pub mod colors;
 pub mod data;
+pub mod manager;
+pub mod mesh;
 pub mod sample;
 pub mod store;
 

@@ -269,28 +269,41 @@ pub fn fast_tile(terrain: &Terrain, colors: &ColorTable, key: TileKey, quality: 
     tile
 }
 
-/// Writes a real chunk's columns into `tile` wherever a sample's cell
-/// middle lies in the chunk. Returns how many samples it replaced.
+/// A chunk's 256 column samples, `z * 16 + x`.
+pub fn chunk_columns(chunk: &Chunk, colors: &ColorTable, quality: Quality) -> Vec<Sample> {
+    (0..CHUNK_SIZE * CHUNK_SIZE)
+        .map(|n| chunk_sample(chunk, colors, n % CHUNK_SIZE, n / CHUNK_SIZE, quality))
+        .collect()
+}
+
+/// Writes a real chunk's columns (from `chunk_columns`) into `tile`
+/// wherever a sample's cell middle lies in the chunk. Returns how many
+/// samples it replaced.
+pub fn patch_from_columns(tile: &mut Tile, pos: ChunkPos, columns: &[Sample]) -> usize {
+    let size = CHUNK_SIZE as i32;
+    let (cx, cz) = pos.min_block();
+    let mut replaced = 0;
+    for j in 0..TILE_SAMPLES {
+        for i in 0..TILE_SAMPLES {
+            let (x, z) = tile.key.sample_block(i, j);
+            if (cx..cx + size).contains(&x) && (cz..cz + size).contains(&z) {
+                let at = (z - cz) as usize * CHUNK_SIZE + (x - cx) as usize;
+                tile.set(i, j, columns[at]);
+                replaced += 1;
+            }
+        }
+    }
+    replaced
+}
+
+/// `patch_from_columns` straight from a chunk.
 pub fn patch_from_chunk(
     tile: &mut Tile,
     chunk: &Chunk,
     colors: &ColorTable,
     quality: Quality,
 ) -> usize {
-    let size = CHUNK_SIZE as i32;
-    let (cx, cz) = chunk.pos.min_block();
-    let mut replaced = 0;
-    for j in 0..TILE_SAMPLES {
-        for i in 0..TILE_SAMPLES {
-            let (x, z) = tile.key.sample_block(i, j);
-            if (cx..cx + size).contains(&x) && (cz..cz + size).contains(&z) {
-                let s = chunk_sample(chunk, colors, (x - cx) as usize, (z - cz) as usize, quality);
-                tile.set(i, j, s);
-                replaced += 1;
-            }
-        }
-    }
-    replaced
+    patch_from_columns(tile, chunk.pos, &chunk_columns(chunk, colors, quality))
 }
 
 /// The tiles, one per level, that a chunk's columns land in (a chunk is
