@@ -18,11 +18,13 @@ use crate::{
 
 /// Bumped whenever a message changes, so mismatched games refuse each
 /// other instead of misreading.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// What a client tells the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
+    /// Distant Terrain (M69): tiles the client wants, nearest first.
+    LodRequest(Vec<crate::lod::data::TileKey>),
     /// The first message: who is joining, and which protocol they speak.
     /// `mods` are the (id, version) of the mods the client has that the
     /// server must have too.
@@ -118,6 +120,8 @@ pub enum ServerMsg {
     },
     /// A chunk out of the player's view.
     Unload(ChunkPos),
+    /// Distant Terrain (M69): one tile, as `Tile::encode` wrote it.
+    LodTile(Vec<u8>),
     /// The player went to another dimension: every chunk is forgotten.
     Dimension(Dimension),
     /// The world after a tick, as the player sees it.

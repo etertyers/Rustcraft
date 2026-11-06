@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use super::colors::ColorTable;
 use super::data::{Material, Sample, Tile, TileKey};
 use super::{Quality, TILE_SAMPLES};
 
@@ -131,7 +132,12 @@ fn uncovered(bottom: i32, top: i32, other: &Sample) -> Vec<(i32, i32)> {
 }
 
 /// Meshes the tile. Slices past `quality`'s count are ignored.
-pub fn build(near: &Neighborhood, hole: Option<Hole>, quality: Quality) -> LodMesh {
+pub fn build(
+    near: &Neighborhood,
+    hole: Option<Hole>,
+    quality: Quality,
+    colors: &ColorTable,
+) -> LodMesh {
     let key = near.tile.key;
     let step = key.step();
     let s = step as f32;
@@ -150,6 +156,7 @@ pub fn build(near: &Neighborhood, hole: Option<Hole>, quality: Quality) -> LodMe
             let (fx, fz) = (x0 as f32, z0 as f32);
             let kept = &sample.slices()[..sample.slices().len().min(quality.slices())];
             for slice in kept {
+                let color = colors.slice_color(slice);
                 let top = f32::from(slice.top) + 1.0;
                 let light = slice.light;
                 mesh.quad(
@@ -159,7 +166,7 @@ pub fn build(near: &Neighborhood, hole: Option<Hole>, quality: Quality) -> LodMe
                         [fx + s, top, fz + s],
                         [fx + s, top, fz],
                     ],
-                    slice.color,
+                    color,
                     FACE_TOP,
                     light,
                 );
@@ -178,7 +185,7 @@ pub fn build(near: &Neighborhood, hole: Option<Hole>, quality: Quality) -> LodMe
                         // Wall rows below the sample's own bottom for the
                         // ground slice are unbounded: cap at a few cells.
                         let lo = lo.max(hi - 255);
-                        wall(&mut mesh, dir, (fx, fz), s, lo, hi, slice.color, light);
+                        wall(&mut mesh, dir, (fx, fz), s, lo, hi, color, light);
                     }
                 }
             }
@@ -258,7 +265,9 @@ mod tests {
                 s.push(Slice {
                     top: height,
                     bottom: -64,
-                    color: [10, 200, 30],
+                    block: 1,
+                    biome: 1,
+                    blend: 0,
                     material: Material::Ground,
                     light: 15,
                 });
@@ -266,6 +275,10 @@ mod tests {
             }
         }
         tile
+    }
+
+    fn table() -> ColorTable {
+        ColorTable::new(None, crate::world::biome::BiomeColors::uniform())
     }
 
     fn alone(tile: Tile) -> Neighborhood {
@@ -277,7 +290,12 @@ mod tests {
 
     #[test]
     fn a_flat_tile_is_one_top_quad_per_sample_and_no_walls() {
-        let mesh = build(&alone(flat(TileKey::new(1, 0, 0), 70)), None, Quality::High);
+        let mesh = build(
+            &alone(flat(TileKey::new(1, 0, 0), 70)),
+            None,
+            Quality::High,
+            &table(),
+        );
         assert_eq!(mesh.tops, TILE_SAMPLES * TILE_SAMPLES);
         assert_eq!(mesh.triangles(), 2 * TILE_SAMPLES * TILE_SAMPLES);
     }
@@ -288,7 +306,7 @@ mod tests {
         let mut low = *tile.get(5, 5);
         low.slices[0].top = 66;
         tile.set(5, 5, low);
-        let mesh = build(&alone(tile), None, Quality::High);
+        let mesh = build(&alone(tile), None, Quality::High, &table());
         // Four higher neighbors each show 4 blocks of wall (67..=70).
         let walls = mesh
             .vertices
@@ -306,7 +324,7 @@ mod tests {
             min: (10, 10),
             max: (40, 40),
         };
-        let mesh = build(&alone(flat(key, 70)), Some(hole), Quality::High);
+        let mesh = build(&alone(flat(key, 70)), Some(hole), Quality::High, &table());
         let mut covered = 0;
         for j in 0..TILE_SAMPLES {
             for i in 0..TILE_SAMPLES {
@@ -340,7 +358,9 @@ mod tests {
                     s.push(Slice {
                         top: 80 + k,
                         bottom: 75,
-                        color: [1, 2, 3],
+                        block: 1,
+                        biome: 1,
+                        blend: 0,
                         material: Material::Leaves,
                         light: 15,
                     });
@@ -349,8 +369,8 @@ mod tests {
             }
         }
         let n = alone(tile);
-        assert_eq!(build(&n, None, Quality::Low).tops, 2 * 1024);
-        assert_eq!(build(&n, None, Quality::High).tops, 3 * 1024);
+        assert_eq!(build(&n, None, Quality::Low, &table()).tops, 2 * 1024);
+        assert_eq!(build(&n, None, Quality::High, &table()).tops, 3 * 1024);
     }
 
     #[test]
@@ -361,7 +381,7 @@ mod tests {
             tile: Arc::new(flat(key, 70)),
             around: [None, Some(Arc::new(east)), None, None],
         };
-        let mesh = build(&hood, None, Quality::High);
+        let mesh = build(&hood, None, Quality::High, &table());
         let east_walls = mesh
             .vertices
             .iter()

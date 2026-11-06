@@ -11,6 +11,7 @@
 
 pub mod colors;
 pub mod data;
+pub mod maker;
 pub mod manager;
 pub mod mesh;
 pub mod sample;
@@ -32,6 +33,8 @@ pub const MAX_DISTANCE: i32 = 512;
 pub const DEFAULT_DISTANCE: i32 = 128;
 /// Disk cap per world, in bytes (oldest-used removed first).
 pub const DEFAULT_DISK_CAP: u64 = 1 << 30;
+/// Disk cap for the tiles a client of another player's world keeps.
+pub const CLIENT_CACHE_CAP: u64 = 512 << 20;
 /// Memory cap for the LOD data kept in RAM, in bytes.
 pub const MEMORY_CAP: u64 = 1 << 30;
 
@@ -97,5 +100,71 @@ mod tests {
         assert_eq!(level_for(300.0, 144.0, q), 2);
         assert_eq!(level_for(1e9, 144.0, q), MAX_LEVEL);
         assert_eq!(level_for(10.0, 144.0, Quality::High), 0);
+    }
+}
+
+/// Options → Video Settings → Distant Terrain.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct DistantTerrain {
+    /// Chunks of LOD distance: 0 is Off, `None` follows the style
+    /// (`DEFAULT_DISTANCE` in Barebones and Realistic, Off in Vanilla).
+    pub distance: Option<i32>,
+    pub quality: Quality,
+    /// Generation threads; 0 is Auto (cores − 2).
+    pub threads: usize,
+}
+
+impl Default for DistantTerrain {
+    fn default() -> Self {
+        Self {
+            distance: None,
+            quality: Quality::Medium,
+            threads: 0,
+        }
+    }
+}
+
+/// Whether the style default turns Distant Terrain on. It stays off until
+/// M69's budgets pass on the target machine.
+pub const ON_BY_DEFAULT: bool = false;
+
+impl DistantTerrain {
+    /// The distance in chunks to use: 0 for Off.
+    pub fn effective(&self, vanilla_style: bool) -> i32 {
+        match self.distance {
+            Some(0) => 0,
+            Some(d) => d.clamp(MIN_DISTANCE, MAX_DISTANCE),
+            None if ON_BY_DEFAULT && !vanilla_style => DEFAULT_DISTANCE,
+            None => 0,
+        }
+    }
+
+    /// The manager's settings for this choice.
+    pub fn settings(&self, distance: i32) -> manager::LodSettings {
+        manager::LodSettings {
+            distance,
+            quality: self.quality,
+            threads: self.threads,
+        }
+    }
+}
+
+#[cfg(test)]
+mod options_tests {
+    use super::*;
+
+    #[test]
+    fn the_style_default_applies_until_the_player_chooses() {
+        let mut d = DistantTerrain::default();
+        assert_eq!(d.effective(true), 0);
+        d.distance = Some(256);
+        assert_eq!(d.effective(true), 256);
+        d.distance = Some(0);
+        assert_eq!(d.effective(false), 0);
+        d.distance = Some(5000);
+        assert_eq!(d.effective(false), MAX_DISTANCE);
+        d.distance = Some(3);
+        assert_eq!(d.effective(false), MIN_DISTANCE);
     }
 }

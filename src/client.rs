@@ -55,6 +55,8 @@ pub struct Client {
     /// Jukebox songs the server started (`Some(disc)`) or stopped, in order
     /// (the audio engine takes its own copy).
     pub records: Vec<(glam::IVec3, Option<String>)>,
+    /// Distant Terrain tiles that arrived (M69), for the LOD manager.
+    pub lod_tiles: Vec<Vec<u8>>,
 }
 
 impl Client {
@@ -80,6 +82,7 @@ impl Client {
             players: Vec::new(),
             corrections: 0,
             records: Vec::new(),
+            lod_tiles: Vec::new(),
         }
     }
 
@@ -131,6 +134,7 @@ impl Client {
                     self.gone = Some(reason);
                 }
                 ServerMsg::Chunk(chunk) => game.chunks.receive(chunk),
+                ServerMsg::LodTile(bytes) => self.lod_tiles.push(bytes),
                 ServerMsg::Blocks { edits, urgent } => {
                     if urgent {
                         game.chunks.set_blocks(&edits);

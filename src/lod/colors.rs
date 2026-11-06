@@ -96,7 +96,24 @@ impl ColorTable {
         [0, 1, 2].map(|c| (f32::from(base[c]) * tint[c]).round().clamp(0.0, 255.0) as u8)
     }
 
-    /// The water color of a biome as drawn, for the fast path.
+    /// A slice as drawn: its block's color in its biome, with the foliage
+    /// share mixed in.
+    pub fn slice_color(&self, slice: &super::data::Slice) -> [u8; 3] {
+        let biome = Biome::ALL
+            .get(usize::from(slice.biome))
+            .copied()
+            .unwrap_or_default();
+        let block = BlockState::of(BlockId(slice.block));
+        let base = self.color(block, biome);
+        if slice.blend == 0 {
+            return base;
+        }
+        let leaf = self.foliage(biome);
+        let t = f32::from(slice.blend) / 255.0;
+        [0, 1, 2].map(|i| (f32::from(base[i]) * (1.0 - t) + f32::from(leaf[i]) * t).round() as u8)
+    }
+
+    /// The water color of a biome as drawn.
     pub fn water(&self, biome: Biome) -> [u8; 3] {
         self.color(BlockState::of(blocks::WATER), biome)
     }

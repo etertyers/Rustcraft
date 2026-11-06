@@ -31,7 +31,12 @@ impl Material {
 pub struct Slice {
     pub top: i16,
     pub bottom: i16,
-    pub color: [u8; 3],
+    /// The block's id: the client works the color out from its own packs.
+    pub block: u16,
+    pub biome: u8,
+    /// How much (0–255) of the biome's foliage color is mixed in: coarse
+    /// samples of forest show leaf-green ground.
+    pub blend: u8,
     pub material: Material,
     /// Sky light at the top, 0–15.
     pub light: u8,
@@ -41,7 +46,9 @@ impl Slice {
     pub const EMPTY: Slice = Slice {
         top: 0,
         bottom: 0,
-        color: [0; 3],
+        block: 0,
+        biome: 0,
+        blend: 0,
         material: Material::Ground,
         light: 15,
     };
@@ -87,7 +94,9 @@ impl Sample {
 
 /// A tile's place: level `level` (1 << level blocks per sample), and
 /// tile coordinates in units of `TILE_SAMPLES << level` blocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct TileKey {
     pub level: u8,
     pub tx: i32,
@@ -187,7 +196,9 @@ impl Tile {
             for sl in s.slices() {
                 raw.extend(sl.top.to_le_bytes());
                 raw.extend(sl.bottom.to_le_bytes());
-                raw.extend(sl.color);
+                raw.extend(sl.block.to_le_bytes());
+                raw.push(sl.biome);
+                raw.push(sl.blend);
                 raw.push((sl.material as u8) | (sl.light << 4));
             }
         }
@@ -218,13 +229,15 @@ impl Tile {
             }
             s.real = head & 0x80 != 0;
             for _ in 0..count {
-                let b = take(8)?;
+                let b = take(9)?;
                 s.push(Slice {
                     top: i16::from_le_bytes([b[0], b[1]]),
                     bottom: i16::from_le_bytes([b[2], b[3]]),
-                    color: [b[4], b[5], b[6]],
-                    material: Material::from_u8(b[7] & 0x0F)?,
-                    light: b[7] >> 4,
+                    block: u16::from_le_bytes([b[4], b[5]]),
+                    biome: b[6],
+                    blend: b[7],
+                    material: Material::from_u8(b[8] & 0x0F)?,
+                    light: b[8] >> 4,
                 });
             }
         }
@@ -245,7 +258,9 @@ pub(crate) mod tests {
                 s.push(Slice {
                     top: (60 + i + j) as i16,
                     bottom: -64,
-                    color: [i as u8, j as u8, 7],
+                    block: (i * 7 + j) as u16,
+                    biome: 3,
+                    blend: 0,
                     material: Material::Ground,
                     light: 15,
                 });
@@ -253,7 +268,9 @@ pub(crate) mod tests {
                     s.push(Slice {
                         top: 63,
                         bottom: ((61 + i) % 63) as i16,
-                        color: [10, 20, 200],
+                        block: 99,
+                        biome: 4,
+                        blend: 17,
                         material: Material::Water,
                         light: 9,
                     });

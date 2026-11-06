@@ -118,6 +118,16 @@ const JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Wait before retrying after the surface skipped a frame, instead of spinning.
 const SKIPPED_FRAME_RETRY: Duration = Duration::from_millis(50);
 
+/// Distant terrain as the window keeps it (M69): the manager for the open
+/// world and the seed it was made for, the block colors of the current look
+/// and the tiles last asked of the server.
+#[derive(Default)]
+struct LodView {
+    manager: Option<(u64, crate::lod::manager::LodManager)>,
+    colors: Option<Arc<crate::lod::colors::ColorTable>>,
+    asked: Vec<crate::lod::data::TileKey>,
+}
+
 pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -149,6 +159,9 @@ pub struct App {
     effect_uvs: EffectUvs,
     /// The block and item atlas, for playing its animations.
     atlas: Option<Atlas>,
+    /// Distant terrain (M69): the manager for the open world, the seed it
+    /// was made for, and the block colors of the current look.
+    lod: LodView,
     /// Display transforms and sprites of the item models.
     item_models: Option<Arc<ItemModels>>,
     /// Geometry of items in hand, built from the atlas.
@@ -408,6 +421,7 @@ impl App {
             live: Default::default(),
             sound_on: Default::default(),
             pending_look: None,
+            lod: LodView::default(),
             animation_start: Instant::now(),
             catalog: Vec::new(),
             tab_views: Vec::new(),
@@ -485,6 +499,22 @@ impl App {
             self.options.render_distance = distance;
         }
         self.options.extras.force = bench.as_ref().and_then(|b| b.extras);
+        // RUSTCRAFT_DISTANT=<chunks>|off, RUSTCRAFT_DISTANT_QUALITY=low|medium|high:
+        // Distant Terrain for this run only (measuring aids, like
+        // RUSTCRAFT_RENDER_SCALE).
+        if let Ok(text) = std::env::var("RUSTCRAFT_DISTANT") {
+            self.options.distant.distance = match text.trim() {
+                "off" => Some(0),
+                n => n.parse().ok(),
+            };
+        }
+        if let Ok(text) = std::env::var("RUSTCRAFT_DISTANT_QUALITY") {
+            self.options.distant.quality = match text.trim().to_lowercase().as_str() {
+                "low" => crate::lod::Quality::Low,
+                "high" => crate::lod::Quality::High,
+                _ => crate::lod::Quality::Medium,
+            };
+        }
         self.bench = bench;
         self
     }
@@ -1661,6 +1691,111 @@ impl App {
         self.apply_grab();
     }
 
+    /// Distant terrain (M69): makes, updates or drops the manager and hands
+    /// its meshes to the renderer.
+    fn update_lod(
+        options: &Options,
+        view: &mut LodView,
+        link: Option<&mut crate::client::Client>,
+        in_process: bool,
+        game: &mut Game,
+        renderer: &mut Renderer,
+        loaded: &[ChunkPos],
+    ) {
+        use crate::world::dimension::Dimension;
+        let style = options.visuals.style;
+        let vanilla = style == crate::render::visuals::Style::Vanilla;
+        let distance = options.distant.effective(vanilla);
+        let seed = link.as_ref().and_then(|l| l.seed);
+        let wanted = distance > 0
+            && game.dimension() == Dimension::Overworld
+            && seed.is_some()
+            && view.colors.is_some();
+        if !wanted {
+            if let Some((_, mut lod)) = view.manager.take() {
+                lod.flush();
+                lod.clear();
+            }
+            renderer.lod_clear();
+            game.lod_view = None;
+            return;
+        }
+        let (seed, colors) = (seed.unwrap_or(0), view.colors.clone());
+        let settings = options.distant.settings(distance);
+        if view.manager.as_ref().is_some_and(|(s, _)| *s != seed) {
+            view.manager = None;
+            renderer.lod_clear();
+        }
+        if view.manager.is_none() {
+            // The built-in server keeps the world's tiles; a client of its own
+            // caches only what a LAN server sent.
+            let dir = game
+                .world_dir_for_packs
+                .clone()
+                .unwrap_or_else(|| std::env::temp_dir().join("rustcraft-unsaved"))
+                .join("lod-cache");
+            let store = crate::lod::store::LodStore::open(&dir, crate::lod::CLIENT_CACHE_CAP)
+                .map(|s| if in_process { s.memory_only() } else { s });
+            match (store, colors) {
+                (Ok(store), Some(colors)) => {
+                    info!(
+                        "distant terrain: {distance} chunks, {} threads, in {}",
+                        settings.worker_count(),
+                        dir.display()
+                    );
+                    view.manager = Some((
+                        seed,
+                        crate::lod::manager::LodManager::new(settings, colors, store),
+                    ));
+                }
+                (Err(err), _) => warn!("distant terrain: can't open {}: {err}", dir.display()),
+                _ => {}
+            }
+        }
+        let Some((_, lod)) = view.manager.as_mut() else {
+            return;
+        };
+        if lod.settings() != settings {
+            lod.set_settings(settings);
+        }
+        for pos in loaded {
+            if let Some(chunk) = game.chunks.world().get(*pos) {
+                lod.observe(chunk.clone());
+            }
+        }
+        let p = game.player.camera.position;
+        let radius = game.chunks.radius();
+        let frame = lod.update(
+            (p.x, p.z),
+            ChunkPos::of_block(p.x.floor() as i32, p.z.floor() as i32),
+            radius,
+        );
+        renderer.lod_apply(frame);
+        if let Some(link) = link {
+            for bytes in std::mem::take(&mut link.lod_tiles) {
+                if let Some(tile) = crate::lod::data::Tile::decode(&bytes) {
+                    lod.insert_tile(tile);
+                }
+            }
+            let want = lod.outstanding((p.x, p.z));
+            if want != view.asked {
+                view.asked = want.clone();
+                link.send(crate::net::protocol::ClientMsg::LodRequest(want));
+            }
+        }
+        let underwater = game.eye_in().is_some();
+        if underwater {
+            renderer.lod_show(None, []);
+            game.lod_view = None;
+        } else {
+            renderer.lod_show(
+                Some((radius * crate::config::CHUNK_SIZE as i32) as f32),
+                lod.visible(),
+            );
+            game.lod_view = Some((distance * crate::config::CHUNK_SIZE as i32) as f32);
+        }
+    }
+
     /// Keeps a newly built look's models, icons and atlas.
     fn install_look(&mut self, look: Look) {
         if let Some(items) = &self.items {
@@ -1688,6 +1823,7 @@ impl App {
         crate::cem::install(look.cem);
         self.icons = Some(Arc::new(look.icons));
         self.models = Some(look.models);
+        self.lod.colors = Some(look.lod_colors.clone());
         self.crack_uvs = look.crack_uvs;
         self.effect_uvs = look.effect_uvs;
         self.fx_uvs = look.fx_uvs.clone();
@@ -2469,6 +2605,15 @@ impl App {
         for pos in changes.unloaded {
             renderer.remove_chunk(pos);
         }
+        Self::update_lod(
+            &self.options,
+            &mut self.lod,
+            self.link.as_mut(),
+            self.server.is_some(),
+            game,
+            renderer,
+            &changes.loaded,
+        );
         let uploaded = Instant::now();
         Self::tick_splashes(&self.options, &mut self.splashes, game);
         crate::extras::set_player_animations(self.options.extras.enabled(

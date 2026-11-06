@@ -43,6 +43,8 @@ pub struct LodStore {
     order: Vec<RegionKey>,
     dirty: HashSet<RegionKey>,
     touched: HashSet<RegionKey>,
+    /// A store that keeps nothing (the built-in server's own client).
+    off: bool,
 }
 
 impl LodStore {
@@ -55,11 +57,18 @@ impl LodStore {
             order: Vec::new(),
             dirty: HashSet::new(),
             touched: HashSet::new(),
+            off: false,
         })
     }
 
     fn path(&self, region: RegionKey) -> PathBuf {
         region_path(&self.dir, region)
+    }
+
+    /// This store reads and writes nothing.
+    pub fn memory_only(mut self) -> Self {
+        self.off = true;
+        self
     }
 
     pub fn set_cap(&mut self, cap: u64) {
@@ -88,6 +97,9 @@ impl LodStore {
 
     /// The tile saved for `key`, if any (and not damaged).
     pub fn get(&mut self, key: TileKey) -> Option<Tile> {
+        if self.off {
+            return None;
+        }
         let region = region_of(key);
         let tile = self
             .load(region)
@@ -98,11 +110,17 @@ impl LodStore {
     }
 
     pub fn contains(&mut self, key: TileKey) -> bool {
+        if self.off {
+            return false;
+        }
         let region = region_of(key);
         self.load(region).contains_key(&(key.tx, key.tz))
     }
 
     pub fn put(&mut self, tile: &Tile) {
+        if self.off {
+            return;
+        }
         let region = region_of(tile.key);
         let bytes = tile.encode();
         self.load(region).insert((tile.key.tx, tile.key.tz), bytes);

@@ -11,6 +11,7 @@ pub mod hand;
 pub mod held;
 pub mod icons;
 pub mod lightmap;
+pub mod lod;
 pub mod models;
 mod outline;
 pub mod player;
@@ -314,6 +315,10 @@ pub struct Renderer {
     entities: Option<ChunkBuffers>,
     /// Chunks that passed frustum culling in the last frame.
     chunks_drawn: usize,
+    /// Distant terrain (M69) and whether it is drawn this frame.
+    lod: lod::LodDraw,
+    lod_edge: Option<f32>,
+    lod_drawn: std::cell::Cell<(usize, u64)>,
     outline: Outline,
     egui_renderer: egui_wgpu::Renderer,
     /// How long making the Trailer look's pipelines took at startup.
@@ -334,6 +339,8 @@ struct Pipelines {
     crack: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     clouds: wgpu::RenderPipeline,
+    /// Distant terrain.
+    lod: wgpu::RenderPipeline,
     /// Binds the face buffer (slot 1) with each mesh.
     faces: bool,
 }
@@ -347,6 +354,9 @@ struct Layouts {
     /// (group 3).
     trailer_blocks: wgpu::PipelineLayout,
     shadow: visuals::shadow::ShadowPipeline,
+    /// Distant terrain: globals, then its own small uniform.
+    lod_uniform: wgpu::BindGroupLayout,
+    lod: wgpu::PipelineLayout,
 }
 
 impl Pipelines {
@@ -404,6 +414,7 @@ impl Pipelines {
                 format,
                 faces,
             ),
+            lod: create_lod_pipeline(device, &layouts.lod, &shaders.lod, format),
             faces,
         }
     }
@@ -417,6 +428,7 @@ struct Shaders {
     trailer_clouds: wgpu::ShaderModule,
     sky: wgpu::ShaderModule,
     clouds: wgpu::ShaderModule,
+    lod: wgpu::ShaderModule,
 }
 
 impl Shaders {
@@ -428,6 +440,7 @@ impl Shaders {
             trailer_clouds: trailer_shader!(device, "trailer_clouds.wgsl"),
             sky: world_shader!(device, "sky.wgsl"),
             clouds: world_shader!(device, "clouds.wgsl"),
+            lod: world_shader!(device, "lod.wgsl"),
         }
     }
 }
@@ -453,12 +466,20 @@ impl Layouts {
             ],
             immediate_size: 0,
         });
+        let lod_uniform = lod::LodDraw::layout(device);
+        let lod = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("lod"),
+            bind_group_layouts: &[Some(&globals), Some(&lod_uniform)],
+            immediate_size: 0,
+        });
         Self {
             globals,
             texture,
             blocks,
             trailer_blocks,
             shadow,
+            lod_uniform,
+            lod,
         }
     }
 }
@@ -653,6 +674,7 @@ impl Renderer {
                 depth: &scene.depth_view,
             },
         );
+        let lod = lod::LodDraw::new(&device, &layouts.lod_uniform);
         Ok(Self {
             surface,
             offscreen_fallback: false,
@@ -720,6 +742,9 @@ impl Renderer {
             chunks: FastMap::default(),
             entities: None,
             chunks_drawn: 0,
+            lod,
+            lod_edge: None,
+            lod_drawn: std::cell::Cell::new((0, 0)),
             outline,
             egui_renderer,
             trailer_startup,
@@ -1060,6 +1085,39 @@ impl Renderer {
     /// Outlines `block`'s boxes from the next frame on, or nothing.
     pub fn set_outline(&mut self, target: Option<(IVec3, Vec<crate::world::shape::Cuboid>)>) {
         self.outline.set_target(target);
+    }
+
+    /// Distant terrain: new meshes and dropped tiles from the manager.
+    pub fn lod_apply(&mut self, frame: crate::lod::manager::Frame) {
+        for key in frame.removed {
+            self.lod.remove(key);
+        }
+        for (key, mesh) in &frame.uploads {
+            self.lod.upload(&self.device, *key, mesh);
+        }
+    }
+
+    /// Which tiles to draw, and the loaded edge (blocks), or `None` to
+    /// draw no distant terrain.
+    pub fn lod_show(
+        &mut self,
+        edge: Option<f32>,
+        visible: impl IntoIterator<Item = crate::lod::data::TileKey>,
+    ) {
+        self.lod_edge = edge;
+        if edge.is_some() {
+            self.lod.set_visible(visible);
+        }
+    }
+
+    pub fn lod_clear(&mut self) {
+        self.lod.clear();
+        self.lod_edge = None;
+    }
+
+    /// Tiles and triangles of distant terrain drawn last frame.
+    pub fn lod_drawn(&self) -> (usize, u64) {
+        self.lod_drawn.get()
     }
 
     pub fn remove_chunk(&mut self, pos: ChunkPos) {
@@ -1723,6 +1781,14 @@ impl Renderer {
         // things, where it shades only what they leave uncovered.
         if !faces {
             self.draw_sky(&mut pass, set);
+        }
+        // Distant terrain, under the loaded chunks (M69).
+        if let Some(edge) = self.lod_edge
+            && !self.lod.is_empty()
+        {
+            self.lod.write_uniform(&self.queue, edge);
+            pass.set_pipeline(&set.lod);
+            self.lod_drawn.set(self.lod.draw(&mut pass, frustum));
         }
         pass.set_pipeline(&set.blocks);
         pass.set_bind_group(1, &self.atlas_bind_group, &[]);
@@ -2439,6 +2505,46 @@ fn create_block_pipeline_entry(
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// Distant terrain: opaque, drawn from both sides.
+fn create_lod_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("distant terrain"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[Some(lod::LodDraw::vertex_layout())],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),

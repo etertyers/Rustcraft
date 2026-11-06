@@ -51,19 +51,8 @@ fn hash(x: i32, z: i32, salt: u64) -> f32 {
     (h >> 40) as f32 / (1u64 << 24) as f32
 }
 
-fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    [0, 1, 2].map(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8)
-}
-
 /// One column from the terrain alone.
-pub fn fast_sample(
-    terrain: &Terrain,
-    colors: &ColorTable,
-    x: i32,
-    z: i32,
-    step: i32,
-    quality: Quality,
-) -> Sample {
+pub fn fast_sample(terrain: &Terrain, x: i32, z: i32, step: i32, quality: Quality) -> Sample {
     let (height, biome, top) = terrain.lod_surface(x, z);
     let mut sample = Sample::EMPTY;
     let pool = top.id() == blocks::WATER;
@@ -72,31 +61,39 @@ pub fn fast_sample(
     } else {
         top
     };
-    let mut ground_color = colors.color(ground, biome);
     let (cover, tree_height) = canopy(biome);
     let grassy = matches!(top.id(), blocks::GRASS_BLOCK | blocks::PODZOL);
     let treed = grassy && height >= SEA_LEVEL && cover > 0.0;
-    // Coarse samples are too big for single trees: tint the ground instead.
-    if treed && step >= 8 {
-        ground_color = mix(ground_color, colors.foliage(biome), cover * 0.7);
-    }
+    // Coarse samples are too big for single trees: tint the ground with
+    // leaf green instead.
+    let blend = if treed && step >= 8 {
+        (cover * 0.7 * 255.0) as u8
+    } else {
+        0
+    };
+    let bi = biome.index() as u8;
     sample.push(Slice {
         top: height as i16,
         bottom: MIN_Y as i16,
-        color: ground_color,
+        block: ground.id().index() as u16,
+        biome: bi,
+        blend,
         material: Material::Ground,
         light: 15,
     });
     if height < SEA_LEVEL || pool {
+        // Frozen oceans are ice at the surface, as real chunks are.
+        let surface = if matches!(biome, Biome::FrozenOcean | Biome::DeepFrozenOcean) {
+            blocks::ICE
+        } else {
+            blocks::WATER
+        };
         sample.push(Slice {
             top: SEA_LEVEL as i16,
             bottom: (height + 1).min(SEA_LEVEL) as i16,
-            // Frozen oceans are ice at the surface, as real chunks are.
-            color: if matches!(biome, Biome::FrozenOcean | Biome::DeepFrozenOcean) {
-                colors.color(BlockState::of(blocks::ICE), biome)
-            } else {
-                colors.water(biome)
-            },
+            block: surface.index() as u16,
+            biome: bi,
+            blend: 0,
             material: Material::Water,
             light: 15,
         });
@@ -105,7 +102,9 @@ pub fn fast_sample(
         sample.push(Slice {
             top: (height + tree_height + jitter) as i16,
             bottom: (height + 3) as i16,
-            color: colors.foliage(biome),
+            block: blocks::OAK_LEAVES.index() as u16,
+            biome: bi,
+            blend: 0,
             material: Material::Leaves,
             light: 15,
         });
@@ -138,7 +137,7 @@ pub fn scan_column(
     let mut cover: Option<Slice> = None;
     match class(y) {
         Class::Water => {
-            let color = colors.color(get(y), biome);
+            let block = get(y).id().index() as u16;
             let water_top = y;
             while y >= MIN_Y && matches!(class(y), Class::Water | Class::Skip) {
                 y -= 1;
@@ -146,7 +145,9 @@ pub fn scan_column(
             cover = Some(Slice {
                 top: water_top as i16,
                 bottom: (y + 1) as i16,
-                color,
+                block,
+                biome: biome.index() as u8,
+                blend: 0,
                 material: Material::Water,
                 light: 15,
             });
@@ -154,7 +155,7 @@ pub fn scan_column(
         Class::Leaves => {
             let canopy_top = y;
             let mut lowest = y;
-            let color = colors.color(get(y), biome);
+            let block = get(y).id().index() as u16;
             while y >= MIN_Y && matches!(class(y), Class::Leaves | Class::Log | Class::Skip) {
                 if class(y) == Class::Leaves {
                     lowest = y;
@@ -164,7 +165,9 @@ pub fn scan_column(
             cover = Some(Slice {
                 top: canopy_top as i16,
                 bottom: lowest as i16,
-                color,
+                block,
+                biome: biome.index() as u8,
+                blend: 0,
                 material: Material::Leaves,
                 light: 15,
             });
@@ -180,7 +183,9 @@ pub fn scan_column(
     sample.push(Slice {
         top: ground_y as i16,
         bottom: MIN_Y as i16,
-        color: colors.color(get(ground_y), biome),
+        block: get(ground_y).id().index() as u16,
+        biome: biome.index() as u8,
+        blend: 0,
         material: Material::Ground,
         light: 15,
     });
@@ -225,12 +230,14 @@ fn add_overhang(
     let overhang = Slice {
         top: top as i16,
         bottom: run_bottom as i16,
-        color: colors.color(get(top), biome),
+        block: get(top).id().index() as u16,
+        biome: biome.index() as u8,
+        blend: 0,
         material: Material::Overhang,
         light: 15,
     };
     sample.slices[0].top = y as i16;
-    sample.slices[0].color = colors.color(get(y), biome);
+    sample.slices[0].block = get(y).id().index() as u16;
     sample.push(overhang);
     sample
 }
@@ -254,16 +261,12 @@ pub fn chunk_sample(
 }
 
 /// A whole tile from the terrain's fast path.
-pub fn fast_tile(terrain: &Terrain, colors: &ColorTable, key: TileKey, quality: Quality) -> Tile {
+pub fn fast_tile(terrain: &Terrain, key: TileKey, quality: Quality) -> Tile {
     let mut tile = Tile::empty(key);
     for j in 0..TILE_SAMPLES {
         for i in 0..TILE_SAMPLES {
             let (x, z) = key.sample_block(i, j);
-            tile.set(
-                i,
-                j,
-                fast_sample(terrain, colors, x, z, key.step(), quality),
-            );
+            tile.set(i, j, fast_sample(terrain, x, z, key.step(), quality));
         }
     }
     tile
@@ -398,7 +401,7 @@ mod tests {
                 for lx in 0..CHUNK_SIZE {
                     let (x, z) = (cx + lx as i32, cz + lz as i32);
                     let real = chunk_sample(chunk, &colors, lx, lz, Quality::Medium);
-                    let fast = fast_sample(&terrain, &colors, x, z, 1, Quality::Medium);
+                    let fast = fast_sample(&terrain, x, z, 1, Quality::Medium);
                     let (r, f) = (surface_top(&real).unwrap(), surface_top(&fast).unwrap());
                     n += 1;
                     if r == f {
@@ -424,7 +427,7 @@ mod tests {
         let (mut close, mut n) = (0, 0);
         for chunk in &chunks {
             let (cx, cz) = chunk.pos.min_block();
-            let mid = fast_sample(&terrain, &colors, cx + 8, cz + 8, 16, Quality::Medium);
+            let mid = fast_sample(&terrain, cx + 8, cz + 8, 16, Quality::Medium);
             let m = surface_top(&mid).unwrap();
             for lz in 0..CHUNK_SIZE {
                 for lx in 0..CHUNK_SIZE {
@@ -439,13 +442,12 @@ mod tests {
 
     #[test]
     fn water_fills_to_sea_level_and_canopy_stands_above_the_ground() {
-        let colors = table();
         let (terrain, _) = chunks();
         let mut water = 0;
         let mut canopy = 0;
         for x in (-600..600).step_by(7) {
             for z in (-600..600).step_by(7) {
-                let s = fast_sample(&terrain, &colors, x, z, 1, Quality::High);
+                let s = fast_sample(&terrain, x, z, 1, Quality::High);
                 let ground = s.slices()[0];
                 for sl in &s.slices()[1..] {
                     match sl.material {
@@ -476,7 +478,7 @@ mod tests {
         for level in 0..=3u8 {
             let (cx, cz) = chunk.pos.min_block();
             let key = TileKey::containing(level, cx, cz);
-            let mut tile = fast_tile(&terrain, &colors, key, Quality::Medium);
+            let mut tile = fast_tile(&terrain, key, Quality::Medium);
             let before = tile.clone();
             let n = patch_from_chunk(&mut tile, chunk, &colors, Quality::Medium);
             let per_side = (CHUNK_SIZE as i32 / key.step()).max(1) as usize;

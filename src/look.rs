@@ -158,6 +158,8 @@ pub struct Look {
     pub effect_uvs: EffectUvs,
     /// Where the extras' particle sprites are in the atlas.
     pub fx_uvs: crate::extras::fx::FxUvs,
+    /// Block colors for distant terrain (M69).
+    pub lod_colors: Arc<crate::lod::colors::ColorTable>,
 }
 
 /// Opens the packs named in `ids` (highest priority first) from `dir`;
@@ -264,6 +266,10 @@ impl Look {
             warn!("{err:#}; using default biome colors");
             BiomeColors::uniform()
         });
+        let lod_colors = Arc::new(crate::lod::colors::ColorTable::new(
+            Some(&atlas),
+            colors.clone(),
+        ));
         let models = Arc::new(
             BlockModels::with_packs(
                 blocks,
@@ -376,6 +382,7 @@ impl Look {
             crack_uvs,
             effect_uvs,
             fx_uvs,
+            lod_colors,
         })
     }
 

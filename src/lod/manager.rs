@@ -10,17 +10,16 @@ use crossbeam_channel::{Receiver, Sender};
 use super::colors::ColorTable;
 use super::data::{Sample, Tile, TileKey};
 use super::mesh::{self, Hole, LodMesh, Neighborhood};
-use super::sample::{chunk_columns, fast_tile, patch_from_columns};
+use super::sample::{chunk_columns, patch_from_columns};
 use super::store::LodStore;
 use super::{CHUNK_BLOCKS, MAX_LEVEL, Quality, level_for};
 use crate::world::chunk::{Chunk, ChunkPos};
-use crate::world::worldgen::terrain::Terrain;
 
 /// Chunks overlap the LOD by this many chunks inside the loaded edge, so
 /// the seam is covered by real terrain drawn over it.
 pub const OVERLAP_CHUNKS: i32 = 2;
-/// Most real chunks' columns kept to fill tiles made later.
-const COLUMN_CAP: usize = 6000;
+/// Tiles asked of the server and not yet answered, at most.
+const MAX_ASKED: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LodSettings {
@@ -43,10 +42,7 @@ impl LodSettings {
     }
 }
 
-type Columns = Arc<Mutex<HashMap<ChunkPos, Arc<Vec<Sample>>>>>;
-
 enum Job {
-    Make(TileKey),
     Mesh {
         key: TileKey,
         epoch: u64,
@@ -58,7 +54,6 @@ enum Job {
 }
 
 enum Done {
-    Tile(Tile, bool),
     Mesh {
         key: TileKey,
         epoch: u64,
@@ -96,14 +91,12 @@ pub struct Stats {
     pub triangles: usize,
     pub memory: u64,
     pub in_flight: usize,
-    pub made: u64,
     pub loaded_from_disk: u64,
 }
 
 pub struct LodManager {
     settings: LodSettings,
     store: Arc<Mutex<LodStore>>,
-    columns: Columns,
     jobs: Sender<Job>,
     done: Receiver<Done>,
     tiles: HashMap<TileKey, Arc<Tile>>,
@@ -115,48 +108,29 @@ pub struct LodManager {
     in_flight: usize,
     next_epoch: u64,
     stats: Stats,
-    /// Tiles a client could not build itself and asked its server for.
-    remote: bool,
-    wanted_remote: Vec<TileKey>,
 }
 
 impl LodManager {
-    /// A manager whose workers make tiles from `terrain`.
-    pub fn new(
-        settings: LodSettings,
-        terrain: Arc<Terrain>,
-        colors: Arc<ColorTable>,
-        store: LodStore,
-    ) -> Self {
-        Self::build(settings, Some(terrain), colors, store)
+    /// A manager for one viewer: tiles come from the store or, when it
+    /// has none, from the server (`take_wanted`, `insert_tile`); its workers
+    /// build meshes.
+    pub fn new(settings: LodSettings, colors: Arc<ColorTable>, store: LodStore) -> Self {
+        Self::build(settings, colors, store)
     }
 
-    /// A client's manager: no terrain, tiles arrive from the server
-    /// (`take_wanted`, `insert_tile`).
-    pub fn remote(settings: LodSettings, colors: Arc<ColorTable>, store: LodStore) -> Self {
-        Self::build(settings, None, colors, store)
-    }
-
-    fn build(
-        settings: LodSettings,
-        terrain: Option<Arc<Terrain>>,
-        colors: Arc<ColorTable>,
-        store: LodStore,
-    ) -> Self {
+    fn build(settings: LodSettings, colors: Arc<ColorTable>, store: LodStore) -> Self {
         let (jobs, job_rx) = crossbeam_channel::unbounded::<Job>();
         let (done_tx, done) = crossbeam_channel::unbounded::<Done>();
         let store = Arc::new(Mutex::new(store));
-        let columns: Columns = Arc::new(Mutex::new(HashMap::new()));
         for n in 0..settings.worker_count() {
             let (job_rx, done_tx) = (job_rx.clone(), done_tx.clone());
-            let (terrain, colors) = (terrain.clone(), colors.clone());
-            let (store, columns) = (store.clone(), columns.clone());
+            let colors = colors.clone();
             std::thread::Builder::new()
                 .name(format!("lod-{n}"))
                 .spawn(move || {
                     background();
                     while let Ok(job) = job_rx.recv() {
-                        let out = work(job, terrain.as_deref(), &colors, &store, &columns);
+                        let out = work(job, &colors);
                         if let Some(out) = out
                             && done_tx.send(out).is_err()
                         {
@@ -169,7 +143,6 @@ impl LodManager {
         Self {
             settings,
             store,
-            columns,
             jobs,
             done,
             tiles: HashMap::new(),
@@ -181,8 +154,6 @@ impl LodManager {
             in_flight: 0,
             next_epoch: 1,
             stats: Stats::default(),
-            remote: terrain.is_none(),
-            wanted_remote: Vec::new(),
         }
     }
 
@@ -212,15 +183,11 @@ impl LodManager {
         stats
     }
 
-    /// Bytes of LOD data in memory: tiles, kept columns and meshes.
+    /// Bytes of LOD data in memory: tiles and meshes.
     pub fn memory(&self) -> u64 {
         let tiles: usize = self.tiles.values().map(|t| t.memory()).sum();
-        let cols = self.columns.lock().map_or(0, |c| c.len())
-            * crate::config::CHUNK_SIZE
-            * crate::config::CHUNK_SIZE
-            * std::mem::size_of::<Sample>();
         let meshes: usize = self.shown.values().map(|s| s.bytes).sum();
-        (tiles + cols + meshes) as u64
+        (tiles + meshes) as u64
     }
 
     /// Forgets everything held in memory (Off): the store keeps its files.
@@ -231,10 +198,6 @@ impl LodManager {
         self.shown.clear();
         self.selected.clear();
         self.last_view = None;
-        self.wanted_remote.clear();
-        if let Ok(mut columns) = self.columns.lock() {
-            columns.clear();
-        }
         gone
     }
 
@@ -248,19 +211,19 @@ impl LodManager {
         }
     }
 
-    /// A real chunk was generated or loaded: its columns replace the fast
-    /// ones in tiles made now and later.
+    /// A real chunk arrived: its columns replace the server's in the tiles
+    /// held now.
     pub fn observe(&mut self, chunk: Arc<Chunk>) {
-        if self.remote {
-            return;
-        }
         self.in_flight += 1;
         let _ = self.jobs.send(Job::Columns(chunk));
     }
 
-    /// Tiles a client wants its server to send (cleared by the call).
-    pub fn take_wanted(&mut self) -> Vec<TileKey> {
-        std::mem::take(&mut self.wanted_remote)
+    /// Tiles the server should send, nearest `eye` first: the ones
+    /// selected and not in memory or on disk.
+    pub fn outstanding(&self, eye: (f32, f32)) -> Vec<TileKey> {
+        let mut keys: Vec<TileKey> = self.asked.iter().copied().collect();
+        keys.sort_by(|a, b| distance(eye, *a).total_cmp(&distance(eye, *b)));
+        keys
     }
 
     /// A tile that arrived from the server.
@@ -328,30 +291,19 @@ impl LodManager {
             let db = distance(eye, *b);
             da.total_cmp(&db)
         });
-        let budget = if self.remote {
-            64
-        } else {
-            self.settings.worker_count() * 3
-        };
+        let budget = self.settings.worker_count() * 3;
         for key in order {
             if self.in_flight >= budget {
                 break;
             }
             if !self.tiles.contains_key(&key) {
-                if self.asked.insert(key) {
-                    if self.remote {
-                        self.wanted_remote.push(key);
-                        // Disk first.
-                        let found = self.store.lock().ok().and_then(|mut s| s.get(key));
-                        if let Some(tile) = found {
-                            self.accept(tile);
-                            self.stats.loaded_from_disk += 1;
-                            self.asked.remove(&key);
-                            self.wanted_remote.retain(|k| *k != key);
-                        }
-                    } else {
-                        self.in_flight += 1;
-                        let _ = self.jobs.send(Job::Make(key));
+                if self.asked.len() < MAX_ASKED && self.asked.insert(key) {
+                    // The cache on disk first, then the server.
+                    let found = self.store.lock().ok().and_then(|mut s| s.get(key));
+                    if let Some(tile) = found {
+                        self.stats.loaded_from_disk += 1;
+                        self.accept(tile);
+                        self.asked.remove(&key);
                     }
                 }
                 continue;
@@ -361,7 +313,7 @@ impl LodManager {
             let coming = around
                 .iter()
                 .any(|k| self.selected.contains(k) && !self.tiles.contains_key(k));
-            if coming && !self.remote {
+            if coming {
                 continue;
             }
             let wanted_hole = hole.filter(|h| h.touches(key));
@@ -409,15 +361,6 @@ impl LodManager {
         while let Ok(done) = self.done.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
             match done {
-                Done::Tile(tile, from_disk) => {
-                    self.stats.made += 1;
-                    self.stats.loaded_from_disk += u64::from(from_disk);
-                    let key = tile.key;
-                    self.asked.remove(&key);
-                    if self.selected.contains(&key) {
-                        self.accept(tile);
-                    }
-                }
                 Done::Mesh {
                     key,
                     epoch,
@@ -565,36 +508,8 @@ pub fn select(
     out
 }
 
-fn work(
-    job: Job,
-    terrain: Option<&Terrain>,
-    colors: &ColorTable,
-    store: &Mutex<LodStore>,
-    columns: &Columns,
-) -> Option<Done> {
+fn work(job: Job, colors: &ColorTable) -> Option<Done> {
     match job {
-        Job::Make(key) => {
-            let saved = store.lock().ok().and_then(|mut s| s.get(key));
-            if let Some(tile) = saved {
-                return Some(Done::Tile(tile, true));
-            }
-            let terrain = terrain?;
-            let mut tile = fast_tile(terrain, colors, key, Quality::High);
-            let known: Vec<(ChunkPos, Arc<Vec<Sample>>)> = columns
-                .lock()
-                .map(|c| c.iter().map(|(p, v)| (*p, v.clone())).collect())
-                .unwrap_or_default();
-            for (pos, cols) in known {
-                let (x, z) = pos.min_block();
-                if TileKey::containing(key.level, x, z) == key {
-                    patch_from_columns(&mut tile, pos, &cols);
-                }
-            }
-            if let Ok(mut store) = store.lock() {
-                store.put(&tile);
-            }
-            Some(Done::Tile(tile, false))
-        }
         Job::Mesh {
             key,
             epoch,
@@ -605,18 +520,10 @@ fn work(
             key,
             epoch,
             hole,
-            mesh: mesh::build(&near, hole, quality),
+            mesh: mesh::build(&near, hole, quality, colors),
         }),
         Job::Columns(chunk) => {
             let cols = chunk_columns(&chunk, colors, Quality::High);
-            if let Ok(mut known) = columns.lock() {
-                if known.len() >= COLUMN_CAP
-                    && let Some(old) = known.keys().next().copied()
-                {
-                    known.remove(&old);
-                }
-                known.insert(chunk.pos, Arc::new(cols.clone()));
-            }
             Some(Done::Columns(chunk.pos, cols))
         }
     }
@@ -624,7 +531,7 @@ fn work(
 
 /// Runs the thread at low priority, so LOD building doesn't compete with
 /// the game.
-fn background() {
+pub(super) fn background() {
     #[cfg(target_os = "macos")]
     // SAFETY: sets the calling thread's own quality-of-service class.
     unsafe {
@@ -635,6 +542,7 @@ fn background() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lod::data::Tile;
 
     fn settings(distance: i32) -> LodSettings {
         LodSettings {
@@ -720,46 +628,47 @@ mod tests {
     }
 
     #[test]
-    fn tiles_are_made_meshed_saved_and_freed_when_off() {
+    fn tiles_arrive_get_meshed_and_off_frees_the_memory() {
+        use crate::lod::maker::LodMaker;
         use crate::world::biome::BiomeColors;
-        let dir = std::env::temp_dir().join(format!("rustcraft-lod-mgr-{}", std::process::id()));
+        use crate::world::worldgen::terrain::Terrain;
+        let dir = std::env::temp_dir().join(format!("rustcraft-lod-view-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let terrain = Arc::new(Terrain::new(12345));
         let colors = Arc::new(ColorTable::new(None, BiomeColors::uniform()));
-        let store = LodStore::open(&dir, u64::MAX).unwrap();
-        let mut lod = LodManager::new(settings(40), terrain.clone(), colors.clone(), store);
-        let center = ChunkPos::new(0, 0);
-        let mut uploaded = 0;
+        let mut maker = LodMaker::new(
+            Arc::new(Terrain::new(12345)),
+            colors.clone(),
+            2,
+            LodStore::open(&dir.join("server"), u64::MAX).unwrap(),
+        );
+        let store = LodStore::open(&dir.join("client"), u64::MAX).unwrap();
+        let mut lod = LodManager::new(settings(40), colors, store);
+        let (eye, center) = ((8.0, 8.0), ChunkPos::new(0, 0));
+        let mut uploads = 0;
         for _ in 0..4000 {
-            let frame = lod.update((8.0, 8.0), center, 9);
-            uploaded += frame.uploads.len();
-            if lod.selected().len() == lod.visible().count() && !lod.selected().is_empty() {
+            uploads += lod.update(eye, center, 9).uploads.len();
+            // The server's side, in this process.
+            maker.poll();
+            for key in lod.outstanding(eye) {
+                maker.request(key);
+                if let Some(bytes) = maker.get(key) {
+                    lod.insert_tile(Tile::decode(&bytes).unwrap());
+                }
+            }
+            if !lod.selected().is_empty() && lod.selected().len() == lod.visible().count() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let stats = lod.stats();
-        assert!(uploaded > 0 && stats.triangles > 1000, "{stats:?}");
+        assert!(uploads > 0 && stats.triangles > 1000, "{stats:?}");
         assert!(stats.memory > 0);
+        // Off drops everything held in memory; the files stay.
         lod.flush();
-        assert!(lod.disk_usage() > 0);
-        // Off frees the memory; the files stay.
         let gone = lod.clear();
         assert!(!gone.is_empty());
         assert_eq!(lod.memory(), 0);
         assert!(lod.disk_usage() > 0);
-        drop(lod);
-        // A new manager loads the saved tiles instead of making them.
-        let store = LodStore::open(&dir, u64::MAX).unwrap();
-        let mut again = LodManager::new(settings(40), terrain, colors, store);
-        for _ in 0..4000 {
-            again.update((8.0, 8.0), center, 9);
-            if again.selected().len() == again.visible().count() && !again.selected().is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        assert!(again.stats().loaded_from_disk > 0, "{:?}", again.stats());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

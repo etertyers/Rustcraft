@@ -477,6 +477,9 @@ pub struct Game {
     pub replies_out: Vec<commands::Reply>,
     /// The world's folder, where its data packs are (a saved world's).
     pub world_dir_for_packs: Option<std::path::PathBuf>,
+    /// Blocks the Overworld's fog reaches when Distant Terrain is drawn
+    /// (M69); `None` ends it at the render distance.
+    pub lod_view: Option<f32>,
     /// `/tick`: the target rate, frozen, steps and sprint left.
     pub tick_rate: f32,
     /// Open to LAN with Allow Cheats: guests count as operators for command blocks.
@@ -646,6 +649,7 @@ impl Game {
             load_pending: false,
             replies_out: Vec::new(),
             world_dir_for_packs: None,
+            lod_view: None,
             tick_rate: 20.0,
             guests_cheat: false,
             border: Default::default(),
