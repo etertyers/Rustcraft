@@ -372,7 +372,9 @@ fn water_above(in: VertexOutput, texel: vec4<f32>, lit: vec3<f32>) -> vec4<f32> 
     var reflection = srgb_to_linear(sky_reflection(in.world, reflected)) * reflection_sky_weight(in.light.x);
     var ssr_weight = 0.0;
     let pixel = in.clip_position.xy;
-    if trailer.water.x > 0.5 {
+    // Medium (fewer than 32 steps) skips the march where the reflection
+    // would add under 3.5% (looking steeply down); High always marches.
+    if trailer.water.x > 0.5 && (trailer.water.x >= 32.0 || f > 0.035) {
         let jitter = hash2(vec3<f32>(pixel, globals.camera.w));
         let hit = screen_reflection(in.world, reflected, u32(trailer.water.x), jitter);
         ssr_weight = hit.w;

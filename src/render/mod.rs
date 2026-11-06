@@ -1946,7 +1946,7 @@ impl Renderer {
         // The water reads a copy of the opaque scene on Medium and High.
         let ssr_steps = match quality {
             Quality::Low => 0,
-            Quality::Medium => 16,
+            Quality::Medium => 12,
             Quality::High => 32,
         } * u32::from(on(Effect::Reflections));
         let refraction = on(Effect::Refraction);
