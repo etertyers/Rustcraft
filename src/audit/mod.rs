@@ -717,26 +717,23 @@ pub fn mob_entries(look: &Look, mobs: &MobRegistry) -> Vec<Entry> {
                     format!("{name} is in no layer"),
                 ));
             }
-            // The texture's size against the size the model's UVs want.
+            // The texture the look chose against the size the model's UVs
+            // want (a pack's may be a whole multiple of it).
             if variant == 0
                 && !baby
-                && let Some(found) = look.res.texture(name)
                 && let Some((_, declared)) =
                     mobs.textures_sized().into_iter().find(|(n, _)| *n == name)
-                && detect::size_mismatch(
-                    declared,
-                    found.image.dimensions(),
-                    !found.vanilla && found.layer != 0,
-                )
+                && detect::size_mismatch(declared, texture.dimensions(), true)
+                && look.res.texture(name).is_some()
             {
                 flags.push(Flag::new(
                     Detector::SizeMismatch,
                     &id,
                     "",
                     format!(
-                        "{name} is {}×{} but the model wants {}×{}",
-                        found.image.width(),
-                        found.image.height(),
+                        "the texture chosen for {name} is {}×{} but the model wants {}×{}",
+                        texture.width(),
+                        texture.height(),
                         declared.0,
                         declared.1
                     ),
@@ -1109,13 +1106,69 @@ impl Audit {
     }
 }
 
+/// One block (`block/stone`) or mob (`mob/pig`, `mob/pig#1`, `mob/pig#baby`)
+/// drawn large from a few angles side by side, for looking at a single
+/// problem: `--texture-audit --entry mob/pig`.
+pub fn entry_picture(assets: &Path, stack: &Stack, id: &str) -> anyhow::Result<RgbaImage> {
+    let mobs = MobRegistry::load(&assets.join("data/mobs.ron"))?;
+    let look = build_look(assets, stack, &mobs)?;
+    let subject = if let Some(name) = id.strip_prefix("mob/") {
+        let mut parts = name.split('#');
+        let base = parts.next().unwrap_or_default();
+        let kind = mobs
+            .find(base)
+            .ok_or_else(|| anyhow::anyhow!("no mob {base:?}"))?;
+        let (mut variant, mut baby) = (0, false);
+        for part in parts {
+            match part {
+                "baby" => baby = true,
+                n => variant = n.parse()?,
+            }
+        }
+        Subject::Mob {
+            kind,
+            variant,
+            baby,
+        }
+    } else if let Some(name) = id.strip_prefix("block/") {
+        let def = block::registry()
+            .iter()
+            .find(|d| d.name == name)
+            .ok_or_else(|| anyhow::anyhow!("no block {name:?}"))?;
+        Subject::Block(BlockState::of(def.id))
+    } else {
+        anyhow::bail!("--entry wants block/<name> or mob/<name>[#variant][#baby]");
+    };
+    let views = match subject {
+        Subject::Mob { .. } => vec![View::FRONT, View::SIDE, View::BACK, View::TOP],
+        _ => vec![View::THREE_QUARTER, View::TOP],
+    };
+    let size = 256;
+    let mut picture = RgbaImage::from_pixel(size * views.len() as u32, size, BACKGROUND);
+    for (i, view) in views.into_iter().enumerate() {
+        let (image, _) = render_subject(&look, &mobs, &subject, view, size);
+        image::imageops::replace(&mut picture, &image, i64::from(size) * i as i64, 0);
+    }
+    Ok(picture)
+}
+
 /// `--texture-audit [--mode <mode>]`: runs the audit, writes
 /// `target/texture-audit/<mode>/` and prints its summary.
-pub fn cli(mode: &str) -> anyhow::Result<()> {
+pub fn cli(mode: &str, entry: Option<&str>) -> anyhow::Result<()> {
     let assets = crate::assets::dir();
     let dir = assets.join("downloads/resourcepacks");
     let stack = stack(mode, &dir)
         .ok_or_else(|| anyhow::anyhow!("unknown mode {mode:?} (vanilla, barebones, realistic)"))?;
+    if let Some(id) = entry {
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/texture-audit")
+            .join(mode)
+            .join(format!("entry-{}.png", id.replace(['/', '#'], "_")));
+        std::fs::create_dir_all(out.parent().unwrap())?;
+        entry_picture(&assets, &stack, id)?.save(&out)?;
+        println!("{}", out.display());
+        return Ok(());
+    }
     let started = std::time::Instant::now();
     let audit = run(&assets, &stack, None)?;
     let out = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1200,6 +1253,16 @@ mod tests {
             .map(|(_, f)| f.id.clone())
             .collect();
         assert!(placeholders.is_empty(), "{placeholders:?}");
+        // The audit's zero-flag rules for vanilla's own textures.
+        for (_, f) in audit.flags() {
+            assert!(
+                !matches!(
+                    f.detector,
+                    Detector::SizeMismatch | Detector::UnknownTexture
+                ),
+                "{f:?}"
+            );
+        }
         let dir = crate::world::save::TempDir::new("audit-out");
         let sheets = audit.write(dir.path()).unwrap();
         assert!(sheets.len() >= 10);
@@ -1215,15 +1278,15 @@ mod tests {
     /// Every item has an icon that isn't empty, except the few vanilla
     /// draws nothing for.
     #[test]
-    fn the_known_bad_mob_layouts_are_found() {
+    fn a_known_bad_mob_layout_is_still_found() {
         if !vanilla_present() {
             return;
         }
         let assets = crate::assets::dir();
         let stack = stack("vanilla", &assets.join("downloads/resourcepacks")).unwrap();
         let audit = run(&assets, &stack, None).unwrap();
-        // The horse and the bee have textures in a layout their boxes don't
-        // match (M61): the size and UV detectors both see it.
+        // The cod's boxes reach past its 32×32 texture: the UV detector
+        // sees it (listed in docs/textures.md).
         let flagged = |id: &str, d: Detector| {
             audit
                 .flags()
@@ -1231,7 +1294,7 @@ mod tests {
                 .any(|(_, f)| f.id == id && f.detector == d)
         };
         assert!(
-            flagged("mob/bee", Detector::UvOutOfRange),
+            flagged("mob/cod", Detector::UvOutOfRange),
             "{}",
             audit.summary(50)
         );
@@ -1286,5 +1349,109 @@ mod tests {
         assert_eq!(image.width(), 64);
         assert_eq!(image.get_pixel(16, 16).0, [255, 255, 0, 255]);
         assert_eq!(image.get_pixel(30, 30).0, [0, 0, 0, 255]);
+    }
+
+    /// A Fresh Animations pig, cow and chicken at rest stand where
+    /// vanilla's do: the same height and length to within a quarter, feet
+    /// on the ground.
+    /// (Their parts used to hang eight pixels too high.) Skipped, with a
+    /// message, where the pack isn't in assets/downloads.
+    #[test]
+    fn fresh_animations_mobs_have_vanillas_silhouette() {
+        let assets = crate::assets::dir();
+        let dir = assets.join("downloads/resourcepacks");
+        let Some(fa) = find_pack(&dir, &["freshanimations"], &["barebones"]) else {
+            eprintln!("skipping: no Fresh Animations in {}", dir.display());
+            return;
+        };
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let mobs = MobRegistry::load(&assets.join("data/mobs.ron")).unwrap();
+        let packs = crate::look::open_packs_in(&crate::pack::packs_dir(), &dir, &[fa]);
+        let look = Look::build(&assets, packs, &mobs).unwrap();
+        let extent = |mesh: &Mesh| {
+            let (mut lo, mut hi) = (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN));
+            for v in &mesh.vertices {
+                lo = lo.min(glam::Vec3::from(v.position));
+                hi = hi.max(glam::Vec3::from(v.position));
+            }
+            (lo, hi)
+        };
+        for name in ["pig", "cow", "chicken"] {
+            let kind = mobs.find(name).unwrap();
+            let def = mobs.get(kind);
+            let model = look
+                .cem
+                .models
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| panic!("no {name} model"));
+            let mut mob = Mob::new(kind, def, DVec3::ZERO, 0.0);
+            mob.id = 7;
+            crate::cem::begin_frame(0.0, 0.5, DVec3::ZERO);
+            let mut vanilla = Mesh::default();
+            crate::render::models::add_mob_model_using(
+                &mut vanilla,
+                &mob,
+                def,
+                &def.model,
+                0.5,
+                (15, 0),
+                [1.0; 3],
+                None,
+            );
+            let mut custom = Mesh::default();
+            crate::render::models::add_mob_model_using(
+                &mut custom,
+                &mob,
+                def,
+                &def.model,
+                0.5,
+                (15, 0),
+                [1.0; 3],
+                Some(model),
+            );
+            let ((vlo, vhi), (clo, chi)) = (extent(&vanilla), extent(&custom));
+            let (vsize, csize) = (vhi - vlo, chi - clo);
+            // Height and length: the width is wings (a chicken's are folded
+            // in Fresh Animations' rest pose, spread in vanilla's).
+            for axis in 1..3 {
+                let ratio = csize[axis] / vsize[axis];
+                assert!(
+                    (0.75..=1.3).contains(&ratio),
+                    "{name} axis {axis}: {csize} against vanilla {vsize}"
+                );
+            }
+            assert!(
+                (clo.y - vlo.y).abs() < 0.15,
+                "{name} feet: {clo} against {vlo}"
+            );
+        }
+    }
+
+    /// Grass, leaves and vines are tinted in a plains chunk (green, not
+    /// gray) and stone is not.
+    #[test]
+    fn grass_and_leaves_are_tinted_green_and_stone_is_not() {
+        let assets = crate::assets::dir();
+        if !assets.join("vanilla/assets/minecraft").is_dir() {
+            eprintln!("skipping: no assets/vanilla");
+            return;
+        }
+        let mobs = MobRegistry::load(&assets.join("data/mobs.ron")).unwrap();
+        let look = Look::build(&assets, Vec::new(), &mobs).unwrap();
+        let green = |name: &str| {
+            let def = block::registry().iter().find(|d| d.name == name).unwrap();
+            let mesh = block_mesh(&look, BlockState::of(def.id));
+            mesh.vertices
+                .iter()
+                .any(|v| v.color[1] > v.color[0] + 0.05 && v.color[1] > v.color[2] + 0.05)
+        };
+        for tinted in ["grass_block", "short_grass", "oak_leaves", "fern"] {
+            assert!(green(tinted), "{tinted} is not tinted green");
+        }
+        assert!(!green("stone"));
     }
 }

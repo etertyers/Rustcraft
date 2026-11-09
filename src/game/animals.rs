@@ -90,6 +90,11 @@ const BREEDING_FOOD: [(&str, &[&str]); 9] = [
 /// The fox's food, apart: a tuple array with ten rows would hold it too.
 const FOX_FOOD: &str = "sweet_berries";
 
+/// Whether the mob called `mob` has babies (it breeds).
+pub(super) fn has_babies(mob: &str) -> bool {
+    mob == "fox" || BREEDING_FOOD.iter().any(|(name, _)| *name == mob)
+}
+
 /// Whether `item` is the breeding food of the mob called `mob`.
 fn is_breeding_food(mob: &str, item: ItemId) -> bool {
     if mob == "fox" {
@@ -299,6 +304,14 @@ impl Game {
         let name = self.mob_defs.get(mob.kind).name.clone();
         let held = self.held().cloned();
         let survival = self.player.mode.uses_up_items();
+        // A spawn egg of its own kind makes a baby.
+        if held
+            .as_ref()
+            .is_some_and(|stack| self.egg_mob(stack.id) == Some(self.mobs[index].kind))
+            && self.use_spawn_egg_on_mob(index)
+        {
+            return true;
+        }
         // Breeding food goes to the animal, not into the player's mouth.
         // (A wolf has to be tamed first.)
         if let Some(stack) = &held

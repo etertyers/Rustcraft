@@ -253,6 +253,9 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                 value(&mut args, "--assets", "a folder")?;
             }
             "--exit" | "--texture-audit" | "--texture-marks" | "--texture-viewer" => {}
+            "--entry" => {
+                value(&mut args, "--entry", "block/<name> or mob/<name>")?;
+            }
             "--mode" => {
                 value(&mut args, "--mode", "vanilla, barebones or realistic")?;
             }

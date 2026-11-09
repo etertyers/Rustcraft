@@ -120,7 +120,8 @@ impl Game {
             && (matches!(
                 stack.id,
                 items::FLINT_AND_STEEL | items::FIRE_CHARGE | items::END_CRYSTAL
-            ) || self.items.places(stack).is_some())
+            ) || self.items.places(stack).is_some()
+                || self.egg_mob(stack.id).is_some())
     }
 
     /// Whether `hand` holds something that shoots.
@@ -460,6 +461,14 @@ impl Game {
                         if self.player.mode.uses_up_items() {
                             self.player.inventory.take(self.held_slot(), 1);
                         }
+                        self.player.place_cooldown = PLACE_REPEAT_TICKS;
+                    }
+                } else if self
+                    .held()
+                    .is_some_and(|stack| self.egg_mob(stack.id).is_some())
+                {
+                    if self.use_spawn_egg_on_block(&hit) {
+                        self.player.view.swing();
                         self.player.place_cooldown = PLACE_REPEAT_TICKS;
                     }
                 } else {
