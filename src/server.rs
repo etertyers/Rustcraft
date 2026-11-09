@@ -830,6 +830,36 @@ mod tests {
         game.chunks.world().block(at.x, at.y, at.z)
     }
 
+    /// M63: a player holding a map or sleeping shows it on the model, and
+    /// the other client sees the same pose.
+    #[test]
+    fn two_clients_see_the_same_arm_and_body_pose_on_another_player() {
+        use crate::render::player::{ArmPose, BodyAction};
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 2
+        });
+        server.game.others[0]
+            .inventory
+            .set(0, Some(ItemStack::new(items::FILLED_MAP, 1)));
+        let bob_on = |game: &Game| {
+            game.remote_players
+                .iter()
+                .find(|p| p.name == "Bob")
+                .map(|p| (p.pose.right, p.pose.left, p.pose.body))
+        };
+        run_until(&mut server, &mut clients, |_, clients| {
+            bob_on(&clients[0].1)
+                .is_some_and(|(right, left, _)| right == ArmPose::Map && left == ArmPose::Map)
+        });
+        let on_server = server.game.with_player(1, |game| {
+            let pose = game.player_view().pose;
+            (pose.right, pose.left, pose.body)
+        });
+        assert_eq!(bob_on(&clients[0].1), Some(on_server));
+        assert_eq!(on_server.2, BodyAction::None);
+    }
+
     #[test]
     fn two_clients_build_and_break_and_everyone_sees_the_same_blocks() {
         let (mut server, mut clients) = world_with(&["Alice", "Bob"]);

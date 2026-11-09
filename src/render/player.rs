@@ -135,6 +135,41 @@ pub enum ArmPose {
     Bow,
     /// Bringing food or a drink to the mouth.
     Eat,
+    /// A map held out in front in both hands (Not Enough Animations).
+    Map,
+    /// A spyglass raised to the eye.
+    Spyglass,
+    /// A goat horn blown.
+    Horn,
+    /// A trident or snowball thrown overhand.
+    Throw,
+    /// A crossbow aimed or loaded.
+    Crossbow,
+}
+
+/// What the whole body is doing besides walking (Not Enough Animations).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum BodyAction {
+    #[default]
+    None,
+    /// Climbing a ladder or vine: arms and legs alternate.
+    Climb,
+    /// Rowing a boat: both arms stroke.
+    Row,
+    /// Riding a horse: legs to the sides, arms holding the reins.
+    Horse,
+    /// Lying in a bed: the arms rest at the sides.
+    Sleep,
+}
+
+impl ArmPose {
+    /// The plain pose an action blends from and to: the item held out.
+    pub fn base(self) -> Self {
+        match self {
+            Self::Empty => Self::Empty,
+            _ => Self::Item,
+        }
+    }
 }
 
 /// Everything the pose depends on.
@@ -167,6 +202,16 @@ pub struct PlayerPose {
     pub use_time: f32,
     /// Sitting in a boat, a cart or on a mob.
     pub riding: bool,
+    /// What the body is doing besides walking, and how far along its
+    /// cycle (ticks with the partial tick).
+    #[serde(default)]
+    pub body: BodyAction,
+    #[serde(default)]
+    pub action_phase: f32,
+    /// How far the arm and body actions have faded back to plain
+    /// walking, 0 (fully shown) to 1: they ease in and out.
+    #[serde(default)]
+    pub fade: f32,
 }
 
 /// One limb's pose: its pivot in model pixels and its rotation.
@@ -210,8 +255,33 @@ fn lerp(t: f32, a: f32, b: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// Poses the limbs (`HumanoidModel.setupAnim` and `PlayerModel`).
+/// Poses the limbs (`HumanoidModel.setupAnim` and `PlayerModel`). Arm and
+/// body actions ease in and out: `fade` blends from the pose with the
+/// action to the one without.
 pub fn rig(pose: &PlayerPose, slim: bool) -> Rig {
+    let full = rig_with(pose, slim, (pose.right, pose.left), pose.body);
+    if pose.fade <= 0.0 {
+        return full;
+    }
+    let plain = rig_with(
+        pose,
+        slim,
+        (pose.right.base(), pose.left.base()),
+        BodyAction::None,
+    );
+    let t = pose.fade.clamp(0.0, 1.0);
+    Rig(std::array::from_fn(|n| LimbPose {
+        pos: full.0[n].pos.lerp(plain.0[n].pos, t),
+        rot: full.0[n].rot.lerp(plain.0[n].rot, t),
+    }))
+}
+
+fn rig_with(
+    pose: &PlayerPose,
+    slim: bool,
+    arms: (ArmPose, ArmPose),
+    body_action: BodyAction,
+) -> Rig {
     let swim = pose.swim_amount;
     let mut pos = Limb::ALL.map(|limb| limb.pivot(slim));
     let mut rot = [Vec3::ZERO; 6];
@@ -254,8 +324,9 @@ pub fn rig(pose: &PlayerPose, slim: bool) -> Rig {
         rot[rl] = Vec3::new(-1.413_716_7, std::f32::consts::PI / 10.0, 0.078_539_82);
         rot[ll] = Vec3::new(-1.413_716_7, -std::f32::consts::PI / 10.0, -0.078_539_82);
     }
-    pose_arm(pose, pose.right, true, &mut rot, head);
-    pose_arm(pose, pose.left, false, &mut rot, head);
+    pose_arm(pose, arms.0, true, &mut rot, head);
+    pose_arm(pose, arms.1, false, &mut rot, head);
+    body_action_pose(pose, body_action, &mut rot);
     attack(pose, &mut pos, &mut rot);
 
     if pose.crouching {
@@ -319,11 +390,85 @@ fn pose_arm(pose: &PlayerPose, arm: ArmPose, right: bool, rot: &mut [Vec3; 6], h
             rot[this].x = -FRAC_PI_2 + rot[head].x;
             rot[other].x = -FRAC_PI_2 + rot[head].x;
         }
+        ArmPose::Map => {
+            // Held out in front, tilted toward the face.
+            rot[this].x = -1.2 + rot[head].x * 0.3;
+            rot[this].y = -side * 0.25;
+            rot[this].z = 0.0;
+        }
+        ArmPose::Spyglass => {
+            // Vanilla's SPYGLASS: the hand to the eye, following the head.
+            let lowered = if pose.crouching { 0.261_799_4 } else { 0.0 };
+            rot[this].x = (rot[head].x - 1.919_862_2 - lowered).clamp(-2.4, 3.3);
+            rot[this].y = rot[head].y - side * 0.261_799_4;
+        }
+        ArmPose::Horn => {
+            // Vanilla's TOOT_HORN.
+            rot[this].x = rot[head].x.clamp(-1.2, 1.2) - 1.483_529_8;
+            rot[this].y = rot[head].y - side * PI / 6.0;
+        }
+        ArmPose::Throw => {
+            // Vanilla's THROW_TRIDENT: the arm back over the shoulder.
+            rot[this].x = rot[this].x * 0.5 - PI;
+            rot[this].y = 0.0;
+        }
+        ArmPose::Crossbow => {
+            // Vanilla's CROSSBOW_HOLD: both arms forward, the front one
+            // steadying the weapon.
+            let (right_y, left_y) = (-0.3 + rot[head].y, 0.6 + rot[head].y);
+            rot[Limb::RightArm.index()].y = right_y;
+            rot[Limb::LeftArm.index()].y = left_y;
+            rot[Limb::RightArm.index()].x = -FRAC_PI_2 + rot[head].x + 0.1;
+            rot[Limb::LeftArm.index()].x = -1.5 + rot[head].x;
+        }
         ArmPose::Eat => {
             // Up to the mouth, bobbing with each bite.
             let bob = (pose.use_time * FRAC_PI_4).cos().abs() * 0.1;
             rot[this].x = -1.15 + bob;
             rot[this].y = -side * 0.35;
+        }
+    }
+}
+
+/// Whole-body actions (Not Enough Animations): climbing, rowing, riding a
+/// horse and sleeping. They replace the walking swing.
+fn body_action_pose(pose: &PlayerPose, action: BodyAction, rot: &mut [Vec3; 6]) {
+    let (ra, la, rl, ll) = (
+        Limb::RightArm.index(),
+        Limb::LeftArm.index(),
+        Limb::RightLeg.index(),
+        Limb::LeftLeg.index(),
+    );
+    let phase = pose.action_phase;
+    match action {
+        BodyAction::None => {}
+        BodyAction::Climb => {
+            // Hands reach up the rungs in turn; the feet step up.
+            let stroke = (phase * 0.4).sin();
+            rot[ra] = Vec3::new(-2.6 + stroke * 0.45, 0.0, 0.1);
+            rot[la] = Vec3::new(-2.6 - stroke * 0.45, 0.0, -0.1);
+            rot[rl].x = -stroke * 0.7;
+            rot[ll].x = stroke * 0.7;
+        }
+        BodyAction::Row => {
+            // Both arms reach out and pull in together, legs seated.
+            let stroke = (phase * 0.25).sin();
+            rot[ra] = Vec3::new(-1.0 + stroke * 0.5, -0.35, 0.0);
+            rot[la] = Vec3::new(-1.0 + stroke * 0.5, 0.35, 0.0);
+        }
+        BodyAction::Horse => {
+            // Knees out to the sides, hands low on the reins.
+            rot[rl] = Vec3::new(-0.9, 0.35, 0.5);
+            rot[ll] = Vec3::new(-0.9, -0.35, -0.5);
+            rot[ra] = Vec3::new(-1.1, -0.3, 0.0);
+            rot[la] = Vec3::new(-1.1, 0.3, 0.0);
+        }
+        BodyAction::Sleep => {
+            // Arms at the sides, still.
+            rot[ra] = Vec3::ZERO;
+            rot[la] = Vec3::ZERO;
+            rot[rl] = Vec3::ZERO;
+            rot[ll] = Vec3::ZERO;
         }
     }
 }
@@ -1201,5 +1346,78 @@ mod tests {
             assert!((2.0..=4.0).contains(&u), "{:?}", v.uv);
             assert!((1.0..=2.0).contains(&t), "{:?}", v.uv);
         }
+    }
+
+    fn arm_x(pose: &PlayerPose, right: bool) -> f32 {
+        let limb = if right { Limb::RightArm } else { Limb::LeftArm };
+        rig(pose, false).get(limb).rot.x
+    }
+
+    #[test]
+    fn each_action_poses_the_limbs_as_its_vanilla_or_mod_pose_does() {
+        let base = standing();
+        let with = |right, left, body| PlayerPose {
+            right,
+            left,
+            body,
+            action_phase: 7.0,
+            head_pitch: 0.3,
+            ..base
+        };
+        // A map: both arms forward.
+        let map = with(ArmPose::Map, ArmPose::Map, BodyAction::None);
+        assert!(arm_x(&map, true) < -1.0 && arm_x(&map, false) < -1.0);
+        // A spyglass: the arm up at the eye, past a held item's.
+        let glass = with(ArmPose::Spyglass, ArmPose::Item, BodyAction::None);
+        assert!((arm_x(&glass, true) - (0.3 - 1.919_862_2)).abs() < 0.1);
+        // A thrown trident: the arm back over the shoulder.
+        let throw = with(ArmPose::Throw, ArmPose::Empty, BodyAction::None);
+        assert!(arm_x(&throw, true) < -3.0);
+        // Climbing: the arms are up and alternate.
+        let climb = with(ArmPose::Item, ArmPose::Item, BodyAction::Climb);
+        assert!(arm_x(&climb, true) < -2.0 && arm_x(&climb, true) != arm_x(&climb, false));
+        let r = rig(&climb, false);
+        assert!(r.get(Limb::RightLeg).rot.x * r.get(Limb::LeftLeg).rot.x < 0.0);
+        // Rowing: both arms move together.
+        let row = with(ArmPose::Item, ArmPose::Item, BodyAction::Row);
+        assert!((arm_x(&row, true) - arm_x(&row, false)).abs() < 1e-5);
+        // A horse: legs out to the sides.
+        let horse = rig(
+            &with(ArmPose::Empty, ArmPose::Empty, BodyAction::Horse),
+            false,
+        );
+        assert!(horse.get(Limb::RightLeg).rot.z > 0.3 && horse.get(Limb::LeftLeg).rot.z < -0.3);
+        // Sleeping: the walking swing stops.
+        let asleep = PlayerPose {
+            limb_swing: 3.0,
+            limb_amount: 1.0,
+            ..with(ArmPose::Item, ArmPose::Item, BodyAction::Sleep)
+        };
+        let r = rig(&asleep, false);
+        assert!(r.get(Limb::RightLeg).rot.x.abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_fade_blends_an_action_into_the_plain_pose_and_the_held_item_follows_the_arm() {
+        let shown = PlayerPose {
+            right: ArmPose::Map,
+            left: ArmPose::Map,
+            ..standing()
+        };
+        let plain = PlayerPose {
+            right: ArmPose::Item,
+            left: ArmPose::Item,
+            ..standing()
+        };
+        let half = PlayerPose { fade: 0.5, ..shown };
+        let gone = PlayerPose { fade: 1.0, ..shown };
+        let (a, b, c) = (arm_x(&shown, true), arm_x(&half, true), arm_x(&gone, true));
+        assert!(a < b && b < c, "{a} {b} {c}");
+        assert!((c - arm_x(&plain, true)).abs() < 1e-5);
+        // The item in the hand rides the arm: its mount moves with the pose.
+        let mount = |p: &PlayerPose| hand_mount(&rig(p, false), true, false).w_axis.truncate();
+        assert!(mount(&shown).distance(mount(&gone)) > 0.05);
+        assert!(mount(&half).distance(mount(&shown)) > 0.01);
+        assert!(mount(&half).distance(mount(&gone)) > 0.01);
     }
 }

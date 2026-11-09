@@ -2059,50 +2059,58 @@ mod tests {
         ] {
             let Some(kind) = reg.find(name) else { continue };
             let def = reg.get(kind);
-            let mut mob = Mob::new(
-                kind,
-                def,
-                DVec3::new(-20.0, 64.0, 0.0),
-                -std::f32::consts::FRAC_PI_2,
-            );
-            let mut peak = 0.0f32;
-            let mut last = None;
-            for tick in 0..60 {
-                let before = mob.feet();
-                mob.tick(
-                    &MoveInput {
-                        forward: def.speed,
-                        ..MoveInput::default()
-                    },
-                    &grid,
-                    false,
+            for pace in [1.0, 2.5] {
+                let mut mob = Mob::new(
+                    kind,
+                    def,
+                    DVec3::new(0.0, 64.0, 0.0),
+                    -std::f32::consts::FRAC_PI_2,
                 );
-                let moved = (mob.feet() - before).length();
-                let leg = (mob.limb_swing * 0.6662).cos() * 1.4 * mob.limb_amount;
-                if tick > 30 {
-                    peak = peak.max(leg.abs());
-                }
-                if tick % 20 == 19 {
-                    last = Some((tick, moved, mob.limb_amount, mob.limb_swing));
-                    println!(
-                        "STEP0 {name} tick {tick}: moved {moved:.3} b/t, amount {:.3}, swing {:.2}",
-                        mob.limb_amount, mob.limb_swing
+                let mut peak = 0.0f32;
+                let mut last = None;
+                for tick in 0..60 {
+                    let before = mob.feet();
+                    mob.tick(
+                        &MoveInput {
+                            forward: def.speed * pace,
+                            ..MoveInput::default()
+                        },
+                        &grid,
+                        false,
                     );
+                    let moved = (mob.feet() - before).length();
+                    let leg = (mob.limb_swing * 0.6662).cos() * 1.4 * mob.limb_amount;
+                    if tick > 30 {
+                        peak = peak.max(leg.abs());
+                    }
+                    if tick % 20 == 19 && tick < 59 {
+                        last = Some((tick, moved, mob.limb_amount, mob.limb_swing));
+                        println!(
+                            "STEP0 {name} tick {tick}: moved {moved:.3} b/t, amount {:.3}, swing {:.2}",
+                            mob.limb_amount, mob.limb_swing
+                        );
+                    }
                 }
+                // Vanilla's WalkAnimationState: the steady speed is min(blocks per
+                // tick × 4, 1) and the leg peaks at 1.4 × speed.
+                let (_, moved, ..) = last.unwrap();
+                let expected = 1.4 * (moved as f32 * 4.0).min(1.0);
+                assert!(
+                    (peak - expected).abs() <= expected * 0.1,
+                    "{name}: {peak} vs {expected}"
+                );
+                println!(
+                    "STEP0 {name}: speed {} peak leg angle {peak:.2} rad ({:?})",
+                    def.speed * pace,
+                    last.map(|l| l.1)
+                );
+                // Standing still, the legs settle to 0 within a second.
+                for _ in 0..20 {
+                    mob.tick(&MoveInput::default(), &grid, false);
+                }
+                let leg = (mob.limb_swing * 0.6662).cos().abs() * 1.4 * mob.limb_amount;
+                assert!(leg < 0.01, "{name} still swings {leg}");
             }
-            // Vanilla's WalkAnimationState: the steady speed is min(blocks per
-            // tick × 4, 1) and the leg peaks at 1.4 × speed.
-            let (_, moved, ..) = last.unwrap();
-            let expected = 1.4 * (moved as f32 * 4.0).min(1.0);
-            assert!(
-                (peak - expected).abs() <= expected * 0.1,
-                "{name}: {peak} vs {expected}"
-            );
-            println!(
-                "STEP0 {name}: speed {} peak leg angle {peak:.2} rad ({:?})",
-                def.speed,
-                last.map(|l| l.1)
-            );
         }
     }
 }
