@@ -750,6 +750,16 @@ pub static SHOTS: &[Shot] = &[
         stage: nothing,
     },
     Shot {
+        name: "m69-distant-terrain",
+        about: "a mountaintop on seed 12345 at sunset, with terrain to the horizon (Distant Terrain at 128 chunks)",
+        world: Some(WorldKind::Generated { seed: 12345 }),
+        view: Some(([516.5, 224.0, -599.5], -std::f32::consts::FRAC_PI_2, -0.06)),
+        time: Some(12500),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: nothing,
+    },
+    Shot {
         name: "cave-torches",
         about: "a closed room carved out at Y -32 on seed 12345 at noon, lit only by torches on its floor",
         world: Some(WorldKind::Generated { seed: 12345 }),

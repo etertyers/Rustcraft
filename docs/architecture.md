@@ -23,6 +23,8 @@ src/
   ui/                # HUD, hotbar, inventory screen, menus (egui)
   pack/              # resource packs: layers, animations, block and item models
   look.rs            # everything texture-derived, rebuilt when the packs change
+  lod/               # Distant Terrain (M69): data (tiles of block-id slices), sample (real chunks + the fast terrain path), store (region files with a cap), maker (the server's tile workers), manager (quadtree selection, meshing workers), mesh, colors
+  render/lod.{rs,wgsl}   # distant terrain pipeline: drawn before the loaded chunks, depth squeezed past 900 blocks
   figure.rs          # the player as drawn: the hand, or the model and what it holds
   game/view.rs       # swing, hand dip, bobbing, body turn, F5 views
   game/combat.rs     # cooldowns, damage, crits, sweeps, the shield (constants in config::combat)

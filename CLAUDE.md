@@ -61,6 +61,7 @@ cargo run --release -- --bench [seconds] [--distance <chunks>]   # timed flight,
 cargo run --release -- --perf-test [--runs <n>] [--label <name>] [--row <name>] [--nether|--end|--underwater]   # writes docs/perf/<label>.md and .json
 cargo run --release -- --perf-test --native [--vsync on|off] --row barebones-native --style barebones --shaders on --quality medium   # full screen at the display's real resolution; reports the share of frames that missed the refresh (M68)
 RUSTCRAFT_RENDER_SCALE=auto|50..100 / RUSTCRAFT_EFFECTS_OFF=bloom,light shafts cargo run --release -- --bench 20   # measuring aids: Render Scale and per-effect cost (M68)
+RUSTCRAFT_DISTANT=off|32..512 [RUSTCRAFT_DISTANT_QUALITY=low|medium|high] cargo run --release -- --perf-test --runs 1 --label m69-lod-128 --row barebones-medium-distant128 --style barebones --shaders on --quality medium   # Distant Terrain for one run (M69)
 scripts/add_bench.py docs/perf/m<N>.json   # adds cargo bench's medians to the results
 scripts/perf_gate.py docs/perf/m<N>.json    # compares with docs/perf/baseline.json; the exit code is the gate
 UPDATE_GOLDEN=1 cargo test --test golden   # rewrite tests/golden/hashes.ron (only per the golden rule in §7)
@@ -111,6 +112,7 @@ world/               # blocks, chunks, light, meshing, fluids, saves, redstone, 
 audit/               # the texture checker (M60): CPU rasterizer, detectors, contact sheets, marks, the Texture Viewer
 cem/                 # OptiFine custom entity models (.jem) and their animation expressions (M58)
 render/              # wgpu pipelines, atlas, camera, shaders (*.wgsl), models, hand, sky (nested CLAUDE.md)
+lod/                 # Distant Terrain (M69): LOD tiles, the server's tile maker, store, meshing, colors
 look.rs, figure.rs   # everything texture-derived (rebuilt on pack change); the player as drawn
 pack/                # resource packs: layers, animations, block and item models
 player/              # controller, physics, collision, raycast, interaction, stats, effects, flying
@@ -175,9 +177,9 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | released (`v1.2.0`) |
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
-| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | in progress (Checkpoint L built: M59–M62, PRs open) |
+| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | built (M59–M69, PRs open, version 1.5.0; tag `v1.5.0` after Kenzo merges) |
 
-After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`.
+After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`; after M69 merges, tag `v1.5.0` and rebuild the `.app`.
 
 ## 7. Milestone rules
 

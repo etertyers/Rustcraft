@@ -38,6 +38,39 @@ impl Registry {
         self.models.get(name)
     }
 
+    /// The model a pack gives layer `stem` of mob `mob` (`sheep_wool`),
+    /// the baby's (`sheep_baby_wool`) if `baby` and the pack has one.
+    pub fn find_layer(&self, mob: &str, stem: &str, baby: bool) -> Option<&Arc<CemModel>> {
+        if baby {
+            let key = baby_layer_key(mob, stem);
+            if let Some(model) = self.models.get(&key) {
+                return Some(model);
+            }
+        }
+        self.models.get(stem).filter(|m| !m.baby)
+    }
+
+    /// Adds the files of layer `stem` of mob `mob` (the wool of a sheep,
+    /// a pig's saddle) from the packs: `<stem>.jem` and its baby's.
+    pub fn load_layer(&mut self, bytes: &dyn Fn(&str) -> Option<Vec<u8>>, mob: &str, stem: &str) {
+        for (file, baby) in [(stem.to_owned(), false), (baby_layer_key(mob, stem), true)] {
+            let path = format!("optifine/cem/{file}.jem");
+            let Some(text) = bytes(&path).and_then(|b| String::from_utf8(b).ok()) else {
+                continue;
+            };
+            let relative = |p: &str| {
+                bytes(&format!("optifine/cem/{p}")).and_then(|b| String::from_utf8(b).ok())
+            };
+            match model::parse(&text, &relative, &mut |line| info!("{path}: {line}")) {
+                Ok(mut model) => {
+                    model.baby = baby;
+                    self.models.insert(file, Arc::new(model));
+                }
+                Err(err) => warn!("{path}: {err}"),
+            }
+        }
+    }
+
     /// Loads the model of each mob name from the packs' `optifine/cem/`
     /// folder (top pack first), logging what each file skipped.
     pub fn load(bytes: &dyn Fn(&str) -> Option<Vec<u8>>, mobs: &[&str]) -> Self {
@@ -107,6 +140,12 @@ pub fn install(registry: Registry) {
     STATES.with(|s| s.borrow_mut().clear());
 }
 
+/// The file a baby's layer is in: the mob's name followed by `_baby`
+/// (`sheep_wool` becomes `sheep_baby_wool`).
+fn baby_layer_key(mob: &str, stem: &str) -> String {
+    stem.replacen(mob, &format!("{mob}_baby"), 1)
+}
+
 /// The models in use, if any packs have some.
 pub fn active() -> Option<Arc<Registry>> {
     #[cfg(test)]
@@ -159,9 +198,13 @@ pub fn with_state<T>(
             .entry((mob_id, name.to_owned()))
             .or_insert_with(|| Runtime::new(model, mob_id));
         runtime.last_used = frame;
-        #[cfg(test)]
-        ANIMATED.with(|n| n.set(n.get() + 1));
-        runtime.animate(model, entity);
+        // Animated once a frame, however many layers are drawn from it.
+        if runtime.animated_in != Some(frame) || runtime.parts.len() != model.parts.len() {
+            runtime.animated_in = Some(frame);
+            #[cfg(test)]
+            ANIMATED.with(|n| n.set(n.get() + 1));
+            runtime.animate(model, entity);
+        }
         f(runtime)
     })
 }

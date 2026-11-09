@@ -410,6 +410,21 @@ impl Terrain {
         self.lay(x, z).height
     }
 
+    /// What Distant Terrain (M69) needs at a column, without caves or
+    /// features: the height of the topmost solid block, the surface biome
+    /// and the block on top. The same noise, climate and surface rules as
+    /// `column`, minus its cave-opening check.
+    pub fn lod_surface(&self, x: i32, z: i32) -> (i32, Biome, BlockState) {
+        let height = self.height(x, z);
+        let slope = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+            .iter()
+            .map(|&(dx, dz)| (height - self.height(x + dx, z + dz)).abs())
+            .max()
+            .unwrap_or(0);
+        let biome = self.biome_at(x, z);
+        (height, biome, self.top(x, z, biome, height, slope))
+    }
+
     /// Noise in -1..1 for surface details at a column.
     fn surface_noise(&self, x: i32, z: i32, scale: f64, offset: f64) -> f64 {
         self.surface.get([

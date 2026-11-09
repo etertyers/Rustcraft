@@ -230,13 +230,47 @@ pub fn add_mob_model(
     tint: [f32; 3],
 ) {
     // A custom entity model (a resource pack's, M58) draws in place of the
-    // mob's own body; its layers (wool, saddles) are left out.
-    let custom = std::ptr::eq(model, &def.model)
-        .then(crate::cem::active)
-        .flatten()
-        .and_then(|registry| registry.find(&def.name, mob.data.age < 0).cloned())
-        .filter(|_| mob.data.variant == 0);
-    add_mob_model_using(mesh, mob, def, model, alpha, light, tint, custom);
+    // mob's own body. A layer (wool, a saddle) is drawn with the pack's
+    // model for that layer, posed from the body's own values, so the two
+    // never part; a layer the pack has no model for is drawn as built in.
+    let registry = crate::cem::active();
+    let body = || {
+        registry
+            .as_ref()
+            .and_then(|registry| registry.find(&def.name, mob.data.age < 0).cloned())
+            .filter(|_| mob.data.variant == 0)
+    };
+    if std::ptr::eq(model, &def.model) {
+        add_mob_model_following(mesh, mob, def, model, alpha, light, tint, body(), None);
+        return;
+    }
+    let layer = def
+        .layers
+        .iter()
+        .position(|l| std::ptr::eq(&l.model, model))
+        .and_then(|i| {
+            let stem = def.layers[i].texture.rsplit('/').next()?;
+            registry
+                .as_ref()?
+                .find_layer(&def.name, stem, mob.data.age < 0)
+                .cloned()
+        });
+    match (body(), layer) {
+        (Some(main), Some(layer)) => {
+            add_mob_model_following(
+                mesh,
+                mob,
+                def,
+                model,
+                alpha,
+                light,
+                tint,
+                Some(layer),
+                Some(main),
+            );
+        }
+        _ => add_mob_model_following(mesh, mob, def, model, alpha, light, tint, None, None),
+    }
 }
 
 /// `add_mob_model` with the custom model to draw the body with, if any.
@@ -250,6 +284,23 @@ pub fn add_mob_model_using(
     light: (u8, u8),
     tint: [f32; 3],
     custom: Option<std::sync::Arc<crate::cem::CemModel>>,
+) {
+    add_mob_model_following(mesh, mob, def, model, alpha, light, tint, custom, None);
+}
+
+/// `add_mob_model_using`; `follow` is the body's custom model when
+/// `custom` is a layer's, which is then posed from the body's state.
+#[allow(clippy::too_many_arguments)]
+fn add_mob_model_following(
+    mesh: &mut Mesh,
+    mob: &Mob,
+    def: &MobDef,
+    model: &crate::entity::mobs::Model,
+    alpha: f32,
+    light: (u8, u8),
+    tint: [f32; 3],
+    custom: Option<std::sync::Arc<crate::cem::CemModel>>,
+    follow: Option<std::sync::Arc<crate::cem::CemModel>>,
 ) {
     let (feet, yaw, _) = mob.pose(alpha);
     let head_yaw = angle_difference(mob.head_yaw, yaw);
@@ -323,8 +374,14 @@ pub fn add_mob_model_using(
     if let Some(cem) = &custom {
         let (frame, counter) = crate::cem::frame();
         let entity = crate::cem::vars::EntityVars::of(mob, def.health as f32, &frame);
-        crate::cem::with_state(mob.id, &def.name, cem, &entity, counter, |runtime| {
-            crate::cem::pose::add_parts(mesh, cem, runtime, place, color, light);
+        let main = follow.as_ref().unwrap_or(cem);
+        crate::cem::with_state(mob.id, &def.name, main, &entity, counter, |runtime| {
+            if follow.is_some() {
+                let layer = runtime.following(main, cem);
+                crate::cem::pose::add_parts(mesh, cem, &layer, place, color, light);
+            } else {
+                crate::cem::pose::add_parts(mesh, cem, runtime, place, color, light);
+            }
         });
     }
     for (index, part) in model.parts.iter().enumerate() {

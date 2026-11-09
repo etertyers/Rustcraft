@@ -158,6 +158,8 @@ pub struct Look {
     pub effect_uvs: EffectUvs,
     /// Where the extras' particle sprites are in the atlas.
     pub fx_uvs: crate::extras::fx::FxUvs,
+    /// Block colors for distant terrain (M69).
+    pub lod_colors: Arc<crate::lod::colors::ColorTable>,
 }
 
 /// Opens the packs named in `ids` (highest priority first) from `dir`;
@@ -264,6 +266,10 @@ impl Look {
             warn!("{err:#}; using default biome colors");
             BiomeColors::uniform()
         });
+        let lod_colors = Arc::new(crate::lod::colors::ColorTable::new(
+            Some(&atlas),
+            colors.clone(),
+        ));
         let models = Arc::new(
             BlockModels::with_packs(
                 blocks,
@@ -328,7 +334,15 @@ impl Look {
         // Custom entity models (a pack's `optifine/cem`, M58) bring their
         // own texture, worn in the plain variant's place.
         let mob_names: Vec<&str> = mobs.iter().map(|(_, def)| def.name.as_str()).collect();
-        let cem = crate::cem::Registry::load(&|path| res.bytes(path), &mob_names);
+        let mut cem = crate::cem::Registry::load(&|path| res.bytes(path), &mob_names);
+        // The pack's models for layers (a sheep's wool) go with the bodies.
+        for (_, def) in mobs.iter() {
+            for layer in &def.layers {
+                if let Some(stem) = layer.texture.rsplit('/').next() {
+                    cem.load_layer(&|path| res.bytes(path), &def.name, stem);
+                }
+            }
+        }
         for (name, model) in &cem.models {
             let Some(kind) = mobs.find(name) else {
                 continue;
@@ -376,6 +390,7 @@ impl Look {
             crack_uvs,
             effect_uvs,
             fx_uvs,
+            lod_colors,
         })
     }
 
