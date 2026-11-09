@@ -110,6 +110,15 @@ impl Menu {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(BACKGROUND).inner_margin(24.0))
             .show(ui, |ui| {
+                // The Texture Viewer takes the whole panel, left-aligned,
+                // not the centered column the other screens use.
+                if let Screen::TextureViewer(viewer) = &mut self.screen {
+                    if viewer.show(ui) {
+                        self.screen =
+                            Screen::Options(OptionsScreen::new(super::options::Page::Video));
+                    }
+                    return;
+                }
                 ui.vertical_centered(|ui| {
                     action = match &mut self.screen {
                         Screen::Title => self.title(ui, options),
@@ -148,14 +157,7 @@ impl Menu {
                             }
                             None
                         }
-                        Screen::TextureViewer(viewer) => {
-                            if viewer.show(ui) {
-                                self.screen = Screen::Options(OptionsScreen::new(
-                                    super::options::Page::Video,
-                                ));
-                            }
-                            None
-                        }
+                        Screen::TextureViewer(_) => None,
                     };
                     if let Some(error) = &self.error {
                         ui.add_space(12.0);
@@ -173,6 +175,14 @@ impl Menu {
     pub fn options_screen(&mut self) -> Option<&mut OptionsScreen> {
         match &mut self.screen {
             Screen::Options(screen) => Some(screen),
+            _ => None,
+        }
+    }
+
+    /// The Texture Viewer, while it's open.
+    pub fn viewer_mut(&mut self) -> Option<&mut crate::audit::viewer::Viewer> {
+        match &mut self.screen {
+            Screen::TextureViewer(viewer) => Some(viewer),
             _ => None,
         }
     }
@@ -207,6 +217,15 @@ impl Menu {
                 Screen::Title
             }
         };
+    }
+
+    /// Opens Resource Packs with the reason the last choice didn't load.
+    pub fn show_pack_error(&mut self, options: &Options, error: String) {
+        self.open_packs(options, Screen::Title);
+        if let Screen::ResourcePacks(packs, _) = std::mem::replace(&mut self.screen, Screen::Title)
+        {
+            self.screen = Screen::ResourcePacks(packs.with_error(error), Box::new(Screen::Title));
+        }
     }
 
     fn open_packs(&mut self, options: &Options, back: Screen) {
@@ -287,9 +306,7 @@ impl Menu {
         let done = scan.poll(&mut arrived);
         for info in arrived {
             let icon = info.icon.as_ref().map(|image| {
-                let size = [image.width() as usize, image.height() as usize];
-                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-                ctx.load_texture("world-icon", pixels, egui::TextureOptions::NEAREST)
+                crate::startup::load_egui(ctx, "world-icon", image, egui::TextureOptions::NEAREST)
             });
             self.worlds.push(WorldRow { info, icon });
         }

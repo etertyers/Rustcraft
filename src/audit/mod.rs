@@ -245,7 +245,10 @@ pub fn mob_mesh_posed(
         }
     }
     mob.age = (time * 20.0) as u32;
-    crate::cem::begin_frame(time * 20.0, 0.5, DVec3::ZERO);
+    {
+        let ticks = time * 20.0;
+        crate::cem::begin_frame(ticks.floor() as u64, ticks.fract(), DVec3::ZERO);
+    }
     let mut mesh = Mesh::default();
     add_mob(&mut mesh, &mob, def, 0.5, (15, 0));
     mesh
@@ -1361,7 +1364,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {name} model"));
             let mut mob = Mob::new(kind, def, DVec3::ZERO, 0.0);
             mob.id = 7;
-            crate::cem::begin_frame(0.0, 0.5, DVec3::ZERO);
+            crate::cem::begin_frame(0, 0.5, DVec3::ZERO);
             let mut vanilla = Mesh::default();
             crate::render::models::add_mob_model_using(
                 &mut vanilla,

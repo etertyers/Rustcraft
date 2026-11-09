@@ -2208,7 +2208,7 @@ mod tests {
                     // The same inputs on every client: only the mob's
                     // synced state and the tick.
                     let frame = Frame {
-                        time: tick as f32,
+                        ticks: tick,
                         frame_time: 0.05,
                         frame_counter: 0,
                         player: DVec3::ZERO,

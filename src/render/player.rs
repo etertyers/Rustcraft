@@ -502,7 +502,8 @@ pub fn add_player(
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WornArmor {
     pub slot: crate::inventory::armor::ArmorSlot,
-    pub row: usize,
+    /// Its cell in the armor sheet's grid (`look::armor_row`): column, row.
+    pub cell: (usize, usize),
     pub tint: [f32; 3],
     pub glint: bool,
 }
@@ -516,7 +517,7 @@ const INNER_ARMOR_GROW: f32 = 0.5;
 /// `HumanoidArmorLayer`): the helmet on the head and hat, the chestplate on
 /// the body and arms, the boots on the legs, all from a 64 × 32 outer
 /// layer, and the leggings on the body and legs from the inner layer. The
-/// armor sheet has `rows` such layers stacked.
+/// armor sheet (`look::armor_grid`) has such layers in a grid.
 #[allow(clippy::too_many_arguments)]
 pub fn add_armor(
     mesh: &mut Mesh,
@@ -525,17 +526,17 @@ pub fn add_armor(
     feet: Vec3,
     yaw: f32,
     worn: &[WornArmor],
-    rows: usize,
     light: (u8, u8),
 ) {
     use crate::inventory::armor::ArmorSlot;
     let rig = rig(pose, slim);
     let frame = body_frame(pose, yaw);
-    let size = (64.0, 32.0 * rows as f32);
+    let (columns, rows) = crate::look::armor_grid();
+    let size = (64.0 * columns as f32, 32.0 * rows as f32);
     for piece in worn {
-        let v = 32.0 * piece.row as f32;
+        let (u, v) = (64.0 * piece.cell.0 as f32, 32.0 * piece.cell.1 as f32);
         let b = |uv: (f32, f32), from: (f32, f32, f32), size: (f32, f32, f32)| PartBox {
-            uv: (uv.0, uv.1 + v),
+            uv: (uv.0 + u, uv.1 + v),
             from,
             size,
         };
@@ -1158,9 +1159,9 @@ mod tests {
     fn armor_covers_its_limbs_a_little_larger_than_the_skin() {
         use crate::inventory::armor::ArmorSlot;
         let pose = PlayerPose::default();
-        let piece = |slot, row| WornArmor {
+        let piece = |slot, cell| WornArmor {
             slot,
-            row,
+            cell,
             tint: [1.0; 3],
             glint: false,
         };
@@ -1177,21 +1178,12 @@ mod tests {
         );
         let mut armor = Mesh::default();
         let worn = [
-            piece(ArmorSlot::Head, 6),
-            piece(ArmorSlot::Chest, 6),
-            piece(ArmorSlot::Legs, 7),
-            piece(ArmorSlot::Feet, 6),
+            piece(ArmorSlot::Head, (2, 1)),
+            piece(ArmorSlot::Chest, (2, 1)),
+            piece(ArmorSlot::Legs, (3, 1)),
+            piece(ArmorSlot::Feet, (2, 1)),
         ];
-        add_armor(
-            &mut armor,
-            &pose,
-            false,
-            Vec3::ZERO,
-            0.0,
-            &worn,
-            18,
-            (15, 0),
-        );
+        add_armor(&mut armor, &pose, false, Vec3::ZERO, 0.0, &worn, (15, 0));
         // Head and hat, body and arms, body and legs, legs: 10 boxes.
         assert_eq!(armor.vertices.len(), 10 * 24);
         let top = |mesh: &Mesh| {
@@ -1201,10 +1193,13 @@ mod tests {
                 .fold(f32::MIN, f32::max)
         };
         assert!(top(&armor) > top(&body), "the helmet is over the hat");
-        // Every corner's texture is in its own row of the sheet.
+        // Every corner's texture is in its own cell of the sheet's grid:
+        // columns 2 and 3 of row 1 of a 4 × 5 grid.
+        let (columns, rows) = crate::look::armor_grid();
         for v in &armor.vertices {
-            let rows = v.uv[1] * 18.0;
-            assert!((6.0..=8.0).contains(&rows), "{:?}", v.uv);
+            let (u, t) = (v.uv[0] * columns as f32, v.uv[1] * rows as f32);
+            assert!((2.0..=4.0).contains(&u), "{:?}", v.uv);
+            assert!((1.0..=2.0).contains(&t), "{:?}", v.uv);
         }
     }
 }
