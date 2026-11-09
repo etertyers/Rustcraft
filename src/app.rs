@@ -235,7 +235,8 @@ pub struct App {
     lan_at_start: Option<u16>,
 }
 
-/// Every pack in `resourcepacks/`: (file name, description).
+/// Every pack in `resourcepacks/`: (file name, description). The built-in
+/// packs join the Trailer look's list with the styles of M62.
 fn available_packs() -> Vec<(String, String)> {
     crate::pack::list(&crate::pack::packs_dir())
         .into_iter()

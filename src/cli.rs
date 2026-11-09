@@ -56,6 +56,8 @@ Usage: cargo run --release -- [flags]
   --nether | --end      an unsaved test world in the Nether or the End
   --view first|back|front   the view to start in (F5 cycles it)
   --pack <name>         play with this resource pack once (repeatable)
+  --assets <dir>        read the game's assets from this folder (default: the app's
+                        Contents/Resources, else the source tree; never the current folder)
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
   --perf-test           the performance gate (writes docs/perf/<label>.md and .json); --underwater flies in the sea
     --runs <n>            ...n flights in one launch; the report has each measure's median and spread
@@ -74,7 +76,7 @@ Usage: cargo run --release -- [flags]
   --lan-test <n>        a server with n bots walking, mining and placing
                         for 60 s; prints tick times and bandwidth
   --help                this text
-Tools: --write-structures, --asset-report, --gen-placeholders,
+Tools: --write-structures, --asset-report [--exit] (exit 1 if the build is incomplete), --gen-placeholders,
        --biome-map and --height-map [--seed <n>] [--size <px>] [--out <file>],
        --spawn-test [--seed <n>] (one night of mob counts in plains),
        --flower-test [--seed <n>] (flowers per chunk by biome)
@@ -244,6 +246,11 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
             "--pack" => {
                 value(&mut args, "--pack", "a resource pack's name")?;
             }
+            // Read in `assets` and `main`.
+            "--assets" => {
+                value(&mut args, "--assets", "a folder")?;
+            }
+            "--exit" => {}
             "--runs" => {
                 let text = value(&mut args, "--runs", "a number")?;
                 runs = text

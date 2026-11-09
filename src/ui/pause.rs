@@ -100,6 +100,10 @@ impl PauseMenu {
                                         crate::pack::packs_dir(),
                                         &options.resource_packs,
                                     )
+                                    .with_builtin(
+                                        crate::pack::builtin_dir(),
+                                        &options.resource_packs,
+                                    )
                                     .for_look(options.visuals.look.name()),
                                 );
                             }

@@ -160,6 +160,9 @@ pub struct Pack {
     files: Files,
     /// Where the `minecraft` namespace starts inside the pack.
     root: &'static str,
+    /// It comes from `assets/downloads/resourcepacks/` (shown as "Built
+    /// in": it can be turned off but not deleted).
+    pub builtin: bool,
 }
 
 impl Pack {
@@ -199,6 +202,7 @@ impl Pack {
             icon: None,
             files,
             root: NAMESPACE_ROOT,
+            builtin: false,
         };
         let mcmeta = pack
             .read_file(anchor)
@@ -223,6 +227,7 @@ impl Pack {
             icon: None,
             files: Files::Dir(assets.to_owned()),
             root: "",
+            builtin: false,
         }
     }
 
@@ -238,6 +243,7 @@ impl Pack {
             icon: None,
             files: Files::Dir(dir.to_owned()),
             root: NAMESPACE_ROOT,
+            builtin: false,
         })
     }
 
@@ -325,6 +331,32 @@ pub fn packs_dir() -> PathBuf {
     crate::level::saves_dir().with_file_name("resourcepacks")
 }
 
+/// The packs the game ships with, in `assets/downloads/resourcepacks/`
+/// (Kenzo's downloads, git-ignored): the Barebones packs and Patrix.
+pub fn builtin_dir() -> PathBuf {
+    crate::assets::dir().join("downloads/resourcepacks")
+}
+
+/// The packs in `dir` and the built-in ones in `builtin`, sorted by name.
+/// A pack in `dir` hides a built-in one with the same file name.
+pub fn list_with_builtin(dir: &Path, builtin: &Path) -> Vec<Pack> {
+    let mut packs = list(dir);
+    for mut pack in list(builtin) {
+        if !packs.iter().any(|p| p.id == pack.id) {
+            pack.builtin = true;
+            packs.push(pack);
+        }
+    }
+    packs.sort_by_key(|pack| pack.name().to_lowercase());
+    packs
+}
+
+/// Where the pack called `id` is: `dir` first, then the built-in folder.
+pub fn find(dir: &Path, builtin: &Path, id: &str) -> PathBuf {
+    let own = dir.join(id);
+    if own.exists() { own } else { builtin.join(id) }
+}
+
 /// Every pack in `dir`, sorted by name; ones that can't be read are
 /// skipped with a warning.
 pub fn list(dir: &Path) -> Vec<Pack> {
@@ -387,6 +419,40 @@ pub(crate) mod tests {
     }
 
     pub const MCMETA: &[u8] = br#"{"pack": {"pack_format": 34, "description": "test"}}"#;
+
+    #[test]
+    fn packs_in_the_downloads_folder_are_listed_as_built_in() {
+        let user = TempDir::new("user-packs");
+        let builtin = TempDir::new("builtin-packs");
+        write_zip(&user.path().join("Mine.zip"), &[("pack.mcmeta", MCMETA)]);
+        write_zip(
+            &builtin.path().join("Patrix_26.3_32x_basic.zip"),
+            &[("pack.mcmeta", MCMETA)],
+        );
+        // The same file name in both: the player's wins and is not built in.
+        write_zip(&user.path().join("Same.zip"), &[("pack.mcmeta", MCMETA)]);
+        write_zip(&builtin.path().join("Same.zip"), &[("pack.mcmeta", MCMETA)]);
+        let packs = list_with_builtin(user.path(), builtin.path());
+        let flags: Vec<(&str, bool)> = packs.iter().map(|p| (p.id.as_str(), p.builtin)).collect();
+        assert_eq!(
+            flags,
+            [
+                ("Mine.zip", false),
+                ("Patrix_26.3_32x_basic.zip", true),
+                ("Same.zip", false)
+            ]
+        );
+        // Opening by name finds a built-in pack when the player has no such file.
+        let opened = crate::look::open_packs_in(
+            user.path(),
+            builtin.path(),
+            &[
+                "Patrix_26.3_32x_basic.zip".to_owned(),
+                "Mine.zip".to_owned(),
+            ],
+        );
+        assert_eq!(opened.len(), 2);
+    }
 
     #[test]
     fn reads_old_and_new_pack_mcmeta() {
