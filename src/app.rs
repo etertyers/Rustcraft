@@ -142,6 +142,8 @@ pub struct App {
     res: Option<Resources>,
     /// The pause menu, open over a stopped game.
     pause: Option<PauseMenu>,
+    /// Start the game again once the world is saved (Mods: Restart now).
+    relaunch: bool,
     /// Atlas rects of the mining crack's stages.
     crack_uvs: Vec<[f32; 4]>,
     effect_uvs: EffectUvs,
@@ -334,6 +336,8 @@ pub struct ShotRun {
 
 /// The `--shot` that captures the Texture Viewer, not a world.
 const TEXTURE_VIEWER_SHOT: &str = "texture-viewer";
+/// The Mods screen shot (M66): also a menu screen, not a world.
+const MODS_SHOT: &str = "mods-screen";
 
 /// Frames drawn after staging a scene before capturing it, so remeshed
 /// chunks and the UI catch up.
@@ -362,6 +366,7 @@ impl App {
             audio: None,
             res: None,
             pause: None,
+            relaunch: false,
             hide_gui: false,
             tab_held: false,
             f3_held: false,
@@ -428,7 +433,7 @@ impl App {
     pub fn with_shot(mut self, shot: &'static shots::Shot, out: std::path::PathBuf) -> Self {
         // Every scene is seen at the standard render distance.
         self.options.render_distance = config::RENDER_DISTANCE;
-        if shot.name == TEXTURE_VIEWER_SHOT {
+        if shot.name == TEXTURE_VIEWER_SHOT || shot.name == MODS_SHOT {
             // A menu screen: no world.
         } else if self.world_kind.is_none() || shot.world.is_some() {
             self.world_kind = Some(shot.world.clone().unwrap_or(WorldKind::Flat));
@@ -632,6 +637,13 @@ impl App {
                         .is_some_and(|run| run.shot.name == TEXTURE_VIEWER_SHOT)
                 {
                     menu.open_texture_viewer();
+                }
+                if self
+                    .shot
+                    .as_ref()
+                    .is_some_and(|run| run.shot.name == MODS_SHOT)
+                {
+                    menu.open_mods();
                 }
                 self.menu = Some(menu);
             }
@@ -2233,6 +2245,11 @@ impl App {
             ScreenAction::AdvTab(tab) => return self.advancements = Some(*tab),
             ScreenAction::Pause(PauseAction::Resume) => return self.resume(),
             ScreenAction::Pause(PauseAction::SaveAndQuit) => return self.quit_to_title(),
+            ScreenAction::Pause(PauseAction::Restart) => {
+                // Saves the world, then `redraw` starts the game again.
+                self.relaunch = true;
+                return self.quit_to_title();
+            }
             ScreenAction::Pause(PauseAction::OpenToLan { mode, cheats, port }) => {
                 return self.open_to_lan(*mode, *cheats, port.unwrap_or(0));
             }
@@ -2258,6 +2275,11 @@ impl App {
         let mobs = self.mob_defs.clone().expect("loaded in init");
         let game = match action {
             MenuAction::Quit => return event_loop.exit(),
+            MenuAction::Restart => {
+                self.save_options();
+                crate::mods::route::relaunch();
+                return event_loop.exit();
+            }
             MenuAction::Join(address) => {
                 if let Err(err) = self.join_world(&address) {
                     error!("joining {address}: {err:#}");
@@ -2300,7 +2322,28 @@ impl App {
         }
     }
 
+    /// A file dropped on the window (M66): on a menu screen the Mods
+    /// screen opens and asks where it goes; in a world, only from the
+    /// pause menu.
+    fn on_dropped_file(&mut self, path: std::path::PathBuf) {
+        if let Some(menu) = self.menu.as_mut() {
+            menu.dropped(path);
+        } else if let Some(pause) = self.pause.as_mut() {
+            let mods = pause
+                .mods
+                .get_or_insert_with(crate::ui::mods::ModsScreen::new);
+            mods.dropped(path);
+            pause.options = None;
+            pause.packs = None;
+        }
+    }
+
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        if self.relaunch && self.menu.is_some() {
+            self.save_options();
+            crate::mods::route::relaunch();
+            return event_loop.exit();
+        }
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
@@ -3344,6 +3387,14 @@ impl App {
                 None => {}
             }
         }
+        if let Some(run) = self.shot.as_mut().filter(|run| run.shot.name == MODS_SHOT) {
+            let frames = run.staged.unwrap_or(0);
+            run.staged = Some(frames + 1);
+            if frames >= SHOT_SETTLE_FRAMES {
+                renderer.capture_next_frame(run.out.clone());
+                capturing = true;
+            }
+        }
         let (ui, action) = debug_ui.menu_frame(window, menu, &mut self.options);
         // A noon sky behind the menu.
         let noon = environment(6000, 0.0, Biome::Plains, Vec3::NEG_Z, None);
@@ -3434,6 +3485,7 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } if self.stack.reaches_game() => {
                 self.recenter_cursor(position);
             }
+            WindowEvent::DroppedFile(path) => self.on_dropped_file(path),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.shift_down = modifiers.state().shift_key();
             }

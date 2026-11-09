@@ -684,6 +684,17 @@ pub static SHOTS: &[Shot] = &[
         overlay: false,
         stage: nothing,
     },
+    // M66: the Mods screen (a menu, not a world).
+    Shot {
+        name: "mods-screen",
+        about: "the Mods screen (a menu, not a world)",
+        world: None,
+        view: None,
+        time: None,
+        mode: None,
+        overlay: false,
+        stage: nothing,
+    },
     // v1.4 (M54): the reference scenes the Vanilla look is checked
     // against, all on seed 12345 (tests/reference/vanilla/).
     Shot {

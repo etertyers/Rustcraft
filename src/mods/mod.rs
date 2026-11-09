@@ -6,7 +6,9 @@
 //! order. Changes in the Mods screen apply the next time the game starts.
 
 pub mod client;
+pub mod kind;
 pub mod lua;
+pub mod route;
 
 use std::{
     collections::HashMap,
@@ -116,6 +118,9 @@ pub struct Found {
     pub bundled: bool,
     /// Why it can't be used.
     pub problem: Option<String>,
+    /// What the folder or file is (M66): a Lua mod, or something that
+    /// belongs elsewhere.
+    pub kind: kind::FileKind,
 }
 
 /// Enabled mods and their order, kept in `mods.ron` beside the saves.
@@ -210,12 +215,25 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
         for path in paths {
             let is_zip = path
                 .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+                .is_some_and(|e| e.eq_ignore_ascii_case("zip") || e.eq_ignore_ascii_case("jar"));
             let file_name = path
                 .file_stem()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             if !(path.is_dir() || is_zip) || file_name.starts_with('.') {
+                continue;
+            }
+            let what = kind::detect(&path);
+            if what != kind::FileKind::LuaMod {
+                // Not a mod: the row says what it is and where it goes.
+                found.push(Found {
+                    id: file_name,
+                    manifest: None,
+                    source: Source::Dir(path.clone()),
+                    bundled: false,
+                    problem: Some(route::advise_as(&path, what).message),
+                    kind: what,
+                });
                 continue;
             }
             let source = if is_zip {
@@ -227,7 +245,8 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                             manifest: None,
                             source: Source::Dir(path),
                             bundled: false,
-                            problem: Some(format!("{err:#}")),
+                            problem: Some(route::plain_problem(&format!("{err:#}"))),
+                            kind: what,
                         });
                         continue;
                     }
@@ -235,7 +254,17 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
             } else if path.join("mod.ron").is_file() {
                 Source::Dir(path.clone())
             } else {
-                continue;
+                // A mod inside one wrapping folder: use that folder.
+                match std::fs::read_dir(&path)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .find(|p| p.join("mod.ron").is_file())
+                {
+                    Some(inner) => Source::Dir(inner),
+                    None => continue,
+                }
             };
             let bundled = bundled_dir.is_some_and(|b| b == dir);
             let parsed = source
@@ -244,7 +273,11 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                 .and_then(|text| parse_manifest(&text));
             let (id, manifest, problem) = match parsed {
                 Ok(m) => (m.id.clone(), Some(m), None),
-                Err(err) => (file_name, None, Some(format!("{err:#}"))),
+                Err(err) => (
+                    file_name,
+                    None,
+                    Some(route::plain_problem(&format!("{err:#}"))),
+                ),
             };
             if let Some(have) = found.iter_mut().find(|f| f.id == id) {
                 // A copy left in the user's mods folder doesn't hide a newer
@@ -266,6 +299,7 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                         source,
                         bundled,
                         problem,
+                        kind: what,
                     };
                 }
                 continue;
@@ -276,6 +310,7 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                 source,
                 bundled,
                 problem,
+                kind: what,
             });
         }
     }
@@ -854,6 +889,7 @@ mod tests {
             source: Source::Dir(PathBuf::from("/nonexistent")),
             bundled: false,
             problem: None,
+            kind: kind::FileKind::LuaMod,
         }
     }
 

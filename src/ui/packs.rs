@@ -63,6 +63,9 @@ pub struct PackScreen {
     look: Option<&'static str>,
     /// Why the last pack chosen didn't load, shown at the top.
     error: Option<String>,
+    /// Files in the folder that aren't resource packs, with what each is
+    /// (M66), so they aren't silently skipped.
+    misplaced: Vec<String>,
 }
 
 impl PackScreen {
@@ -78,6 +81,7 @@ impl PackScreen {
             checked: Instant::now(),
             look: None,
             error: None,
+            misplaced: Vec::new(),
         };
         screen.rescan(enabled);
         screen
@@ -105,6 +109,10 @@ impl PackScreen {
     /// Reads the folder again, keeping the current selection and order.
     fn rescan(&mut self, enabled: &[String]) {
         self.scanned = modified(&self.dir);
+        self.misplaced = crate::mods::route::misplaced_in(&self.dir)
+            .into_iter()
+            .map(|(_, advice)| advice.message)
+            .collect();
         let found = match &self.builtin_dir {
             Some(builtin) => pack::list_with_builtin(&self.dir, builtin),
             None => pack::list(&self.dir),
@@ -175,6 +183,9 @@ impl PackScreen {
         );
         if let Some(error) = &self.error {
             ui.colored_label(Color32::from_rgb(0xff, 0x60, 0x60), error);
+        }
+        for note in &self.misplaced {
+            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x50), note);
         }
         ui.label(RichText::new("Packs on top override the ones below them").color(GRAY));
         if let Some(look) = self.look {
