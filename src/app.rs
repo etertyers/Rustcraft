@@ -512,7 +512,13 @@ impl App {
                 // A click puts the mouse in the window.
                 self.stack.set_in_world(true, false);
             }
-            None => self.menu = Some(Menu::new(level::saves_dir())),
+            None => {
+                let mut menu = Menu::new(level::saves_dir());
+                if std::env::args().any(|arg| arg == "--texture-viewer") {
+                    menu.open_texture_viewer();
+                }
+                self.menu = Some(menu);
+            }
         }
         self.renderer = Some(renderer);
         window.request_redraw();
@@ -1384,7 +1390,10 @@ impl App {
     /// What the chat box asked for this frame.
     fn on_chat(&mut self, action: Option<crate::ui::chat::ChatAction>) {
         use crate::{net::protocol::ClientMsg, ui::chat::ChatAction};
+        let mut texture_viewer = false;
         match action {
+            // `/textures` opens the Texture Viewer here, on this client.
+            Some(ChatAction::Send(text)) if text.trim() == "/textures" => texture_viewer = true,
             Some(ChatAction::Send(text)) => self.tell_server(ClientMsg::Chat(text)),
             Some(ChatAction::Complete(line)) => self.tell_server(ClientMsg::Complete(line)),
             Some(ChatAction::Click(action, value)) => match action.as_str() {
@@ -1412,6 +1421,12 @@ impl App {
         // Enter closed it.
         if !self.chat.is_open() && self.stack.contains(Layer::Chat) {
             self.close_chat();
+        }
+        if texture_viewer {
+            self.pause_game();
+            if let Some(pause) = self.pause.as_mut() {
+                pause.viewer = Some(Box::default());
+            }
         }
     }
 

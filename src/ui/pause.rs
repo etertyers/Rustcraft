@@ -33,6 +33,8 @@ pub struct PauseMenu {
     pub packs: Option<PackScreen>,
     pub lan: Option<LanScreen>,
     pub mods: Option<ModsScreen>,
+    /// The Texture Viewer, from Video Settings or `/textures`.
+    pub viewer: Option<Box<crate::audit::viewer::Viewer>>,
     /// Whether this world can be opened to LAN (the host's, not yet open),
     /// set by the caller.
     pub can_open_lan: bool,
@@ -52,7 +54,15 @@ impl PauseMenu {
     /// Escape: from Resource Packs back to Options without applying, up
     /// the Options pages to the menu, from the menu back to the game.
     pub fn back(&mut self) -> Option<PauseAction> {
-        if self.packs.take().is_some() || self.lan.take().is_some() || self.mods.take().is_some() {
+        if let Some(viewer) = self.viewer.as_mut() {
+            if viewer.escape() {
+                self.viewer = None;
+            }
+            None
+        } else if self.packs.take().is_some()
+            || self.lan.take().is_some()
+            || self.mods.take().is_some()
+        {
             None
         } else if let Some(options) = self.options.as_mut() {
             if options.back() {
@@ -84,6 +94,12 @@ impl PauseMenu {
             .fade_in(false)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
+                    if let Some(viewer) = self.viewer.as_mut() {
+                        if viewer.show(ui) {
+                            self.viewer = None;
+                        }
+                        return;
+                    }
                     if let Some(packs) = self.packs.as_mut() {
                         if let Some(selection) = packs.show(ui) {
                             options.resource_packs = selection;
@@ -106,6 +122,9 @@ impl PauseMenu {
                                     )
                                     .for_look(options.visuals.look.name()),
                                 );
+                            }
+                            Some(OptionsAction::TextureViewer) => {
+                                self.viewer = Some(Box::default());
                             }
                             None => {}
                         }

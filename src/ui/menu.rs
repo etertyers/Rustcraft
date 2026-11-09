@@ -47,6 +47,8 @@ enum Screen {
     CreateWorld,
     Multiplayer(Multiplayer),
     Mods(super::mods::ModsScreen),
+    /// The Texture Viewer (M60).
+    TextureViewer(Box<crate::audit::viewer::Viewer>),
     /// A world played with mods that are missing: what is missing, until
     /// the player says go on.
     ConfirmMods(WorldDir, Vec<String>),
@@ -121,6 +123,7 @@ impl Menu {
                                         Screen::Options(OptionsScreen::new(page)),
                                     )
                                 }
+                                Some(OptionsAction::TextureViewer) => self.open_texture_viewer(),
                                 None => {}
                             }
                             None
@@ -145,6 +148,14 @@ impl Menu {
                             }
                             None
                         }
+                        Screen::TextureViewer(viewer) => {
+                            if viewer.show(ui) {
+                                self.screen = Screen::Options(OptionsScreen::new(
+                                    super::options::Page::Video,
+                                ));
+                            }
+                            None
+                        }
                     };
                     if let Some(error) = &self.error {
                         ui.add_space(12.0);
@@ -166,6 +177,11 @@ impl Menu {
         }
     }
 
+    /// Opens the Texture Viewer (Options, or `--texture-viewer`).
+    pub fn open_texture_viewer(&mut self) {
+        self.screen = Screen::TextureViewer(Box::default());
+    }
+
     /// Escape: back a page of Options, or out of Resource Packs or a
     /// world screen to the one before.
     pub fn back(&mut self) {
@@ -178,6 +194,13 @@ impl Menu {
                 }
             }
             Screen::ResourcePacks(_, back) => *back,
+            Screen::TextureViewer(mut viewer) => {
+                if viewer.escape() {
+                    Screen::Options(OptionsScreen::new(super::options::Page::Video))
+                } else {
+                    Screen::TextureViewer(viewer)
+                }
+            }
             Screen::CreateWorld => Screen::SelectWorld,
             Screen::ConfirmMods(..) => Screen::SelectWorld,
             Screen::Title | Screen::SelectWorld | Screen::Multiplayer(_) | Screen::Mods(_) => {
