@@ -219,7 +219,7 @@ impl Game {
     }
 
     /// Gives a new mob its id and adds it to the world.
-    pub(super) fn add_mob(&mut self, mut mob: Mob) -> u64 {
+    pub fn add_mob(&mut self, mut mob: Mob) -> u64 {
         self.next_mob_id += 1;
         mob.id = self.next_mob_id;
         self.mobs.push(mob);
@@ -229,7 +229,7 @@ impl Game {
     /// A mob of `kind` with the random traits its kind has: a sheep's
     /// color, a cat's or horse's coat, a slime's size, the time to the
     /// next egg.
-    pub(super) fn new_mob(&mut self, kind: MobKind, feet: DVec3, yaw: f32) -> Mob {
+    pub fn new_mob(&mut self, kind: MobKind, feet: DVec3, yaw: f32) -> Mob {
         let def = self.mob_defs.get(kind);
         let mut data = MobData::default();
         let roll = self.rng.next_f64();

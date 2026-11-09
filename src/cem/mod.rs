@@ -9,11 +9,7 @@ pub mod model;
 pub mod pose;
 pub mod vars;
 
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use log::{info, warn};
 
@@ -90,10 +86,21 @@ impl Registry {
     }
 }
 
-static ACTIVE: RwLock<Option<Arc<Registry>>> = RwLock::new(None);
+#[cfg(not(test))]
+static ACTIVE: std::sync::RwLock<Option<Arc<Registry>>> = std::sync::RwLock::new(None);
+
+#[cfg(test)]
+thread_local! {
+    /// In tests each thread has its own, so tests that install custom
+    /// models can't change what the tests running beside them draw.
+    static TEST_ACTIVE: RefCell<Option<Arc<Registry>>> = const { RefCell::new(None) };
+}
 
 /// Makes `registry` the models mobs are drawn with.
 pub fn install(registry: Registry) {
+    #[cfg(test)]
+    TEST_ACTIVE.with(|a| *a.borrow_mut() = Some(Arc::new(registry)));
+    #[cfg(not(test))]
     if let Ok(mut active) = ACTIVE.write() {
         *active = Some(Arc::new(registry));
     }
@@ -102,6 +109,9 @@ pub fn install(registry: Registry) {
 
 /// The models in use, if any packs have some.
 pub fn active() -> Option<Arc<Registry>> {
+    #[cfg(test)]
+    return TEST_ACTIVE.with(|a| a.borrow().clone().filter(|r| !r.models.is_empty()));
+    #[cfg(not(test))]
     ACTIVE.read().ok()?.clone().filter(|r| !r.models.is_empty())
 }
 

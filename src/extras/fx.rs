@@ -1352,7 +1352,7 @@ mod tests {
             fx.tick(&world, &input(t, cam, Sky::Thunder, &bodies), all);
         }
         let ticks = 400u64;
-        let started = std::time::Instant::now();
+        let started = crate::testutil::thread_cpu_time();
         let mut quads = 0;
         for t in 0..ticks {
             fx.tick(&world, &input(200 + t, cam, Sky::Thunder, &bodies), all);
@@ -1362,7 +1362,8 @@ mod tests {
             });
             quads += mesh.indices.len() / 6;
         }
-        let per_tick = started.elapsed().as_secs_f64() * 1000.0 / ticks as f64;
+        let per_tick =
+            (crate::testutil::thread_cpu_time() - started).as_secs_f64() * 1000.0 / ticks as f64;
         println!(
             "storm with three boats: {per_tick:.3} ms a tick, {} quads a tick",
             quads / ticks as usize

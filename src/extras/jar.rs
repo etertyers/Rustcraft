@@ -3,7 +3,12 @@
 //! `fx/<mod>/<name>`. A missing jar leaves its sprites out, and the effect
 //! falls back to vanilla's particles with one log line.
 
-use std::{collections::HashMap, io::Read, path::Path};
+use std::{
+    collections::HashMap,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::RwLock,
+};
 
 use image::RgbaImage;
 use log::info;
@@ -109,6 +114,71 @@ pub fn load(dir: &Path) -> HashMap<String, RgbaImage> {
     images
 }
 
+static DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Where the mod jars are (`downloads/mods`), set when the resources load.
+pub fn set_dir(dir: &Path) {
+    if let Ok(mut d) = DIR.write() {
+        *d = Some(dir.to_owned());
+    }
+}
+
+/// The jar in the mods folder whose file name starts with `prefix`.
+pub fn find_jar(prefix: &str) -> Option<PathBuf> {
+    let dir = DIR.read().ok()?.clone()?;
+    find_jar_in(&dir, prefix)
+}
+
+pub fn find_jar_in(dir: &Path, prefix: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(prefix) && n.ends_with(".jar"))
+        })
+}
+
+/// A file inside the jar `jar`.
+pub fn read_in(jar: &Path, path: &str) -> Option<Vec<u8>> {
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(jar).ok()?).ok()?;
+    let mut entry = zip.by_name(path).ok()?;
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Which jar has the sounds of a namespace.
+fn sound_jar(namespace: &str) -> Option<&'static str> {
+    match namespace {
+        "presencefootsteps" | "presencefootstepsmono" => Some("PresenceFootsteps-"),
+        "ambientsounds" => Some("AmbientSounds_"),
+        _ => None,
+    }
+}
+
+/// The bytes of a sound `namespace:path` from its jar (`sounds/<path>.ogg`).
+pub fn sound_bytes(name: &str) -> Option<Vec<u8>> {
+    let (namespace, path) = name.split_once(':')?;
+    let jar = find_jar(sound_jar(namespace)?)?;
+    read_in(&jar, &format!("assets/{namespace}/sounds/{path}.ogg"))
+}
+
+/// The jars' own `sounds.json` files, to merge into the sound table: their
+/// events name the files above.
+pub fn sounds_json_layers() -> Vec<String> {
+    ["presencefootsteps", "ambientsounds"]
+        .into_iter()
+        .filter_map(|namespace| {
+            let jar = find_jar(sound_jar(namespace)?)?;
+            let bytes = read_in(&jar, &format!("assets/{namespace}/sounds.json"))?;
+            String::from_utf8(bytes).ok()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +209,33 @@ mod tests {
             let image = images.get(name).unwrap_or_else(|| panic!("{name} missing"));
             assert_eq!(image.width(), image.height(), "{name} is a square frame");
         }
+    }
+
+    #[test]
+    fn the_sound_jars_give_their_events_and_ogg_files_when_downloaded() {
+        let dir = crate::assets::dir().join("downloads/mods");
+        if find_jar_in(&dir, "PresenceFootsteps-").is_none()
+            || find_jar_in(&dir, "AmbientSounds_").is_none()
+        {
+            eprintln!("skipped: no sound jars");
+            return;
+        }
+        set_dir(&dir);
+        let layers = sounds_json_layers();
+        assert_eq!(layers.len(), 2, "both jars have a sounds.json");
+        // Every file the first events name is in a jar and is an ogg.
+        let mut checked = 0;
+        for layer in &layers {
+            let json: serde_json::Value = serde_json::from_str(layer).unwrap();
+            for (_, event) in json.as_object().unwrap().iter().take(40) {
+                for sound in event["sounds"].as_array().into_iter().flatten() {
+                    let name = sound.as_str().or_else(|| sound["name"].as_str()).unwrap();
+                    let bytes = sound_bytes(name).unwrap_or_else(|| panic!("{name} missing"));
+                    assert_eq!(&bytes[..4], b"OggS", "{name}");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 20, "{checked}");
     }
 }

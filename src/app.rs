@@ -179,6 +179,9 @@ pub struct App {
     fx_uvs: crate::extras::fx::FxUvs,
     fx_tick: Option<u64>,
     fx_hurt: std::collections::HashMap<u64, u32>,
+    /// The sound extras (M65): footsteps, ambient beds, physics snapshots.
+    live: crate::extras::live::Live,
+    sound_on: crate::extras::live::SoundOn,
     pending_look: Option<(Vec<String>, crossbeam_channel::Receiver<Result<Look>>)>,
     /// When texture animations started.
     animation_start: Instant,
@@ -397,6 +400,8 @@ impl App {
             fx_uvs: Default::default(),
             fx_tick: None,
             fx_hurt: Default::default(),
+            live: Default::default(),
+            sound_on: Default::default(),
             pending_look: None,
             animation_start: Instant::now(),
             catalog: Vec::new(),
@@ -474,6 +479,7 @@ impl App {
         if let Some(distance) = bench.as_ref().and_then(|bench| bench.distance) {
             self.options.render_distance = distance;
         }
+        self.options.extras.force = bench.as_ref().and_then(|b| b.extras);
         self.bench = bench;
         self
     }
@@ -1676,8 +1682,22 @@ impl App {
                 Some("music.menu"),
             ),
         };
+        // The sound extras (M65): vanilla's steps give way to ours, sounds
+        // are shaped by their surroundings, and ambient beds follow the place.
+        crate::audio::set_mute_steps(self.live.footsteps_ready(self.sound_on));
+        let underwater = self
+            .game
+            .as_ref()
+            .is_some_and(|g| g.eye_in() == Some(crate::world::block::Fluid::Water));
+        audio.set_physics(self.sound_on.physics, self.live.snapshot(), underwater);
         audio.update(res, &listener, self.options.volume, &self.options.volumes);
         audio.update_music(res, music, dt, self.options.volumes.music);
+        let beds: &[crate::extras::ambient::Bed] = if self.sound_on.ambient && self.game.is_some() {
+            self.live.beds()
+        } else {
+            &[]
+        };
+        audio.update_ambient(beds, self.options.volumes.ambient, dt);
     }
 
     /// Rebuilds the look with the selected resource packs on a background
@@ -1929,6 +1949,16 @@ impl App {
             },
             on,
         );
+        if tick.is_multiple_of(200) && !fx.particles().is_empty() {
+            log::debug!(
+                "extras: {} particles ({} rain, {} wake, {} bubble, {} visual)",
+                fx.particles().len(),
+                fx.count(crate::extras::fx::Kind::Rain),
+                fx.count(crate::extras::fx::Kind::Wake),
+                fx.count(crate::extras::fx::Kind::Bubble),
+                fx.count(crate::extras::fx::Kind::Visual),
+            );
+        }
         // A popped bubble makes a small pop, at Make Bubbles Pop's default
         // 10% volume (at most a few a tick).
         for (n, at) in fx.pops.iter().take(3).enumerate() {
@@ -2311,6 +2341,9 @@ impl App {
                 world.teleport(glam::DVec3::from_array(start), 0.0, -0.35);
             }
             world.glide(bench::SPEED * dt as f64, bench.height());
+            if bench.storm {
+                bench::stage_storm(world);
+            }
             // This client looks where the flight does.
             game.player.camera.yaw = world.player.camera.yaw;
             game.player.camera.pitch = world.player.camera.pitch;
@@ -2363,6 +2396,17 @@ impl App {
             self.options.visuals.style,
             crate::extras::Extra::PlayerAnimations,
         ));
+        {
+            let style = self.options.visuals.style;
+            let t = &self.options.extras;
+            use crate::extras::Extra;
+            self.sound_on = crate::extras::live::SoundOn {
+                footsteps: t.enabled(style, Extra::FootstepsByMaterial),
+                physics: t.enabled(style, Extra::SoundPhysics),
+                ambient: t.enabled(style, Extra::AmbientSounds),
+            };
+            self.live.tick(game, self.sound_on);
+        }
         Self::tick_fx(
             &self.options,
             &mut self.fx,
