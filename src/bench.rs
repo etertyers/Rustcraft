@@ -78,6 +78,10 @@ pub struct FrameTimes {
     pub chunks: Duration,
     /// Building entity meshes and the UI, and drawing.
     pub draw: Duration,
+    /// Of `draw`: building the egui frame (M68).
+    pub egui: Duration,
+    /// Of `draw`: the renderer's own split (M68).
+    pub cpu: crate::render::CpuSplit,
     /// Drawn off screen because the window had no frame to give (it was
     /// hidden or the screen locked).
     pub offscreen: bool,
@@ -100,6 +104,14 @@ pub struct Bench {
     /// `--storm` (M65): a thunderstorm over the ocean with three boats sailing
     /// and mobs being hit, so the extras are working while it's measured.
     pub storm: bool,
+    /// `--native` (M68): full screen at the display's real resolution, with
+    /// vsync as in the options (or `--vsync`), and the share of frames that
+    /// missed the display's refresh is reported.
+    pub native: bool,
+    /// `--vsync on|off`: for this run only.
+    pub vsync: Option<bool>,
+    /// The display's refresh rate in Hz, as winit reports it (set at start).
+    pub refresh_hz: Option<f32>,
     /// `--extras on|off`: every extra on or off for this run.
     pub extras: Option<bool>,
     /// `--runs <n>`: how many flights `--perf-test` makes (the report has the
@@ -129,6 +141,9 @@ impl Bench {
             dimension: Default::default(),
             underwater: false,
             storm: false,
+            native: false,
+            vsync: None,
+            refresh_hz: None,
             extras: None,
             runs: 1,
             label: None,
@@ -234,6 +249,36 @@ impl Bench {
         if let Some(memory) = run.memory_mib {
             put("memory_mib", memory);
         }
+        // Frames that missed the display's refresh: over 1.5 intervals.
+        let refresh = f64::from(self.refresh_hz.unwrap_or(60.0));
+        let missed = self
+            .frames
+            .iter()
+            .filter(|t| f64::from(t.frame) > 1.5 / refresh)
+            .count();
+        put("refresh_hz", refresh);
+        put(
+            "missed_frame_pct",
+            missed as f64 * 100.0 / self.frames.len().max(1) as f64,
+        );
+        // Where the CPU's frame went (M68), mean ms per frame.
+        let n = self.frames.len().max(1) as f64;
+        let mean = |part: fn(&FrameTimes) -> Duration| {
+            self.frames
+                .iter()
+                .map(|t| part(t).as_secs_f64())
+                .sum::<f64>()
+                / n
+                * 1000.0
+        };
+        put("cpu_game_ms", mean(|t| t.game));
+        put("cpu_chunks_ms", mean(|t| t.chunks));
+        put("cpu_draw_ms", mean(|t| t.draw));
+        put("cpu_egui_ms", mean(|t| t.egui));
+        put("cpu_acquire_ms", mean(|t| t.cpu.acquire));
+        put("cpu_encode_ms", mean(|t| t.cpu.encode));
+        put("cpu_submit_ms", mean(|t| t.cpu.submit));
+        put("cpu_present_ms", mean(|t| t.cpu.present));
         if let Some((passes, total)) = &self.gpu {
             for (pass, ms) in passes {
                 put(&format!("gpu_{pass}_ms"), *ms);
@@ -362,7 +407,8 @@ fn summary(frames: &[FrameTimes]) -> String {
     format!(
         "{} frames ({offscreen} off screen), {:.0} fps average, 1% low {:.0} fps, worst {:.1} ms \
          (game {:.1}, chunks {:.1}, draw {:.1}), {slow} over 33 ms; \
-         per frame: game {:.2} ms, chunks {:.2} ms, draw {:.2} ms",
+         per frame: game {:.2} ms, chunks {:.2} ms, draw {:.2} ms \
+         (egui {:.2}, acquire {:.2}, encode {:.2}, submit {:.2}, present or GPU wait {:.2})",
         frames.len(),
         n / total,
         1.0 / percentile(0.99),
@@ -373,6 +419,11 @@ fn summary(frames: &[FrameTimes]) -> String {
         mean_ms(|f| f.game),
         mean_ms(|f| f.chunks),
         mean_ms(|f| f.draw),
+        mean_ms(|f| f.egui),
+        mean_ms(|f| f.cpu.acquire),
+        mean_ms(|f| f.cpu.encode),
+        mean_ms(|f| f.cpu.submit),
+        mean_ms(|f| f.cpu.present),
     )
 }
 

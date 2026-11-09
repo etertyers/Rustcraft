@@ -525,9 +525,23 @@ impl App {
             None => (config::WINDOW_WIDTH, config::WINDOW_HEIGHT),
         };
         let attrs = Window::default_attributes().with_title(config::WINDOW_TITLE);
+        let native = self.bench.as_ref().is_some_and(|b| b.native);
+        // The bench's 1080p is 1080p pixels on every screen: a logical
+        // 1920×1080 window on a scale-2 display is 3840×2160 pixels, which
+        // macOS clamps to the screen (2940×1678 on a MacBook Air), so M4
+        // "1080p" rows measured another resolution and Auto's Render Scale.
         let attrs = match self.window_size {
             Some((w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+            None if self.bench.is_some() => {
+                attrs.with_inner_size(winit::dpi::PhysicalSize::new(width, height))
+            }
             None => attrs.with_inner_size(LogicalSize::new(width, height)),
+        };
+        // `--perf-test --native` flies full screen at the display's size.
+        let attrs = if native {
+            attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
+        } else {
+            attrs
         };
         let window = Arc::new(event_loop.create_window(attrs)?);
         info!(
@@ -585,8 +599,28 @@ impl App {
         let mut renderer =
             Renderer::new(window.clone(), &look.atlas, &look.sky, &look.mob_textures)?;
         // The bench measures how fast frames can go.
-        renderer.set_vsync(self.options.vsync && self.bench.is_none() && self.shot.is_none());
+        // The bench measures how fast frames can go, except a native one
+        // (vsync as in the options, or `--vsync`).
+        let vsync = match &self.bench {
+            Some(b) => b.vsync.unwrap_or(b.native && self.options.vsync),
+            None => self.options.vsync && self.shot.is_none(),
+        };
+        renderer.set_vsync(vsync);
+        if let Some(bench) = self.bench.as_mut() {
+            bench.refresh_hz = window
+                .current_monitor()
+                .and_then(|m| m.refresh_rate_millihertz())
+                .map(|mhz| mhz as f32 / 1000.0);
+        }
         renderer.set_offscreen_fallback(self.bench.is_some() || self.shot.is_some());
+        renderer.set_visuals(self.options.visuals.frame());
+        {
+            let report = renderer.display_report(&window);
+            info!("{report}");
+            if self.bench.is_some() {
+                println!("{report}");
+            }
+        }
         renderer.set_clouds(self.options.clouds != crate::options::Clouds::Off);
         crate::ui::gui::set_gui_scale(self.options.gui_scale);
         crate::ui::glint::set_glint(self.options.glint_speed, self.options.glint_strength);
@@ -2090,7 +2124,9 @@ impl App {
         let Some(window) = &self.window else {
             return;
         };
-        let wanted = self.options.fullscreen && self.bench.is_none() && self.shot.is_none();
+        let native = self.bench.as_ref().is_some_and(|b| b.native);
+        let wanted =
+            native || (self.options.fullscreen && self.bench.is_none() && self.shot.is_none());
         if wanted != window.fullscreen().is_some() {
             window.set_fullscreen(wanted.then_some(winit::window::Fullscreen::Borderless(None)));
         }
@@ -3189,6 +3225,7 @@ impl App {
             .as_mut()
             .map(|menu| (menu, &mut self.options, &mut difficulty));
         let chat = (!self.hide_gui).then_some((&mut self.chat, &chat_settings));
+        let egui_started = Instant::now();
         let (ui, actions, chat_action, editor_action) = debug_ui.frame(
             window,
             &game.player.camera,
@@ -3199,6 +3236,7 @@ impl App {
             chat,
             self.command_block.as_mut(),
         );
+        let egui_time = egui_started.elapsed();
         game.difficulty = difficulty;
         let mut environment = game.environment_with(self.client_mods.min_light());
         environment.brightness = self.options.brightness;
@@ -3216,6 +3254,7 @@ impl App {
             renderer.chunks_drawn()
         );
         let offscreen = renderer.drew_offscreen();
+        let cpu = renderer.cpu_split();
         self.finish_frame(event_loop, now, result);
         if let Some(bench) = self.bench.as_mut() {
             let was_warming_up = bench.warming_up();
@@ -3224,6 +3263,8 @@ impl App {
                 game: ticked - now,
                 chunks: uploaded - ticked,
                 draw: uploaded.elapsed(),
+                egui: egui_time,
+                cpu,
                 offscreen,
             });
             // GPU times count from the end of the warm-up.

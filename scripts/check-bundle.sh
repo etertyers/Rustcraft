@@ -1,8 +1,11 @@
 #!/bin/sh
 # Checks a built Rustcraft.app against the folders it was built from: the
-# number of files in each asset folder must match, and the app's own binary,
-# started from / (as the Finder does), must report no silent sound event, no
-# missing texture and a Minecraft font (--asset-report --exit).
+# number of files in each asset folder must match; the binary must not contain
+# this repo's absolute path (a path baked in at build time makes the app work
+# only on the Mac that built it); and a copy of the app, started from / (as
+# the Finder does) in a temp folder while this repo's assets/ is renamed away,
+# must report no silent sound event, no missing texture and a Minecraft font
+# (--asset-report --exit).
 #
 #   scripts/check-bundle.sh [Rustcraft.app] [assets dir]
 #   (default: target/release/bundle/Rustcraft.app and assets)
@@ -41,10 +44,32 @@ if [ ! -x "$BIN" ]; then
   echo "error: $BIN is missing" >&2
   exit 1
 fi
-if ! (cd / && "$BIN" --asset-report --exit) ; then
-  echo "error: the app's own asset report found problems (above)" >&2
+# 1. No build-machine path in the binary.
+REPO=$(pwd -P)
+if strings -a "$BIN" | grep -qF "$REPO"; then
+  echo "error: the binary contains this repo's path ($REPO); some loading uses a path baked in at build time:" >&2
+  strings -a "$BIN" | grep -F "$REPO" | sort -u | head -5 >&2
+  failed=1
+else
+  echo "ok       no build-machine path in the binary"
+fi
+
+# 2. Run a copy with the repo's assets/ unreachable.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/rustcraft-bundle-check.XXXXXX")
+HIDDEN="$REPO/assets.hidden-by-check-bundle"
+restore() {
+  if [ -d "$HIDDEN" ] && [ ! -e "$REPO/assets" ]; then mv "$HIDDEN" "$REPO/assets"; fi
+  rm -rf "$TMP"
+}
+trap restore EXIT INT TERM
+cp -cR "$APP" "$TMP/Rustcraft.app" 2>/dev/null || cp -R "$APP" "$TMP/Rustcraft.app"
+if [ -d "$REPO/assets" ]; then mv "$REPO/assets" "$HIDDEN"; fi
+if ! (cd / && env -u RUSTCRAFT_ASSETS "$TMP/Rustcraft.app/Contents/MacOS/rustcraft" --asset-report --exit) ; then
+  echo "error: the copied app's asset report found problems with the repo unreachable (above)" >&2
   failed=1
 fi
+restore
+trap - EXIT INT TERM
 if [ $failed = 1 ]; then
   echo "bundle check FAILED" >&2
   exit 1

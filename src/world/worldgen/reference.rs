@@ -37,8 +37,7 @@ fn short(name: &str) -> &str {
 impl Reference {
     /// The evaluator, if the vanilla data is on disk.
     pub fn load(seed: u64) -> Option<Self> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("assets/vanilla/data/minecraft/worldgen");
+        let root = crate::assets::dir().join("vanilla/data/minecraft/worldgen");
         root.join("noise_settings/overworld.json")
             .is_file()
             .then(|| Self {

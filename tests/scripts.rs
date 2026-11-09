@@ -34,6 +34,29 @@ fn run(script: &str, args: &[&Path]) -> Output {
         .unwrap()
 }
 
+/// Runs `check-bundle.sh` from a copy in a fake repo (its own `scripts/` and
+/// `assets/`), because the script renames the repo's `assets/` while it runs
+/// and must not do that to the real one under other tests. Returns the fake
+/// repo too, with `FAKE_REPO` set to it for the app's binary.
+fn check_bundle(app: &Path, src: &Path) -> (Output, PathBuf) {
+    let fake = temp("repo");
+    fs::create_dir_all(fake.join("assets/data")).unwrap();
+    write(fake.join("assets/data/blocks.ron"), "x");
+    let script = fake.join("scripts/check-bundle.sh");
+    write(
+        &script,
+        &fs::read_to_string(repo().join("scripts/check-bundle.sh")).unwrap(),
+    );
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(app)
+        .arg(src)
+        .env("FAKE_REPO", fs::canonicalize(&fake).unwrap())
+        .output()
+        .unwrap();
+    (out, fake)
+}
+
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -216,7 +239,7 @@ fn the_bundle_check_passes_on_a_complete_layer_and_fails_naming_what_differs() {
     write(src.join("textures/block/a.png"), "x");
     write(src.join("data/blocks.ron"), "x");
     let app = fake_app(&src, 0);
-    let out = run("check-bundle.sh", &[&app, &src]);
+    let (out, _) = check_bundle(&app, &src);
     assert!(out.status.success(), "{}", stderr(&out));
 
     // A sound file left out of the app.
@@ -224,7 +247,7 @@ fn the_bundle_check_passes_on_a_complete_layer_and_fails_naming_what_differs() {
         app.join("Contents/Resources/assets/vanilla/assets/minecraft/sounds/step/stone1.ogg"),
     )
     .unwrap();
-    let out = run("check-bundle.sh", &[&app, &src]);
+    let (out, _) = check_bundle(&app, &src);
     assert!(!out.status.success());
     assert!(stderr(&out).contains("vanilla: "), "{}", stderr(&out));
 }
@@ -234,11 +257,70 @@ fn the_bundle_check_fails_when_the_apps_own_report_does() {
     let src = temp("bundle-src-bad");
     fake_vanilla(&src, true, true);
     let app = fake_app(&src, 1);
-    let out = run("check-bundle.sh", &[&app, &src]);
+    let (out, _) = check_bundle(&app, &src);
     assert!(!out.status.success());
     assert!(
         stderr(&out).contains("asset report found problems"),
         "{}",
         stderr(&out)
     );
+}
+
+fn complete_source(name: &str) -> PathBuf {
+    let src = temp(name);
+    fake_vanilla(&src, true, true);
+    write(src.join("textures/block/a.png"), "x");
+    write(src.join("data/blocks.ron"), "x");
+    src
+}
+
+#[test]
+fn the_bundle_check_fails_when_the_binary_holds_the_repos_path() {
+    let src = complete_source("bundle-src-path");
+    let app = fake_app(&src, 0);
+    // The fake repo's path is only known once the check has made it, so the
+    // binary reads it from the environment at run time and also contains the
+    // path of the temp folder the repo lives in (its parent) plus the repo's
+    // name: both are given away by `strings`.
+    let fake = temp("repo-for-path");
+    let canon = fs::canonicalize(&fake).unwrap();
+    // A script that carries the path is enough for `strings`.
+    write(
+        app.join("Contents/MacOS/rustcraft"),
+        &format!("#!/bin/sh\n# {}\nexit 0\n", canon.display()),
+    );
+    let script = canon.join("scripts/check-bundle.sh");
+    write(
+        &script,
+        &fs::read_to_string(repo().join("scripts/check-bundle.sh")).unwrap(),
+    );
+    fs::create_dir_all(canon.join("assets")).unwrap();
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(&app)
+        .arg(&src)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("contains this repo's path"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn the_bundle_check_runs_a_copy_with_the_repos_assets_out_of_reach() {
+    let src = complete_source("bundle-src-hidden");
+    let app = fake_app(&src, 0);
+    // Fails if the repo's assets/ is visible while the app runs.
+    write(
+        app.join("Contents/MacOS/rustcraft"),
+        "#!/bin/sh\n[ -e \"$FAKE_REPO/assets\" ] && { echo 'repo assets reachable' >&2; exit 1; }\necho 'sound events: 1 in the table'\nexit 0\n",
+    );
+    let (out, fake) = check_bundle(&app, &src);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // And it is back afterwards.
+    assert!(fake.join("assets/data/blocks.ron").is_file());
+    assert!(!fake.join("assets.hidden-by-check-bundle").exists());
 }

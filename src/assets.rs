@@ -12,8 +12,12 @@ pub enum RootSource {
     Env,
     /// The app's `Contents/Resources/assets`, found from the executable.
     Bundle,
-    /// The `assets/` folder of the source tree (for `cargo run`).
+    /// The `assets/` folder of the source tree, found by walking up from
+    /// the executable (`target/release/rustcraft` in the repo, for `cargo
+    /// run`). No path is baked into the binary at build time.
     Repo,
+    /// Nothing found; reads fail with the path that was tried.
+    Missing,
 }
 
 impl RootSource {
@@ -23,22 +27,20 @@ impl RootSource {
             Self::Env => "$RUSTCRAFT_ASSETS",
             Self::Bundle => "the app bundle's Contents/Resources",
             Self::Repo => "the source tree",
+            Self::Missing => "nowhere: no assets folder next to the executable",
         }
     }
 }
 
 /// The read-only asset root, in this order: `--assets <dir>`, then
 /// `$RUSTCRAFT_ASSETS` (the same override, for scripts), then the app
-/// bundle's `Contents/Resources/assets` (from `exe`'s location), then the
-/// source tree's `assets/` under `manifest`. The working folder is never
-/// looked at, so the game finds the same assets whether it is opened from
-/// the Finder, a terminal or `cargo run`.
-pub fn resolve(
-    flag: Option<PathBuf>,
-    env: Option<PathBuf>,
-    exe: &Path,
-    manifest: &Path,
-) -> (PathBuf, RootSource) {
+/// bundle's `Contents/Resources/assets` (from `exe`'s location), then an
+/// `assets/` folder in a parent of `exe` (a build inside the source tree,
+/// for `cargo run`). The working folder and the path the binary was built
+/// in are never looked at, so the game finds the same assets whether it is
+/// opened from the Finder, a terminal or `cargo run`, and a copy of the
+/// binary on another Mac can't reach for the build machine's repo.
+pub fn resolve(flag: Option<PathBuf>, env: Option<PathBuf>, exe: &Path) -> (PathBuf, RootSource) {
     if let Some(dir) = flag {
         return (dir, RootSource::Flag);
     }
@@ -48,7 +50,14 @@ pub fn resolve(
     if let Some(resources) = resources_of(exe) {
         return (resources.join("assets"), RootSource::Bundle);
     }
-    (manifest.join("assets"), RootSource::Repo)
+    for parent in exe.ancestors().skip(1) {
+        let assets = parent.join("assets");
+        if assets.join("data/blocks.ron").is_file() {
+            return (assets, RootSource::Repo);
+        }
+    }
+    let tried = exe.parent().unwrap_or(exe).join("assets");
+    (tried, RootSource::Missing)
 }
 
 /// The value after `--assets` in `args`, if given.
@@ -67,7 +76,6 @@ fn root() -> &'static (PathBuf, RootSource) {
             assets_flag(&args),
             std::env::var_os("RUSTCRAFT_ASSETS").map(PathBuf::from),
             &exe,
-            Path::new(env!("CARGO_MANIFEST_DIR")),
         );
         log::info!(
             "assets: {} (from {}); {}",
@@ -82,6 +90,14 @@ fn root() -> &'static (PathBuf, RootSource) {
 /// The assets folder, resolved once.
 pub fn dir() -> PathBuf {
     root().0.clone()
+}
+
+/// The folder holding `assets/` (the source tree, in a dev build), for the
+/// tools that write beside it (`docs/`, `target/`) and the tests that read
+/// `src/`. Never used to find assets.
+pub fn repo_root() -> PathBuf {
+    let assets = dir();
+    assets.parent().map(Path::to_path_buf).unwrap_or(assets)
 }
 
 /// Where [`dir`] came from.
@@ -356,7 +372,7 @@ mod tests {
         // A folder named `assets` in the current folder must not matter:
         // resolve() never looks at it.
         std::fs::create_dir_all(tmp.path().join("assets")).unwrap();
-        let (root, source) = resolve(None, None, &exe, Path::new("/src/rustcraft"));
+        let (root, source) = resolve(None, None, &exe);
         assert_eq!(
             root,
             tmp.path().join("Rustcraft.app/Contents/Resources/assets")
@@ -367,23 +383,58 @@ mod tests {
     #[test]
     fn the_flag_wins_then_the_bundle_then_the_source_tree() {
         let exe = Path::new("/Applications/Rustcraft.app/Contents/MacOS/rustcraft");
-        let dev = Path::new("/code/rustcraft/target/release/rustcraft");
-        let manifest = Path::new("/code/rustcraft");
         let flag = Some(PathBuf::from("/elsewhere"));
         assert_eq!(
-            resolve(flag.clone(), None, exe, manifest),
+            resolve(flag.clone(), None, exe),
             (PathBuf::from("/elsewhere"), RootSource::Flag)
         );
         assert_eq!(
-            resolve(None, flag, dev, manifest),
+            resolve(None, flag, exe),
             (PathBuf::from("/elsewhere"), RootSource::Env)
         );
-        assert_eq!(resolve(None, None, dev, manifest).1, RootSource::Repo);
+        assert_eq!(resolve(None, None, exe).1, RootSource::Bundle);
+        // A dev build finds the tree it sits in, by walking up from the exe.
+        let tree = std::env::temp_dir().join(format!("rc-tree-{}", std::process::id()));
+        std::fs::create_dir_all(tree.join("assets/data")).unwrap();
+        std::fs::write(tree.join("assets/data/blocks.ron"), "").unwrap();
+        let dev = tree.join("target/release/rustcraft");
         assert_eq!(
-            resolve(None, None, dev, manifest).0,
-            PathBuf::from("/code/rustcraft/assets")
+            resolve(None, None, &dev),
+            (tree.join("assets"), RootSource::Repo)
         );
-        assert_eq!(resolve(None, None, exe, manifest).1, RootSource::Bundle);
+        std::fs::remove_dir_all(&tree).unwrap();
+    }
+
+    #[test]
+    fn a_copied_binary_never_reaches_for_the_build_machines_repo() {
+        // Not in a bundle, no assets folder above it: nothing is found, and
+        // the answer is not a path from compile time.
+        let lone = Path::new("/nonexistent-rc/bin/rustcraft");
+        let (path, source) = resolve(None, None, lone);
+        assert_eq!(source, RootSource::Missing);
+        assert_eq!(path, PathBuf::from("/nonexistent-rc/bin/assets"));
+    }
+
+    #[test]
+    fn no_source_file_bakes_in_the_build_path() {
+        // Compile-time paths make an app work only on the Mac that built it.
+        let needle = ["env!(\"CARGO_MANIFEST", "_DIR\")"].concat();
+        let mut stack = vec![repo_root().join("src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !text.contains(&needle),
+                        "{} bakes in the build path; use assets::dir() or repo_root()",
+                        path.display()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

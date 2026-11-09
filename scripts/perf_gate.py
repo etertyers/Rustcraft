@@ -159,14 +159,17 @@ def gate(args, results_path):
             print(f"no baseline at {baseline_path}", file=sys.stderr)
             sys.exit(2)
         baseline = {"machine": results["machine"], "rows": {}}
-    if baseline["machine"] != results.get("machine"):
+    row = baseline["rows"].get(row_name)
+    # A row can name its own machine (the native row is the M4's; the Mac
+    # mini that builds the game can't measure it and is refused).
+    machine = (row or {}).get("machine", baseline["machine"])
+    if machine != results.get("machine"):
         print(
-            f"refusing to compare: baseline is from {baseline['machine']}, "
+            f"refusing to compare: baseline is from {machine}, "
             f"these results are from {results.get('machine')}",
             file=sys.stderr,
         )
         sys.exit(2)
-    row = baseline["rows"].get(row_name)
     if row is None and not args.update_baseline:
         print(f"the baseline has no row {row_name!r}", file=sys.stderr)
         sys.exit(2)
@@ -191,7 +194,7 @@ def gate(args, results_path):
             "spread_pct": results.get("spread_pct", {}),
             "benchmarks": results.get("benchmarks", {}),
         }
-        for kept in ("thresholds", "budgets", "accepted"):
+        for kept in ("machine", "note", "thresholds", "budgets", "accepted"):
             if kept in row:
                 new[kept] = row[kept]
         if args.accept:
