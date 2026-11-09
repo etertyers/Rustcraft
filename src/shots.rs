@@ -483,6 +483,16 @@ pub static SHOTS: &[Shot] = &[
         stage: torchlit_room,
     },
     Shot {
+        name: "m64-boat-rain",
+        about: "a boat sailing across a lake in a thunderstorm: rain particles falling and splashing, ripples on the water and the boat's wake behind it",
+        world: Some(WorldKind::Flat),
+        view: Some(([6.5, 65.2, -2.5], 0.0, -0.2)),
+        time: Some(6000),
+        mode: Some(GameMode::Creative),
+        overlay: false,
+        stage: boat_in_rain,
+    },
+    Shot {
         name: "m33-ruined-portal",
         about: "a ruined portal on the land surface in a forest on seed 20111118: broken obsidian frame, netherrack and stone bricks, its chest, the inside clear",
         world: Some(WorldKind::Generated { seed: 20111118 }),
@@ -951,6 +961,34 @@ fn torchlit_room(game: &mut Game) {
         0.5,
     ));
     game.run_ticks(40);
+}
+
+/// A lake with a boat under way in a thunderstorm (M64's extras).
+fn boat_in_rain(game: &mut Game) {
+    let mut edits = Vec::new();
+    for x in -14..=14 {
+        for z in -22..=-5 {
+            for y in 60..=63 {
+                edits.push((at(x, y, z), BlockState::of(WATER)));
+            }
+        }
+    }
+    game.set_blocks(&edits);
+    let kind = crate::entity::boat::BoatKind::of_item("oak_boat").unwrap();
+    game.boats.push(crate::entity::boat::Boat::new(
+        1,
+        kind,
+        glam::DVec3::new(3.0, 63.6, -6.0),
+        -0.5,
+    ));
+    game.weather = crate::game::weather::Weather::Thunder;
+    game.weather_ticks = 100_000;
+    for _ in 0..40 {
+        if let Some(boat) = game.boats.first_mut() {
+            boat.velocity = glam::DVec3::new(-0.06, 0.0, -0.17);
+        }
+        game.run_ticks(1);
+    }
 }
 
 /// Rows of farmland at X −4..4, Z −2..2 with a water channel down the

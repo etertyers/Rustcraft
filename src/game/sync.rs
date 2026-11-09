@@ -131,6 +131,7 @@ impl Game {
                 carts: self.carts.clone(),
                 boats: self.boats.clone(),
                 primed: self.primed.clone(),
+                weather: self.weather.to_byte(),
                 eyes: self.eyes.clone(),
                 // The fight is only in the End.
                 dragon: self.dragon.clone().filter(|_| in_the_end),
@@ -197,6 +198,7 @@ impl Game {
         self.boats = e.boats;
         self.clamp_boat_look();
         self.primed = e.primed;
+        self.weather = super::weather::Weather::from_byte(e.weather);
         self.eyes = e.eyes;
         self.dragon = e.dragon;
         self.crystals = e.crystals;

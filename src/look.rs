@@ -156,6 +156,8 @@ pub struct Look {
     pub crack_uvs: Vec<[f32; 4]>,
     /// Where the combat effects are in the atlas.
     pub effect_uvs: EffectUvs,
+    /// Where the extras' particle sprites are in the atlas.
+    pub fx_uvs: crate::extras::fx::FxUvs,
 }
 
 /// Opens the packs named in `ids` (highest priority first) from `dir`;
@@ -243,6 +245,11 @@ impl Look {
                 .map(str::to_owned),
         );
         textures.extend(json_models.textures());
+        for sprite in crate::extras::fx::Sprite::ALL {
+            let (names, stand_in) = sprite.names();
+            textures.extend(names);
+            textures.insert(stand_in.to_owned());
+        }
         textures.extend((0..crack::STAGES).map(crack::texture));
         textures.insert(entities::CRIT_TEXTURE.to_owned());
         textures.insert(entities::SHADOW_TEXTURE.to_owned());
@@ -286,6 +293,8 @@ impl Look {
             hook: atlas.uv_or_missing(entities::HOOK_TEXTURE),
             line: atlas.uv_or_missing(entities::LINE_TEXTURE),
         };
+        let fx_uvs =
+            crate::extras::fx::FxUvs::build(|name| atlas.get(name).map(|t| atlas.uv_rect(t)));
         let sky = SkyImages::load(&res)?;
         let (skin, skin_slim) = load_skin(&res, assets);
         let mut mob_textures: Vec<RgbaImage> = mobs
@@ -366,6 +375,7 @@ impl Look {
             skin_slim,
             crack_uvs,
             effect_uvs,
+            fx_uvs,
         })
     }
 

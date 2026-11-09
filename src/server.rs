@@ -830,6 +830,118 @@ mod tests {
         game.chunks.world().block(at.x, at.y, at.z)
     }
 
+    /// M64: rain is drawn on every client, so the weather travels with the
+    /// entities.
+    #[test]
+    fn clients_follow_the_servers_weather() {
+        use crate::game::weather::Weather;
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 2
+        });
+        server.game.weather = Weather::Thunder;
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients
+                .iter()
+                .all(|(_, game)| game.weather == Weather::Thunder)
+        });
+        server.game.weather = Weather::Clear;
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients
+                .iter()
+                .all(|(_, game)| game.weather == Weather::Clear)
+        });
+    }
+
+    /// M64: wakes are made on each client from the boats it's told about,
+    /// so two clients agree on where a moving boat's wake is.
+    #[test]
+    fn two_clients_both_see_a_boats_wake() {
+        use crate::{
+            entity::boat::{Boat, BoatKind},
+            extras::fx::{Enabled, Fx, Input, Kind, Sky, World},
+        };
+        let (mut server, mut clients) = world_with(&["Alice", "Bob"]);
+        run_until(&mut server, &mut clients, |server, _| {
+            server.player_count() == 2
+        });
+        let mut boat = Boat::new(
+            900,
+            BoatKind {
+                wood: 0,
+                chest: false,
+            },
+            DVec3::new(3.0, 62.0, 3.0),
+            0.0,
+        );
+        boat.velocity = DVec3::new(0.0, 0.0, 0.2);
+        server.game.boats.push(boat);
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients
+                .iter()
+                .all(|(_, game)| game.boats.iter().any(|b| b.id == 900))
+        });
+        /// A lake under the boats.
+        struct Lake;
+        impl World for Lake {
+            fn block(&self, _: i32, y: i32, _: i32) -> Option<crate::world::block::BlockState> {
+                Some(if (56..=62).contains(&y) {
+                    crate::world::fluid::at_level(crate::world::block::Fluid::Water, 0)
+                } else {
+                    crate::world::block::BlockState::AIR
+                })
+            }
+            fn light(&self, _: i32, _: i32, _: i32) -> (u8, u8) {
+                (15, 0)
+            }
+            fn biome(&self, _: i32, _: i32, _: i32) -> Option<crate::world::biome::Biome> {
+                Some(crate::world::biome::Biome::Plains)
+            }
+        }
+        let wakes = Enabled {
+            wakes: true,
+            ..Enabled::default()
+        };
+        let made: Vec<Vec<glam::DVec3>> = clients
+            .iter()
+            .map(|(_, game)| {
+                let mut hurt = std::collections::HashMap::new();
+                let (mut bodies, hits) = crate::extras::bodies_and_hits(game, &mut hurt);
+                // The test world is flat: put the bodies on the lake, moving.
+                bodies.retain(|b| b.kind == crate::extras::fx::BodyKind::Boat);
+                assert_eq!(bodies.len(), 1, "the synced boat");
+                for b in &mut bodies {
+                    b.in_water = true;
+                    b.velocity = DVec3::new(0.0, 0.0, 0.2);
+                }
+                let mut fx = Fx::default();
+                for tick in 0..6 {
+                    fx.tick(
+                        &Lake,
+                        &Input {
+                            tick,
+                            camera: DVec3::new(0.5, 64.0, 0.5),
+                            sky: Sky::Clear,
+                            bodies: &bodies,
+                            hits: &hits,
+                        },
+                        wakes,
+                    );
+                }
+                assert!(fx.count(Kind::Wake) > 0, "this client sees the wake");
+                let mut spots: Vec<_> = fx
+                    .particles()
+                    .iter()
+                    .filter(|p| p.flat)
+                    .map(|p| p.pos)
+                    .collect();
+                spots.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.z.total_cmp(&b.z)));
+                spots
+            })
+            .collect();
+        assert_eq!(made[0], made[1]);
+    }
+
     /// M63: a player holding a map or sleeping shows it on the model, and
     /// the other client sees the same pose.
     #[test]
