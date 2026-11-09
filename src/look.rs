@@ -334,7 +334,15 @@ impl Look {
         // Custom entity models (a pack's `optifine/cem`, M58) bring their
         // own texture, worn in the plain variant's place.
         let mob_names: Vec<&str> = mobs.iter().map(|(_, def)| def.name.as_str()).collect();
-        let cem = crate::cem::Registry::load(&|path| res.bytes(path), &mob_names);
+        let mut cem = crate::cem::Registry::load(&|path| res.bytes(path), &mob_names);
+        // The pack's models for layers (a sheep's wool) go with the bodies.
+        for (_, def) in mobs.iter() {
+            for layer in &def.layers {
+                if let Some(stem) = layer.texture.rsplit('/').next() {
+                    cem.load_layer(&|path| res.bytes(path), &def.name, stem);
+                }
+            }
+        }
         for (name, model) in &cem.models {
             let Some(kind) = mobs.find(name) else {
                 continue;

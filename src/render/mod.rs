@@ -3016,3 +3016,6 @@ mod tests {
         assert_eq!(srgb.b, 1.0);
     }
 }
+
+#[cfg(test)]
+mod sheep_face_tests;

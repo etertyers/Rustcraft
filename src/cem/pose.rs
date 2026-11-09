@@ -33,6 +33,8 @@ pub struct Runtime {
     random: u64,
     /// The frame this was last used in, to forget mobs that are gone.
     pub last_used: u64,
+    /// The frame it was last animated in.
+    pub animated_in: Option<u64>,
 }
 
 impl Runtime {
@@ -45,9 +47,24 @@ impl Runtime {
             render: [model.shadow_size, 1.0, 1.0],
             random: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
             last_used: 0,
+            animated_in: None,
         };
         runtime.rest(model);
         runtime
+    }
+
+    /// The state of a layer's model (a sheep's wool) moving with this one:
+    /// each of its parts takes the pose of the part of `main` with the
+    /// same name, so a layer is posed from the same values as the body.
+    /// Parts `main` doesn't have stay at rest, on their parents.
+    pub fn following(&self, main: &CemModel, layer: &CemModel) -> Runtime {
+        let mut out = Runtime::new(layer, 0);
+        for (state, part) in out.parts.iter_mut().zip(&layer.parts) {
+            if let Some(j) = main.part_named(&part.name) {
+                *state = self.parts[j];
+            }
+        }
+        out
     }
 
     fn rest(&mut self, model: &CemModel) {
