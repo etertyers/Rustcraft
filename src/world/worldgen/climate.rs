@@ -239,6 +239,8 @@ pub struct Lay {
     pub height: i32,
     /// The surface height the shape pulls toward (the preliminary surface).
     pub offset: f64,
+    /// Vanilla's preliminary surface level at the quart's corner (M67).
+    pub prelim: i32,
 }
 
 #[cfg(test)]

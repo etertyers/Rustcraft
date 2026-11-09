@@ -391,6 +391,20 @@ The caves follow **vanilla 1.21.11's world-gen data** (`misode/mcmeta`, branch `
 - **Carvers** (`caves::worms`) are `CaveWorldCarver` and `CanyonWorldCarver` with the configs of `cave`, `cave_extra_underground` and `canyon`: probabilities 15%, 7% and 1% a chunk; a cave start makes `random(random(random(15) + 1) + 1)` tunnels, a quarter with a room first, each 112 − random(28) steps long with the branches of `createTunnel`; a ravine is one tall tunnel with per-height width factors.
 - **Tools:** `--cave-openings [--side 63]` counts the surface openings per 1,000 × 1,000 blocks by source (`docs/perf/m53-openings-*.txt`); `--cave-openings --time` times chunk generation.
 
+### Surface rules and carvers keep the grass (M67)
+
+**Order per chunk** (`Terrain::generate_steps`, asserted by a test): the **noise** step (terrain density, noise caves, entrances and aquifers together, from the final density; solid blocks are stone, or deepslate low down), then the **surface** step, then the **carvers** (cave, extra-underground cave, canyon), then ores, underground features, structures, trees and plants. Noise caves are not a later pass.
+
+**Surface rules** (`Terrain::surface_column`, from `noise_settings/overworld.json`'s `surface_rule`): going down each column, every solid block counts the solid blocks above it since the last air or fluid (`stone_depth`). A count of 1 is a **floor**; the floor gets the biome's top block (grass, sand, snow...), and the blocks under it within the surface depth (3 to 5) the filler (dirt, sand...). That holds for every floor the noise leaves, not only the heightmap's: a hill's top, a cave entrance's floor, an overhang. Under water or lava the grassy ground is plain dirt (the `water` condition). Ceilings (the solid block under air) never get the grass rule; a thin slab can still be dirt all through. The rules only apply from `prelim + surface depth − 8` up (`above_preliminary_surface`), so the floor of a deep cave stays stone.
+
+**Preliminary surface level** (`terrain::preliminary_surface`): vanilla's `find_top_surface` from the 1.21.11 noise router: from Y 256 down in steps of 8 (one cell), the first level where the land's density without the 3D noise and jaggedness (under the two slides, less 0.390625) is solid. Rustcraft's land shape is its own, so the term `4 × quarter_negative((offset + gradient) × factor)` is Rustcraft's `(offset − y) × factor`; the slides, the −0.703125 and the 0.390625 are vanilla's. It is computed at each quart corner and cached with the corner, like vanilla's per-quart cache.
+
+**Carvers' top material** (`Terrain::hand_on_top_material`, vanilla `WorldCarver.carveBlock`): carving goes top down; a carved grass block or mycelium with dirt under it leaves the surface rule's top block there (dirt if the carved block holds a fluid), and the block below hands it on in turn, so a carved cave in grassy ground ends on grass, not bare dirt. The M48 rule that a carver never cuts the block under water stays, read from the blocks as they were before the step.
+
+**Differences from vanilla:** `stoneDepthBelow` (the ceiling variants: sand over sandstone, gravel over stone on a one-block slab) isn't modeled; the surface depth and every biome's top block are Rustcraft's own `top()` per column, applied to the floors; the preliminary surface uses Rustcraft's land shape; the badlands bands still reach down to the sea in any case.
+
+**Tool:** `--grass-test [--seed 12345] [--side 63]` prints exposed dirt per 1,000 × 1,000 blocks by cause (a noise cave or entrance cut the grass; a carver cut it; a surface rule put dirt on top; biome ground), pits, and the M53 openings. `cargo run --release --example vanilla_dirt -- assets/vanilla/server/world/region` counts the same in a world Mojang's 1.21.11 server generated (a test-only tool; the server jar and the world stay git-ignored under `assets/vanilla/server/`). Numbers: `docs/perf/m67-grass.md`.
+
 ## The Nether (M24)
 
 `world/worldgen/nether.rs`. The Nether is y 0–127 (air above the roof), with its own noises mixed from the world seed.
