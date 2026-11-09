@@ -167,7 +167,7 @@ impl PackScreen {
         ui.label(RichText::new("Packs on top override the ones below them").color(GRAY));
         if let Some(look) = self.look {
             ui.label(
-                RichText::new(format!("For the {look} look (each look has its own list)"))
+                RichText::new(format!("Extra packs for the {look} style (each style has its own list; its own packs are built in)"))
                     .color(GRAY),
             );
         }

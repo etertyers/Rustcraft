@@ -179,10 +179,10 @@ fn main() -> Result<()> {
         return rustcraft::perf::run_all_looks(&args);
     }
     // `--shot <name> --compare`: the scene once per look, side by side.
-    if cli.compare
+    if let Some(spec) = &cli.compare
         && let Some((_, out)) = &cli.shot
     {
-        return rustcraft::render::visuals::compare::run(&args, out, cli.quality);
+        return rustcraft::render::visuals::compare::run(&args, spec, out, cli.quality);
     }
     // `--perf-test --runs <n>` flies n times in child processes.
     if let Some(bench) = cli
@@ -198,7 +198,7 @@ fn main() -> Result<()> {
         .with_view(cli.view)
         .with_lan(cli.name, cli.join, cli.lan)
         .with_size(cli.size)
-        .with_visuals(cli.visuals, cli.quality);
+        .with_graphics(cli.style, cli.shaders, cli.quality);
     // `--pack <file or folder>` (repeatable): play or shoot with these
     // resource packs instead of the chosen ones, leaving options.ron be.
     let packs: Vec<String> = args

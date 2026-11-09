@@ -120,7 +120,7 @@ impl PauseMenu {
                                         crate::pack::builtin_dir(),
                                         &options.resource_packs,
                                     )
-                                    .for_look(options.visuals.look.name()),
+                                    .for_look(options.visuals.style.name()),
                                 );
                             }
                             Some(OptionsAction::TextureViewer) => {

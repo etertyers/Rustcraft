@@ -197,18 +197,111 @@ impl Effect {
     }
 }
 
+/// The three built-in styles (v1.5): which textures, models and extras the
+/// game wears. Independent of the Shaders switch (`LookKind`: Vanilla is
+/// Shaders off, Trailer is Shaders on).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub enum Style {
+    /// Complete vanilla: Mojang's own files only.
+    Vanilla,
+    /// The trailer look: Bare Bones, Barebones Better Leaves, Fresh
+    /// Animations and Bare Bones x Fresh Animations over vanilla.
+    #[default]
+    Barebones,
+    /// Patrix 32x over vanilla.
+    Realistic,
+}
+
+impl Style {
+    /// From fastest to slowest, as Video Settings lists them.
+    pub const BY_SPEED: [Self; 3] = [Self::Barebones, Self::Vanilla, Self::Realistic];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Vanilla => "Vanilla",
+            Self::Barebones => "Barebones",
+            Self::Realistic => "Realistic",
+        }
+    }
+
+    /// The name on the command line and in perf rows.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Vanilla => "vanilla",
+            Self::Barebones => "barebones",
+            Self::Realistic => "realistic",
+        }
+    }
+
+    /// Shift+F12: Vanilla, then Barebones, then Realistic, then round.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Vanilla => Self::Barebones,
+            Self::Barebones => Self::Realistic,
+            Self::Realistic => Self::Vanilla,
+        }
+    }
+
+    /// `--style vanilla|barebones|realistic`.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.to_ascii_lowercase().as_str() {
+            "vanilla" => Some(Self::Vanilla),
+            "barebones" => Some(Self::Barebones),
+            "realistic" => Some(Self::Realistic),
+            _ => None,
+        }
+    }
+}
+
+/// The perf gate's row for a style and shaders setting: `vanilla` with
+/// shaders off, `barebones-medium` with them on.
+pub fn row_name(style: Style, shaders: bool, quality: Quality) -> String {
+    if shaders {
+        format!("{}-{}", style.key(), quality.name().to_ascii_lowercase())
+    } else {
+        style.key().to_owned()
+    }
+}
+
+/// "Realistic, Shaders on": what F12 and Shift+F12 show.
+pub fn style_message(style: Style, shaders: bool) -> String {
+    format!(
+        "{}, Shaders {}",
+        style.name(),
+        if shaders { "on" } else { "off" }
+    )
+}
+
 /// The `visuals` options.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Visuals {
+    /// Shaders: `Trailer` is on, `Vanilla` off (v1.4's names).
     pub look: LookKind,
+    pub style: Style,
     pub quality: Quality,
     /// Effects the player turned on or off against the profile.
     pub effects: BTreeMap<Effect, bool>,
-    /// Each look's resource packs, highest priority first. The options'
-    /// `resource_packs` is always the list of the look that's on.
+    /// v1.4's lists, one per look; moved to `style_packs` the first time
+    /// v1.5 reads the options.
     pub vanilla_packs: Vec<String>,
     pub trailer_packs: Vec<String>,
+    /// Each style's own extra resource packs on top of its stack, highest
+    /// priority first. The options' `resource_packs` is always the list of
+    /// the style that's on.
+    pub style_packs: BTreeMap<Style, Vec<String>>,
+    /// The options have been moved to styles (false in v1.4 files).
+    pub style_set_up: bool,
+    /// The frame rate last measured on this computer, by "style/off" or
+    /// "style/on".
+    pub measured: BTreeMap<String, f32>,
+    /// The Measure button was pressed, and a measurement is running.
+    #[serde(skip)]
+    pub measure_requested: bool,
+    #[serde(skip)]
+    pub measuring: bool,
     /// The Trailer packs (`packs::TrailerPack` keys) already put on the
     /// Trailer list once, so one the player takes off stays off.
     pub offered: Vec<String>,
@@ -234,19 +327,27 @@ impl Visuals {
         }
     }
 
-    /// The pack list kept for `look`.
-    pub fn packs(&self, look: LookKind) -> &Vec<String> {
-        match look {
-            LookKind::Vanilla => &self.vanilla_packs,
-            LookKind::Trailer => &self.trailer_packs,
-        }
+    /// Whether Shaders are on.
+    pub fn shaders(&self) -> bool {
+        self.look == LookKind::Trailer
     }
 
-    pub fn packs_mut(&mut self, look: LookKind) -> &mut Vec<String> {
-        match look {
-            LookKind::Vanilla => &mut self.vanilla_packs,
-            LookKind::Trailer => &mut self.trailer_packs,
-        }
+    pub fn set_shaders(&mut self, on: bool) {
+        self.look = if on {
+            LookKind::Trailer
+        } else {
+            LookKind::Vanilla
+        };
+    }
+
+    /// The extra pack list kept for `style`.
+    pub fn packs(&self, style: Style) -> &Vec<String> {
+        static NONE: Vec<String> = Vec::new();
+        self.style_packs.get(&style).unwrap_or(&NONE)
+    }
+
+    pub fn packs_mut(&mut self, style: Style) -> &mut Vec<String> {
+        self.style_packs.entry(style).or_default()
     }
 
     /// What the renderer needs this frame.

@@ -133,47 +133,18 @@ pub struct Stack {
     pub packs: Vec<String>,
 }
 
-/// Finds the downloaded pack whose normalized name holds every word of
-/// `want` and none of `deny`, as `scripts/check-downloads.sh` does.
+/// `crate::pack::find_by_words`.
 pub fn find_pack(dir: &Path, want: &[&str], deny: &[&str]) -> Option<String> {
-    let norm = |s: &str| {
-        s.to_lowercase()
-            .chars()
-            .filter(char::is_ascii_lowercase)
-            .collect::<String>()
-    };
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .collect();
-    names.sort();
-    names.into_iter().find(|name| {
-        let n = norm(name);
-        want.iter().all(|w| n.contains(w)) && !deny.iter().any(|d| n.contains(d))
-    })
+    crate::pack::find_by_words(dir, want, deny)
 }
 
 /// The stack called `name` (`vanilla`, `barebones`, `realistic`), with the
 /// packs it finds in `dir`.
 pub fn stack(name: &str, dir: &Path) -> Option<Stack> {
-    let found = |want: &[&str], deny: &[&str]| find_pack(dir, want, deny);
-    let packs = match name {
-        "vanilla" => Vec::new(),
-        "barebones" => [
-            found(&["barebones", "freshanimations"], &[]),
-            found(&["freshanimations"], &["barebones"]),
-            found(&["barebones", "leaves"], &[]),
-            found(&["barebones"], &["freshanimations", "leaves"]),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
-        "realistic" => found(&["patrix"], &[]).into_iter().collect(),
-        _ => return None,
-    };
+    let style = crate::render::visuals::Style::parse(name)?;
     Some(Stack {
         name: name.to_owned(),
-        packs,
+        packs: crate::pack::style_stack(style, dir),
     })
 }
 

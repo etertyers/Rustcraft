@@ -71,7 +71,8 @@ cargo run --release -- --texture-viewer   # check textures by eye: B broken, K O
 cargo run --release -- --help        # every flag (note the `--`: without it cargo rejects the flag itself)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end, --underwater,
-#   --view first|back|front, --pack <name>, --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>],
+#   --view first|back|front, --pack <name>, --style vanilla|barebones|realistic, --shaders on|off, --quality low|medium|high
+#   (--visuals is the old name), --bench [s], --distance <n>, --perf-test, --shot <name> [--out <file>] [--compare [all]],
 #   --name <player>, --join <ip:port>, --lan [port], --lan-test <n>, --assets <dir>, --help
 # Tools (usage text in --help): --spawn-test, --flower-test, --structure-test, --nether-map, --cave-test,
 #   --cave-openings, --cave-slice, --write-structures, --asset-report, --gen-placeholders
@@ -172,7 +173,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | released (`v1.2.0`) |
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
-| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | in progress (Checkpoint L: M59–M62) |
+| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | in progress (Checkpoint L built: M59–M62, PRs open) |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`.
 
@@ -248,7 +249,7 @@ Every numeric target in a milestone says where it comes from: vanilla code or da
 
 - v1.4 adds the Trailer look (Checkpoint K, M54–M58): native wgpu effects in the style of the trailers and Complementary Reimagined, with a quality profile (Low/Medium/High) and per-effect toggles. It's the default; F12 switches to the Vanilla look, which stays identical to M53 (checked against reference images).
 - Rustcraft doesn't load OptiFine/Iris shader packs: they target vanilla's OpenGL pipeline and would need a compatibility layer that is slower and months of work. The look is written natively in WGSL instead. Resource packs with OptiFine CEM models and animations (Fresh Animations) are supported (M58).
-- Each look has its own resource pack list. The Trailer list starts with Fresh Animations, Barebones Better Leaves and Bare Bones if they're in resourcepacks/; none of the three is ever bundled or committed (their licenses forbid redistribution).
+- (v1.5 replaced the two looks by three styles and one Shaders switch, M62: each style has its own extra pack list on top of its stack; none of the packs is ever bundled into the repo or committed.)
 - Frame-rate budgets on Kenzo's Mac mini M1 at 1080p, render distance 9: Vanilla within 3% of M53; Trailer Low ≥ 100 FPS average / 50 at the 1% low; Medium ≥ 75 / 45; High ≥ 60 / 40. Each Trailer effect has a GPU-time share, measured with timestamps every milestone.
 
 ### v1.5 (assets, styles, mods, caves and speed)

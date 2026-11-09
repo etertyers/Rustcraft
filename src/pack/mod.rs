@@ -357,6 +357,104 @@ pub fn find(dir: &Path, builtin: &Path, id: &str) -> PathBuf {
     if own.exists() { own } else { builtin.join(id) }
 }
 
+/// Whether Fresh Animations goes under Patrix in the Realistic style. It
+/// does only if Patrix's mob textures fit Fresh Animations' models (the M60
+/// audit on the Realistic stack): see `docs/textures.md`.
+pub const REALISTIC_USES_FRESH_ANIMATIONS: bool = false;
+
+/// The first file in `dir` whose normalized name (lower-case letters only,
+/// so versions, spaces and dashes don't matter) holds every word of `want`
+/// and none of `deny`, as `scripts/check-downloads.sh` matches.
+pub fn find_by_words(dir: &Path, want: &[&str], deny: &[&str]) -> Option<String> {
+    let norm = |s: &str| {
+        s.to_lowercase()
+            .chars()
+            .filter(char::is_ascii_lowercase)
+            .collect::<String>()
+    };
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names.into_iter().find(|name| {
+        let n = norm(name);
+        want.iter().all(|w| n.contains(w)) && !deny.iter().any(|d| n.contains(d))
+    })
+}
+
+/// The packs a style is made of, found in `dir` (the built-in packs'
+/// folder), highest priority first, vanilla always underneath. A pack that
+/// isn't there is left out: the style still works without it.
+pub fn style_stack(style: crate::render::visuals::Style, dir: &Path) -> Vec<String> {
+    use crate::render::visuals::Style;
+    let found = |want: &[&str], deny: &[&str]| find_by_words(dir, want, deny);
+    match style {
+        Style::Vanilla => Vec::new(),
+        Style::Barebones => [
+            found(&["barebones", "freshanimations"], &[]),
+            found(&["freshanimations"], &["barebones"]),
+            found(&["barebones", "leaves"], &[]),
+            found(&["barebones"], &["freshanimations", "leaves"]),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        Style::Realistic => {
+            let mut stack: Vec<String> = found(&["patrix"], &[]).into_iter().collect();
+            if REALISTIC_USES_FRESH_ANIMATIONS {
+                stack.extend(found(&["freshanimations"], &["barebones"]));
+            }
+            stack
+        }
+    }
+}
+
+/// The packs a style should have but `dir` lacks: (title, link).
+pub fn missing_for(
+    style: crate::render::visuals::Style,
+    dir: &Path,
+) -> Vec<(&'static str, &'static str)> {
+    use crate::render::visuals::Style;
+    let has = |want: &[&str], deny: &[&str]| find_by_words(dir, want, deny).is_some();
+    let mut out = Vec::new();
+    match style {
+        Style::Vanilla => {}
+        Style::Barebones => {
+            if !has(&["barebones", "freshanimations"], &[]) {
+                out.push((
+                    "Bare Bones x Fresh Animations",
+                    "https://modrinth.com/resourcepacks?q=Bare+Bones+x+Fresh+Animations",
+                ));
+            }
+            if !has(&["freshanimations"], &["barebones"]) {
+                out.push((
+                    "Fresh Animations",
+                    "https://modrinth.com/resourcepacks?q=Fresh+Animations",
+                ));
+            }
+            if !has(&["barebones", "leaves"], &[]) {
+                out.push((
+                    "Barebones Better Leaves",
+                    "https://modrinth.com/resourcepacks?q=Barebones+Better+Leaves",
+                ));
+            }
+            if !has(&["barebones"], &["freshanimations", "leaves"]) {
+                out.push((
+                    "Bare Bones",
+                    "https://modrinth.com/resourcepacks?q=Bare+Bones",
+                ));
+            }
+        }
+        Style::Realistic => {
+            if !has(&["patrix"], &[]) {
+                out.push(("Patrix 32x", "https://modrinth.com/resourcepack/patrix-32x"));
+            }
+        }
+    }
+    out
+}
+
 /// Every pack in `dir`, sorted by name; ones that can't be read are
 /// skipped with a warning.
 pub fn list(dir: &Path) -> Vec<Pack> {
