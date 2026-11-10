@@ -177,7 +177,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.2 | M31–M42 | E–G | `docs/milestones/v1.2.md` | released (`v1.2.0`) |
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
-| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | built (M59–M69, PRs open, version 1.5.0; tag `v1.5.0` after Kenzo merges) |
+| 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | released (`v1.5.0`) |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`; after M69 merges, tag `v1.5.0` and rebuild the `.app`.
 
