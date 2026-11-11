@@ -92,6 +92,29 @@ pub fn dir() -> PathBuf {
     root().0.clone()
 }
 
+/// The folder holding `assets/minecraft`, for the asset root `assets`.
+/// For the game's own root it is the root's `vanilla/` when complete, else
+/// the user layer's (`~/Library/Application Support/Rustcraft/assets`,
+/// filled by the first-launch download, M74); any other root (a test's
+/// temporary folder) keeps its own `vanilla/`.
+pub fn vanilla_for(assets: &Path) -> PathBuf {
+    #[cfg(not(target_arch = "wasm32"))]
+    if assets == dir() {
+        return crate::setup::layers::current(assets).vanilla;
+    }
+    assets.join("vanilla")
+}
+
+/// The folder holding `resourcepacks/` and `mods/` (the style packs and
+/// the mod jars), chosen like [`vanilla_for`].
+pub fn downloads_for(assets: &Path) -> PathBuf {
+    #[cfg(not(target_arch = "wasm32"))]
+    if assets == dir() {
+        return crate::setup::layers::current(assets).downloads;
+    }
+    assets.join("downloads")
+}
+
 /// The folder holding `assets/` (the source tree, in a dev build), for the
 /// tools that write beside it (`docs/`, `target/`) and the tests that read
 /// `src/`. Never used to find assets.
@@ -203,7 +226,7 @@ fn vanilla_texture_index(assets: &Path) -> std::collections::HashMap<String, Vec
             }
         }
     }
-    let root = assets.join("vanilla/assets/minecraft/textures");
+    let root = vanilla_for(assets).join("assets/minecraft/textures");
     let mut index = std::collections::HashMap::new();
     walk(&root, &root, &mut index);
     index

@@ -161,7 +161,7 @@ pub struct Vanilla {
 
 impl Vanilla {
     pub fn open(assets: &Path) -> Result<Self> {
-        let root = assets.join("vanilla/assets/minecraft");
+        let root = crate::assets::vanilla_for(assets).join("assets/minecraft");
         if !root.is_dir() {
             bail!(
                 "no vanilla assets in {}: run scripts/fetch-vanilla-assets.sh",
