@@ -106,7 +106,8 @@ if [ $LITE = 1 ]; then
   # is an unused local port): it must open the first-launch screen.
   HOME_DIR="$TMP/home"; mkdir -p "$HOME_DIR"
   LOG="$TMP/lite.log"
-  (cd / && env -u RUSTCRAFT_ASSETS -u RUSTCRAFT_NO_DOWNLOAD HOME="$HOME_DIR" RUST_LOG=info \
+  # exec: the background job is the app itself, so kill reaches it.
+  (cd / && exec env -u RUSTCRAFT_ASSETS -u RUSTCRAFT_NO_DOWNLOAD HOME="$HOME_DIR" RUST_LOG=info \
      RUSTCRAFT_SETUP_BASE=http://127.0.0.1:9 "$TMP/Rustcraft.app/Contents/MacOS/rustcraft" >"$LOG" 2>&1) &
   PID=$!
   seen=0

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 use winit::window::{Window, WindowId};
@@ -329,27 +329,33 @@ impl ApplicationHandler for Runner {
                 }
             }
             WindowEvent::RedrawRequested => self.redraw(event_loop),
-            _ => {}
+            _ => {
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+        }
+    }
+
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        // The timer set in `about_to_wait` is the frame clock.
+        if let StartCause::ResumeTimeReached { .. } = cause
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(window) = &self.window else {
-            return;
-        };
-        if self.screen.animating() {
-            let now = Instant::now();
-            if now >= self.next_frame {
-                self.next_frame = now + FRAME;
-                window.request_redraw();
-            }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+        // A moving download redraws at about 30 frames a second, a still
+        // screen ten times a second (events redraw at once).
+        let wait = if self.screen.animating() {
+            FRAME
         } else {
-            // Idle screens redraw when an event arrives; a short timer
-            // still lets the worker's last message through.
-            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME * 3));
-            window.request_redraw();
-        }
+            FRAME * 3
+        };
+        self.next_frame = Instant::now() + wait;
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
 }
 
