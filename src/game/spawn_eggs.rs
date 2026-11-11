@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn every_mob_has_an_egg_with_a_texture_that_is_not_the_placeholder() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }

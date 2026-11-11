@@ -8,9 +8,9 @@ pub mod blockmodel;
 pub mod model;
 mod resources;
 
+use crate::platform::fs::File;
 use std::{
     collections::HashSet,
-    fs::File,
     io::{BufReader, Read},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -187,7 +187,7 @@ impl Pack {
             .and_then(|n| n.to_str())
             .with_context(|| format!("bad pack name {}", path.display()))?
             .to_owned();
-        let files = if path.is_dir() {
+        let files = if crate::platform::fs::is_dir(path) {
             Files::Dir(path.to_owned())
         } else if path
             .extension()
@@ -235,7 +235,7 @@ impl Pack {
     /// The downloaded vanilla assets (`assets/vanilla/assets/minecraft`),
     /// if the folder exists: the layer under every other.
     pub fn vanilla(dir: &Path) -> Option<Self> {
-        dir.join(NAMESPACE_ROOT).is_dir().then(|| Self {
+        crate::platform::fs::is_dir(dir.join(NAMESPACE_ROOT)).then(|| Self {
             id: VANILLA_ID.to_owned(),
             info: PackInfo {
                 description: "Minecraft's own assets, as the lowest fallback".to_owned(),
@@ -264,7 +264,7 @@ impl Pack {
     pub fn has(&self, path: &str) -> bool {
         let full = format!("{}{path}", self.root);
         match &self.files {
-            Files::Dir(dir) => dir.join(&full).is_file(),
+            Files::Dir(dir) => crate::platform::fs::is_file(dir.join(&full)),
             Files::Zip { names, .. } => names.contains(&full),
         }
     }
@@ -355,7 +355,11 @@ pub fn list_with_builtin(dir: &Path, builtin: &Path) -> Vec<Pack> {
 /// Where the pack called `id` is: `dir` first, then the built-in folder.
 pub fn find(dir: &Path, builtin: &Path, id: &str) -> PathBuf {
     let own = dir.join(id);
-    if own.exists() { own } else { builtin.join(id) }
+    if crate::platform::fs::exists(&own) {
+        own
+    } else {
+        builtin.join(id)
+    }
 }
 
 /// Whether Fresh Animations goes under Patrix in the Realistic style. It
@@ -465,7 +469,7 @@ pub fn list(dir: &Path) -> Vec<Pack> {
     let mut packs: Vec<Pack> = entries
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|path| {
-            path.is_dir()
+            crate::platform::fs::is_dir(path)
                 || path
                     .extension()
                     .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
@@ -510,7 +514,7 @@ pub(crate) mod tests {
     /// says so and passes without it on a machine that doesn't have it.
     pub fn kenzos_pack(name: &str) -> Option<Pack> {
         let path = packs_dir().join(name);
-        if !path.exists() {
+        if !crate::platform::fs::exists(&path) {
             eprintln!("skipping: {} isn't in {}", name, packs_dir().display());
             return None;
         }

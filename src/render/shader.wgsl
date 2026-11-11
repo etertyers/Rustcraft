@@ -89,13 +89,13 @@ fn glint(world: vec3<f32>) -> vec3<f32> {
     let s = 0.17364818;
     let rotated = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
     let scroll = vec2<f32>(seconds / 3.0, seconds / 4.873);
-    let texel = textureSample(glint_texture, glint_sampler, rotated + scroll);
+    let texel = textureSampleLevel(glint_texture, glint_sampler, rotated + scroll, 0.0);
     return texel.rgb * vec3<f32>(0.5, 0.25, 0.8) * globals.lighting.z;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     var light = in.light;
     // Fast graphics' leaves are drawn solid (see SOLID_FLAG).
     var solid = false;
@@ -129,7 +129,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // are used as they are, since blending happens on linear values.
 @fragment
 fn fs_crack(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     if texel.a < 0.1 {
         discard;
     }
@@ -144,7 +144,7 @@ const SHADOW_FLAG: f32 = 128.0;
 // Translucent faces (water, ice, glass): the texture's own alpha, blended.
 @fragment
 fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     if texel.a < 0.01 {
         discard;
     }

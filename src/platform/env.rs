@@ -25,8 +25,67 @@ pub fn args() -> std::env::Args {
 
 #[cfg(target_arch = "wasm32")]
 pub fn args() -> std::vec::IntoIter<String> {
-    vec!["rustcraft".to_owned()].into_iter()
+    ARGS.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .into_iter()
 }
+
+#[cfg(target_arch = "wasm32")]
+static ARGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// The browser's "command line", from the page's query (see `query_args`).
+#[cfg(target_arch = "wasm32")]
+pub fn set_args(args: Vec<String>) {
+    *ARGS.lock().unwrap_or_else(|e| e.into_inner()) = args;
+}
+
+/// The page's query string as command-line arguments, program name first:
+/// `?creative&world=My%20World&seed=5` is `creative --world "My World" --seed 5`
+/// (`--creative --world "My World" --seed 5`). `single-thread` and other
+/// page-only keys are left to the page.
+pub fn query_args(query: &str) -> Vec<String> {
+    fn decode(s: &str) -> String {
+        let mut out = Vec::new();
+        let b = s.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                b'+' => out.push(b' '),
+                b'%' if i + 2 < b.len() => match u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                    Ok(v) => {
+                        out.push(v);
+                        i += 2;
+                    }
+                    Err(_) => out.push(b'%'),
+                },
+                c => out.push(c),
+            }
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+    let mut args = vec!["rustcraft".to_owned()];
+    for part in query
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty())
+    {
+        let (key, value) = part.split_once('=').unwrap_or((part, ""));
+        let key = decode(key);
+        if PAGE_ONLY.contains(&key.as_str()) {
+            continue;
+        }
+        args.push(format!("--{key}"));
+        if !value.is_empty() {
+            args.push(decode(value));
+        }
+    }
+    args
+}
+
+/// Query keys the page itself uses, which are not game flags.
+const PAGE_ONLY: &[&str] = &["single-thread", "webgl", "debug"];
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn var(name: &str) -> Result<String, VarError> {
@@ -94,4 +153,30 @@ pub fn exit(code: i32) -> ! {
 pub fn exit(code: i32) -> ! {
     log::error!("exit({code}) in the browser build");
     panic!("exit({code})");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_query_becomes_flags() {
+        assert_eq!(query_args(""), ["rustcraft"]);
+        assert_eq!(
+            query_args("?creative&world=My%20World&seed=5&single-thread"),
+            [
+                "rustcraft",
+                "--creative",
+                "--world",
+                "My World",
+                "--seed",
+                "5"
+            ]
+        );
+        assert_eq!(
+            query_args("?perf-test&style=vanilla+x"),
+            ["rustcraft", "--perf-test", "--style", "vanilla x"]
+        );
+        assert_eq!(query_args("?a=100%"), ["rustcraft", "--a", "100%"]);
+    }
 }

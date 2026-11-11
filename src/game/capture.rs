@@ -99,7 +99,7 @@ impl Game {
         let template = self.capture_sketch()?.template();
         let path = (1..)
             .map(|n| dir.join(format!("capture_{n}.ron")))
-            .find(|path| !path.exists())
+            .find(|path| !crate::platform::fs::exists(path))
             .expect("a free name");
         write(&template, &path)?;
         Ok(path)

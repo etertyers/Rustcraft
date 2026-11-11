@@ -196,7 +196,7 @@ pub fn marker_path() -> PathBuf {
 /// Notes that a start has begun. Returns true if the last one never
 /// finished (its marker was still there).
 pub fn begin(marker: &Path) -> bool {
-    let left = marker.exists();
+    let left = crate::platform::fs::exists(marker);
     if let Some(dir) = marker.parent() {
         let _ = crate::platform::fs::create_dir_all(dir);
     }
@@ -532,7 +532,7 @@ mod tests {
 
     fn assets_ready() -> Option<(std::path::PathBuf, MobRegistry)> {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return None;
         }
@@ -753,7 +753,7 @@ mod tests {
             "the marker is still there: it never finished"
         );
         super::finish(&marker);
-        assert!(!marker.exists());
+        assert!(!crate::platform::fs::exists(&marker));
         assert!(!super::begin(&marker), "a finished start leaves none");
         let none = dir.path().join("none");
         let path = dir.path().join("options.ron");

@@ -38,5 +38,7 @@ pub mod startup;
 #[cfg(test)]
 pub(crate) mod testutil;
 pub mod ui;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 pub mod world;
 pub mod worldlist;

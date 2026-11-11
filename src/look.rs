@@ -418,7 +418,7 @@ pub fn load_skin(res: &Resources, assets: &Path) -> (RgbaImage, bool) {
     }
     let dir = assets.join("skins");
     for (file, slim) in [("steve-skin.png", false), ("alex.png", true)] {
-        match image::open(dir.join(file)) {
+        match crate::platform::fs::open_image(dir.join(file)) {
             Ok(image) => return (prepare_skin(image.into_rgba8()), slim),
             Err(err) => warn!("no skin {file}: {err}"),
         }
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn the_horse_and_its_overlays_load_in_the_64_by_64_layout_when_vanilla_is_there() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla")) {
             return;
         }
         let mobs = mobs();
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(skin.dimensions(), (64, 64));
         assert!(!look.skin_slim);
         let steve = prepare_skin(
-            image::open(assets.join("skins/steve-skin.png"))
+            crate::platform::fs::open_image(assets.join("skins/steve-skin.png"))
                 .unwrap()
                 .into_rgba8(),
         );
@@ -845,7 +845,7 @@ mod tests {
     #[test]
     fn mobs_whose_canvas_grew_declare_it_and_use_the_vanilla_file() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }
@@ -864,7 +864,7 @@ mod tests {
     #[test]
     fn every_mob_texture_resolves_in_the_vanilla_layer_alone() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }
@@ -884,7 +884,7 @@ mod tests {
     #[test]
     fn the_vanilla_style_resolves_every_texture_to_vanilla_or_a_listed_rustcraft_only_file() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }
@@ -948,7 +948,7 @@ mod tests {
             eprintln!("skipping: no Bare Bones in {}", dir.display());
             return;
         };
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }
@@ -992,7 +992,7 @@ mod tests {
     fn switching_styles_back_and_forth_leaves_nothing_of_the_others() {
         use crate::render::visuals::Style;
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }

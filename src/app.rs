@@ -150,6 +150,8 @@ pub struct App {
     options: Options,
     /// The sound engine, and the resource layers its sounds come from.
     audio: Option<Audio>,
+    /// The browser's window waiting for its GPU (`init` resumes with it).
+    waiting_window: Option<Arc<Window>>,
     res: Option<Resources>,
     /// The pause menu, open over a stopped game.
     pause: Option<PauseMenu>,
@@ -378,6 +380,7 @@ impl App {
                 options
             },
             audio: None,
+            waiting_window: None,
             res: None,
             pause: None,
             relaunch: false,
@@ -553,7 +556,8 @@ impl App {
         event_loop.exit();
     }
 
-    fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+    /// Opens the window (a canvas in the browser).
+    fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
         // The bench draws a full 1080p screen's worth.
         let (width, height) = match self.bench {
             Some(_) => bench::WINDOW_SIZE,
@@ -578,6 +582,7 @@ impl App {
         } else {
             attrs
         };
+        let attrs = crate::platform::window::attributes(attrs);
         let window = Arc::new(event_loop.create_window(attrs)?);
         info!(
             "window {}x{} pixels, scale factor {}",
@@ -585,6 +590,25 @@ impl App {
             window.inner_size().height,
             window.scale_factor()
         );
+        Ok(window)
+    }
+
+    fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        let window = match self.waiting_window.take() {
+            Some(window) => window,
+            None => self.create_window(event_loop)?,
+        };
+        // The browser's GPU arrives asynchronously: come back when it has.
+        let gpu = match crate::platform::window::acquire(&window) {
+            crate::platform::window::Acquire::Ready(gpu) => gpu,
+            crate::platform::window::Acquire::Pending => {
+                self.waiting_window = Some(window);
+                return Ok(());
+            }
+            crate::platform::window::Acquire::Failed(err) => {
+                anyhow::bail!("no usable GPU in this browser: {err}")
+            }
+        };
         let assets = assets::dir();
         let blocks = block::registry();
         info!(
@@ -608,7 +632,14 @@ impl App {
             crate::startup::Mode::Normal
         };
         // The GPU's own texture limit, for egui and for every upload.
-        let (ctx, first_textures) = crate::startup::egui_context(crate::startup::probe_gpu_limit());
+        let limit = match &gpu {
+            Some(gpu) => {
+                crate::startup::set_gpu_limit(gpu.texture_limit());
+                crate::startup::gpu_limit()
+            }
+            None => crate::startup::probe_gpu_limit(),
+        };
+        let (ctx, first_textures) = crate::startup::egui_context(limit);
         let builtin = crate::pack::builtin_dir();
         let started = crate::startup::start(
             &assets,
@@ -631,8 +662,13 @@ impl App {
             self.options.visuals.style,
         );
         let look = started.look;
-        let mut renderer =
-            Renderer::new(window.clone(), &look.atlas, &look.sky, &look.mob_textures)?;
+        let mut renderer = Renderer::new(
+            window.clone(),
+            gpu,
+            &look.atlas,
+            &look.sky,
+            &look.mob_textures,
+        )?;
         // The bench measures how fast frames can go.
         // The bench measures how fast frames can go, except a native one
         // (vsync as in the options, or `--vsync`).
@@ -1849,6 +1885,9 @@ impl App {
         self.held.clear();
         match self.audio.as_mut() {
             Some(audio) => audio.reload(&look.res),
+            // Browsers start audio only after a click or key press;
+            // `update_audio` makes it then.
+            None if !crate::platform::window::user_gesture() => {}
             None => self.audio = Some(Audio::new(&look.res)),
         }
         self.res = Some(look.res);
@@ -1856,6 +1895,9 @@ impl App {
 
     /// Plays the sounds the game and menus queued, and keeps the music going.
     fn update_audio(&mut self, dt: f32) {
+        if self.audio.is_none() && crate::platform::window::user_gesture() {
+            self.audio = self.res.as_ref().map(Audio::new);
+        }
         let (Some(audio), Some(res)) = (self.audio.as_mut(), self.res.as_ref()) else {
             return;
         };
@@ -3664,6 +3706,15 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // The browser's GPU has arrived: finish starting up.
+        if self.waiting_window.is_some() && self.window.is_none() {
+            if let Err(err) = self.init(event_loop) {
+                self.fail(event_loop, err);
+            }
+            if self.window.is_none() {
+                return;
+            }
+        }
         let dropping = matches!(event, WindowEvent::Ime(_)) && self.ime_commit_dropped;
         if !dropping && let (Some(window), Some(debug_ui)) = (&self.window, self.debug_ui.as_mut())
         {
@@ -3719,6 +3770,11 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if crate::platform::window::take_lock_lost() {
+            self.stack.set_engaged(false);
+            self.pause_game();
+            self.apply_grab();
+        }
         if self.occluded {
             event_loop.set_control_flow(ControlFlow::Wait);
         } else if self.frame_skipped {
