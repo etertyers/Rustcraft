@@ -21,6 +21,7 @@ pub mod storage;
 pub mod task;
 pub mod time;
 pub mod window;
+pub mod world_zip;
 
 /// Whether this is the browser build.
 pub const WEB: bool = cfg!(target_arch = "wasm32");

@@ -201,7 +201,7 @@ mod web {
         path: PathBuf,
         data: Cursor<Vec<u8>>,
         writable: bool,
-        dirty: bool,
+        dirty: std::cell::Cell<bool>,
     }
 
     impl File {
@@ -210,7 +210,7 @@ mod web {
                 path: path.as_ref().to_owned(),
                 data: Cursor::new(read(path)?),
                 writable: false,
-                dirty: false,
+                dirty: std::cell::Cell::new(false),
             })
         }
 
@@ -220,13 +220,13 @@ mod web {
                 path: path.as_ref().to_owned(),
                 data: Cursor::new(Vec::new()),
                 writable: true,
-                dirty: false,
+                dirty: std::cell::Cell::new(false),
             })
         }
 
         /// Writes the file out (the browser's storage has no disk to sync).
         pub fn sync_all(&self) -> io::Result<()> {
-            if self.dirty {
+            if self.dirty.replace(false) {
                 storage().write(&self.path, self.data.get_ref())?;
             }
             Ok(())
@@ -257,16 +257,12 @@ mod web {
             if !self.writable {
                 return Err(io::Error::new(io::ErrorKind::PermissionDenied, "read-only"));
             }
-            self.dirty = true;
+            self.dirty.set(true);
             self.data.write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            if self.dirty {
-                storage().write(&self.path, self.data.get_ref())?;
-                self.dirty = false;
-            }
-            Ok(())
+            self.sync_all()
         }
     }
 

@@ -34,6 +34,11 @@ export async function opfsWrite(path, bytes) {
   });
 }
 
+// Resolves once every queued write and delete has finished.
+export function opfsIdle() {
+  return Promise.all([...chains.values()]);
+}
+
 export async function opfsRead(path) {
   try {
     const [dir, name] = await dirOf(path, false);
@@ -135,4 +140,30 @@ export function hadGesture() {
 
 export function hardwareConcurrency() {
   return navigator.hardwareConcurrency ?? 4;
+}
+
+// A file the player saves (an exported world).
+export function downloadBytes(filename, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// Asks for one file; calls back with its bytes. Needs a click to be allowed.
+export function pickFile(accept, cb) {
+  const input = Object.assign(document.createElement("input"), { type: "file", accept });
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (file) cb(new Uint8Array(await file.arrayBuffer()));
+  };
+  input.click();
+}
+
+// Calls back when the tab is hidden or closing: the game saves then.
+export function onLeavingPage(cb) {
+  document.addEventListener("visibilitychange", () => { if (document.hidden) cb(); });
+  addEventListener("pagehide", () => cb());
 }

@@ -1,6 +1,9 @@
 // Rustcraft's browser loader (M71): starts the wasm, shows the asset setup
 // screen when Minecraft's files aren't stored yet, then starts the game.
-import init, { boot, vanilla_add, vanilla_add_zip, vanilla_finish, pack_add, start } from "./pkg/rustcraft.js";
+import init, { boot, vanilla_add, vanilla_add_zip, vanilla_finish, pack_add, start, save_now, export_world, import_world, storage_idle } from "./pkg/rustcraft.js";
+
+// For tests and the console: window.rustcraft.save_now() saves the world.
+window.rustcraft = { save_now, export_world, import_world, storage_idle };
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $("status").textContent = t; };

@@ -8,3 +8,4 @@ pub mod lan;
 pub mod lan;
 pub mod protocol;
 pub mod transport;
+pub mod worker;

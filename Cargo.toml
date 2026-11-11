@@ -45,7 +45,7 @@ web-sys = { version = "0.3", features = [
     "FileSystemGetDirectoryOptions", "FileSystemGetFileOptions", "FileSystemRemoveOptions",
     "Response", "Request", "Blob", "File", "FileList", "Url", "Location", "UrlSearchParams",
     "AudioContext", "Performance", "Storage", "ReadableStream", "ResponseInit", "RequestInit",
-    "DomRectReadOnly", "WorkerGlobalScope",
+    "DomRectReadOnly", "WorkerGlobalScope", "Worker", "WorkerOptions", "WorkerType", "MessageEvent",
 ] }
 web-time = "1"
 getrandom = { version = "0.3", features = ["wasm_js"] }

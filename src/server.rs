@@ -883,6 +883,23 @@ mod tests {
 
     /// Like `world_with`, on any chunk source.
     fn world_on(source: ChunkSource, names: &[&str]) -> (Server, Vec<(Client, Game)>) {
+        world_over(source, names, || {
+            let (server_end, client_end) = local_pair();
+            (Box::new(server_end), Box::new(client_end))
+        })
+    }
+
+    /// Like `world_on`, with each connection made by `pair` (the server's end
+    /// and the client's).
+    #[allow(clippy::type_complexity)]
+    fn world_over(
+        source: ChunkSource,
+        names: &[&str],
+        pair: impl Fn() -> (
+            ServerConnection,
+            Box<dyn crate::net::transport::Connection<ClientMsg, ServerMsg>>,
+        ),
+    ) -> (Server, Vec<(Client, Game)>) {
         let (items, models) = registries();
         let mobs = mob_registry();
         let chunks = ChunkManager::new(source, models.clone(), 2, 2);
@@ -894,14 +911,48 @@ mod tests {
         let clients = names
             .iter()
             .map(|name| {
-                let (server_end, client_end) = local_pair();
-                server.connect(Box::new(server_end));
-                let client = Client::join(Box::new(client_end), name, settings());
+                let (server_end, client_end) = pair();
+                server.connect(server_end);
+                let client = Client::join(client_end, name, settings());
                 let game = Game::new_client(items.clone(), models.clone(), mobs.clone(), 2, 1);
                 (client, game)
             })
             .collect();
         (server, clients)
+    }
+
+    /// M72: the same protocol over worker-shaped connections (every message
+    /// bincode + lz4 in a copied byte frame, as `postMessage` carries it):
+    /// a server and two clients still agree on the world and on an edit.
+    #[test]
+    fn a_server_and_two_clients_agree_over_worker_shaped_connections() {
+        let (mut server, mut clients) = world_over(ChunkSource::Flat, &["Alice", "Bob"], || {
+            let (s, c) = crate::net::worker::worker_pair::<ServerMsg, ClientMsg>();
+            (Box::new(s), Box::new(c))
+        });
+        run_until(&mut server, &mut clients, |server, clients| {
+            let spot = IVec3::new(3, 63, 3);
+            server.player_count() == 2
+                && block_at(&server.game, spot).is_some()
+                && clients
+                    .iter()
+                    .all(|(c, g)| c.welcomed && block_at(g, spot) == block_at(&server.game, spot))
+        });
+        // An edit on the server reaches both.
+        let at = IVec3::new(3, 64, 3);
+        let stone = crate::world::block::BlockState::of(blocks::STONE);
+        server.game.set_blocks(&[(at, stone)]);
+        run_until(&mut server, &mut clients, |_, clients| {
+            clients.iter().all(|(_, g)| block_at(g, at) == Some(stone))
+        });
+        for (client, game) in &clients {
+            assert!(client.welcomed);
+            assert_eq!(block_at(game, at), Some(stone));
+            assert_eq!(
+                block_at(game, IVec3::new(0, 63, 0)),
+                block_at(&server.game, IVec3::new(0, 63, 0))
+            );
+        }
     }
 
     /// Runs frames of every client and the server until `done`.
