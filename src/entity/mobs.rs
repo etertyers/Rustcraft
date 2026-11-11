@@ -421,8 +421,8 @@ impl MobRegistry {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let text =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let text = crate::platform::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
         let mut mobs: Vec<MobDef> =
             ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         // A mod's `data/mob_drops.ron`: extra drops by mob name.

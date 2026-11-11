@@ -256,7 +256,7 @@ impl Registry {
     }
 
     fn load_dir(&mut self, root: &Path, dir: &Path) -> Result<()> {
-        let mut entries: Vec<_> = std::fs::read_dir(dir)?
+        let mut entries: Vec<_> = crate::platform::fs::read_dir(dir)?
             .flatten()
             .map(|e| e.path())
             .collect();
@@ -269,7 +269,7 @@ impl Registry {
             if path.extension().is_none_or(|ext| ext != "ron") {
                 continue;
             }
-            let text = std::fs::read_to_string(&path)?;
+            let text = crate::platform::fs::read_to_string(&path)?;
             let template: Template =
                 ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
             template
@@ -463,9 +463,9 @@ pub fn write(template: &Template, path: &Path) -> Result<()> {
         .separate_tuple_members(false);
     let text = ron::ser::to_string_pretty(template, config)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        crate::platform::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, text + "\n")?;
+    crate::platform::fs::write(path, text + "\n")?;
     Ok(())
 }
 

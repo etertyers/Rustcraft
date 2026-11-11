@@ -61,9 +61,9 @@ impl Results {
 
     pub fn write(&self, path: &Path) -> Result<()> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            crate::platform::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self)? + "\n")
+        crate::platform::fs::write(path, serde_json::to_string_pretty(self)? + "\n")
             .with_context(|| format!("writing {}", path.display()))
     }
 
@@ -153,7 +153,7 @@ fn commit() -> String {
 /// `--perf-test --runs <n>`: flies n times, each in a fresh process with
 /// an empty world and its own 5 s warm-up, and writes the medians.
 pub fn run_many(bench: &Bench, args: &[String]) -> Result<()> {
-    let exe = std::env::current_exe()?;
+    let exe = crate::platform::env::current_exe()?;
     // This command line minus --runs and --perf-out.
     let mut rest = Vec::new();
     let mut words = args.iter().skip(1);
@@ -166,8 +166,10 @@ pub fn run_many(bench: &Bench, args: &[String]) -> Result<()> {
     }
     let mut flights = Vec::new();
     for i in 1..=bench.runs {
-        let out =
-            std::env::temp_dir().join(format!("rustcraft-perf-{}-{i}.json", std::process::id()));
+        let out = crate::platform::env::temp_dir().join(format!(
+            "rustcraft-perf-{}-{i}.json",
+            crate::platform::env::process_id()
+        ));
         println!("perf run {i} of {}", bench.runs);
         let status = Command::new(&exe)
             .args(&rest)
@@ -177,16 +179,16 @@ pub fn run_many(bench: &Bench, args: &[String]) -> Result<()> {
         if !status.success() {
             bail!("run {i} failed: {status}");
         }
-        let text = std::fs::read_to_string(&out)
+        let text = crate::platform::fs::read_to_string(&out)
             .with_context(|| format!("run {i} wrote no results to {}", out.display()))?;
         flights.push(serde_json::from_str::<Results>(&text)?);
-        let _ = std::fs::remove_file(&out);
+        let _ = crate::platform::fs::remove_file(&out);
     }
     let results = combine(&flights);
     let json = format!("docs/perf/{}.json", results.label);
     results.write(Path::new(&json))?;
     let md = format!("docs/perf/{}.md", results.label);
-    std::fs::write(&md, results.markdown())?;
+    crate::platform::fs::write(&md, results.markdown())?;
     println!("{}\nwrote {json} and {md}", results.markdown());
     Ok(())
 }
@@ -210,7 +212,7 @@ pub const ALL_LOOKS: [(&str, &str, &str, &str); 8] = [
 /// (`gpu_extra_ms`, and `gpu_world_extra_ms` for the world pass), and
 /// writes every table into `docs/perf/<label>.md`.
 pub fn run_all_looks(args: &[String]) -> Result<()> {
-    let exe = std::env::current_exe()?;
+    let exe = crate::platform::env::current_exe()?;
     // This command line minus --all-looks, --visuals, --quality, --row
     // and --label.
     let mut rest = Vec::new();
@@ -248,7 +250,8 @@ pub fn run_all_looks(args: &[String]) -> Result<()> {
             bail!("{style} shaders {shaders} {quality} failed: {status}");
         }
         let path = format!("docs/perf/{name}.json");
-        let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+        let text = crate::platform::fs::read_to_string(&path)
+            .with_context(|| format!("reading {path}"))?;
         all.push((path, serde_json::from_str::<Results>(&text)?));
     }
     let vanilla = all[0].1.measures.clone();
@@ -262,7 +265,7 @@ pub fn run_all_looks(args: &[String]) -> Result<()> {
         md += "\n";
     }
     let md_path = format!("docs/perf/{label}.md");
-    std::fs::write(&md_path, &md)?;
+    crate::platform::fs::write(&md_path, &md)?;
     println!("{md}\nwrote {md_path}");
     Ok(())
 }

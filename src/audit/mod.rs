@@ -734,7 +734,7 @@ pub fn mob_entries(look: &Look, mobs: &MobRegistry) -> Vec<Entry> {
 /// layers, as names (`gui/sprites/hud/heart/full`).
 fn textures_under(assets: &Path, folder: &str) -> BTreeSet<String> {
     fn walk(dir: &Path, root: &Path, out: &mut BTreeSet<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = crate::platform::fs::read_dir(dir) else {
             return;
         };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
@@ -843,7 +843,7 @@ pub fn animated_flags(look: &Look, assets: &Path) -> (Vec<Flag>, Vec<String>) {
 /// The names of the textures that have a `.png.mcmeta`.
 pub fn textures_with_mcmeta(assets: &Path) -> BTreeSet<String> {
     fn walk(dir: &Path, root: &Path, out: &mut BTreeSet<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = crate::platform::fs::read_dir(dir) else {
             return;
         };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
@@ -1019,7 +1019,7 @@ impl Audit {
 
     /// Writes the contact sheets and `report.json` into `dir`.
     pub fn write(&self, dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
-        std::fs::create_dir_all(dir)?;
+        crate::platform::fs::create_dir_all(dir)?;
         let mut written = Vec::new();
         for category in Category::ALL {
             let entries: Vec<&Entry> = self
@@ -1063,7 +1063,7 @@ impl Audit {
                 severity: f.detector.severity(),
             })
             .collect();
-        std::fs::write(
+        crate::platform::fs::write(
             dir.join("report.json"),
             serde_json::to_string_pretty(&serde_json::json!({
                 "stack": self.stack.name,
@@ -1072,7 +1072,7 @@ impl Audit {
                 "flags": flags,
             }))?,
         )?;
-        std::fs::write(
+        crate::platform::fs::write(
             dir.join("summary.txt"),
             self.step0.join("\n") + "\n" + &self.summary(20),
         )?;
@@ -1138,12 +1138,12 @@ pub fn cli(mode: &str, entry: Option<&str>) -> anyhow::Result<()> {
             .join("target/texture-audit")
             .join(mode)
             .join(format!("entry-{}.png", id.replace(['/', '#'], "_")));
-        std::fs::create_dir_all(out.parent().unwrap())?;
+        crate::platform::fs::create_dir_all(out.parent().unwrap())?;
         entry_picture(&assets, &stack, id)?.save(&out)?;
         println!("{}", out.display());
         return Ok(());
     }
-    let started = std::time::Instant::now();
+    let started = crate::platform::time::Instant::now();
     let audit = run(&assets, &stack, None)?;
     let out = crate::assets::repo_root()
         .join("target/texture-audit")
@@ -1244,7 +1244,7 @@ mod tests {
             let image = image::open(path).unwrap();
             assert!(image.width() <= sheet::COLUMNS * 68 && image.height() <= sheet::COLUMNS * 80);
         }
-        let report = std::fs::read_to_string(dir.path().join("report.json")).unwrap();
+        let report = crate::platform::fs::read_to_string(dir.path().join("report.json")).unwrap();
         assert!(report.contains("\"flags\""));
         assert!(audit.summary(5).contains("per detector"));
     }
@@ -1284,7 +1284,7 @@ mod tests {
             "FreshAnimations_v1.11.2_26.1+.zip",
             "Patrix_26.3_32x_basic.zip",
         ] {
-            std::fs::write(dir.path().join(name), "x").unwrap();
+            crate::platform::fs::write(dir.path().join(name), "x").unwrap();
         }
         let barebones = stack("barebones", dir.path()).unwrap();
         assert_eq!(
@@ -1302,7 +1302,10 @@ mod tests {
             ["Patrix_26.3_32x_basic.zip"]
         );
         // With some missing, the stack has what's there.
-        std::fs::remove_file(dir.path().join("Bare Bones x Fresh Animations 1.10.4.zip")).unwrap();
+        crate::platform::fs::remove_file(
+            dir.path().join("Bare Bones x Fresh Animations 1.10.4.zip"),
+        )
+        .unwrap();
         assert_eq!(stack("barebones", dir.path()).unwrap().packs.len(), 3);
         assert!(stack("nonsense", dir.path()).is_none());
     }

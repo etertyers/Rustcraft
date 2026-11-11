@@ -53,7 +53,7 @@ impl Reference {
             .borrow_mut()
             .entry(path.clone())
             .or_insert_with(|| {
-                let text = std::fs::read_to_string(&path)
+                let text = crate::platform::fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
                 Rc::new(
                     serde_json::from_str(&text)

@@ -277,9 +277,11 @@ impl Menu {
             self.screen = Screen::SelectWorld;
         }
         ui.add_space(8.0);
-        if ui
-            .add_sized(BUTTON, Button::new("Multiplayer"))
-            .clicked_with_sound()
+        // LAN play needs sockets, which the browser doesn't have.
+        if crate::platform::LAN
+            && ui
+                .add_sized(BUTTON, Button::new("Multiplayer"))
+                .clicked_with_sound()
         {
             let (finder, deaf) = match crate::net::lan::Finder::start() {
                 Ok(finder) => (Some(finder), None),

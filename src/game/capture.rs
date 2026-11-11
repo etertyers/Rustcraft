@@ -136,7 +136,7 @@ mod tests {
         game.mark_corner(1);
         let dir = crate::world::save::TempDir::new("capture");
         let path = game.capture_to(dir.path()).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
+        let text = crate::platform::fs::read_to_string(&path).unwrap();
         let template: Template = ron::from_str(&text).unwrap();
         template.validate().unwrap();
         assert_eq!(template.size, [4, 4, 4]);

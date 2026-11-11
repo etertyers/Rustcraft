@@ -21,7 +21,7 @@ pub mod screens;
 pub mod stack;
 pub mod text_field;
 
-use std::time::Instant;
+use crate::platform::time::Instant;
 
 use egui::{Align2, Color32, Frame, RichText};
 use winit::{event::WindowEvent, window::Window};

@@ -57,23 +57,21 @@ impl LodMaker {
             let (job_rx, done_tx) = (job_rx.clone(), done_tx.clone());
             let (terrain, colors) = (terrain.clone(), colors.clone());
             let (store, columns) = (store.clone(), columns.clone());
-            std::thread::Builder::new()
-                .name(format!("lod-make-{n}"))
-                .spawn(move || {
-                    super::manager::background();
-                    while let Ok(job) = job_rx.recv() {
-                        match job {
-                            Job::Make(key) => {
-                                let bytes = make(&terrain, key, &store, &columns);
-                                if done_tx.send((key, Arc::new(bytes))).is_err() {
-                                    break;
-                                }
+            crate::platform::task::spawn(format!("lod-make-{n}"), move || {
+                super::manager::background();
+                while let Ok(job) = job_rx.recv() {
+                    match job {
+                        Job::Make(key) => {
+                            let bytes = make(&terrain, key, &store, &columns);
+                            if done_tx.send((key, Arc::new(bytes))).is_err() {
+                                break;
                             }
-                            Job::Chunk(chunk) => see(&chunk, &colors, &store, &columns),
                         }
+                        Job::Chunk(chunk) => see(&chunk, &colors, &store, &columns),
                     }
-                })
-                .expect("spawn an LOD maker");
+                }
+            })
+            .expect("spawn an LOD maker");
         }
         Self {
             jobs,
@@ -211,8 +209,11 @@ mod tests {
     }
 
     fn temp(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("rustcraft-lod-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::platform::env::temp_dir().join(format!(
+            "rustcraft-lod-{name}-{}",
+            crate::platform::env::process_id()
+        ));
+        let _ = crate::platform::fs::remove_dir_all(&dir);
         dir
     }
 
@@ -233,7 +234,7 @@ mod tests {
         let mut again = maker(&dir);
         again.request(key);
         assert_eq!(*wait(&mut again, key), *bytes);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -254,6 +255,6 @@ mod tests {
         let tile = Tile::decode(&wait(&mut m, key)).unwrap();
         let real = tile.samples.iter().filter(|s| s.real).count();
         assert_eq!(real, 256, "the chunk's 16×16 columns");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 }

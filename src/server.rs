@@ -2,7 +2,8 @@
 //! and telling each connected client what they see. Single player runs one
 //! in the same process with a single client, so there's one way to play.
 
-use std::{collections::VecDeque, sync::Arc, time::Instant};
+use crate::platform::time::Instant;
+use std::{collections::VecDeque, sync::Arc};
 
 use glam::DVec3;
 use log::{info, warn};
@@ -369,7 +370,7 @@ impl Server {
                 .game
                 .world_dir_for_packs
                 .clone()
-                .unwrap_or_else(|| std::env::temp_dir().join("rustcraft-unsaved"))
+                .unwrap_or_else(|| crate::platform::env::temp_dir().join("rustcraft-unsaved"))
                 .join("lod");
             let Ok(store) = crate::lod::store::LodStore::open(&dir, crate::lod::DEFAULT_DISK_CAP)
             else {
@@ -844,7 +845,8 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use crate::platform::time::Instant;
+    use std::time::Duration;
 
     use glam::IVec3;
 
@@ -1544,22 +1546,25 @@ mod tests {
             s.player_count() == 2 && c.iter().all(|(client, _)| client.welcomed)
         });
         // A data pack with a tick function counting ticks.
-        let root = std::env::temp_dir().join(format!("rc-m45-server-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::platform::env::temp_dir().join(format!(
+            "rc-m45-server-{}",
+            crate::platform::env::process_id()
+        ));
+        let _ = crate::platform::fs::remove_dir_all(&root);
         let pack = root.join("datapacks/p");
-        std::fs::create_dir_all(pack.join("data/demo/function")).unwrap();
-        std::fs::create_dir_all(pack.join("data/minecraft/tags/function")).unwrap();
-        std::fs::write(
+        crate::platform::fs::create_dir_all(pack.join("data/demo/function")).unwrap();
+        crate::platform::fs::create_dir_all(pack.join("data/minecraft/tags/function")).unwrap();
+        crate::platform::fs::write(
             pack.join("pack.mcmeta"),
             r#"{"pack":{"pack_format":48,"description":"p"}}"#,
         )
         .unwrap();
-        std::fs::write(
+        crate::platform::fs::write(
             pack.join("data/demo/function/t.mcfunction"),
             "scoreboard players add #ticks n 1\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::platform::fs::write(
             pack.join("data/minecraft/tags/function/tick.json"),
             r#"{"values":["demo:t"]}"#,
         )
@@ -1658,7 +1663,7 @@ mod tests {
                 .any(|(l, _)| l.starts_with("§7§o[@:")),
             "Bob isn't an operator"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
     }
 
     /// How many of `name` player `inventory` holds (hotbar and main).

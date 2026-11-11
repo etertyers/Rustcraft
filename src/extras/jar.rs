@@ -56,7 +56,7 @@ pub fn frame_names(base: &str, frames: u8) -> Vec<String> {
 /// Reads every sprite the jars in `dir` have, keyed `fx/<mod>/<name>`.
 pub fn load(dir: &Path) -> HashMap<String, RgbaImage> {
     let mut images = HashMap::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::platform::fs::read_dir(dir) else {
         info!(
             "extras: no mods folder at {}; the extras use vanilla's particles",
             dir.display()
@@ -74,7 +74,7 @@ pub fn load(dir: &Path) -> HashMap<String, RgbaImage> {
             info!("extras: {name}'s jar is missing; it falls back to vanilla's particles");
             continue;
         };
-        let Ok(file) = std::fs::File::open(jar) else {
+        let Ok(file) = crate::platform::fs::File::open(jar) else {
             continue;
         };
         let Ok(mut zip) = zip::ZipArchive::new(file) else {
@@ -130,7 +130,7 @@ pub fn find_jar(prefix: &str) -> Option<PathBuf> {
 }
 
 pub fn find_jar_in(dir: &Path, prefix: &str) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
+    crate::platform::fs::read_dir(dir)
         .ok()?
         .flatten()
         .map(|e| e.path())
@@ -143,7 +143,7 @@ pub fn find_jar_in(dir: &Path, prefix: &str) -> Option<PathBuf> {
 
 /// A file inside the jar `jar`.
 pub fn read_in(jar: &Path, path: &str) -> Option<Vec<u8>> {
-    let mut zip = zip::ZipArchive::new(std::fs::File::open(jar).ok()?).ok()?;
+    let mut zip = zip::ZipArchive::new(crate::platform::fs::File::open(jar).ok()?).ok()?;
     let mut entry = zip.by_name(path).ok()?;
     let mut bytes = Vec::new();
     entry.read_to_end(&mut bytes).ok()?;

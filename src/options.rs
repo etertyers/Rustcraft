@@ -259,8 +259,10 @@ impl Options {
     /// own, so they neither read nor change the player's settings.
     pub fn path() -> PathBuf {
         if cfg!(test) {
-            return std::env::temp_dir()
-                .join(format!("rustcraft-test-options-{}.ron", std::process::id()));
+            return crate::platform::env::temp_dir().join(format!(
+                "rustcraft-test-options-{}.ron",
+                crate::platform::env::process_id()
+            ));
         }
         level::saves_dir().with_file_name("options.ron")
     }
@@ -268,7 +270,7 @@ impl Options {
     /// Reads the options, falling back to the defaults if the file is
     /// missing or can't be read.
     pub fn load(path: &Path) -> Self {
-        let text = match std::fs::read_to_string(path) {
+        let text = match crate::platform::fs::read_to_string(path) {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Self::default(),
             Err(err) => {
@@ -288,9 +290,11 @@ impl Options {
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())?;
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+            crate::platform::fs::create_dir_all(dir)
+                .with_context(|| format!("creating {}", dir.display()))?;
         }
-        std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
+        crate::platform::fs::write(path, text)
+            .with_context(|| format!("writing {}", path.display()))
     }
 
     /// Moves options from before v1.5 to styles the first time, and makes
@@ -420,7 +424,7 @@ mod tests {
         let dir = TempDir::new("options-graphics");
         let path = dir.path().join("options.ron");
         // A file from before v1.4: packs chosen, no looks.
-        std::fs::write(
+        crate::platform::fs::write(
             &path,
             r#"(render_distance: 9, resource_packs: ["Ashen_1.8.3.zip", "Bare Bones 1.21.zip"])"#,
         )
@@ -471,14 +475,14 @@ mod tests {
         };
         let dir = TempDir::new("options-v14");
         let path = dir.path().join("options.ron");
-        std::fs::write(&path, v14("Vanilla")).unwrap();
+        crate::platform::fs::write(&path, v14("Vanilla")).unwrap();
         let mut vanilla = Options::load(&path);
         vanilla.set_up_packs(&[]);
         assert_eq!(vanilla.visuals.style, Style::Vanilla);
         assert!(!vanilla.visuals.shaders());
         assert_eq!(vanilla.resource_packs, ["Ashen_1.8.3.zip"]);
         assert_eq!(vanilla.visuals.packs(Style::Barebones), &["Mine.zip"]);
-        std::fs::write(&path, v14("Trailer")).unwrap();
+        crate::platform::fs::write(&path, v14("Trailer")).unwrap();
         let mut trailer = Options::load(&path);
         trailer.set_up_packs(&[]);
         assert_eq!(trailer.visuals.style, Style::Barebones);
@@ -506,7 +510,7 @@ mod tests {
             "Patrix_26.3_32x_basic.zip",
         ];
         for name in all {
-            std::fs::write(dir.path().join(name), "x").unwrap();
+            crate::platform::fs::write(dir.path().join(name), "x").unwrap();
         }
         let stack = |s| crate::pack::style_stack(s, dir.path());
         assert!(
@@ -524,8 +528,9 @@ mod tests {
         );
         assert_eq!(stack(Style::Realistic), ["Patrix_26.3_32x_basic.zip"]);
         // Some missing: the style still works, and says what is missing.
-        std::fs::remove_file(dir.path().join("FreshAnimations_v1.11.2_26.1+.zip")).unwrap();
-        std::fs::remove_file(dir.path().join("Patrix_26.3_32x_basic.zip")).unwrap();
+        crate::platform::fs::remove_file(dir.path().join("FreshAnimations_v1.11.2_26.1+.zip"))
+            .unwrap();
+        crate::platform::fs::remove_file(dir.path().join("Patrix_26.3_32x_basic.zip")).unwrap();
         assert_eq!(stack(Style::Barebones).len(), 3);
         assert!(stack(Style::Realistic).is_empty());
         let missing = crate::pack::missing_for(Style::Realistic, dir.path());
@@ -614,14 +619,14 @@ mod tests {
         assert_eq!(Options::load(&path), options);
         // Older files without a setting keep its default; values out of
         // range are pulled back in.
-        std::fs::write(&path, "(fov: 500.0)").unwrap();
+        crate::platform::fs::write(&path, "(fov: 500.0)").unwrap();
         let loaded = Options::load(&path);
         assert_eq!(loaded.fov, 110.0);
         assert_eq!(loaded.biome_blend, config::BIOME_BLEND);
-        std::fs::write(&path, "(biome_blend: 20)").unwrap();
+        crate::platform::fs::write(&path, "(biome_blend: 20)").unwrap();
         assert_eq!(Options::load(&path).biome_blend, 7);
         assert_eq!(loaded.render_distance, config::RENDER_DISTANCE);
-        std::fs::write(
+        crate::platform::fs::write(
             &path,
             r#"(player_name: "no spaces", gui_scale: 40, mystery: 3)"#,
         )
@@ -629,7 +634,7 @@ mod tests {
         let loaded = Options::load(&path);
         assert_eq!(loaded.player_name, DEFAULT_NAME);
         assert_eq!(loaded.gui_scale, MAX_GUI_SCALE);
-        std::fs::write(&path, "not ron").unwrap();
+        crate::platform::fs::write(&path, "not ron").unwrap();
         assert_eq!(Options::load(&path), Options::default());
     }
 }

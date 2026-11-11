@@ -169,7 +169,7 @@ pub struct Registry {
 
 impl Registry {
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = crate::platform::fs::read_to_string(path)?;
         let defs: Vec<Def> = ron::from_str(&text)?;
         Self::new(defs)
     }

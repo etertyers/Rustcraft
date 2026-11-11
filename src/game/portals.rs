@@ -316,7 +316,8 @@ fn height_range(dimension: Dimension) -> (i32, i32) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use crate::platform::time::Instant;
+    use std::time::Duration;
 
     use super::*;
     use crate::game::tests::flat_game;

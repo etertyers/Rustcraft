@@ -1385,7 +1385,8 @@ mod tests {
     #[test]
     fn require_loads_from_the_mod_only() {
         let dir = crate::world::save::TempDir::new("mod-require");
-        std::fs::write(dir.path().join("helper.lua"), "return { answer = 42 }").unwrap();
+        crate::platform::fs::write(dir.path().join("helper.lua"), "return { answer = 42 }")
+            .unwrap();
         let mut active = mod_with("t", "answer = require('helper').answer");
         active.source = Source::Dir(dir.path().to_owned());
         let set = set_of(vec![active]);

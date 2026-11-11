@@ -155,7 +155,7 @@ pub fn measure(name: &str, setup: &dyn Fn(&mut Mob), state: State) -> Option<(f3
 
 fn pack_registry(contains: &str) -> Option<crate::cem::Registry> {
     let dir = crate::assets::dir().join("downloads/resourcepacks");
-    let path = std::fs::read_dir(dir)
+    let path = crate::platform::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .find(|p| p.to_string_lossy().contains(contains))?;

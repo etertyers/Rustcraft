@@ -2208,7 +2208,7 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod timing {
     use super::*;
-    use std::time::Instant;
+    use crate::platform::time::Instant;
 
     /// `cargo test --release timing -- --ignored --nocapture`
     #[test]
@@ -2242,7 +2242,7 @@ mod timing {
     fn total_generate() {
         let terrain = Terrain::new(20111118);
         let s = Instant::now();
-        let n: i32 = std::env::var("GEN_N")
+        let n: i32 = crate::platform::env::var("GEN_N")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(200);

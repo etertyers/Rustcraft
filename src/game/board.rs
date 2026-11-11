@@ -4,9 +4,9 @@
 //! and `Game` feeds it the criteria events. The world keeps the objectives,
 //! scores, slots and teams in `scoreboard.ron`.
 
+use crate::platform::fs;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -581,7 +581,8 @@ mod tests {
         assert_eq!(board.dressed("Alex"), "Alex");
         assert_eq!(board.team_of("Kenzo").unwrap().0, "red");
         board.set("kills", "Kenzo", 3);
-        let dir = std::env::temp_dir().join(format!("rc-board-{}", std::process::id()));
+        let dir = crate::platform::env::temp_dir()
+            .join(format!("rc-board-{}", crate::platform::env::process_id()));
         fs::create_dir_all(&dir).unwrap();
         board.save(&dir);
         assert_eq!(Scoreboard::load(&dir), board);

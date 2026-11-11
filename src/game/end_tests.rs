@@ -1,7 +1,9 @@
 //! The End as played (M27): portals and eyes, the dragon fight from start
 //! to credits, and what a saved world keeps of it.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::platform::time::Instant;
 
 use glam::{DVec3, IVec3};
 
