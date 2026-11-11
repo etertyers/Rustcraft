@@ -324,3 +324,141 @@ fn the_bundle_check_runs_a_copy_with_the_repos_assets_out_of_reach() {
     assert!(fake.join("assets/data/blocks.ron").is_file());
     assert!(!fake.join("assets.hidden-by-check-bundle").exists());
 }
+
+/// `check-bundle.sh --lite` from a fake repo that also holds the download
+/// list and its script (the lite check reads them).
+fn check_lite(app: &Path, src: &Path) -> Output {
+    let fake = temp("repo-lite");
+    fs::create_dir_all(fake.join("assets/data")).unwrap();
+    write(fake.join("assets/data/blocks.ron"), "x");
+    for script in ["check-bundle.sh", "check-downloads.sh"] {
+        write(
+            fake.join("scripts").join(script),
+            &fs::read_to_string(repo().join("scripts").join(script)).unwrap(),
+        );
+    }
+    write(
+        fake.join("assets/data/downloads.ron"),
+        &fs::read_to_string(repo().join("assets/data/downloads.ron")).unwrap(),
+    );
+    Command::new("sh")
+        .arg(fake.join("scripts/check-bundle.sh"))
+        .arg("--lite")
+        .arg(app)
+        .arg(src)
+        .output()
+        .unwrap()
+}
+
+/// A lite app: the small asset folders only, and a binary that logs what the
+/// real one logs when it opens the first-launch screen.
+fn fake_lite_app(src: &Path, logs_the_screen: bool) -> PathBuf {
+    let app = temp("lite-app").join("Rustcraft.app");
+    let res = app.join("Contents/Resources/assets");
+    fs::create_dir_all(&res).unwrap();
+    for folder in ["textures", "data", "structures", "skins"] {
+        fs::create_dir_all(src.join(folder)).unwrap();
+        assert!(
+            Command::new("cp")
+                .arg("-R")
+                .arg(src.join(folder))
+                .arg(&res)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let log = if logs_the_screen {
+        "echo 'first-launch screen: window opened' >&2\n"
+    } else {
+        "echo 'title screen' >&2\n"
+    };
+    let bin = app.join("Contents/MacOS/rustcraft");
+    write(&bin, &format!("#!/bin/sh\n{log}sleep 3\n"));
+    Command::new("chmod").arg("+x").arg(&bin).status().unwrap();
+    app
+}
+
+#[test]
+fn the_lite_check_passes_a_lite_app_that_shows_the_first_launch_screen() {
+    let src = complete_source("lite-src");
+    let app = fake_lite_app(&src, true);
+    let out = check_lite(&app, &src);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("no Mojang file, pack or mod jar inside"),
+        "{text}"
+    );
+    assert!(text.contains("shows the first-launch screen"), "{text}");
+}
+
+#[test]
+fn the_lite_check_fails_on_vanilla_packs_jars_or_a_missing_screen() {
+    let src = complete_source("lite-src-bad");
+    // A sound file inside.
+    let app = fake_lite_app(&src, true);
+    write(
+        app.join("Contents/Resources/assets/textures/sound/stone1.ogg"),
+        "x",
+    );
+    let out = check_lite(&app, &src);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("must be downloaded instead"),
+        "{}",
+        stderr(&out)
+    );
+
+    // A vanilla folder, however small.
+    let app = fake_lite_app(&src, true);
+    write(
+        app.join("Contents/Resources/assets/vanilla/assets/minecraft/lang/en_us.json"),
+        "{}",
+    );
+    let out = check_lite(&app, &src);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("has an assets/vanilla folder"),
+        "{}",
+        stderr(&out)
+    );
+
+    // A pack named in the download list.
+    let app = fake_lite_app(&src, true);
+    write(
+        app.join("Contents/Resources/assets/textures/Patrix_26.3_32x_basic.zip"),
+        "x",
+    );
+    let out = check_lite(&app, &src);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("Patrix_26.3_32x_basic.zip"),
+        "{}",
+        stderr(&out)
+    );
+
+    // An app that doesn't show the screen.
+    let app = fake_lite_app(&src, false);
+    let out = check_lite(&app, &src);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("did not show the first-launch screen"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn check_downloads_reads_the_games_own_list() {
+    let out = run("check-downloads.sh", &[Path::new("--list")]);
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(text.lines().count(), 14, "{text}");
+    for e in rustcraft::setup::manifest::extras() {
+        assert!(
+            text.contains(&e.file),
+            "{} missing from the script's list",
+            e.file
+        );
+    }
+}
