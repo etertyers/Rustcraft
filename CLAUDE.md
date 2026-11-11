@@ -178,6 +178,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
 | 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | released (`v1.5.0`) |
+| after 1.5.0 | M74 | none | `docs/milestones/v1.5.md` ("After v1.5.0") | in progress |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`; after M69 merges, tag `v1.5.0` and rebuild the `.app`.
 
@@ -269,3 +270,4 @@ Every numeric target in a milestone says where it comes from: vanilla code or da
 - Surface rules run after noise caves and use stone_depth floors with above_preliminary_surface. Carvers turn exposed dirt under removed grass into the top block, as vanilla does. Checked against chunks from Mojang's own server on the same seed (M67).
 - Render Scale defaults to Auto (the world at no more than about 4 million pixels, the UI always at full resolution). The game runs at the display's full refresh rate, including 120 Hz ProMotion (M68). v1.5's budgets are measured on Kenzo's M4.
 - Distant Horizons is rebuilt natively as Distant Terrain: LOD terrain to 32–512 chunks (default 128 in Barebones and Realistic, Off in Vanilla), built by the server in the background and cached per world (M69).
+- Fresh installs download Mojang's files and the style packs on first launch from Mojang's and Modrinth's servers (M74); nothing is committed or hosted.
