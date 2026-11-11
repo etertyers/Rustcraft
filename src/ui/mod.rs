@@ -361,6 +361,8 @@ impl DebugUi {
         let mut editor = editor;
         let mut editor_action = None;
         let output = self.ctx.run_ui(input, |ui| {
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::setup::game_files::show(ui.ctx());
             let full = ui.ctx().content_rect();
             if hud.crosshair && !hud.hidden {
                 draw_crosshair(ui);
@@ -479,7 +481,11 @@ impl DebugUi {
     ) -> (UiPaint, Option<MenuAction>) {
         let input = self.state.take_egui_input(window);
         let mut action = None;
-        let output = self.ctx.run_ui(input, |ui| action = menu.show(ui, options));
+        let output = self.ctx.run_ui(input, |ui| {
+            action = menu.show(ui, options);
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::setup::game_files::show(ui.ctx());
+        });
         // The cursor is free in the menu, so let egui set it and use the clipboard.
         self.state
             .handle_platform_output(window, output.platform_output.clone());

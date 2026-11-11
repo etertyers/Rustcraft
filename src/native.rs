@@ -199,7 +199,16 @@ pub fn main() -> Result<()> {
     {
         return rustcraft::perf::run_many(bench, &args);
     }
-    let event_loop = EventLoop::new()?;
+    let mut event_loop = EventLoop::new()?;
+    // Minecraft's files (or a pack) missing in this clone: download or copy
+    // them first, in a window of their own on this same event loop (M74).
+    if let Some(screen) =
+        rustcraft::setup::first_launch_screen(&args, cli.bench.is_some() || cli.shot.is_some())
+        && rustcraft::setup::window::run(&mut event_loop, screen)?
+            == rustcraft::setup::screen::Outcome::Quit
+    {
+        return Ok(());
+    }
     let mut app = app::App::new(cli.world)
         .with_bench(cli.bench)
         .with_view(cli.view)
