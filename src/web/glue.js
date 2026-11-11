@@ -135,7 +135,9 @@ export function listenForGesture() {
   addEventListener("keydown", on, { once: true, capture: true });
 }
 export function hadGesture() {
-  return gesture;
+  // ?mute keeps the audio engine off (the perf tests use it to measure
+  // the game without sound decoding).
+  return gesture && !location.search.includes("mute");
 }
 
 export function hardwareConcurrency() {

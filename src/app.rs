@@ -3472,6 +3472,7 @@ impl App {
         self.finish_frame(event_loop, now, result);
         if let Some(bench) = self.bench.as_mut() {
             let was_warming_up = bench.warming_up();
+            bench::note_frame(dt);
             bench.record(FrameTimes {
                 frame: dt,
                 game: ticked - now,

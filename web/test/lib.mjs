@@ -20,6 +20,12 @@ export async function serve() {
   const server = createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
     try {
+      // Local packs for the perf tests (never part of target/web).
+      if (path.startsWith("/__packs/") && process.env.RUSTCRAFT_PACKS_DIR) {
+        const data = await readFile(join(process.env.RUSTCRAFT_PACKS_DIR, path.slice("/__packs/".length)));
+        res.writeHead(200, { "content-type": "application/zip" });
+        return res.end(data);
+      }
       const file = path === "/" ? "/index.html" : path;
       const data = await readFile(join(dir, file));
       res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
@@ -33,12 +39,12 @@ export async function serve() {
   return () => server.close();
 }
 
-export async function launch(profile) {
+export async function launch(profile, viewport = { width: 1280, height: 720 }) {
   const dir = profile ?? mkdtempSync(join(tmpdir(), "rustcraft-web-"));
   const context = await chromium.launchPersistentContext(dir, {
     channel: "chrome",
     headless: false,
-    viewport: { width: 1280, height: 720 },
+    viewport,
     args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan"],
   });
   const page = context.pages()[0] ?? (await context.newPage());

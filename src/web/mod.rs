@@ -222,6 +222,12 @@ pub fn import_world(bytes: &[u8]) -> Result<String, JsValue> {
     crate::platform::world_zip::import(&crate::level::saves_dir(), bytes).map_err(js_err)
 }
 
+/// A file from the browser's storage (the perf test reads its results).
+#[wasm_bindgen]
+pub fn read_file(path: &str) -> Option<Vec<u8>> {
+    fs::read(path).ok()
+}
+
 /// Resolves when everything written so far has reached OPFS.
 #[wasm_bindgen]
 pub async fn storage_idle() -> Result<(), JsValue> {
