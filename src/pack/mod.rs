@@ -335,7 +335,8 @@ pub fn packs_dir() -> PathBuf {
 /// The packs the game ships with, in `assets/downloads/resourcepacks/`
 /// (Kenzo's downloads, git-ignored): the Barebones packs and Patrix.
 pub fn builtin_dir() -> PathBuf {
-    crate::assets::dir().join("downloads/resourcepacks")
+    let assets = crate::assets::dir();
+    crate::assets::downloads_for(&assets).join("resourcepacks")
 }
 
 /// The packs in `dir` and the built-in ones in `builtin`, sorted by name.
