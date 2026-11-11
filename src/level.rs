@@ -8,10 +8,8 @@
 //! the old files in `backup-v1.0/`.
 
 use crate::platform::fs;
-use std::{
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use crate::platform::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -530,7 +528,9 @@ impl WorldDir {
 
     /// Makes a new folder in `saves` named after `name` and writes `level` there.
     pub fn create(saves: &Path, level: &Level) -> Result<Self> {
-        let folder = folder_name(&level.name, |name| saves.join(name).exists());
+        let folder = folder_name(&level.name, |name| {
+            crate::platform::fs::exists(saves.join(name))
+        });
         let dir = Self::new(saves.join(folder));
         fs::create_dir_all(&dir.path)
             .with_context(|| format!("creating {}", dir.path.display()))?;
@@ -573,7 +573,7 @@ impl WorldDir {
 
     /// Whether the folder holds a world.
     pub fn exists(&self) -> bool {
-        self.path.join(LEVEL_FILE).is_file()
+        crate::platform::fs::is_file(self.path.join(LEVEL_FILE))
     }
 
     pub fn load_level(&self) -> Result<Level> {
@@ -624,13 +624,13 @@ impl WorldDir {
         }
         log::info!("upgrading {:?} from v1.0", level.name);
         let backup = self.path.join(BACKUP_FOLDER);
-        if !backup.exists() {
+        if !crate::platform::fs::exists(&backup) {
             let temp = self.path.join(format!("{BACKUP_FOLDER}.tmp"));
             let _ = fs::remove_dir_all(&temp);
             fs::create_dir_all(&temp)?;
             fs::copy(self.path.join(LEVEL_FILE), temp.join(LEVEL_FILE))?;
             let region = self.path.join("region");
-            if region.is_dir() {
+            if crate::platform::fs::is_dir(&region) {
                 copy_dir(&region, &temp.join("region"))?;
             }
             fs::rename(&temp, &backup)?;
@@ -919,8 +919,12 @@ mod tests {
         let mut level = world.load_level().unwrap();
         world.migrate_v1(&mut level).unwrap();
         assert_eq!(level.version, LEVEL_VERSION);
-        assert!(dir.join("backup-v1.0/level.ron").is_file());
-        assert!(dir.join("backup-v1.0/region/r.0.0.rcr").is_file());
+        assert!(crate::platform::fs::is_file(
+            dir.join("backup-v1.0/level.ron")
+        ));
+        assert!(crate::platform::fs::is_file(
+            dir.join("backup-v1.0/region/r.0.0.rcr")
+        ));
 
         let reopened = world.load_level().unwrap();
         assert_eq!(reopened.version, LEVEL_VERSION);

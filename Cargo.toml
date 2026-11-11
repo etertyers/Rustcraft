@@ -36,7 +36,17 @@ pollster = "1.0.1"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 egui-winit = { version = "0.37.0", default-features = false, features = ["links", "bytemuck"] }
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["console", "Window", "Performance"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+    "console", "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Navigator",
+    "StorageManager", "FileSystemDirectoryHandle", "FileSystemFileHandle", "FileSystemWritableFileStream",
+    "FileSystemGetDirectoryOptions", "FileSystemGetFileOptions", "FileSystemRemoveOptions",
+    "Response", "Request", "Blob", "File", "FileList", "Url", "Location", "UrlSearchParams",
+    "AudioContext", "Performance", "Storage", "ReadableStream", "ResponseInit", "RequestInit",
+    "DomRectReadOnly", "WorkerGlobalScope",
+] }
 web-time = "1"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 

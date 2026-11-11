@@ -124,6 +124,8 @@ pub struct ChunkManager {
     jobs: Option<Sender<Job>>,
     done: Receiver<Done>,
     workers: Vec<JoinHandle<()>>,
+    /// Set when no worker thread could start.
+    inline: Option<Inline>,
     generating: FastSet<ChunkPos>,
     meshing: FastSet<ChunkPos>,
     meshed: FastSet<ChunkPos>,
@@ -291,7 +293,11 @@ impl ChunkManager {
         let (done_tx, done_rx) = crossbeam_channel::unbounded();
         let stats = Arc::new(WorkStats::default());
         let workers = (0..workers.max(1))
-            .map(|i| {
+            .filter_map(|i| {
+                #[cfg(test)]
+                if tests::NO_THREADS.with(|f| f.get()) {
+                    return None;
+                }
                 let (jobs, done, source, store) = (
                     job_rx.clone(),
                     done_tx.clone(),
@@ -301,32 +307,21 @@ impl ChunkManager {
                 let stats = stats.clone();
                 crate::platform::task::spawn(format!("chunk-worker-{i}"), move || {
                     for job in jobs {
-                        let started = crate::platform::time::Instant::now();
-                        let result = match job {
-                            Job::Generate(pos) => {
-                                let chunk = source.load_or_generate(store.as_deref(), pos);
-                                stats.generated.record(started.elapsed());
-                                Done::Generated(Box::new(chunk))
-                            }
-                            Job::Mesh(pos, area, revision, models, draws) => {
-                                let light = light_chunk(&models, &area);
-                                let mesh = if draws {
-                                    mesh_chunk(&models, &area, &light)
-                                } else {
-                                    Mesh::default()
-                                };
-                                stats.meshed.record(started.elapsed());
-                                Done::Meshed(pos, mesh, light, revision)
-                            }
-                        };
+                        let result = run_job(job, &source, store.as_deref(), &stats);
                         if done.send(result).is_err() {
                             break;
                         }
                     }
                 })
-                .expect("spawning a chunk worker thread")
+                .ok()
             })
             .collect::<Vec<_>>();
+        // No threads (the browser build before its workers): the jobs run
+        // on the calling thread, a little each `update` ("single thread mode").
+        let inline = workers.is_empty().then(|| Inline {
+            jobs: job_rx.clone(),
+            done: done_tx.clone(),
+        });
 
         let offsets = offsets(radius);
         Self {
@@ -336,8 +331,13 @@ impl ChunkManager {
             models,
             jobs: Some(job_tx),
             done: done_rx,
-            max_in_flight: workers.len() * 2,
+            max_in_flight: if inline.is_some() {
+                INLINE_IN_FLIGHT
+            } else {
+                workers.len() * 2
+            },
             workers,
+            inline,
             generating: FastSet::default(),
             meshing: FastSet::default(),
             meshed: FastSet::default(),
@@ -428,6 +428,7 @@ impl ChunkManager {
             loaded: std::mem::take(&mut self.loaded_now),
         };
         let remote = matches!(*self.source, ChunkSource::Remote);
+        self.run_inline();
 
         for _ in 0..MAX_RESULTS_PER_FRAME {
             match self.done.try_recv() {
@@ -902,8 +903,59 @@ impl ChunkManager {
         Ok(count)
     }
 
+    /// Single thread mode: runs queued jobs until the budget is spent (at
+    /// least one, so work always advances).
+    fn run_inline(&mut self) {
+        let Some(inline) = &self.inline else {
+            return;
+        };
+        let started = crate::platform::time::Instant::now();
+        while let Ok(job) = inline.jobs.try_recv() {
+            let result = run_job(job, &self.source, self.store.as_deref(), &self.stats);
+            if inline.done.send(result).is_err() {
+                break;
+            }
+            if started.elapsed() >= INLINE_BUDGET {
+                break;
+            }
+        }
+    }
+
     fn neighbors_loaded(&self, pos: ChunkPos) -> bool {
         (-1..=1).all(|dz| (-1..=1).all(|dx| self.world.get(pos.offset(dx, dz)).is_some()))
+    }
+}
+
+/// What single thread mode needs to run jobs itself.
+struct Inline {
+    jobs: Receiver<Job>,
+    done: Sender<Done>,
+}
+
+/// Single thread mode: how long one `update` may spend on jobs (a starting
+/// value, measured in M73), and how many may be queued.
+const INLINE_BUDGET: Duration = Duration::from_millis(4);
+const INLINE_IN_FLIGHT: usize = 8;
+
+/// Generates or meshes one chunk.
+fn run_job(job: Job, source: &ChunkSource, store: Option<&RegionStore>, stats: &WorkStats) -> Done {
+    let started = Instant::now();
+    match job {
+        Job::Generate(pos) => {
+            let chunk = source.load_or_generate(store, pos);
+            stats.generated.record(started.elapsed());
+            Done::Generated(Box::new(chunk))
+        }
+        Job::Mesh(pos, area, revision, models, draws) => {
+            let light = light_chunk(&models, &area);
+            let mesh = if draws {
+                mesh_chunk(&models, &area, &light)
+            } else {
+                Mesh::default()
+            };
+            stats.meshed.record(started.elapsed());
+            Done::Meshed(pos, mesh, light, revision)
+        }
     }
 }
 
@@ -926,6 +978,23 @@ mod tests {
         collections::HashSet,
         time::{Duration, Instant},
     };
+
+    thread_local! {
+        /// Makes the next managers start without threads (single thread mode).
+        pub(super) static NO_THREADS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    #[test]
+    fn single_thread_mode_loads_and_meshes_the_same_chunks_without_workers() {
+        NO_THREADS.with(|f| f.set(true));
+        let mut manager = ChunkManager::new(ChunkSource::Flat, models(), 2, 3);
+        NO_THREADS.with(|f| f.set(false));
+        assert!(manager.workers.is_empty() && manager.inline.is_some());
+        let center = ChunkPos::new(0, 0);
+        run_until(&mut manager, center, |m, _| m.settled(center));
+        assert!(manager.world().get(center).is_some());
+        assert!(manager.settled(center));
+    }
 
     fn models() -> Arc<BlockModels> {
         let registry = crate::world::block::registry();

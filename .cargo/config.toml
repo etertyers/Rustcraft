@@ -1,0 +1,4 @@
+# The browser build (M71): getrandom 0.3 needs its backend chosen with a cfg
+# flag; the feature alone is not enough.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rustcraft</title>
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 15px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas#rustcraft { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; }
+  #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #1b1b1b; z-index: 10; }
+  #panel { max-width: 560px; padding: 24px 28px; background: #262626; border: 2px solid #555; }
+  h1 { margin: 0 0 8px; font-size: 22px; }
+  button, label.btn { background: #6d6d6d; color: #fff; border: 2px solid #aaa; padding: 8px 14px; font: inherit; cursor: pointer; display: inline-block; margin: 4px 6px 4px 0; }
+  button:hover, label.btn:hover { background: #7f7f7f; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=file] { display: none; }
+  #status { margin-top: 12px; color: #9c9; white-space: pre-wrap; }
+  #error { margin-top: 12px; color: #f88; white-space: pre-wrap; }
+  small { color: #999; }
+  #click { display: none; font-size: 18px; }
+</style>
+</head>
+<body>
+<canvas id="rustcraft" tabindex="0"></canvas>
+<div id="overlay">
+  <div id="panel">
+    <h1>Rustcraft</h1>
+    <div id="setup" hidden>
+      <p>Rustcraft needs Minecraft's own textures, sounds and font. They stay in your browser (they are never uploaded) and are not part of this page.</p>
+      <p><b>Minecraft's files (required).</b> Pick the <code>assets/vanilla</code> folder from <code>scripts/fetch-vanilla-assets.sh</code>, or a <code>.zip</code> of it (or a Minecraft client <code>.jar</code>).</p>
+      <label class="btn">Choose folder<input id="vanilla-folder" type="file" webkitdirectory></label>
+      <label class="btn">Choose .zip or .jar<input id="vanilla-zip" type="file" accept=".zip,.jar"></label>
+      <p><b>Resource packs (optional).</b> The Barebones and Realistic styles need their packs.</p>
+      <label class="btn">Choose packs<input id="packs" type="file" accept=".zip" multiple></label>
+      <p><button id="continue" disabled>Continue</button> <small id="have"></small></p>
+    </div>
+    <div id="click"><button id="go">Click to start</button></div>
+    <div id="status">Loading...</div>
+    <div id="error"></div>
+  </div>
+</div>
+<script type="module" src="loader.js"></script>
+</body>
+</html>

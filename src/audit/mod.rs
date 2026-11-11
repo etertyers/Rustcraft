@@ -738,7 +738,7 @@ fn textures_under(assets: &Path, folder: &str) -> BTreeSet<String> {
             return;
         };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
-            if path.is_dir() {
+            if crate::platform::fs::is_dir(&path) {
                 walk(&path, root, out);
             } else if path.extension().is_some_and(|e| e == "png")
                 && let Ok(rel) = path.strip_prefix(root)
@@ -847,7 +847,7 @@ pub fn textures_with_mcmeta(assets: &Path) -> BTreeSet<String> {
             return;
         };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
-            if path.is_dir() {
+            if crate::platform::fs::is_dir(&path) {
                 walk(&path, root, out);
             } else if path
                 .file_name()
@@ -1341,7 +1341,7 @@ mod tests {
             eprintln!("skipping: no Fresh Animations in {}", dir.display());
             return;
         };
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }
@@ -1413,7 +1413,7 @@ mod tests {
     #[test]
     fn grass_and_leaves_are_tinted_green_and_stone_is_not() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla");
             return;
         }

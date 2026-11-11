@@ -92,7 +92,7 @@ fn glint(world: vec3<f32>) -> vec3<f32> {
     let s = 0.17364818;
     let rotated = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
     let scroll = vec2<f32>(seconds / 3.0, seconds / 4.873);
-    let texel = textureSample(glint_texture, glint_sampler, rotated + scroll);
+    let texel = textureSampleLevel(glint_texture, glint_sampler, rotated + scroll, 0.0);
     return texel.rgb * vec3<f32>(0.5, 0.25, 0.8) * globals.lighting.z;
 }
 
@@ -284,7 +284,7 @@ fn face_lighting(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     var light = in.light;
     var solid = face_solid(in.face);
     if light.y >= SOLID_FLAG * 0.5 {
@@ -332,7 +332,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_crack(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     if texel.a < 0.1 {
         discard;
     }
@@ -430,7 +430,7 @@ fn water_below(in: VertexOutput, lit: vec3<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     if texel.a < 0.01 {
         discard;
     }
@@ -489,7 +489,7 @@ fn fs_translucent(in: VertexOutput) -> @location(0) vec4<f32> {
 // sky reflected by Fresnel and the sun's glint, over Vanilla's blending.
 @fragment
 fn fs_translucent_low(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     if texel.a < 0.01 {
         discard;
     }

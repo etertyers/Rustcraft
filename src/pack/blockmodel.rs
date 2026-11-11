@@ -670,7 +670,7 @@ mod tests {
     /// Bakes the real vanilla files, if downloaded.
     fn vanilla() -> Option<(Resources, JsonModels)> {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla")) {
             eprintln!("skipped: assets/vanilla isn't downloaded");
             return None;
         }

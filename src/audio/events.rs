@@ -437,7 +437,7 @@ mod played {
     fn literal_events(dir: &Path, found: &mut BTreeSet<String>) {
         for entry in fs::read_dir(dir).unwrap().flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            if crate::platform::fs::is_dir(&path) {
                 literal_events(&path, found);
             } else if path.extension().is_some_and(|e| e == "rs") {
                 let text = fs::read_to_string(&path).unwrap();
@@ -468,7 +468,7 @@ mod played {
     fn named_events(dir: &Path, found: &mut BTreeSet<String>) {
         for entry in fs::read_dir(dir).unwrap().flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            if crate::platform::fs::is_dir(&path) {
                 named_events(&path, found);
             } else if path.extension().is_some_and(|e| e == "rs") {
                 // The table's own tests use made-up events.

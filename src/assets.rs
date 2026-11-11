@@ -16,6 +16,9 @@ pub enum RootSource {
     /// the executable (`target/release/rustcraft` in the repo, for `cargo
     /// run`). No path is baked into the binary at build time.
     Repo,
+    /// The browser build: the repo's assets unpacked into storage as `assets/`,
+    /// plus the layers the player added (M71).
+    Web,
     /// Nothing found; reads fail with the path that was tried.
     Missing,
 }
@@ -27,6 +30,7 @@ impl RootSource {
             Self::Env => "$RUSTCRAFT_ASSETS",
             Self::Bundle => "the app bundle's Contents/Resources",
             Self::Repo => "the source tree",
+            Self::Web => "the browser's asset storage",
             Self::Missing => "nowhere: no assets folder next to the executable",
         }
     }
@@ -52,7 +56,7 @@ pub fn resolve(flag: Option<PathBuf>, env: Option<PathBuf>, exe: &Path) -> (Path
     }
     for parent in exe.ancestors().skip(1) {
         let assets = parent.join("assets");
-        if assets.join("data/blocks.ron").is_file() {
+        if crate::platform::fs::is_file(assets.join("data/blocks.ron")) {
             return (assets, RootSource::Repo);
         }
     }
@@ -70,6 +74,9 @@ static ROOT: OnceLock<(PathBuf, RootSource)> = OnceLock::new();
 
 fn root() -> &'static (PathBuf, RootSource) {
     ROOT.get_or_init(|| {
+        if crate::platform::WEB {
+            return (PathBuf::from("assets"), RootSource::Web);
+        }
         let args: Vec<String> = crate::platform::env::args().collect();
         let exe = crate::platform::env::current_exe().unwrap_or_default();
         let found = resolve(
@@ -125,8 +132,10 @@ pub fn layers(assets: &Path) -> String {
     let yes = |present: bool| if present { "found" } else { "missing" };
     format!(
         "layers: Rustcraft textures {}, vanilla {}, downloads: {} packs, {} mod jars",
-        yes(assets.join("textures").is_dir()),
-        yes(assets.join("vanilla/assets/minecraft").is_dir()),
+        yes(crate::platform::fs::is_dir(assets.join("textures"))),
+        yes(crate::platform::fs::is_dir(
+            assets.join("vanilla/assets/minecraft")
+        )),
         count_in(&assets.join("downloads/resourcepacks"), "")
             .saturating_sub(count_hidden(&assets.join("downloads/resourcepacks"))),
         count_in(&assets.join("downloads/mods"), "jar")
@@ -191,7 +200,7 @@ fn vanilla_texture_index(assets: &Path) -> std::collections::HashMap<String, Vec
             return;
         };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
-            if path.is_dir() {
+            if crate::platform::fs::is_dir(&path) {
                 walk(&path, root, index);
             } else if path.extension().is_some_and(|e| e == "png")
                 && let (Some(stem), Ok(rel)) = (path.file_stem(), path.strip_prefix(root))
@@ -424,7 +433,7 @@ mod tests {
         while let Some(dir) = stack.pop() {
             for entry in crate::platform::fs::read_dir(&dir).unwrap().flatten() {
                 let path = entry.path();
-                if path.is_dir() {
+                if crate::platform::fs::is_dir(&path) {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") {
                     let text = crate::platform::fs::read_to_string(&path).unwrap();
@@ -453,7 +462,7 @@ mod tests {
     #[test]
     fn the_report_finds_every_sound_texture_and_the_font() {
         let assets = dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             eprintln!("skipping: no assets/vanilla (run scripts/fetch-vanilla-assets.sh)");
             return;
         }
