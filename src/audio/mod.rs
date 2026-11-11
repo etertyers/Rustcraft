@@ -13,11 +13,7 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, io::Cursor, time::Du
 use glam::{DVec3, IVec3};
 use kira::{
     AudioManager, AudioManagerSettings, DefaultBackend, Tween,
-    sound::{
-        PlaybackState,
-        static_sound::StaticSoundData,
-        streaming::{StreamingSoundData, StreamingSoundHandle},
-    },
+    sound::{PlaybackState, static_sound::StaticSoundData},
 };
 use log::{debug, info, warn};
 use std::sync::{
@@ -26,6 +22,18 @@ use std::sync::{
 };
 
 use crate::pack::Resources;
+
+/// Music, records and long ambient sounds. Native streams them from the
+/// encoded bytes; kira has no streaming on `wasm32`, so the browser build
+/// decodes the whole sound up front (M70).
+#[cfg(not(target_arch = "wasm32"))]
+type LongSoundData = kira::sound::streaming::StreamingSoundData<kira::sound::FromFileError>;
+#[cfg(not(target_arch = "wasm32"))]
+type LongSoundHandle = kira::sound::streaming::StreamingSoundHandle<kira::sound::FromFileError>;
+#[cfg(target_arch = "wasm32")]
+type LongSoundData = StaticSoundData;
+#[cfg(target_arch = "wasm32")]
+type LongSoundHandle = kira::sound::static_sound::StaticSoundHandle;
 pub use table::SoundTable;
 use table::{Entry, SoundTable as Table};
 
@@ -318,15 +326,11 @@ pub struct Audio {
     cache: HashMap<String, Option<StaticSoundData>>,
     random: Random,
     /// The track playing, its event and its own volume.
-    music: Option<(
-        String,
-        StreamingSoundHandle<kira::sound::FromFileError>,
-        f32,
-    )>,
+    music: Option<(String, LongSoundHandle, f32)>,
     /// Seconds until the next track may start.
     music_wait: f32,
     /// Songs playing from jukeboxes: where, the stream and the file's volume.
-    records: HashMap<IVec3, (StreamingSoundHandle<kira::sound::FromFileError>, f32)>,
+    records: HashMap<IVec3, (LongSoundHandle, f32)>,
     /// A record is audible, so the background music keeps quiet.
     record_near: bool,
     /// Files already reported missing.
@@ -346,7 +350,7 @@ pub struct Audio {
 /// A bed of ambient sound: the file playing now, how long it has played
 /// and how long it should, and the pause before the next.
 struct PlayingBed {
-    handle: Option<StreamingSoundHandle<kira::sound::FromFileError>>,
+    handle: Option<LongSoundHandle>,
     played: f32,
     cut_at: Option<f32>,
     pause: f32,
@@ -475,7 +479,7 @@ impl Audio {
                         }
                         continue;
                     };
-                    match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
+                    match LongSoundData::from_cursor(Cursor::new(bytes)) {
                         Ok(data) => {
                             if let Some(manager) = &mut self.manager
                                 && let Ok(mut handle) = manager.play(data.volume(decibels(0.0001)))
@@ -603,7 +607,7 @@ impl Audio {
                 }
                 continue;
             };
-            match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
+            match LongSoundData::from_cursor(Cursor::new(bytes)) {
                 Ok(data) => {
                     if let Some(manager) = &mut self.manager {
                         match manager.play(data.volume(decibels(0.0001))) {
@@ -794,7 +798,7 @@ impl Audio {
             self.music_wait = 30.0;
             return;
         };
-        let data = match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
+        let data = match LongSoundData::from_cursor(Cursor::new(bytes)) {
             Ok(data) => data.volume(decibels(entry.volume * volume * 0.7)),
             Err(err) => {
                 warn!("can't stream {}: {err}", entry.name);

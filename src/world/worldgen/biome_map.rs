@@ -24,7 +24,7 @@ impl BiomeMap {
         let noise = ClimateNoise::new(seed);
         let half = (side / 2) as i32;
         let mut biomes = vec![Biome::Ocean; side * side];
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let threads = crate::platform::task::available_parallelism().map_or(4, |n| n.get());
         let rows_each = side.div_ceil(threads);
         std::thread::scope(|scope| {
             for (n, chunk) in biomes.chunks_mut(rows_each * side).enumerate() {
@@ -297,7 +297,7 @@ impl HeightMap {
         let terrain = super::terrain::Terrain::new(seed);
         let half = (side / 2) as i32;
         let mut cells = vec![(0, Biome::Ocean); side * side];
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let threads = crate::platform::task::available_parallelism().map_or(4, |n| n.get());
         let rows_each = side.div_ceil(threads);
         std::thread::scope(|scope| {
             for (n, chunk) in cells.chunks_mut(rows_each * side).enumerate() {

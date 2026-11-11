@@ -533,10 +533,13 @@ mod tests {
     #[test]
     #[ignore]
     fn dump_pack_mob() {
-        let (Ok(pack), Ok(name)) = (std::env::var("CEM_PACK"), std::env::var("CEM_MOB")) else {
+        let (Ok(pack), Ok(name)) = (
+            crate::platform::env::var("CEM_PACK"),
+            crate::platform::env::var("CEM_MOB"),
+        ) else {
             return;
         };
-        let file = std::fs::File::open(&pack).unwrap();
+        let file = crate::platform::fs::File::open(&pack).unwrap();
         let mut zip = zip::ZipArchive::new(file).unwrap();
         let names: Vec<String> = zip
             .file_names()

@@ -62,7 +62,7 @@ pub fn caption(style: Style, shaders: bool, quality: Quality) -> String {
 
 /// Runs each pair in its own game and joins the pictures into `out`.
 pub fn run(args: &[String], spec: &str, out: &Path, quality: Option<Quality>) -> Result<()> {
-    let exe = std::env::current_exe()?;
+    let exe = crate::platform::env::current_exe()?;
     // This command line minus --compare (and what it names), --out,
     // --style, --shaders, --visuals and --quality.
     let mut rest = Vec::new();
@@ -82,8 +82,11 @@ pub fn run(args: &[String], spec: &str, out: &Path, quality: Option<Quality>) ->
     }
     let quality = quality.unwrap_or_default();
     let (pairs, columns) = plan(spec)?;
-    let dir = std::env::temp_dir().join(format!("rustcraft-compare-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
+    let dir = crate::platform::env::temp_dir().join(format!(
+        "rustcraft-compare-{}",
+        crate::platform::env::process_id()
+    ));
+    crate::platform::fs::create_dir_all(&dir)?;
     let mut cells = Vec::new();
     for (i, &(style, on)) in pairs.iter().enumerate() {
         let path = dir.join(format!("{i}.png"));
@@ -116,12 +119,12 @@ pub fn run(args: &[String], spec: &str, out: &Path, quality: Option<Quality>) ->
         grid(&cells, columns)
     };
     if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)?;
+        crate::platform::fs::create_dir_all(parent)?;
     }
     joined
         .save(out)
         .with_context(|| format!("saving {}", out.display()))?;
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = crate::platform::fs::remove_dir_all(&dir);
     println!("{}", out.display());
     Ok(())
 }

@@ -157,7 +157,7 @@ pub fn active() -> Option<Arc<Registry>> {
 thread_local! {
     /// The frame being drawn: game time, the player, how long the last
     /// frame took.
-    static FRAME: RefCell<(vars::Frame, u64, Option<std::time::Instant>)> = const { RefCell::new((
+    static FRAME: RefCell<(vars::Frame, u64, Option<crate::platform::time::Instant>)> = const { RefCell::new((
         vars::Frame {
             ticks: 0,
             frame_time: 0.0,
@@ -213,7 +213,7 @@ pub fn with_state<T>(
 pub fn begin_frame(ticks: u64, alpha: f32, player: glam::DVec3) {
     FRAME.with(|f| {
         let mut f = f.borrow_mut();
-        let now = std::time::Instant::now();
+        let now = crate::platform::time::Instant::now();
         let dt =
             f.2.map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.25));
         f.2 = Some(now);
@@ -281,16 +281,19 @@ mod tests {
     #[test]
     fn every_fresh_animations_file_loads() {
         let dir = crate::pack::packs_dir();
-        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|entries| {
-            entries.filter_map(|e| e.ok().map(|e| e.path())).find(|p| {
-                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                identify(name, "") == Some(TrailerPack::FreshAnimations)
+        let Some(path) = crate::platform::fs::read_dir(&dir)
+            .ok()
+            .and_then(|entries| {
+                entries.filter_map(|e| e.ok().map(|e| e.path())).find(|p| {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    identify(name, "") == Some(TrailerPack::FreshAnimations)
+                })
             })
-        }) else {
+        else {
             eprintln!("skipping: no Fresh Animations pack in {}", dir.display());
             return;
         };
-        let Ok(file) = std::fs::File::open(&path) else {
+        let Ok(file) = crate::platform::fs::File::open(&path) else {
             eprintln!("skipping: can't open {}", path.display());
             return;
         };
@@ -318,7 +321,8 @@ mod tests {
             };
             let folder = jem[..jem.rfind('/').unwrap() + 1].to_owned();
             // Part files, read from a second handle on the same pack.
-            let mut parts = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+            let mut parts =
+                zip::ZipArchive::new(crate::platform::fs::File::open(&path).unwrap()).unwrap();
             let relative = |p: &str| {
                 let mut text = String::new();
                 std::io::Read::read_to_string(
@@ -340,7 +344,7 @@ mod tests {
     /// Fresh Animations' registry, or None (with a message) without the pack.
     fn fresh_animations() -> Option<Registry> {
         let dir = crate::assets::dir().join("downloads/resourcepacks");
-        let path = std::fs::read_dir(&dir)
+        let path = crate::platform::fs::read_dir(&dir)
             .ok()?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .find(|p| {
@@ -441,7 +445,7 @@ mod tests {
     #[test]
     fn count_random_calls_in_fresh_animations() {
         let dir = crate::assets::dir().join("downloads/resourcepacks");
-        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|e| {
+        let Some(path) = crate::platform::fs::read_dir(&dir).ok().and_then(|e| {
             e.filter_map(|e| e.ok().map(|e| e.path())).find(|p| {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 identify(name, "") == Some(TrailerPack::FreshAnimations)
@@ -449,7 +453,7 @@ mod tests {
         }) else {
             return;
         };
-        let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut zip = zip::ZipArchive::new(crate::platform::fs::File::open(path).unwrap()).unwrap();
         let (mut bare, mut seeded) = (0, 0);
         for i in 0..zip.len() {
             let mut file = zip.by_index(i).unwrap();

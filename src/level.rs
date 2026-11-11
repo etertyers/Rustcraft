@@ -7,8 +7,8 @@
 //! after a one-time upgrade (`WorldDir::migrate_v1`) that keeps a copy of
 //! the old files in `backup-v1.0/`.
 
+use crate::platform::fs;
 use std::{
-    fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -508,7 +508,7 @@ fn now() -> u64 {
 /// `~/Library/Application Support/Rustcraft/saves` in the app bundle, else
 /// `./saves`. Options are kept beside it.
 pub fn saves_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("RUSTCRAFT_SAVES") {
+    if let Some(dir) = crate::platform::env::var_os("RUSTCRAFT_SAVES") {
         return dir.into();
     }
     match crate::assets::support_dir().filter(|_| crate::assets::in_app_bundle()) {
@@ -986,7 +986,7 @@ mod tests {
     #[ignore]
     fn real_v1_worlds_upgrade_and_every_chunk_loads() {
         use crate::world::chunk::ChunkPos;
-        let saves = std::env::var_os("RUSTCRAFT_V1_SAVES").expect("RUSTCRAFT_V1_SAVES");
+        let saves = crate::platform::env::var_os("RUSTCRAFT_V1_SAVES").expect("RUSTCRAFT_V1_SAVES");
         let worlds = list_worlds(Path::new(&saves));
         assert!(!worlds.is_empty());
         for (dir, mut level) in worlds {

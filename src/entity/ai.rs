@@ -1852,7 +1852,7 @@ mod tests {
                     threat: None,
                     errand: None,
                 };
-                let started = std::time::Instant::now();
+                let started = crate::platform::time::Instant::now();
                 let intent = think(mob, def, &view, &mut random);
                 spent += started.elapsed();
                 // Advance a little without the slow test collider.

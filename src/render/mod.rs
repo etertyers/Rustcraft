@@ -495,11 +495,13 @@ impl Renderer {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let surface = instance.create_surface(window)?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))?;
+        let adapter = crate::platform::task::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            },
+        ))?;
         log::info!("GPU adapter: {:?}", adapter.get_info());
         // Timestamps for the GPU profiler, where the GPU has them.
         let features =
@@ -520,7 +522,7 @@ impl Renderer {
             ..wgpu::Limits::default()
         };
         let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            crate::platform::task::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("rustcraft device"),
                 required_features: features,
                 required_limits,
@@ -594,7 +596,7 @@ impl Renderer {
         let vanilla = Pipelines::new(&device, &layouts, &shaders, config.format, false);
         // The Trailer look's pipelines are made now too, so F12 never waits
         // for them; this is what they add to startup.
-        let started = std::time::Instant::now();
+        let started = crate::platform::time::Instant::now();
         let trailer = Pipelines::new(
             &device,
             &layouts,
@@ -1341,7 +1343,7 @@ impl Renderer {
         drop(data);
         buffer.unmap();
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            crate::platform::fs::create_dir_all(dir)?;
         }
         image::RgbaImage::from_raw(width, height, pixels)
             .context("captured frame size")?
@@ -1379,7 +1381,7 @@ impl Renderer {
 
     fn draw(&mut self, camera: &Camera, environment: &Environment, ui: &UiPaint) -> Result<bool> {
         let capture = self.capture.take();
-        let started = std::time::Instant::now();
+        let started = crate::platform::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             _ if capture.is_some() => None,
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -1398,7 +1400,7 @@ impl Renderer {
             }
             wgpu::CurrentSurfaceTexture::Validation => bail!("surface validation error"),
         };
-        let acquired = std::time::Instant::now();
+        let acquired = crate::platform::time::Instant::now();
         self.drew_offscreen = frame.is_none();
         let target = match (&frame, &capture) {
             (Some(frame), _) => frame.texture.clone(),
@@ -1692,13 +1694,13 @@ impl Renderer {
         let readback = capture
             .as_ref()
             .map(|_| self.copy_out(&mut encoder, &target));
-        let encoded = std::time::Instant::now();
+        let encoded = crate::platform::time::Instant::now();
         self.queue
             .submit(ui_commands.into_iter().chain([encoder.finish()]));
         if let Some(profiler) = profiler.as_mut() {
             profiler.after_submit();
         }
-        let submitted = std::time::Instant::now();
+        let submitted = crate::platform::time::Instant::now();
         if let (Some(path), Some((buffer, padded))) = (capture, readback) {
             self.save_capture(&buffer, padded, &path)?;
         }
@@ -2931,8 +2933,9 @@ mod tests {
     pub(crate) fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let adapter =
+            crate::platform::task::block_on(instance.request_adapter(&Default::default())).ok()?;
+        crate::platform::task::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: adapter.features() & visuals::frame::HDR_FEATURE,
             ..Default::default()
         }))
@@ -2955,7 +2958,7 @@ mod tests {
         // The best of three, so other tests hogging the CPU don't fail it.
         let took = (0..3)
             .map(|_| {
-                let started = std::time::Instant::now();
+                let started = crate::platform::time::Instant::now();
                 let _trailer = Pipelines::new(
                     &device,
                     &layouts,

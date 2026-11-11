@@ -1076,7 +1076,7 @@ mod tests {
     #[test]
     fn a_mob_is_animated_once_a_frame_layers_included() {
         let dir = crate::assets::dir().join("downloads/resourcepacks");
-        let Some(path) = std::fs::read_dir(&dir).ok().and_then(|e| {
+        let Some(path) = crate::platform::fs::read_dir(&dir).ok().and_then(|e| {
             e.filter_map(|e| e.ok().map(|e| e.path()))
                 .find(|p| p.to_string_lossy().contains("FreshAnimations"))
         }) else {

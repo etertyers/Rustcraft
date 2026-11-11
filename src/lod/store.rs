@@ -4,11 +4,11 @@
 //! coordinates. Its modification time is its last use (reading touches it),
 //! and when the folder passes its cap the oldest-used files go first.
 
+use crate::platform::fs;
+use crate::platform::time::SystemTime;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use super::data::{Tile, TileKey};
 
@@ -139,9 +139,7 @@ impl LodStore {
             fs::rename(&tmp, &path)?;
         }
         for region in self.touched.drain().collect::<Vec<_>>() {
-            if let Ok(file) = fs::File::options().write(true).open(self.path(region)) {
-                let _ = file.set_modified(SystemTime::now());
-            }
+            let _ = fs::touch(self.path(region));
         }
         self.enforce_cap()
     }
@@ -237,7 +235,10 @@ mod tests {
     use super::*;
 
     fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("rustcraft-lod-{name}-{}", std::process::id()));
+        let dir = crate::platform::env::temp_dir().join(format!(
+            "rustcraft-lod-{name}-{}",
+            crate::platform::env::process_id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         dir
     }

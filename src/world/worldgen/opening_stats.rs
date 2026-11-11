@@ -111,7 +111,7 @@ pub fn measure(seed: u64, side: i32) -> Openings {
     let positions: Vec<ChunkPos> = (first..first + side)
         .flat_map(|z| (first..first + side).map(move |x| ChunkPos::new(x, z)))
         .collect();
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let threads = crate::platform::task::available_parallelism().map_or(4, |n| n.get());
     let per = positions.len().div_ceil(threads);
     // Each thread works out the open columns of its chunks: (x, h, z).
     let mut open: Vec<(i32, i32, i32)> = Vec::new();
@@ -219,7 +219,7 @@ pub fn measure(seed: u64, side: i32) -> Openings {
             }
         }
         let best = (0..7).max_by_key(|&i| (total[i], 7 - i)).unwrap_or(0);
-        if total[best] == 0 && std::env::var_os("M53_DEBUG").is_some() {
+        if total[best] == 0 && crate::platform::env::var_os("M53_DEBUG").is_some() {
             let (x, h, z) = group[0];
             let chunk = terrain.generate(ChunkPos::of_block(x, z));
             let at = |y: i32| {
@@ -264,10 +264,10 @@ pub fn time_generation(seed: u64, side: i32) {
     for z in first..first + side {
         for x in first..first + side {
             let pos = ChunkPos::new(x, z);
-            let t = std::time::Instant::now();
+            let t = crate::platform::time::Instant::now();
             let _ = terrain.area(pos);
             areas += t.elapsed();
-            let t = std::time::Instant::now();
+            let t = crate::platform::time::Instant::now();
             let _ = terrain.generate(pos);
             chunks += t.elapsed();
         }

@@ -358,7 +358,7 @@ impl Visuals {
     pub fn frame(&self) -> FrameVisuals {
         // A measuring aid (M68): RUSTCRAFT_EFFECTS_OFF=bloom,fxaa turns the
         // named effects off for this run, to find what each one costs.
-        let off = std::env::var("RUSTCRAFT_EFFECTS_OFF").unwrap_or_default();
+        let off = crate::platform::env::var("RUSTCRAFT_EFFECTS_OFF").unwrap_or_default();
         let off: Vec<String> = off
             .split(',')
             .map(|n| n.trim().to_lowercase().replace([' ', '-'], ""))
@@ -370,7 +370,7 @@ impl Visuals {
                 .any(|n| *n == name || (n == "all" && e != Effect::Shadows))
         };
         // RUSTCRAFT_RENDER_SCALE=auto|50..100 sets the scale for a run.
-        let render_scale = match std::env::var("RUSTCRAFT_RENDER_SCALE") {
+        let render_scale = match crate::platform::env::var("RUSTCRAFT_RENDER_SCALE") {
             Ok(text) if text.eq_ignore_ascii_case("auto") => scale::AUTO,
             Ok(text) => text.parse().unwrap_or(self.render_scale),
             Err(_) => self.render_scale,

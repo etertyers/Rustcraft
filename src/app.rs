@@ -1,9 +1,7 @@
 //! winit event loop: owns the window, renderer and UI, and the game being played.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use crate::platform::time::Instant;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use glam::{DVec3, Vec3};
@@ -509,13 +507,13 @@ impl App {
         // RUSTCRAFT_DISTANT=<chunks>|off, RUSTCRAFT_DISTANT_QUALITY=low|medium|high:
         // Distant Terrain for this run only (measuring aids, like
         // RUSTCRAFT_RENDER_SCALE).
-        if let Ok(text) = std::env::var("RUSTCRAFT_DISTANT") {
+        if let Ok(text) = crate::platform::env::var("RUSTCRAFT_DISTANT") {
             self.options.distant.distance = match text.trim() {
                 "off" => Some(0),
                 n => n.parse().ok(),
             };
         }
-        if let Ok(text) = std::env::var("RUSTCRAFT_DISTANT_QUALITY") {
+        if let Ok(text) = crate::platform::env::var("RUSTCRAFT_DISTANT_QUALITY") {
             self.options.distant.quality = match text.trim().to_lowercase().as_str() {
                 "low" => crate::lod::Quality::Low,
                 "high" => crate::lod::Quality::High,
@@ -602,7 +600,7 @@ impl App {
         if tracked {
             self.start_marker = Some(crate::startup::marker_path());
         }
-        let mode = if std::env::args().any(|arg| arg == "--safe-mode") {
+        let mode = if crate::platform::env::args().any(|arg| arg == "--safe-mode") {
             crate::startup::Mode::Safe
         } else if unfinished {
             crate::startup::Mode::UnfinishedStart
@@ -701,7 +699,7 @@ impl App {
             None => {
                 let mut menu = Menu::new(level::saves_dir());
                 menu.error = self.start_notice.take();
-                if std::env::args().any(|arg| arg == "--texture-viewer")
+                if crate::platform::env::args().any(|arg| arg == "--texture-viewer")
                     || self
                         .shot
                         .as_ref()
@@ -1739,7 +1737,7 @@ impl App {
             let dir = game
                 .world_dir_for_packs
                 .clone()
-                .unwrap_or_else(|| std::env::temp_dir().join("rustcraft-unsaved"))
+                .unwrap_or_else(|| crate::platform::env::temp_dir().join("rustcraft-unsaved"))
                 .join("lod-cache");
             let store = crate::lod::store::LodStore::open(&dir, crate::lod::CLIENT_CACHE_CAP)
                 .map(|s| if in_process { s.memory_only() } else { s });
@@ -1914,21 +1912,19 @@ impl App {
         self.applied_packs = packs.clone();
         let (send, receive) = crossbeam_channel::bounded(1);
         let wanted = packs.clone();
-        std::thread::Builder::new()
-            .name("resource packs".into())
-            .spawn(move || {
-                // A pack that panics must not take the game down: it comes
-                // back as an error and the old look stays.
-                let built = crate::startup::build_look(
-                    &assets::dir(),
-                    (&crate::pack::packs_dir(), &crate::pack::builtin_dir()),
-                    &wanted,
-                    &mobs,
-                );
-                let _ = send.send(built.map_err(|reason| anyhow::anyhow!(reason)));
-            })
-            .map_err(|err| error!("can't start loading resource packs: {err}"))
-            .ok();
+        crate::platform::task::spawn("resource packs", move || {
+            // A pack that panics must not take the game down: it comes
+            // back as an error and the old look stays.
+            let built = crate::startup::build_look(
+                &assets::dir(),
+                (&crate::pack::packs_dir(), &crate::pack::builtin_dir()),
+                &wanted,
+                &mobs,
+            );
+            let _ = send.send(built.map_err(|reason| anyhow::anyhow!(reason)));
+        })
+        .map_err(|err| error!("can't start loading resource packs: {err}"))
+        .ok();
         self.pending_look = Some((packs, receive));
     }
 
@@ -2194,30 +2190,28 @@ impl App {
         let (send, receive) = crossbeam_channel::unbounded();
         self.measure = Some(receive);
         let quality = self.options.visuals.quality;
-        std::thread::Builder::new()
-            .name("measure".into())
-            .spawn(move || {
-                let Ok(exe) = std::env::current_exe() else {
-                    return;
-                };
-                for style in crate::render::visuals::Style::BY_SPEED {
-                    for on in [false, true] {
-                        let output = std::process::Command::new(&exe)
-                            .args(["--bench", "20", "--seed", "12345", "--style", style.key()])
-                            .args(["--shaders", if on { "on" } else { "off" }])
-                            .args(["--quality", quality.name()])
-                            .output();
-                        let Ok(output) = output else { continue };
-                        let text = String::from_utf8_lossy(&output.stdout).into_owned();
-                        if let Some(fps) = parse_average_fps(&text) {
-                            let key = format!("{}/{}", style.key(), if on { "on" } else { "off" });
-                            let _ = send.send((key, fps));
-                        }
+        crate::platform::task::spawn("measure", move || {
+            let Ok(exe) = crate::platform::env::current_exe() else {
+                return;
+            };
+            for style in crate::render::visuals::Style::BY_SPEED {
+                for on in [false, true] {
+                    let output = std::process::Command::new(&exe)
+                        .args(["--bench", "20", "--seed", "12345", "--style", style.key()])
+                        .args(["--shaders", if on { "on" } else { "off" }])
+                        .args(["--quality", quality.name()])
+                        .output();
+                    let Ok(output) = output else { continue };
+                    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+                    if let Some(fps) = parse_average_fps(&text) {
+                        let key = format!("{}/{}", style.key(), if on { "on" } else { "off" });
+                        let _ = send.send((key, fps));
                     }
                 }
-            })
-            .map_err(|err| error!("can't start measuring: {err}"))
-            .ok();
+            }
+        })
+        .map_err(|err| error!("can't start measuring: {err}"))
+        .ok();
     }
 
     /// Takes the numbers `start_measure` has so far, and saves them.
@@ -2263,7 +2257,10 @@ impl App {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        let name = format!("{}.png", screenshot_stamp(std::time::SystemTime::now()));
+        let name = format!(
+            "{}.png",
+            screenshot_stamp(crate::platform::time::SystemTime::now())
+        );
         let dir = level::saves_dir().with_file_name("screenshots");
         renderer.capture_next_frame(dir.join(&name));
         info!("saving screenshot {name}");
@@ -3490,8 +3487,9 @@ impl App {
                     }
                     if bench.run_out.is_none() {
                         let text = bench.perf_markdown(render_distance, run, &about);
-                        if let Err(err) = std::fs::create_dir_all(path.parent().unwrap_or(&path))
-                            .and_then(|_| std::fs::write(&path, &text))
+                        if let Err(err) =
+                            crate::platform::fs::create_dir_all(path.parent().unwrap_or(&path))
+                                .and_then(|_| crate::platform::fs::write(&path, &text))
                         {
                             error!("writing {}: {err}", path.display());
                         } else {
@@ -3755,9 +3753,9 @@ impl ApplicationHandler for App {
 }
 
 /// Vanilla's screenshot name for a moment, `2026-10-25_16.25.42`.
-fn screenshot_stamp(at: std::time::SystemTime) -> String {
+fn screenshot_stamp(at: crate::platform::time::SystemTime) -> String {
     let secs = at
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(crate::platform::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
     // Howard Hinnant's civil_from_days.
@@ -4158,10 +4156,10 @@ mod tests {
 
     #[test]
     fn screenshots_are_named_for_when_they_were_taken() {
-        let at = std::time::UNIX_EPOCH + Duration::from_secs(1_793_028_342);
+        let at = crate::platform::time::UNIX_EPOCH + Duration::from_secs(1_793_028_342);
         assert_eq!(screenshot_stamp(at), "2026-10-26_15.25.42");
         assert_eq!(
-            screenshot_stamp(std::time::UNIX_EPOCH),
+            screenshot_stamp(crate::platform::time::UNIX_EPOCH),
             "1970-01-01_00.00.00"
         );
     }

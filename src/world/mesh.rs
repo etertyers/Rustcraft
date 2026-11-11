@@ -2369,7 +2369,7 @@ mod tests {
             ],
         );
         let base = dir.path().join("base");
-        std::fs::create_dir_all(&base).unwrap();
+        crate::platform::fs::create_dir_all(&base).unwrap();
         let res = Resources::new(
             Pack::base(&base),
             vec![Pack::open(&zip).unwrap()],

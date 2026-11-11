@@ -469,10 +469,10 @@ mod tests {
         );
         // The Nether loads around the guest while the host's world stays.
         game.enter_realm(Dimension::Nether);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = crate::platform::time::Instant::now() + std::time::Duration::from_secs(30);
         while game.chunks.world().get(ChunkPos::new(0, 0)).is_none() {
             assert!(
-                std::time::Instant::now() < deadline,
+                crate::platform::time::Instant::now() < deadline,
                 "the Nether never loaded"
             );
             game.chunks.update(ChunkPos::new(0, 0));

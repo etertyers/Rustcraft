@@ -378,7 +378,12 @@ pub fn machine() -> String {
 /// This process's resident memory in MiB, from `ps`.
 pub fn resident_memory_mib() -> Option<f64> {
     let output = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .args([
+            "-o",
+            "rss=",
+            "-p",
+            &crate::platform::env::process_id().to_string(),
+        ])
         .output()
         .ok()?;
     let kib: f64 = String::from_utf8(output.stdout).ok()?.trim().parse().ok()?;

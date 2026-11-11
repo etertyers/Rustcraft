@@ -664,13 +664,13 @@ mod tests {
     fn modern_sprites_draw_over_the_sheet_below() {
         let dir = crate::world::save::TempDir::new("gui");
         let base = dir.path().join("base");
-        std::fs::create_dir_all(base.join("textures/gui")).unwrap();
-        std::fs::write(
+        crate::platform::fs::create_dir_all(base.join("textures/gui")).unwrap();
+        crate::platform::fs::write(
             base.join("textures/gui/widgets.png"),
             png(256, 256, [1, 1, 1, 255]),
         )
         .unwrap();
-        std::fs::write(
+        crate::platform::fs::write(
             base.join("textures/gui/icons.png"),
             png(256, 256, [5, 5, 5, 255]),
         )
@@ -709,8 +709,8 @@ mod tests {
     fn very_sharp_packs_are_capped() {
         let dir = crate::world::save::TempDir::new("gui-hd");
         let base = dir.path().join("base");
-        std::fs::create_dir_all(base.join("textures/gui")).unwrap();
-        std::fs::write(
+        crate::platform::fs::create_dir_all(base.join("textures/gui")).unwrap();
+        crate::platform::fs::write(
             base.join("textures/gui/icons.png"),
             png(4096, 4096, [7, 7, 7, 255]),
         )

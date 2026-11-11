@@ -173,7 +173,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                     for shot in shots::SHOTS {
                         println!("{:28} {}", shot.name, shot.about);
                     }
-                    std::process::exit(0);
+                    crate::platform::env::exit(0);
                 }
                 shot = Some(shots::find(&name).ok_or_else(|| {
                     CliError::wrong(format!("no scene {name:?} (try --shot list)"))

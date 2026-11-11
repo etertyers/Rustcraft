@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use rustcraft::{app, cli};
 use winit::event_loop::EventLoop;
 
-fn main() -> Result<()> {
-    env_logger::init();
+pub fn main() -> Result<()> {
+    rustcraft::platform::logging::init();
     // Chooses the mods before any block or item registry is built.
     rustcraft::mods::init();
     // Writes the built-in structure templates to assets/structures (for
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
             for problem in &report.problems {
                 eprintln!("asset problem: {problem}");
             }
-            std::process::exit(1);
+            rustcraft::platform::env::exit(1);
         }
         return Ok(());
     }
@@ -157,7 +157,7 @@ fn main() -> Result<()> {
             .map_or(Ok(20111118), |s| s.parse())
             .context("--seed needs a number")?;
         let pass = rustcraft::world::structure::check::run(seed);
-        std::process::exit(if pass { 0 } else { 1 });
+        rustcraft::platform::env::exit(if pass { 0 } else { 1 });
     }
     if args.iter().any(|arg| arg == "--spawn-test") {
         let seed = args
@@ -178,7 +178,7 @@ fn main() -> Result<()> {
         Ok(cli) => cli,
         Err(err) => {
             eprint!("{err}");
-            std::process::exit(err.exit_code());
+            rustcraft::platform::env::exit(err.exit_code());
         }
     };
     // `--perf-test --all-looks`: each look and quality in turn.
@@ -239,7 +239,7 @@ fn biome_map(args: &[String]) -> Result<()> {
         .map_or(Ok(4096), |s| s.parse())
         .context("--size needs a number of pixels")?;
     let out = value("--out").unwrap_or_else(|| "biome-map.png".into());
-    let started = std::time::Instant::now();
+    let started = rustcraft::platform::time::Instant::now();
     let map = BiomeMap::sample(seed, size);
     let stats = stats(&map);
     render(&map, &stats).save(&out)?;
@@ -269,7 +269,7 @@ fn height_map(args: &[String]) -> Result<()> {
         .map_or(Ok(2048), |s| s.parse())
         .context("--size needs a number of pixels")?;
     let out = value("--out").unwrap_or_else(|| "docs/screenshots/m21-height-map.png".into());
-    let started = std::time::Instant::now();
+    let started = rustcraft::platform::time::Instant::now();
     let map = HeightMap::sample(seed, size);
     map.render().save(&out)?;
     println!(

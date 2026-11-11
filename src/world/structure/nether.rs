@@ -198,7 +198,7 @@ mod tests {
             let n = nether.world_seed();
             let took = std::thread::spawn(move || {
                 let nether = Nether::new(n);
-                let started = std::time::Instant::now();
+                let started = crate::platform::time::Instant::now();
                 let mut count = 0;
                 for z in lo.z..=hi.z {
                     for x in lo.x..=hi.x {

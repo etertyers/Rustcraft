@@ -402,7 +402,7 @@ impl ModsScreen {
     fn pick_files(&mut self) {
         let (send, receive) = channel();
         self.picking = Some(receive);
-        std::thread::spawn(move || {
+        crate::platform::task::spawn_detached("pick-files", move || {
             let _ = send.send(choose_files());
         });
     }
@@ -870,7 +870,7 @@ pub fn turn_on_pack(options: &mut Options, id: &str) {
 
 /// Shows the mods folder in the Finder, making it if needed.
 fn open_folder(dir: &Path) {
-    if let Err(err) = std::fs::create_dir_all(dir) {
+    if let Err(err) = crate::platform::fs::create_dir_all(dir) {
         return log::warn!("creating {}: {err}", dir.display());
     }
     if let Err(err) = std::process::Command::new("open").arg(dir).spawn() {
@@ -920,7 +920,7 @@ fn choose_files() -> Vec<PathBuf> {
 /// The `--shot mods-screen` scene shows Fresh Animations as a download
 /// sitting in `mods/`; the file itself is never touched.
 fn shot_fixture() -> Option<PathBuf> {
-    if !std::env::args().any(|a| a == "mods-screen") {
+    if !crate::platform::env::args().any(|a| a == "mods-screen") {
         return None;
     }
     let dir = crate::pack::builtin_dir();
@@ -933,7 +933,7 @@ mod tests {
     use crate::{pack::tests::write_zip, world::save::TempDir};
 
     fn zip_at(dir: &Path, name: &str, files: &[&str]) -> PathBuf {
-        std::fs::create_dir_all(dir).unwrap();
+        crate::platform::fs::create_dir_all(dir).unwrap();
         let path = dir.join(name);
         let files: Vec<(&str, &[u8])> = files
             .iter()
@@ -951,14 +951,14 @@ mod tests {
             packs: root.join("resourcepacks"),
             saves: root.join("saves"),
         };
-        std::fs::create_dir_all(&dirs.mods).unwrap();
+        crate::platform::fs::create_dir_all(&dirs.mods).unwrap();
         ModsScreen::build(dirs, Config::default(), Vec::new(), false)
     }
 
     fn lua_mod(root: &Path, id: &str, ron: &str) {
         let dir = root.join("mods").join(id);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("mod.ron"), ron).unwrap();
+        crate::platform::fs::create_dir_all(&dir).unwrap();
+        crate::platform::fs::write(dir.join("mod.ron"), ron).unwrap();
     }
 
     fn row<'a>(screen: &'a ModsScreen, id: &str) -> &'a Row {
@@ -1138,8 +1138,8 @@ mod tests {
     fn a_data_pack_goes_into_the_chosen_world() {
         let root = TempDir::new("mods-data");
         let world = root.path().join("saves/Home");
-        std::fs::create_dir_all(&world).unwrap();
-        std::fs::write(world.join("level.ron"), "()").unwrap();
+        crate::platform::fs::create_dir_all(&world).unwrap();
+        crate::platform::fs::write(world.join("level.ron"), "()").unwrap();
         let mut screen = screen(root.path());
         let pack = zip_at(
             &root.path().join("mods"),
@@ -1163,8 +1163,8 @@ mod tests {
             return;
         };
         let root = TempDir::new("mods-real-fa");
-        std::fs::create_dir_all(root.path().join("mods")).unwrap();
-        std::fs::copy(dir.join(&name), root.path().join("mods").join(&name)).unwrap();
+        crate::platform::fs::create_dir_all(root.path().join("mods")).unwrap();
+        crate::platform::fs::copy(dir.join(&name), root.path().join("mods").join(&name)).unwrap();
         let screen = screen(root.path());
         let r = screen.rows.first().unwrap();
         assert_eq!(r.advice.as_ref().unwrap().fix, Fix::MoveToResourcePacks);
