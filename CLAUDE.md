@@ -188,7 +188,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
 | 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | released (`v1.5.0`) |
 | 1.6 | M70–M73 (M74–M76 follow) | O | `docs/milestones/v1.6.md` | M70–M73 merged and tagged (`m70`–`m73`); `v1.6.0` not tagged yet. Known gaps, all in M76 (after M75): the server isn't in its own Web Worker, no mesher workers, no upload budget, frustum-first requests or render distance ramp, saves go through the main thread's async OPFS writer, one 60–76 ms frame per web flight (fails the browser gate's "no frame over 50 ms" clause), Distant Terrain not in the browser; the M4 has its own gate baseline (see the milestone entry) |
-| after 1.5.0 | M74 | none | `docs/milestones/v1.5.md` ("After v1.5.0") | in progress |
+| after 1.5.0 | M74 | none | `docs/milestones/v1.5.md` ("After v1.5.0") | built (PR open) |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`; after M69 merges, tag `v1.5.0` and rebuild the `.app`.
 
