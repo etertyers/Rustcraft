@@ -3770,6 +3770,12 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if crate::platform::window::take_save_request()
+            && let Some(server) = self.server.as_mut()
+            && let Err(err) = server.game.save()
+        {
+            error!("saving the world failed: {err:#}");
+        }
         if crate::platform::window::take_lock_lost() {
             self.stack.set_engaged(false);
             self.pause_game();

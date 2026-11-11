@@ -105,3 +105,50 @@ pub fn set_lock_lost() {
 pub fn take_lock_lost() -> bool {
     LOCK_LOST.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
+
+static PICKED: std::sync::Mutex<Option<Vec<u8>>> = std::sync::Mutex::new(None);
+
+/// A file the player picked (see `pick_zip`) arrived.
+pub fn set_picked(bytes: Vec<u8>) {
+    *PICKED.lock().unwrap_or_else(|e| e.into_inner()) = Some(bytes);
+}
+
+/// The file picked since the last call, if any.
+pub fn take_picked_zip() -> Option<Vec<u8>> {
+    PICKED.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Browser: gives the player `bytes` as a download named `filename`.
+#[cfg(target_arch = "wasm32")]
+pub fn download(filename: &str, bytes: &[u8]) {
+    crate::web::download_bytes(filename, bytes);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn download(filename: &str, _bytes: &[u8]) {
+    log::warn!("download {filename}: only the browser build has downloads");
+}
+
+/// Browser: asks the player for a .zip; `take_picked_zip` gets it later.
+#[cfg(target_arch = "wasm32")]
+pub fn pick_zip() {
+    crate::web::pick_file(".zip");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn pick_zip() {
+    log::warn!("pick_zip: only the browser build has a file picker");
+}
+
+static SAVE_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Browser: the tab was hidden or is closing, so the world should be saved
+/// now (a page can't count on a later chance).
+pub fn request_save() {
+    SAVE_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// True once per `request_save`.
+pub fn take_save_request() -> bool {
+    SAVE_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed)
+}

@@ -22,7 +22,7 @@ if [ "$OPT" = 1 ] && [ "$PROFILE" = release ]; then
     --enable-mutable-globals --enable-reference-types -o "$OUT/pkg/rustcraft_bg.opt.wasm" "$OUT/pkg/rustcraft_bg.wasm"
   mv "$OUT/pkg/rustcraft_bg.opt.wasm" "$OUT/pkg/rustcraft_bg.wasm"
 fi
-cp web/index.html web/loader.js "$OUT/"
+cp web/index.html web/loader.js web/worker.js "$OUT/"
 
 # The repo's own assets, minus Mojang's files and Kenzo's downloads.
 python3 -I - "$OUT/assets.zip" <<'PY'
