@@ -1,9 +1,9 @@
 // Rustcraft's browser loader (M71): starts the wasm, shows the asset setup
 // screen when Minecraft's files aren't stored yet, then starts the game.
-import init, { boot, vanilla_add, vanilla_add_zip, vanilla_finish, pack_add, start, save_now, export_world, import_world, storage_idle } from "./pkg/rustcraft.js";
+import init, { boot, vanilla_add, vanilla_add_zip, vanilla_finish, pack_add, start, save_now, export_world, import_world, storage_idle, read_file, camera, surface } from "./pkg/rustcraft.js";
 
 // For tests and the console: window.rustcraft.save_now() saves the world.
-window.rustcraft = { save_now, export_world, import_world, storage_idle };
+window.rustcraft = { save_now, export_world, import_world, storage_idle, read_file, pack_add, camera, surface };
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $("status").textContent = t; };
@@ -62,6 +62,10 @@ async function setup() {
 
 async function main() {
   try {
+    if (!window.isSecureContext) {
+      // OPFS, WebGPU and pointer lock options need https or localhost.
+      throw new Error("This page needs a secure address: https://, or http://localhost. Start scripts/serve-web.sh --https and open its https URL (accept the certificate warning once).");
+    }
     await init();
     let haveVanilla = await boot("assets.zip");
     if (!haveVanilla) {

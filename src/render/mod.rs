@@ -1207,6 +1207,11 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// The size the surface is configured at, in pixels.
+    pub fn surface_size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
             return;

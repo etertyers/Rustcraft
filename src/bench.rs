@@ -357,7 +357,18 @@ impl Bench {
     }
 }
 
+/// The browser build's "machine": the browser's own description.
+#[cfg(target_arch = "wasm32")]
+pub fn machine() -> String {
+    let agent = web_sys::window()
+        .map(|w| w.navigator())
+        .and_then(|n| n.user_agent().ok())
+        .unwrap_or_default();
+    format!("web ({agent})")
+}
+
 /// The machine's model and chip, from `sysctl`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn machine() -> String {
     let read = |key: &str| {
         std::process::Command::new("sysctl")
@@ -375,7 +386,14 @@ pub fn machine() -> String {
     )
 }
 
+/// The browser build's memory: the wasm heap's size in MiB.
+#[cfg(target_arch = "wasm32")]
+pub fn resident_memory_mib() -> Option<f64> {
+    Some((core::arch::wasm32::memory_size::<0>() * 65536) as f64 / (1024.0 * 1024.0))
+}
+
 /// This process's resident memory in MiB, from `ps`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn resident_memory_mib() -> Option<f64> {
     let output = std::process::Command::new("ps")
         .args([
@@ -491,6 +509,27 @@ pub fn stage_storm(game: &mut crate::game::Game) {
         }
     }
 }
+
+/// Browser build: says when the wasm heap grew during a slow frame (a
+/// `memory.grow` of hundreds of MiB is one thing that stalls a page).
+#[cfg(target_arch = "wasm32")]
+pub fn note_frame(seconds: f32) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static LAST: AtomicUsize = AtomicUsize::new(0);
+    let pages = core::arch::wasm32::memory_size::<0>();
+    let before = LAST.swap(pages, Ordering::Relaxed);
+    if seconds > 0.04 {
+        log::info!(
+            "slow frame {:.1} ms; wasm memory {} MiB (was {} MiB)",
+            seconds * 1000.0,
+            pages * 64 / 1024,
+            before * 64 / 1024
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn note_frame(_seconds: f32) {}
 
 #[cfg(test)]
 mod tests {
