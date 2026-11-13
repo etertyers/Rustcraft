@@ -569,12 +569,21 @@ impl App {
         // 1920×1080 window on a scale-2 display is 3840×2160 pixels, which
         // macOS clamps to the screen (2940×1678 on a MacBook Air), so M4
         // "1080p" rows measured another resolution and Auto's Render Scale.
-        let attrs = match self.window_size {
-            Some((w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
-            None if self.bench.is_some() => {
-                attrs.with_inner_size(winit::dpi::PhysicalSize::new(width, height))
+        // In the browser the page's CSS sizes the canvas (100% of the
+        // viewport, the drawing buffer at CSS size × devicePixelRatio, which
+        // winit follows with a ResizeObserver): asking winit for a size would
+        // write a fixed inline style that overrides the CSS and pins the
+        // canvas to it whatever the window does.
+        let attrs = if crate::platform::WEB {
+            attrs
+        } else {
+            match self.window_size {
+                Some((w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+                None if self.bench.is_some() => {
+                    attrs.with_inner_size(winit::dpi::PhysicalSize::new(width, height))
+                }
+                None => attrs.with_inner_size(LogicalSize::new(width, height)),
             }
-            None => attrs.with_inner_size(LogicalSize::new(width, height)),
         };
         // `--perf-test --native` flies full screen at the display's size.
         let attrs = if native {
@@ -1070,6 +1079,10 @@ impl App {
     /// then wanders out of the window. If it drifts away from the middle,
     /// put it back.
     fn recenter_cursor(&self, position: PhysicalPosition<f64>) {
+        // A browser pins a locked pointer itself and has no cursor to move.
+        if crate::platform::WEB {
+            return;
+        }
         let Some(window) = &self.window else {
             return;
         };
@@ -2576,6 +2589,16 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
+        if let Some(renderer) = &self.renderer {
+            let (w, h) = renderer.surface_size();
+            crate::platform::window::publish_surface(w, h);
+        }
+        if let Some(game) = &self.game {
+            crate::platform::window::publish_camera(
+                game.player.camera.yaw,
+                game.player.camera.pitch,
+            );
+        }
         self.client_mods.advance(dt);
         self.poll_pending_look();
         self.poll_measure();

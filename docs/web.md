@@ -28,6 +28,12 @@ On first start a setup screen asks for Minecraft's files (the `assets/vanilla` f
 | `--perf-test --native`, `--texture-audit`, `--lan-test`, `--shot` | Native dev tools. The Texture Viewer stays. |
 | Quit Game | A page has no program to quit. |
 
+## Window size and mouse look
+
+- **The page sizes the canvas, the game follows.** The canvas is CSS `100vw × 100vh` (no scrollbars); the game never asks winit for a window size on the web (that writes a fixed inline style that overrides the CSS). winit's `ResizeObserver` reports the canvas in device pixels (CSS size × `devicePixelRatio`), the renderer reconfigures the surface and every render target on each `Resized`, and Render Scale Auto works on that buffer as on the Mac (the UI stays at full size). Browser zoom, window resizing and fullscreen are all the same event.
+- **Mouse look** reads raw pointer-lock movement (`requestPointerLock({unadjustedMovement: true})`, with a plain lock as the fallback); every motion event turns the camera at once by `movement × 0.0025` rad, the same formula as the Mac app. Clicking the canvas locks the pointer, Esc releases it and opens the pause menu. Audio starts at "Click to start", not on the first click in the world: creating the browser's `AudioContext` blocks the page for 200 to 600 ms on an M1, which used to freeze the camera at the first click.
+- `?mute` keeps the audio engine off (for measuring).
+
 ## Keys the browser keeps
 
 The browser keeps Cmd+W / Ctrl+W (close tab), Cmd+Q, Ctrl+T, Cmd+R / Ctrl+R and the like; Rustcraft doesn't fight them. Losing the pointer lock (Esc, switching tab) opens the pause menu, like Minecraft does when the window loses focus. In fullscreen on Chromium the Keyboard Lock API lets Esc and the F-keys through. F11 is the browser's fullscreen.
@@ -49,7 +55,7 @@ Browsers give a page the storage (OPFS) and the GPU (WebGPU) the game needs only
 
 ## Testing
 
-`web/test/` has Playwright scripts (`npm install` there once; they drive your installed Chrome, headed): `smoke.mjs`, `play.mjs`, `persist.mjs` (save, reload, reopen), `exchange.mjs` (world zips between browser and Mac app), `perf.mjs` (the gate), `trace.mjs` (long tasks and a CPU profile of a flight), `check-output.mjs` (the build refuses Mojang's files).
+`web/test/` has Playwright scripts (`npm install` there once; they drive your installed Chrome, headed): `smoke.mjs`, `play.mjs`, `persist.mjs` (save, reload, reopen), `exchange.mjs` (world zips between browser and Mac app), `perf.mjs` (the gate), `trace.mjs` (long tasks and a CPU profile of a flight), `check-output.mjs` (the build refuses Mojang's files), `look-test.mjs` (the first click causes no long task; mouse moves turn the camera by exactly `movement × 0.0025` rad within two frames, with none dropped), `resize.mjs` and `resize-real.mjs` (the canvas, its drawing buffer and the wgpu surface follow viewport and window resizes), `look.mjs` and `profile-click.mjs` (the probes that found the click stall). Chrome under automation can't be granted a real pointer lock or enter fullscreen, so those two are manual checks.
 
 ## Hosting later
 

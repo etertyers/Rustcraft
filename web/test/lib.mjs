@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, extname } from "node:path";
 import { createServer } from "node:http";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 
 export const ROOT = resolve(new URL("../..", import.meta.url).pathname);
@@ -39,15 +40,28 @@ export async function serve() {
   return () => server.close();
 }
 
-export async function launch(profile, viewport = { width: 1280, height: 720 }) {
+export async function launch(profile, viewport = { width: 1280, height: 720 }, deviceScaleFactor = 1) {
   const dir = profile ?? mkdtempSync(join(tmpdir(), "rustcraft-web-"));
   const context = await chromium.launchPersistentContext(dir, {
     channel: "chrome",
     headless: false,
     viewport,
+    ...(viewport ? { deviceScaleFactor } : {}),
     args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan"],
   });
   const page = context.pages()[0] ?? (await context.newPage());
+  // Pointer lock needs the browser to be the frontmost app (WrongDocumentError
+  // otherwise), so bring this Chrome forward (macOS).
+  if (process.platform === "darwin" && !process.env.RUSTCRAFT_NO_FOCUS) {
+    await page.bringToFront();
+    spawnSync("osascript", ["-e", `tell application "System Events" to set frontmost of (first process whose unix id is ${context.browser()?.process?.()?.pid ?? 0}) to true`], { stdio: "ignore" });
+    spawnSync("osascript", ["-e", 'tell application "Google Chrome" to activate'], { stdio: "ignore" });
+  }
+  // Pointer lock also needs the page's focus controller to be active.
+  try {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+  } catch { /* not fatal */ }
   const logs = [];
   page.on("console", (m) => logs.push(`[${m.type()}] ${m.text()}`));
   page.on("pageerror", (e) => logs.push(`[pageerror] ${e.message}`));
