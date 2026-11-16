@@ -179,8 +179,8 @@ fn label(image: &mut RgbaImage, text: &str, x: u32, y: u32, scale: u32) {
     for py in y..(y + height).min(image.height()) {
         for px in x..(x + width).min(image.width()) {
             let p = image.get_pixel_mut(px, py);
-            for c in 0..3 {
-                p.0[c] /= 3;
+            for channel in &mut p.0[..3] {
+                *channel /= 3;
             }
         }
     }
