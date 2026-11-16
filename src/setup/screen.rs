@@ -3,13 +3,12 @@
 //! own font, because the Minecraft font is one of the things being fetched.
 
 use super::download::{self, Event, Handle, Policy, Request};
-use super::layers;
-use super::manifest::{self, Endpoints, Extra};
+use super::layers::{self, CopySource, Needs};
+use super::manifest::{Endpoints, Extra, Kind};
 use super::vanilla::Plan;
 use super::{Result, SetupError};
 use crossbeam_channel::Receiver;
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -101,14 +100,24 @@ pub(super) fn duration_text(seconds: f64) -> String {
 pub struct SetupScreen {
     endpoints: Endpoints,
     policy: Policy,
-    /// The user asset layer the files go to.
-    target: PathBuf,
+    /// What this start is missing, and the folder that gets filled.
+    needs: Needs,
+    /// A complete copy elsewhere on this Mac, if one has what is missing.
+    copy: Option<CopySource>,
+    /// The main button copies (true) or downloads (false).
+    use_copy: bool,
     phase: Phase,
     measuring: Option<Receiver<Result<Plan>>>,
     plan: Option<Arc<Plan>>,
-    /// The packs and jars not yet in the downloads folder.
-    missing_extras: Vec<Extra>,
+    /// Why Mojang couldn't be asked (the copy still works).
+    offline: Option<String>,
+    /// Start the download as soon as the sizes are in.
+    start_when_measured: bool,
+    /// Whether the packs go with this run. "Only Minecraft's files" turns it off.
     with_packs: bool,
+    /// What to record in the skip marker when the running job succeeds
+    /// (`None`: leave it, as for "Use a folder I already have").
+    marker_on_success: Option<bool>,
     job: Option<Handle>,
     progress: Progress,
     outcome: Option<Outcome>,
@@ -116,33 +125,35 @@ pub struct SetupScreen {
 }
 
 impl SetupScreen {
-    /// A screen that will put its files in `target` (the user asset layer).
+    /// A screen for `needs`; `copy` is a folder on this Mac that has it all.
     pub fn new(
         endpoints: Endpoints,
         policy: Policy,
-        target: PathBuf,
-        downloads: &std::path::Path,
+        needs: Needs,
+        copy: Option<CopySource>,
     ) -> Self {
-        let missing_extras = manifest::extras()
-            .iter()
-            .filter(|e| layers::presence(downloads, e) != layers::Presence::Present)
-            .cloned()
-            .collect();
         let mut screen = Self {
             endpoints,
             policy,
-            target,
-            phase: Phase::Measuring,
+            use_copy: copy.is_some(),
+            copy,
+            phase: Phase::Ready,
             measuring: None,
             plan: None,
-            missing_extras,
+            offline: None,
+            start_when_measured: false,
             with_packs: true,
+            marker_on_success: None,
             job: None,
             progress: Progress::new(),
             outcome: None,
             cancelled: false,
+            needs,
         };
-        screen.measure();
+        // Only Mojang's sizes need asking, and only when its files are missing.
+        if screen.needs.vanilla {
+            screen.measure();
+        }
         screen
     }
 
@@ -169,20 +180,73 @@ impl SetupScreen {
         self.measuring = Some(download::measure(self.endpoints.clone(), self.policy));
     }
 
-    fn start(&mut self) {
-        let Some(plan) = self.plan.clone() else {
+    /// The packs this run fetches.
+    fn extras(&self) -> Vec<Extra> {
+        if self.with_packs {
+            self.needs.extras.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn extras_bytes(&self) -> u64 {
+        self.extras().iter().map(|e| e.size).sum()
+    }
+
+    /// What the main action does: copy, else download.
+    fn act(&mut self) {
+        if !self.needs.vanilla && !self.with_packs {
+            // Vanilla is here and the player wants no packs: nothing to fetch.
+            self.finish_ok(Some(true));
+        } else if self.use_copy && self.copy.is_some() {
+            self.start_copy();
+        } else {
+            self.start();
+        }
+    }
+
+    fn finish_ok(&mut self, marker: Option<bool>) {
+        if let Some(skip) = marker
+            && !self.needs.extras.is_empty()
+        {
+            layers::set_skip_packs(&self.needs.target, skip);
+        }
+        self.job = None;
+        self.outcome = Some(Outcome::Installed);
+    }
+
+    fn start_copy(&mut self) {
+        let Some(mut source) = self.copy.clone() else {
             return;
+        };
+        source.extras = self.extras();
+        source.vanilla = self.needs.vanilla;
+        self.cancelled = false;
+        self.progress = Progress::new();
+        self.marker_on_success = Some(!self.with_packs);
+        self.job = Some(download::start_copy(source, self.needs.target.clone()));
+        self.phase = Phase::Working;
+    }
+
+    fn start(&mut self) {
+        let plan = if self.needs.vanilla {
+            let Some(plan) = self.plan.clone() else {
+                // Mojang's sizes aren't in yet (or failed): ask, then go.
+                self.start_when_measured = true;
+                self.measure();
+                return;
+            };
+            Some(plan)
+        } else {
+            None
         };
         self.cancelled = false;
         self.progress = Progress::new();
+        self.marker_on_success = Some(!self.with_packs);
         self.job = Some(download::start(Request {
-            vanilla: Some(plan),
-            extras: if self.with_packs {
-                self.missing_extras.clone()
-            } else {
-                Vec::new()
-            },
-            target: self.target.clone(),
+            vanilla: plan,
+            extras: self.extras(),
+            target: self.needs.target.clone(),
             endpoints: self.endpoints.clone(),
             policy: self.policy,
         }));
@@ -197,7 +261,8 @@ impl SetupScreen {
             return;
         };
         self.progress = Progress::new();
-        self.job = Some(download::start_import(picked, self.target.clone()));
+        self.marker_on_success = None;
+        self.job = Some(download::start_import(picked, self.needs.target.clone()));
         self.phase = Phase::Working;
     }
 
@@ -210,14 +275,26 @@ impl SetupScreen {
             match result {
                 Ok(plan) => {
                     self.plan = Some(Arc::new(plan));
+                    self.offline = None;
                     self.phase = Phase::Ready;
                     // For tests and demos: `$RUSTCRAFT_SETUP_AUTO=1` presses
-                    // "Download" (the packs included) once the sizes are in.
-                    if std::env::var_os("RUSTCRAFT_SETUP_AUTO").is_some() {
-                        self.start();
+                    // the main button once the sizes are in.
+                    if self.start_when_measured
+                        || std::env::var_os("RUSTCRAFT_SETUP_AUTO").is_some()
+                    {
+                        self.start_when_measured = false;
+                        self.act();
                     }
                 }
-                Err(err) => self.phase = Phase::Failed(err.to_string()),
+                // A copy needs no network: offer it, with the reason.
+                Err(err) if self.use_copy && self.copy.is_some() => {
+                    self.offline = Some(err.to_string());
+                    self.phase = Phase::Ready;
+                }
+                Err(err) => {
+                    self.start_when_measured = false;
+                    self.phase = Phase::Failed(err.to_string());
+                }
             }
         }
         let mut finished = None;
@@ -240,10 +317,7 @@ impl SetupScreen {
             self.progress.note(now);
         }
         match finished {
-            Some(Ok(())) => {
-                self.job = None;
-                self.outcome = Some(Outcome::Installed);
-            }
+            Some(Ok(())) => self.finish_ok(self.marker_on_success),
             Some(Err(SetupError::Cancelled)) => {
                 self.job = None;
                 self.cancelled = true;
@@ -256,10 +330,6 @@ impl SetupScreen {
             }
             None => {}
         }
-    }
-
-    fn extras_bytes(&self) -> u64 {
-        self.missing_extras.iter().map(|e| e.size).sum()
     }
 
     /// Draws one frame of the screen.
@@ -285,44 +355,103 @@ impl SetupScreen {
             });
     }
 
-    fn ready(&mut self, ui: &mut egui::Ui) {
-        let Some(plan) = self.plan.clone() else {
-            return;
+    /// The bytes a download would fetch, when known.
+    fn download_bytes(&self) -> Option<u64> {
+        let vanilla = if self.needs.vanilla {
+            self.plan.as_ref()?.download_bytes()
+        } else {
+            0
         };
+        Some(vanilla + self.extras_bytes())
+    }
+
+    fn ready(&mut self, ui: &mut egui::Ui) {
         ui.label(
-            "Rustcraft draws the world with Minecraft's own textures, sounds and font. \
-             They aren't included with the game: it downloads them once, from Mojang's \
-             servers, onto this Mac.",
+            "Rustcraft draws the world with Minecraft's own textures, sounds and font, and its \
+             looks come from a few resource packs and mods. They aren't part of the game's \
+             code, so this copy of Rustcraft gets them once.",
         );
-        ui.add_space(8.0);
+        ui.add_space(6.0);
+        let mut missing = Vec::new();
+        if self.needs.vanilla {
+            missing.push("Minecraft's files".to_owned());
+        }
+        if !self.needs.extras.is_empty() {
+            let packs = self
+                .needs
+                .extras
+                .iter()
+                .filter(|e| e.kind == Kind::Pack)
+                .count();
+            let mods = self.needs.extras.len() - packs;
+            missing.push(format!("{packs} packs and {mods} mods"));
+        }
+        ui.label(format!("Missing here: {}.", missing.join(" and ")));
         if self.cancelled {
             ui.colored_label(
                 ui.visuals().warn_fg_color,
-                "Stopped. Download again to carry on where it left off.",
+                "Stopped. Pressing the button again carries on where it left off.",
             );
-            ui.add_space(4.0);
         }
-        ui.strong("Missing: Minecraft's files (required)");
-        let sounds = plan.sound_bytes();
-        ui.label(format!(
-            "  Textures, models and text (client {}): {}",
-            plan.version,
-            megabytes(plan.client.size + plan.object_bytes() - sounds)
-        ));
-        ui.label(format!("  Sounds and music: {}", megabytes(sounds)));
-        ui.add_space(10.0);
-        ui.checkbox(
-            &mut self.with_packs,
-            "Also get the Barebones and Realistic style packs",
-        );
-        if !self.missing_extras.is_empty() {
-            ui.label(format!(
-                "  {} packs and mods from Modrinth, {}",
-                self.missing_extras.len(),
-                megabytes(self.extras_bytes())
-            ));
-            egui::CollapsingHeader::new("What these are").show(ui, |ui| {
-                for extra in &self.missing_extras {
+        ui.add_space(14.0);
+        let width = ui.available_width().min(520.0);
+        let big = |text: String| {
+            egui::Button::new(egui::RichText::new(text).size(20.0))
+                .min_size(egui::vec2(width, 56.0))
+        };
+        match (&self.copy, self.use_copy) {
+            (Some(copy), true) => {
+                let label = format!(
+                    "Copy from this Mac ({}, {})",
+                    megabytes(copy.bytes),
+                    home_relative(&copy.assets)
+                );
+                if ui.add(big(label)).clicked() {
+                    self.act();
+                }
+                ui.add_space(4.0);
+                let text = match self.download_bytes() {
+                    Some(n) => format!("Download instead ({})", megabytes(n)),
+                    None => "Download instead".to_owned(),
+                };
+                if ui.small_button(text).clicked() {
+                    self.use_copy = false;
+                }
+                if let Some(err) = &self.offline {
+                    ui.colored_label(ui.visuals().warn_fg_color, format!("Download: {err}"));
+                }
+            }
+            _ => {
+                let label = match self.download_bytes() {
+                    Some(n) => format!("Download game files ({})", megabytes(n)),
+                    None => "Download game files".to_owned(),
+                };
+                if ui.add(big(label)).clicked() {
+                    self.act();
+                }
+                if self.copy.is_some() && ui.small_button("Copy from this Mac instead").clicked() {
+                    self.use_copy = true;
+                }
+            }
+        }
+        ui.add_space(6.0);
+        if !self.needs.extras.is_empty() && ui.link("Only Minecraft's files").clicked() {
+            self.with_packs = false;
+            self.act();
+        }
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.button("Use a folder I already have…").clicked() {
+                self.pick_folder();
+            }
+            if ui.button("Quit").clicked() {
+                self.outcome = Some(Outcome::Quit);
+            }
+        });
+        if !self.needs.extras.is_empty() {
+            ui.add_space(10.0);
+            egui::CollapsingHeader::new("What the packs and mods are").show(ui, |ui| {
+                for extra in &self.needs.extras {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(format!(
                             "{} by {} — {} —",
@@ -336,27 +465,6 @@ impl SetupScreen {
                 }
             });
         }
-        ui.add_space(14.0);
-        let total = plan.download_bytes()
-            + if self.with_packs {
-                self.extras_bytes()
-            } else {
-                0
-            };
-        ui.horizontal(|ui| {
-            if ui
-                .button(format!("Download Minecraft's files ({})", megabytes(total)))
-                .clicked()
-            {
-                self.start();
-            }
-            if ui.button("Use a folder I already have…").clicked() {
-                self.pick_folder();
-            }
-            if ui.button("Quit").clicked() {
-                self.outcome = Some(Outcome::Quit);
-            }
-        });
     }
 
     fn working(&mut self, ui: &mut egui::Ui) {
@@ -404,11 +512,7 @@ impl SetupScreen {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if ui.button("Retry").clicked() {
-                if self.plan.is_some() {
-                    self.start();
-                } else {
-                    self.measure();
-                }
+                self.act();
             }
             if ui.button("Use a folder I already have…").clicked() {
                 self.pick_folder();
@@ -418,6 +522,16 @@ impl SetupScreen {
             }
         });
     }
+}
+
+/// `path` with the home folder written as `~`.
+fn home_relative(path: &std::path::Path) -> String {
+    if let Some(home) = crate::platform::env::var_os("HOME")
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
+    }
+    path.display().to_string()
 }
 
 /// A licence id from Modrinth in words.

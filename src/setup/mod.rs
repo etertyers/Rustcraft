@@ -65,10 +65,13 @@ impl From<std::io::Error> for SetupError {
 
 pub type Result<T, E = SetupError> = std::result::Result<T, E>;
 
-/// The first-launch screen, if this start needs it: no complete vanilla
-/// layer in the asset root or the user layer, and not a tool or test run
-/// (`--no-download`, `$RUSTCRAFT_NO_DOWNLOAD`, a bench or a shot).
-/// `$RUSTCRAFT_SETUP_BASE` points it at a local server (tests).
+/// The first-launch screen, if this start needs it: this clone is missing
+/// Minecraft's files or one of the pinned packs and jars (unless the player
+/// chose "Only Minecraft's files"), and this isn't a tool or test run
+/// (`--no-download`, `$RUSTCRAFT_NO_DOWNLOAD`, a bench or a shot). A clone
+/// counts only its own `assets/vanilla` and `assets/downloads`; only the
+/// .app falls back to the user layer. `$RUSTCRAFT_SETUP_BASE` points the
+/// download at a local server (tests).
 pub fn first_launch_screen(args: &[String], tool_run: bool) -> Option<screen::SetupScreen> {
     if tool_run
         || args.iter().any(|a| a == "--no-download")
@@ -77,17 +80,24 @@ pub fn first_launch_screen(args: &[String], tool_run: bool) -> Option<screen::Se
         return None;
     }
     let assets = crate::assets::dir();
-    if !layers::vanilla_missing(&assets) {
-        return None;
-    }
-    let Some(target) = layers::user_assets() else {
-        log::warn!("no home folder to download Minecraft's files into; starting without them");
+    let source = crate::assets::source();
+    let user = layers::user_assets();
+    let Some(needs) = layers::needs(&assets, source, user.as_deref()) else {
+        // Complete: remember this clone for the next fresh one's "Copy".
+        layers::remember_clone(&assets, source);
         return None;
     };
     log::info!(
-        "first launch: Minecraft's files are missing from {} and from {}; showing the setup screen",
-        assets.join("vanilla").display(),
-        target.join("vanilla").display()
+        "{}: Minecraft's files {}, {} packs and mods missing; showing the setup screen",
+        assets.display(),
+        if needs.vanilla { "missing" } else { "present" },
+        needs.extras.len()
+    );
+    let copy = layers::find_copy_source(
+        &assets,
+        needs.vanilla,
+        &needs.extras,
+        &layers::copy_candidates(),
     );
     let endpoints = match std::env::var("RUSTCRAFT_SETUP_BASE") {
         Ok(base) => manifest::Endpoints::local(&base),
@@ -96,7 +106,13 @@ pub fn first_launch_screen(args: &[String], tool_run: bool) -> Option<screen::Se
     Some(screen::SetupScreen::new(
         endpoints,
         download::Policy::default(),
-        target,
-        &crate::assets::downloads_for(&assets),
+        needs,
+        copy,
     ))
+}
+
+/// Called after the screen finished: records this clone as the last one
+/// with complete files.
+pub fn note_this_clone() {
+    layers::remember_clone(&crate::assets::dir(), crate::assets::source());
 }

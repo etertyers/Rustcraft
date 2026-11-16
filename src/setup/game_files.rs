@@ -70,8 +70,9 @@ fn lock() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Where a download fills: this clone's own folders, or the user layer for the app.
 fn target() -> Option<PathBuf> {
-    layers::user_assets()
+    layers::target()
 }
 
 fn tag_of(style: crate::render::visuals::Style) -> Option<StyleTag> {
@@ -128,6 +129,10 @@ fn start_job(state: &mut State, what: &str, vanilla: bool, extras: Vec<Extra>) {
         return;
     };
     state.message = None;
+    if !extras.is_empty() {
+        // Getting packs here ends "Only Minecraft's files".
+        layers::set_skip_packs(&target, false);
+    }
     state.job = Some(Running {
         handle: download::start_full(
             vanilla,
@@ -204,7 +209,7 @@ fn build_report() -> Report {
         }
         Err(_) => Health::Missing,
     };
-    let stamp = layers::user_assets()
+    let stamp = target()
         .map(|t| download::Stamp::read(&t))
         .unwrap_or_default();
     let version = stamp
@@ -396,7 +401,7 @@ pub fn page(ui: &mut egui::Ui) {
             if report.vanilla_in_user_layer {
                 ""
             } else {
-                " (the app's own copy)"
+                " (this copy of the game's own folder)"
             }
         ));
         ui.add_space(6.0);

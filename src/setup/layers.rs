@@ -1,8 +1,11 @@
 //! Which folders hold `vanilla/` and `downloads/`, and whether a copy is
-//! complete. The read-only asset root keeps its order (`--assets`,
-//! `$RUSTCRAFT_ASSETS`, the app's Resources, the source tree); for these
-//! two folders only, the root's copy wins when complete, otherwise the
-//! user layer (`~/Library/Application Support/Rustcraft/assets`) does.
+//! complete. The asset root keeps its order (`--assets`,
+//! `$RUSTCRAFT_ASSETS`, the app's Resources, the source tree). A clone of
+//! the repository (root = the source tree, or a folder given by flag or
+//! environment) counts only its own `assets/vanilla` and `assets/downloads`
+//! and fills them (M74, per clone). The .app's Resources are read-only, so
+//! only a bundle root falls back to the user layer
+//! (`~/Library/Application Support/Rustcraft/assets`) and downloads into it.
 
 use super::manifest::{self, Extra};
 use std::path::{Path, PathBuf};
@@ -14,6 +17,54 @@ pub const STAMP_FILE: &str = "installed.ron";
 /// `~/Library/Application Support/Rustcraft/assets`.
 pub fn user_assets() -> Option<PathBuf> {
     crate::assets::support_dir().map(|dir| dir.join("assets"))
+}
+
+/// Written in `downloads/` when the player chose "Only Minecraft's files":
+/// this clone doesn't ask for the packs again. Git-ignored with the folder.
+pub const SKIP_PACKS_FILE: &str = ".skip-packs";
+
+/// Where the last run from a clone recorded its assets folder, in the user
+/// layer's parent (`…/Rustcraft/last-assets.txt`).
+pub const LAST_ASSETS_FILE: &str = "last-assets.txt";
+
+/// Whether this root reads and fills the shared user layer: only the app
+/// bundle, whose Resources can't be written.
+pub fn shares_user_layer(source: crate::assets::RootSource) -> bool {
+    source == crate::assets::RootSource::Bundle
+}
+
+/// The folder a download or copy fills for `root`: the root itself for a
+/// clone (its own `vanilla/` and `downloads/`), the user layer for the
+/// bundle. `None`: a bundle with no home folder.
+pub fn target_for(root: &Path, source: crate::assets::RootSource) -> Option<PathBuf> {
+    if shares_user_layer(source) {
+        user_assets()
+    } else {
+        Some(root.to_owned())
+    }
+}
+
+/// [`target_for`] the game's own root.
+pub fn target() -> Option<PathBuf> {
+    target_for(&crate::assets::dir(), crate::assets::source())
+}
+
+/// Whether the player chose to go without the packs, under `target`.
+pub fn skip_packs(target: &Path) -> bool {
+    target.join("downloads").join(SKIP_PACKS_FILE).exists()
+}
+
+pub fn set_skip_packs(target: &Path, skip: bool) {
+    let marker = target.join("downloads").join(SKIP_PACKS_FILE);
+    if skip {
+        let _ = std::fs::create_dir_all(target.join("downloads"));
+        let _ = std::fs::write(
+            &marker,
+            "Only Minecraft's files; remove this file to be asked again.\n",
+        );
+    } else {
+        let _ = std::fs::remove_file(&marker);
+    }
 }
 
 /// What a complete vanilla layer holds (the numbers `check-vanilla.sh` prints).
@@ -220,11 +271,20 @@ pub struct Layers {
 /// else the root's (as before M74, so a missing layer is reported against
 /// the root).
 pub fn resolve(root: &Path, user: Option<&Path>) -> Layers {
+    resolve_with(root, user, true)
+}
+
+/// The choice for a root of this kind: a clone counts only its own folders.
+pub fn resolve_for(root: &Path, user: Option<&Path>, source: crate::assets::RootSource) -> Layers {
+    resolve_with(root, user, shares_user_layer(source))
+}
+
+fn resolve_with(root: &Path, user: Option<&Path>, shared: bool) -> Layers {
     let root_vanilla = root.join("vanilla");
     let root_downloads = root.join("downloads");
     let (mut vanilla, mut in_user_vanilla) = (root_vanilla.clone(), false);
     let (mut downloads, mut in_user_downloads) = (root_downloads.clone(), false);
-    if let Some(user) = user.filter(|u| *u != root) {
+    if let Some(user) = user.filter(|u| shared && *u != root) {
         if !vanilla_complete(&root_vanilla) && vanilla_complete(&user.join("vanilla")) {
             vanilla = user.join("vanilla");
             in_user_vanilla = true;
@@ -258,7 +318,7 @@ pub fn current(root: &Path) -> Layers {
     {
         return layers.clone();
     }
-    let layers = resolve(root, user_assets().as_deref());
+    let layers = resolve_for(root, user_assets().as_deref(), crate::assets::source());
     log::info!(
         "vanilla layer: {} ({}); downloads: {} ({})",
         layers.vanilla.display(),
@@ -297,4 +357,125 @@ pub fn vanilla_missing(root: &Path) -> bool {
 /// `root` or in `user`.
 pub fn vanilla_missing_in(root: &Path, user: Option<&Path>) -> bool {
     !vanilla_complete(&resolve(root, user).vanilla)
+}
+
+// --- A complete copy elsewhere on this Mac ----------------------------------
+
+/// A folder (an `assets/` folder) that has what this clone is missing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopySource {
+    pub assets: PathBuf,
+    /// Copies Minecraft's files.
+    pub vanilla: bool,
+    /// The packs and jars it copies.
+    pub extras: Vec<manifest::Extra>,
+    pub bytes: u64,
+}
+
+/// Remembers `root` (a clone with complete files) in the user layer's
+/// parent, so a fresh clone can offer to copy from it.
+pub fn remember_clone(root: &Path, source: crate::assets::RootSource) {
+    if shares_user_layer(source) || !vanilla_complete(&root.join("vanilla")) {
+        return;
+    }
+    let Some(dir) = crate::assets::support_dir() else {
+        return;
+    };
+    let text = root.display().to_string();
+    if std::fs::read_to_string(dir.join(LAST_ASSETS_FILE)).is_ok_and(|t| t.trim() == text) {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join(LAST_ASSETS_FILE), text);
+}
+
+/// The first of the user layer and the last clone that has everything the
+/// clone at `root` is missing: Minecraft's files when `need_vanilla`, and
+/// each of `need_extras` (only counts a copy that has them all). `None`
+/// when no such folder exists.
+pub fn find_copy_source(
+    root: &Path,
+    need_vanilla: bool,
+    need_extras: &[manifest::Extra],
+    candidates: &[PathBuf],
+) -> Option<CopySource> {
+    candidates.iter().find_map(|assets| {
+        if assets == root || !assets.is_dir() {
+            return None;
+        }
+        if need_vanilla && !vanilla_complete(&assets.join("vanilla")) {
+            return None;
+        }
+        let downloads = assets.join("downloads");
+        if need_extras
+            .iter()
+            .any(|e| presence(&downloads, e) != Presence::Present)
+        {
+            return None;
+        }
+        if !need_vanilla && need_extras.is_empty() {
+            return None;
+        }
+        let bytes = if need_vanilla {
+            super::download::dir_size(&assets.join("vanilla/assets"))
+        } else {
+            0
+        } + need_extras.iter().map(|e| e.size).sum::<u64>();
+        Some(CopySource {
+            assets: assets.clone(),
+            vanilla: need_vanilla,
+            extras: need_extras.to_vec(),
+            bytes,
+        })
+    })
+}
+
+/// The folders worth looking in, best first: the user layer, then the clone
+/// the last run used.
+pub fn copy_candidates() -> Vec<PathBuf> {
+    let mut list = Vec::new();
+    list.extend(user_assets());
+    if let Some(dir) = crate::assets::support_dir()
+        && let Ok(text) = std::fs::read_to_string(dir.join(LAST_ASSETS_FILE))
+    {
+        let path = PathBuf::from(text.trim());
+        if !path.as_os_str().is_empty() && !list.contains(&path) {
+            list.push(path);
+        }
+    }
+    list
+}
+
+/// What this start is missing, for the first-launch screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Needs {
+    /// Minecraft's files are missing or incomplete.
+    pub vanilla: bool,
+    /// The pinned packs and jars not in `downloads/` (none when the player
+    /// chose "Only Minecraft's files" for this clone).
+    pub extras: Vec<manifest::Extra>,
+    /// The folder a download or copy fills (see [`target_for`]).
+    pub target: PathBuf,
+}
+
+/// What `root` (of this `source`) lacks, counting only its own folders when
+/// it is a clone. `None`: nothing, so no screen.
+pub fn needs(root: &Path, source: crate::assets::RootSource, user: Option<&Path>) -> Option<Needs> {
+    let target = target_for(root, source)?;
+    let layers = resolve_for(root, user, source);
+    let vanilla = !vanilla_complete(&layers.vanilla);
+    let extras: Vec<manifest::Extra> = if skip_packs(&target) {
+        Vec::new()
+    } else {
+        manifest::extras()
+            .iter()
+            .filter(|e| presence(&layers.downloads, e) != Presence::Present)
+            .cloned()
+            .collect()
+    };
+    (vanilla || !extras.is_empty()).then_some(Needs {
+        vanilla,
+        extras,
+        target,
+    })
 }

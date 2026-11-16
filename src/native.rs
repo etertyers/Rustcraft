@@ -204,10 +204,13 @@ pub fn main() -> Result<()> {
     // them first, in a window of their own on this same event loop (M74).
     if let Some(screen) =
         rustcraft::setup::first_launch_screen(&args, cli.bench.is_some() || cli.shot.is_some())
-        && rustcraft::setup::window::run(&mut event_loop, screen)?
-            == rustcraft::setup::screen::Outcome::Quit
     {
-        return Ok(());
+        if rustcraft::setup::window::run(&mut event_loop, screen)?
+            == rustcraft::setup::screen::Outcome::Quit
+        {
+            return Ok(());
+        }
+        rustcraft::setup::note_this_clone();
     }
     let mut app = app::App::new(cli.world)
         .with_bench(cli.bench)

@@ -203,6 +203,7 @@ pub struct App {
     pending_look: Option<(Vec<String>, crossbeam_channel::Receiver<Result<Look>>)>,
     /// The style last seen in the options, to ask for its packs when the
     /// player picks one that is missing them (M74).
+    #[cfg(not(target_arch = "wasm32"))]
     style_seen: Option<crate::render::visuals::Style>,
     /// When texture animations started.
     animation_start: Instant,
@@ -428,6 +429,7 @@ impl App {
             live: Default::default(),
             sound_on: Default::default(),
             pending_look: None,
+            #[cfg(not(target_arch = "wasm32"))]
             style_seen: None,
             lod: LodView::default(),
             animation_start: Instant::now(),

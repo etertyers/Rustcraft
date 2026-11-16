@@ -895,3 +895,122 @@ pub fn start_import(picked: PathBuf, target: PathBuf) -> Handle {
         thread: Some(thread),
     }
 }
+
+// --- A complete copy elsewhere on this Mac (per-clone, M74) -----------------
+
+/// Copies what `source` has into `target` (`vanilla/` and `downloads/`),
+/// checking every copied file against its checksum: Minecraft's files
+/// against the source's `files.sha1` (made by the installer; a copy from the
+/// fetch script gets its list written from the copy), the packs and jars
+/// against the pinned sha512 in `downloads.ron`.
+pub fn copy_from(source: &layers::CopySource, target: &Path, ctl: &Control) -> Result<()> {
+    std::fs::create_dir_all(target)?;
+    let from_vanilla = source.assets.join("vanilla");
+    let total = if source.vanilla {
+        dir_size(&from_vanilla.join("assets"))
+    } else {
+        0
+    } + source.extras.iter().map(|e| e.size).sum::<u64>();
+    ctl.send(Event::Started { total, files: 0 });
+    let mut stamp = Stamp::read(target);
+    if source.vanilla {
+        ctl.send(Event::Stage("Copying Minecraft's files".into()));
+        let partial = vanilla_partial(target);
+        let _ = std::fs::remove_dir_all(&partial);
+        copy_tree(&from_vanilla.join("assets"), &partial.join("assets"), ctl)?;
+        let sums = from_vanilla.join(SUMS_FILE);
+        if sums.is_file() {
+            std::fs::copy(&sums, partial.join(SUMS_FILE))?;
+            ctl.send(Event::Stage(
+                "Checking the copy against its checksums".into(),
+            ));
+            match verify_vanilla(&partial) {
+                Some(bad) if !bad.is_empty() => {
+                    let _ = std::fs::remove_dir_all(&partial);
+                    return Err(SetupError::Checksum {
+                        file: bad[0].clone(),
+                        expected: "the checksum in files.sha1".into(),
+                        got: "a different one".into(),
+                        attempts: 1,
+                    });
+                }
+                _ => {}
+            }
+        }
+        layers::check_vanilla(&partial).map_err(|p| SetupError::Format(p.join("; ")))?;
+        if !sums.is_file() {
+            write_sums(&partial)?;
+        }
+        swap_into_place(&partial, &target.join("vanilla"))?;
+        let old = Stamp::read(&source.assets);
+        stamp.vanilla = Some(VanillaStamp {
+            version: old.vanilla.map_or_else(
+                || format!("copied from {}", source.assets.display()),
+                |v| v.version,
+            ),
+            files: 0,
+            bytes: total,
+        });
+    }
+    for extra in &source.extras {
+        if ctl.cancelled() {
+            return Err(SetupError::Cancelled);
+        }
+        ctl.send(Event::File(extra.name.clone()));
+        let from = source.assets.join("downloads").join(extra.rel_path());
+        let partial = downloads_partial(target).join(extra.rel_path());
+        if let Some(parent) = partial.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&from, &partial)?;
+        ctl.send(Event::Bytes(extra.size as i64));
+        let got = hash_file(Algo::Sha512, &partial)?;
+        if got != extra.sha512 {
+            let _ = std::fs::remove_dir_all(downloads_partial(target));
+            return Err(SetupError::Checksum {
+                file: extra.file.clone(),
+                expected: extra.sha512.clone(),
+                got,
+                attempts: 1,
+            });
+        }
+    }
+    for extra in &source.extras {
+        let from = downloads_partial(target).join(extra.rel_path());
+        let to = target.join("downloads").join(extra.rel_path());
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&from, &to)?;
+        stamp.extras.retain(|s| s.file != extra.file);
+        stamp.extras.push(ExtraStamp {
+            name: extra.name.clone(),
+            version: extra.version.clone(),
+            file: extra.file.clone(),
+        });
+    }
+    let _ = std::fs::remove_dir_all(downloads_partial(target));
+    stamp.write(target)?;
+    layers::refresh();
+    Ok(())
+}
+
+/// Runs [`copy_from`] on its own thread, like [`start`].
+pub fn start_copy(source: layers::CopySource, target: PathBuf) -> Handle {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let ctl = Control {
+        tx,
+        cancel: cancel.clone(),
+    };
+    let thread = std::thread::spawn(move || match copy_from(&source, &target, &ctl) {
+        Ok(()) => ctl.send(Event::Finished),
+        Err(SetupError::Cancelled) => ctl.send(Event::Cancelled),
+        Err(err) => ctl.send(Event::Failed(err)),
+    });
+    Handle {
+        rx,
+        cancel,
+        thread: Some(thread),
+    }
+}

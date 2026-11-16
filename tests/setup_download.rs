@@ -695,3 +695,171 @@ fn copy_dir(from: &Path, to: &Path) {
         }
     }
 }
+
+// --- Per clone (M74 follow-up) -----------------------------------------------
+
+use rustcraft::assets::RootSource;
+use rustcraft::setup::manifest;
+
+/// Puts every pinned pack and jar into `<assets>/downloads` at its pinned size.
+fn put_all_extras(assets: &Path) {
+    for e in manifest::extras() {
+        let path = assets.join("downloads").join(e.rel_path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::File::create(path)
+            .unwrap()
+            .set_len(e.size)
+            .unwrap();
+    }
+}
+
+/// A complete user layer (Minecraft's files and every pinned file).
+fn full_user_layer() -> PathBuf {
+    let (server, _, _) = serve_fake(fake(0));
+    let user = temp("clone-user");
+    install(&server, &user, vec![], true, quick()).0.unwrap();
+    put_all_extras(&user);
+    user
+}
+
+#[test]
+fn a_clone_with_no_vanilla_shows_the_screen_even_when_the_user_layer_is_complete() {
+    let user = full_user_layer();
+    let clone = temp("clone-empty");
+    let needs = layers::needs(&clone, RootSource::Repo, Some(&user)).expect("screen");
+    assert!(needs.vanilla);
+    assert_eq!(needs.extras.len(), manifest::extras().len());
+    // It fills the clone's own folders, not the user layer.
+    assert_eq!(needs.target, clone);
+    assert!(layers::vanilla_missing_in(&clone, None));
+    assert_eq!(
+        layers::resolve_for(&clone, Some(&user), RootSource::Repo).vanilla,
+        clone.join("vanilla")
+    );
+}
+
+#[test]
+fn a_clone_with_vanilla_but_a_missing_pack_shows_the_screen() {
+    let user = full_user_layer();
+    let clone = temp("clone-vanilla");
+    copy_dir(&user.join("vanilla"), &clone.join("vanilla"));
+    put_all_extras(&clone);
+    assert!(layers::needs(&clone, RootSource::Repo, Some(&user)).is_none());
+    let gone = &manifest::extras()[3];
+    std::fs::remove_file(clone.join("downloads").join(gone.rel_path())).unwrap();
+    let needs = layers::needs(&clone, RootSource::Repo, Some(&user)).expect("screen");
+    assert!(!needs.vanilla);
+    assert_eq!(needs.extras, vec![gone.clone()]);
+}
+
+#[test]
+fn the_skip_marker_stops_the_screen_for_packs_until_it_is_removed() {
+    let user = full_user_layer();
+    let clone = temp("clone-skip");
+    copy_dir(&user.join("vanilla"), &clone.join("vanilla"));
+    assert!(layers::needs(&clone, RootSource::Repo, None).is_some());
+    layers::set_skip_packs(&clone, true);
+    assert!(clone.join("downloads/.skip-packs").exists());
+    assert!(layers::needs(&clone, RootSource::Repo, None).is_none());
+    // Without vanilla the screen still comes, but without the packs.
+    let bare = temp("clone-skip-bare");
+    layers::set_skip_packs(&bare, true);
+    let needs = layers::needs(&bare, RootSource::Repo, None).unwrap();
+    assert!(needs.vanilla && needs.extras.is_empty());
+    layers::set_skip_packs(&clone, false);
+    assert!(layers::needs(&clone, RootSource::Repo, None).is_some());
+}
+
+#[test]
+fn the_app_bundle_still_uses_the_user_layer() {
+    let user = full_user_layer();
+    let resources = temp("bundle-root");
+    // The bundle falls back to the user layer, so it needs nothing.
+    assert!(layers::needs(&resources, RootSource::Bundle, Some(&user)).is_none());
+    let chosen = layers::resolve_for(&resources, Some(&user), RootSource::Bundle);
+    assert_eq!(chosen.vanilla, user.join("vanilla"));
+    assert!(chosen.vanilla_in_user_layer && chosen.downloads_in_user_layer);
+    // Downloads for the bundle go to the user layer; for a clone, to itself.
+    assert_eq!(
+        layers::target_for(&resources, RootSource::Repo),
+        Some(resources.clone())
+    );
+    if let Some(user_assets) = layers::user_assets() {
+        assert_eq!(
+            layers::target_for(&resources, RootSource::Bundle),
+            Some(user_assets)
+        );
+    }
+}
+
+#[test]
+fn a_download_into_a_clone_never_touches_the_user_layer() {
+    let (server, _, _) = serve_fake(fake(0));
+    let clone = temp("clone-download");
+    let needs = layers::needs(&clone, RootSource::Repo, None).unwrap();
+    let before =
+        layers::user_assets().map(|u| std::fs::metadata(&u).ok().map(|m| m.modified().ok()));
+    install(&server, &needs.target, vec![], true, quick())
+        .0
+        .unwrap();
+    assert!(layers::vanilla_complete(&clone.join("vanilla")));
+    assert!(clone.join(layers::STAMP_FILE).exists());
+    let after =
+        layers::user_assets().map(|u| std::fs::metadata(&u).ok().map(|m| m.modified().ok()));
+    assert_eq!(before, after);
+}
+
+#[test]
+fn copy_from_this_mac_verifies_checksums_and_fills_the_clones_folders() {
+    let (server, extras, _) = serve_fake(fake(2));
+    let source = temp("copy-source");
+    install(&server, &source, extras.clone(), true, quick())
+        .0
+        .unwrap();
+    let candidates = vec![source.clone()];
+    let clone = temp("copy-clone");
+    let found = layers::find_copy_source(&clone, true, &extras, &candidates).expect("a source");
+    assert!(found.vanilla && found.bytes > 0);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let ctl = Control {
+        tx,
+        cancel: Arc::new(AtomicBool::new(false)),
+    };
+    download::copy_from(&found, &clone, &ctl).unwrap();
+    layers::check_vanilla(&clone.join("vanilla")).unwrap();
+    assert!(
+        download::verify_vanilla(&clone.join("vanilla"))
+            .unwrap()
+            .is_empty()
+    );
+    for e in &extras {
+        assert!(clone.join("downloads").join(e.rel_path()).is_file());
+    }
+    assert!(rx.try_iter().any(|e| matches!(e, Event::Started { .. })));
+    assert_eq!(Stamp::read(&clone).extras.len(), 2);
+
+    // A source without everything this clone needs isn't offered.
+    let bare = temp("copy-bare");
+    assert!(layers::find_copy_source(&clone, true, &extras, &[bare]).is_none());
+    // A clone isn't offered itself.
+    assert!(layers::find_copy_source(&source, true, &extras, &candidates).is_none());
+
+    // A damaged file in the source is caught, and nothing is put in place.
+    let victim = source.join("vanilla/assets/minecraft/lang/en_us.json");
+    let mut text = std::fs::read(&victim).unwrap();
+    text.push(b' ');
+    std::fs::write(&victim, text).unwrap();
+    let clone2 = temp("copy-clone2");
+    let err = download::copy_from(&found, &clone2, &ctl).unwrap_err();
+    assert!(matches!(err, SetupError::Checksum { .. }), "{err}");
+    assert!(!clone2.join("vanilla").exists());
+    // So is a pack whose bytes don't match the pinned hash.
+    let victim = source.join("downloads").join(extras[0].rel_path());
+    std::fs::write(&victim, vec![7u8; extras[0].size as usize]).unwrap();
+    let packs_only = layers::CopySource {
+        vanilla: false,
+        ..found
+    };
+    let err = download::copy_from(&packs_only, &temp("copy-clone3"), &ctl).unwrap_err();
+    assert!(matches!(err, SetupError::Checksum { .. }), "{err}");
+}

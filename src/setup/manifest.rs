@@ -23,7 +23,7 @@ pub enum StyleTag {
 }
 
 /// One pinned file on Modrinth.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Extra {
     pub name: String,
     pub kind: Kind,
