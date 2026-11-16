@@ -863,3 +863,103 @@ fn copy_from_this_mac_verifies_checksums_and_fills_the_clones_folders() {
     let err = download::copy_from(&packs_only, &temp("copy-clone3"), &ctl).unwrap_err();
     assert!(matches!(err, SetupError::Checksum { .. }), "{err}");
 }
+
+// --- --download-only ---------------------------------------------------------
+
+use rustcraft::setup::headless;
+
+/// What `layers::needs` would say for `clone`, with the test's own pinned list.
+fn needs_with(clone: &Path, extras: &[Extra]) -> Option<layers::Needs> {
+    let vanilla = !layers::vanilla_complete(&clone.join("vanilla"));
+    let missing: Vec<Extra> = extras
+        .iter()
+        .filter(|e| layers::presence(&clone.join("downloads"), e) != layers::Presence::Present)
+        .cloned()
+        .collect();
+    (vanilla || !missing.is_empty()).then(|| layers::Needs {
+        vanilla,
+        extras: missing,
+        target: clone.to_owned(),
+    })
+}
+
+#[test]
+fn download_only_fills_an_empty_clone_then_does_nothing_and_reports_offline() {
+    let (server, extras, _) = serve_fake(fake(2));
+    let clone = temp("dl-only");
+    let mut out = Vec::new();
+    headless::run_with(
+        needs_with(&clone, &extras),
+        None,
+        server.endpoints(),
+        quick(),
+        &mut out,
+    )
+    .unwrap();
+    let text = String::from_utf8(out).unwrap();
+    assert!(
+        text.contains("downloading") && text.contains("done"),
+        "{text}"
+    );
+    layers::check_vanilla(&clone.join("vanilla")).unwrap();
+    for e in &extras {
+        assert!(clone.join("downloads").join(e.rel_path()).is_file());
+    }
+    assert!(needs_with(&clone, &extras).is_none());
+
+    // A second run asks for nothing and reaches no server.
+    server.clear_log();
+    let mut out = Vec::new();
+    headless::run_with(
+        needs_with(&clone, &extras),
+        None,
+        server.endpoints(),
+        quick(),
+        &mut out,
+    )
+    .unwrap();
+    assert!(
+        String::from_utf8(out)
+            .unwrap()
+            .contains("nothing is missing")
+    );
+    assert!(server.requests().is_empty(), "{:?}", server.requests());
+
+    // Offline: an error with the screen's one-line reason.
+    let port = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let ep = Endpoints::local(&format!("http://127.0.0.1:{port}"));
+    let bare = temp("dl-only-offline");
+    let err = headless::run_with(
+        needs_with(&bare, &extras),
+        None,
+        ep,
+        quick(),
+        &mut Vec::new(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, SetupError::Offline { .. }), "{err:?}");
+    assert!(err.to_string().contains("Is this Mac online?"));
+    assert!(!bare.join("vanilla").exists());
+}
+
+#[test]
+fn download_only_copies_from_this_mac_without_the_network() {
+    let (server, extras, _) = serve_fake(fake(2));
+    let source = temp("dl-only-source");
+    install(&server, &source, extras.clone(), true, quick())
+        .0
+        .unwrap();
+    server.clear_log();
+    let clone = temp("dl-only-copy");
+    let needs = needs_with(&clone, &extras).unwrap();
+    let copy = layers::find_copy_source(&clone, true, &needs.extras, &[source]);
+    assert!(copy.is_some());
+    let mut out = Vec::new();
+    headless::run_with(Some(needs), copy, server.endpoints(), quick(), &mut out).unwrap();
+    assert!(String::from_utf8(out).unwrap().contains("copying"));
+    assert!(server.requests().is_empty());
+    assert!(needs_with(&clone, &extras).is_none());
+}

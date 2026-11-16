@@ -27,6 +27,7 @@ scripts/fetch-vanilla-assets.sh      # Mojang's files into assets/vanilla (also 
 scripts/check-vanilla.sh             # is assets/vanilla complete?
 scripts/check-downloads.sh           # are the 5 packs and 9 mod jars (assets/data/downloads.ron) in assets/downloads?
 cargo run --release -- --no-download   # never show the screen (CI, tools)
+cargo run --release -- --download-only # no window: fill this clone's assets/vanilla and assets/downloads (Copy from this Mac when possible, else download), print progress, exit 0 when complete, non-zero with the reason if not
 ```
 
 ## Building the app

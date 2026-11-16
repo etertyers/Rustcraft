@@ -12,6 +12,7 @@
 
 pub mod download;
 pub mod game_files;
+pub mod headless;
 pub mod layers;
 pub mod manifest;
 pub mod modrinth;

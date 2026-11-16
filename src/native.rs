@@ -14,6 +14,11 @@ pub fn main() -> Result<()> {
         println!("wrote {count} templates to {}", dir.display());
         return Ok(());
     }
+    // `--download-only`: fill this clone's Minecraft files, packs and jars
+    // without a window (scripts, CI); the exit status says if it is complete.
+    if std::env::args().any(|arg| arg == "--download-only") {
+        rustcraft::platform::env::exit(rustcraft::setup::headless::cli());
+    }
     // Prints what the asset layers cover: textures and sounds still missing.
     if std::env::args().any(|arg| arg == "--asset-report") {
         let report = rustcraft::assets::report(&rustcraft::assets::dir())?;
