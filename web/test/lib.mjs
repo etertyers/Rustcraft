@@ -21,6 +21,13 @@ export async function serve() {
   const server = createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
     try {
+      // Minecraft's own files from this clone, for the load-time experiments
+      // (individual-file fetching); never part of target/web.
+      if (path.startsWith("/__vanilla/")) {
+        const data = await readFile(join(ROOT, "assets/vanilla/assets/minecraft", path.slice("/__vanilla/".length)));
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+        return res.end(data);
+      }
       // Local packs for the perf tests (never part of target/web).
       if (path.startsWith("/__packs/") && process.env.RUSTCRAFT_PACKS_DIR) {
         const data = await readFile(join(process.env.RUSTCRAFT_PACKS_DIR, path.slice("/__packs/".length)));

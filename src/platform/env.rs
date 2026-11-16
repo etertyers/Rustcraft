@@ -85,7 +85,14 @@ pub fn query_args(query: &str) -> Vec<String> {
 }
 
 /// Query keys the page itself uses, which are not game flags.
-const PAGE_ONLY: &[&str] = &["single-thread", "webgl", "debug", "mute"];
+const PAGE_ONLY: &[&str] = &[
+    "single-thread",
+    "webgl",
+    "debug",
+    "mute",
+    "eager",
+    "nobackground",
+];
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn var(name: &str) -> Result<String, VarError> {
@@ -178,5 +185,10 @@ mod tests {
             ["rustcraft", "--perf-test", "--style", "vanilla x"]
         );
         assert_eq!(query_args("?a=100%"), ["rustcraft", "--a", "100%"]);
+        // Keys the loader itself reads are not game flags.
+        assert_eq!(
+            query_args("?eager&nobackground&mute&style=realistic"),
+            ["rustcraft", "--style", "realistic"]
+        );
     }
 }

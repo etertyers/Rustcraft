@@ -12,7 +12,7 @@ Rustcraft is a Minecraft clone for macOS (Apple Silicon), written in Rust with w
 - LAN multiplayer for up to 8 players (Open to LAN, a server and clients), with chat.
 - Commands with vanilla Java syntax (selectors, `/execute`, scoreboards, data packs, command blocks). Cheat commands need Allow Cheats, or an operator on LAN.
 - Resource packs, an options menu with rebindable keys, advancements, Lua mods (with a bundled Fullbright mod), farming and fishing.
-- **A web build (v1.6, M70–M73):** the same crate compiled to `wasm32-unknown-unknown` and run in a browser on Mac and Windows (Eaglercraft's approach: the client on the main thread, the server and the generators in Web Workers). It leaves out LAN and Lua mods, and asks for Mojang's files at first start instead of bundling them. See `docs/web.md`.
+- **A web build (v1.6, M70–M73 and M75):** the same crate compiled to `wasm32-unknown-unknown` and run in a browser on Mac and Windows (Eaglercraft's approach: the client on the main thread, the server and the generators in Web Workers). It leaves out LAN and Lua mods. `scripts/build-web.sh` builds it with this clone's own Minecraft files, style packs and mod jars as built-in archives in `target/web/builtin/` (git-ignored, never committed or deployed), so it opens straight to the title screen; `--lite` leaves them out and the page asks for the files at first start. See `docs/web.md`.
 
 **Reference list:** `docs/blocks-and-items.md` lists every 1.0.0 block and item with its original numeric ID. Modern names are in `assets/data/blocks.ron` and `items.ron`.
 
@@ -75,7 +75,7 @@ cargo run --release -- --texture-audit [--mode vanilla|barebones|realistic]   # 
 cargo run --release -- --texture-viewer   # check textures by eye: B broken, K OK, U clear, F next flagged; marks go to texture-marks.ron (--texture-marks prints them); also Options → Video Settings → Texture Viewer, and /textures in a world
 cargo check --target wasm32-unknown-unknown                  # the web build still compiles (also run by the pre-commit hook and CI)
 cargo clippy --target wasm32-unknown-unknown -- -D warnings  # and is clippy-clean
-scripts/build-web.sh           # (M71) build target/web/ with wasm-bindgen + wasm-opt; refuses anything from assets/vanilla or assets/downloads
+scripts/build-web.sh           # (M71, M75) build target/web/: wasm-bindgen + wasm-opt, plus this clone's Minecraft files, packs and jars as built-in archives (it runs `--download-only` first if they're incomplete, and stops with its one-line reason if that fails); --lite builds without them; scripts/check-web-output.sh refuses Mojang's files, packs or jars anywhere but builtin/
 scripts/serve-web.sh           # (M71) serve target/web/ on the LAN and print the URLs; add ?single-thread, ?perf-test, ?creative to the URL
 cargo run --release -- --help        # every flag (note the `--`: without it cargo rejects the flag itself)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
@@ -281,3 +281,8 @@ Every numeric target in a milestone says where it comes from: vanilla code or da
 - Render Scale defaults to Auto (the world at no more than about 4 million pixels, the UI always at full resolution). The game runs at the display's full refresh rate, including 120 Hz ProMotion (M68). v1.5's budgets are measured on Kenzo's M4.
 - Distant Horizons is rebuilt natively as Distant Terrain: LOD terrain to 32–512 chunks (default 128 in Barebones and Realistic, Off in Vanilla), built by the server in the background and cached per world (M69).
 - Fresh installs download Mojang's files and the style packs from Mojang's and Modrinth's servers (M74); nothing is committed or hosted. The download screen belongs to each clone: it fills that clone's own `assets/vanilla` and `assets/downloads` and shows on every start where either lacks Minecraft's files or a pack or jar (`assets/downloads/.skip-packs` = "Only Minecraft's files"); it offers a checksum-verified "Copy from this Mac" when a complete copy exists. Only the .app and lite app use `~/Library/Application Support/Rustcraft/assets`.
+
+### v1.6 (the web version)
+
+- The local web build (M75) carries this clone's own Minecraft files, packs and mod jars in `target/web/builtin/`, built by `scripts/build-web.sh` from `assets/vanilla` (the game's files only, never `data/` or `server/`) and `assets/downloads`, like the .app bundle does. `target/` is git-ignored: they are never committed and the site is never deployed with them. `scripts/build-web.sh --lite` builds without them (the folder-picker setup screen), and that is the build to host anywhere.
+- The browser loads them as archives (not file by file), cached in OPFS under the build's stamp, with the sounds and the biggest pack arriving while the game runs (numbers in `docs/web.md`).
