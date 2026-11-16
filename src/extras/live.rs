@@ -55,7 +55,8 @@ impl Live {
             return;
         }
         self.loaded = true;
-        let dir = crate::assets::dir().join("downloads/mods");
+        let assets = crate::assets::dir();
+        let dir = crate::assets::downloads_for(&assets).join("mods");
         self.footsteps = Footsteps::load(&dir).filter(|f| !f.is_empty());
         self.ambient = Ambient::load(&dir).filter(|a| !a.is_empty());
         log::info!(

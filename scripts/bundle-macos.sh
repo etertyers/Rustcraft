@@ -5,6 +5,12 @@
 #
 #   scripts/bundle-macos.sh            # → target/release/bundle/Rustcraft.app
 #   scripts/bundle-macos.sh <out dir>  # → <out dir>/Rustcraft.app
+#   scripts/bundle-macos.sh --lite     # → target/release/bundle-lite/Rustcraft.app
+#
+# --lite (M74) leaves out assets/vanilla and assets/downloads and everything
+# from them (Mojang's files, the packs, the mod jars): the app downloads them on
+# first launch. It needs neither folder to exist, and is checked with
+# scripts/check-bundle.sh --lite.
 #
 # Refuses to build when assets/vanilla lacks sounds, the font or textures
 # (scripts/check-vanilla.sh), warns when the packs or mod jars in
@@ -16,19 +22,23 @@
 set -eu
 
 cd "$(dirname "$0")/.."
+LITE=0
+if [ "${1:-}" = "--lite" ]; then LITE=1; shift; fi
 ICON_SVG=assets/rustcraft-app-icon-v1.svg
-OUT=${1:-target/release/bundle}
+if [ $LITE = 1 ]; then OUT=${1:-target/release/bundle-lite}; else OUT=${1:-target/release/bundle}; fi
 APP="$OUT/Rustcraft.app"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 
 # A silent app is worse than no app: stop here if the vanilla layer is
 # incomplete.
-if ! scripts/check-vanilla.sh assets; then
-    echo "not building: complete assets/vanilla with scripts/fetch-vanilla-assets.sh first" >&2
-    exit 1
-fi
-if ! scripts/check-downloads.sh assets/downloads; then
-    echo "warning: building without the downloads listed above (Kenzo's packs and mod jars)" >&2
+if [ $LITE = 0 ]; then
+    if ! scripts/check-vanilla.sh assets; then
+        echo "not building: complete assets/vanilla with scripts/fetch-vanilla-assets.sh first" >&2
+        exit 1
+    fi
+    if ! scripts/check-downloads.sh assets/downloads; then
+        echo "warning: building without the downloads listed above (Kenzo's packs and mod jars)" >&2
+    fi
 fi
 
 cargo build --release
@@ -55,7 +65,11 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 # The assets, without the icon's source and the vanilla checkout's git data
 # (assets/vanilla is the local fallback layer from scripts/fetch-vanilla-assets.sh;
 # it goes into this local build only and is never committed).
-rsync -a --exclude '.DS_Store' --exclude '*.svg' --exclude '/vanilla/.git' assets/ "$APP/Contents/Resources/assets/"
+if [ $LITE = 1 ]; then
+    rsync -a --exclude '.DS_Store' --exclude '*.svg' --exclude '/vanilla' --exclude '/downloads' assets/ "$APP/Contents/Resources/assets/"
+else
+    rsync -a --exclude '.DS_Store' --exclude '*.svg' --exclude '/vanilla/.git' assets/ "$APP/Contents/Resources/assets/"
+fi
 # The bundled mods (Fullbright); players' own are in Application Support/Rustcraft/mods.
 rsync -a --exclude '.DS_Store' mods/ "$APP/Contents/Resources/mods/"
 
@@ -98,4 +112,8 @@ EOF
 # "damaged" warning once built here.
 codesign --force --sign - "$APP" >/dev/null 2>&1
 echo "built $APP"
-scripts/check-bundle.sh "$APP" assets
+if [ $LITE = 1 ]; then
+    scripts/check-bundle.sh --lite "$APP" assets
+else
+    scripts/check-bundle.sh "$APP" assets
+fi

@@ -31,6 +31,12 @@ libc = "0.2.191"
 env_logger = "0.11.11"
 egui-winit = "0.37.0"
 pollster = "1.0.1"
+# First-launch downloads (M74).
+ureq = { version = "3.5.1", features = ["platform-verifier"] }
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+hex = "0.4.3"
+rfd = "0.18.0"
 
 # The browser build (M70 on): see docs/web.md.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

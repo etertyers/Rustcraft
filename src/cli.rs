@@ -64,6 +64,11 @@ Usage: cargo run --release -- [flags]
                         stay off if you change an option, and come back from Resource Packs
   --assets <dir>        read the game's assets from this folder (default: the app's
                         Contents/Resources, else the source tree; never the current folder)
+  --no-download         never show the first-launch download screen (CI and tools); missing
+                        Minecraft files then stay missing, as before
+  --download-only       no window: fill this clone's assets/vanilla and assets/downloads (honors
+                        assets/downloads/.skip-packs), copying from this Mac when a complete copy
+                        exists, else downloading; prints progress; exit 0 when complete
   --bench [seconds] [--distance <chunks>]   timed flight, prints fps
   --perf-test           the performance gate (writes docs/perf/<label>.md and .json); --underwater flies in the sea;
                         --storm flies in a thunderstorm with boats and mobs being hit; --extras on|off sets every extra;
@@ -310,7 +315,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Cli, CliError> {
                 value(&mut args, "--assets", "a folder")?;
             }
             "--exit" | "--texture-audit" | "--texture-marks" | "--texture-viewer"
-            | "--safe-mode" => {}
+            | "--safe-mode" | "--no-download" | "--download-only" => {}
             "--entry" => {
                 value(&mut args, "--entry", "block/<name> or mob/<name>")?;
             }

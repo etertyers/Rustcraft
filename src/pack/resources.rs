@@ -115,16 +115,20 @@ impl Resources {
         if !vanilla {
             return Ok(res);
         }
-        crate::extras::jar::set_dir(&assets.join("downloads/mods"));
-        res.extra = crate::extras::jar::load(&assets.join("downloads/mods"));
-        res.vanilla = Pack::vanilla(&assets.join("vanilla"));
+        let (vanilla_dir, mods_dir) = (
+            crate::assets::vanilla_for(assets),
+            crate::assets::downloads_for(assets).join("mods"),
+        );
+        crate::extras::jar::set_dir(&mods_dir);
+        res.extra = crate::extras::jar::load(&mods_dir);
+        res.vanilla = Pack::vanilla(&vanilla_dir);
         if res.vanilla.is_none() {
             static WARNED: std::sync::Once = std::sync::Once::new();
             WARNED.call_once(|| {
                 warn!(
                     "no vanilla assets in {}: run scripts/fetch-vanilla-assets.sh; \
                      missing textures and sounds will show as checkerboards or stay silent",
-                    assets.join("vanilla").display()
+                    vanilla_dir.display()
                 );
             });
         }

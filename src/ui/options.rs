@@ -42,6 +42,8 @@ pub enum Page {
     Trailer,
     /// Video Settings' Extras: the video's mods, built in M63–M65.
     Extras,
+    /// Game Files (M74): what is downloaded, Verify, Re-download.
+    GameFiles,
 }
 
 impl Page {
@@ -69,6 +71,7 @@ impl Page {
             Page::Accessibility => "Accessibility Settings",
             Page::Trailer => "Shader Settings",
             Page::Extras => "Extras",
+            Page::GameFiles => "Game Files",
         }
     }
 }
@@ -215,6 +218,13 @@ impl OptionsScreen {
                 self.extras(ui, options);
                 None
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Page::GameFiles => {
+                crate::setup::game_files::page(ui);
+                None
+            }
+            #[cfg(target_arch = "wasm32")]
+            Page::GameFiles => None,
         };
         if self.page != Page::KeyBinds {
             ui.add_space(16.0);
@@ -285,6 +295,7 @@ impl OptionsScreen {
             ("Controls...", Some(Page::Controls)),
             ("Chat Settings...", Some(Page::Chat)),
             ("Resource Packs...", None),
+            ("Game Files...", Some(Page::GameFiles)),
             ("Accessibility Settings...", Some(Page::Accessibility)),
         ];
         pairs(ui, "options-pages", |ui, cell| {
@@ -293,7 +304,13 @@ impl OptionsScreen {
                 let response = ui.add(Button::new(label).min_size(HALF.into()));
                 if self.clicked(&response) {
                     match page {
-                        Some(page) => self.page = page,
+                        Some(page) => {
+                            self.page = page;
+                            #[cfg(not(target_arch = "wasm32"))]
+                            if page == Page::GameFiles {
+                                crate::setup::game_files::forget_report();
+                            }
+                        }
                         None => action = Some(OptionsAction::ResourcePacks),
                     }
                 }

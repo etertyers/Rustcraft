@@ -201,6 +201,10 @@ pub struct App {
     live: crate::extras::live::Live,
     sound_on: crate::extras::live::SoundOn,
     pending_look: Option<(Vec<String>, crossbeam_channel::Receiver<Result<Look>>)>,
+    /// The style last seen in the options, to ask for its packs when the
+    /// player picks one that is missing them (M74).
+    #[cfg(not(target_arch = "wasm32"))]
+    style_seen: Option<crate::render::visuals::Style>,
     /// When texture animations started.
     animation_start: Instant,
     /// Every block and item, for the creative inventory.
@@ -425,6 +429,8 @@ impl App {
             live: Default::default(),
             sound_on: Default::default(),
             pending_look: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            style_seen: None,
             lod: LodView::default(),
             animation_start: Instant::now(),
             catalog: Vec::new(),
@@ -1983,6 +1989,23 @@ impl App {
         self.pending_look = Some((packs, receive));
     }
 
+    /// Downloads that finished in the background rebuild the look; a style
+    /// chosen without its packs asks to download them (M74).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn poll_game_files(&mut self) {
+        if crate::setup::game_files::take_reload() {
+            self.apply_resource_packs();
+        }
+        let style = self.options.visuals.style;
+        if self
+            .style_seen
+            .replace(style)
+            .is_some_and(|seen| seen != style)
+        {
+            crate::setup::game_files::style_chosen(style);
+        }
+    }
+
     /// Swaps in the look `apply_resource_packs` was building, once it's
     /// ready.
     fn poll_pending_look(&mut self) {
@@ -2601,6 +2624,8 @@ impl App {
         }
         self.client_mods.advance(dt);
         self.poll_pending_look();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_game_files();
         self.poll_measure();
         self.animate_textures();
         self.update_audio(dt);
