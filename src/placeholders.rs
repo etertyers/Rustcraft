@@ -162,7 +162,7 @@ pub struct Vanilla {
 impl Vanilla {
     pub fn open(assets: &Path) -> Result<Self> {
         let root = assets.join("vanilla/assets/minecraft");
-        if !root.is_dir() {
+        if !crate::platform::fs::is_dir(&root) {
             bail!(
                 "no vanilla assets in {}: run scripts/fetch-vanilla-assets.sh",
                 root.display()
@@ -183,7 +183,7 @@ impl Vanilla {
     }
 
     fn has_texture(&self, location: &str) -> bool {
-        self.root.join(format!("textures/{location}.png")).is_file()
+        crate::platform::fs::is_file(self.root.join(format!("textures/{location}.png")))
     }
 
     /// The block's name in English, from the language file.
@@ -333,7 +333,7 @@ impl Vanilla {
         let mut level = 0;
         for location in locations {
             let path = self.root.join(format!("textures/{location}.png"));
-            let Ok(image) = image::open(&path) else {
+            let Ok(image) = crate::platform::fs::open_image(&path) else {
                 continue;
             };
             for pixel in image.to_rgba8().pixels() {
@@ -1071,7 +1071,7 @@ mod tests {
     #[test]
     fn placeholders_have_all_their_textures_with_the_vanilla_folder() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft")) {
             return;
         }
         let res = crate::pack::Resources::load(&assets, Vec::new()).unwrap();

@@ -2,8 +2,8 @@
 //! file that isn't a Lua mod, and the moves that fix it. The same routing
 //! serves the Mods screen's list, Add Files and files dropped on the window.
 
+use crate::platform::fs::File;
 use std::{
-    fs::File,
     io::BufReader,
     path::{Path, PathBuf},
 };
@@ -173,8 +173,8 @@ pub fn relaunch() {
 
 /// Moves `src` to `dest`, falling back to copy and delete across disks.
 fn move_path(src: &Path, dest: &Path) -> Result<()> {
-    if dest.exists() {
-        if dest.is_dir() {
+    if crate::platform::fs::exists(dest) {
+        if crate::platform::fs::is_dir(dest) {
             crate::platform::fs::remove_dir_all(dest)
         } else {
             crate::platform::fs::remove_file(dest)
@@ -185,7 +185,7 @@ fn move_path(src: &Path, dest: &Path) -> Result<()> {
         return Ok(());
     }
     copy_path(src, dest)?;
-    if src.is_dir() {
+    if crate::platform::fs::is_dir(src) {
         crate::platform::fs::remove_dir_all(src)
     } else {
         crate::platform::fs::remove_file(src)
@@ -194,7 +194,7 @@ fn move_path(src: &Path, dest: &Path) -> Result<()> {
 }
 
 fn copy_path(src: &Path, dest: &Path) -> Result<()> {
-    if src.is_dir() {
+    if crate::platform::fs::is_dir(src) {
         crate::platform::fs::create_dir_all(dest)?;
         for entry in crate::platform::fs::read_dir(src)? {
             let entry = entry?;
@@ -226,7 +226,7 @@ pub fn install_resource_pack(src: &Path, packs_dir: &Path, move_it: bool) -> Res
         if move_it {
             move_path(src, &dest)?;
         } else {
-            if dest.is_dir() {
+            if crate::platform::fs::is_dir(&dest) {
                 crate::platform::fs::remove_dir_all(&dest)?;
             }
             copy_path(src, &dest)?;
@@ -257,19 +257,19 @@ pub fn install_lua_mod(src: &Path, mods_dir: &Path, move_it: bool) -> Result<()>
 pub fn install_data_pack(src: &Path, world: &Path) -> Result<String> {
     let folder = display_name(src);
     let dest = world.join("datapacks").join(&folder);
-    if dest.exists() {
+    if crate::platform::fs::exists(&dest) {
         crate::platform::fs::remove_dir_all(&dest)
             .with_context(|| format!("replacing {folder}"))?;
     }
-    if src.is_dir() {
+    if crate::platform::fs::is_dir(src) {
         // A wrapped folder: the one that holds pack.mcmeta.
-        let root = if src.join("pack.mcmeta").is_file() {
+        let root = if crate::platform::fs::is_file(src.join("pack.mcmeta")) {
             src.to_owned()
         } else {
             crate::platform::fs::read_dir(src)?
                 .flatten()
                 .map(|e| e.path())
-                .find(|p| p.join("pack.mcmeta").is_file())
+                .find(|p| crate::platform::fs::is_file(p.join("pack.mcmeta")))
                 .context("no pack.mcmeta in it")?
         };
         copy_path(&root, &dest)?;
@@ -327,7 +327,7 @@ pub fn worlds_in(saves: &Path) -> Vec<(String, PathBuf)> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.join("level.ron").is_file())
+        .filter(|p| crate::platform::fs::is_file(p.join("level.ron")))
         .filter_map(|p| Some((p.file_name()?.to_string_lossy().into_owned(), p)))
         .collect();
     out.sort_by_key(|(name, _)| name.to_lowercase());
@@ -340,7 +340,7 @@ pub fn misplaced_in(dir: &Path) -> Vec<(String, Advice)> {
     super::kind::children(dir)
         .into_iter()
         .filter(|p| {
-            p.is_dir()
+            crate::platform::fs::is_dir(p)
                 || p.extension()
                     .is_some_and(|e| e.eq_ignore_ascii_case("zip") || e.eq_ignore_ascii_case("jar"))
         })
@@ -465,14 +465,20 @@ mod tests {
         let in_mods = zip_at(&mods, "FA.zip", &["pack.mcmeta", "assets/minecraft/a"]);
         let id = install_resource_pack(&in_mods, &packs, true).unwrap();
         assert_eq!(id, "FA.zip");
-        assert!(!in_mods.exists() && packs.join("FA.zip").is_file());
+        assert!(
+            !crate::platform::fs::exists(&in_mods)
+                && crate::platform::fs::is_file(packs.join("FA.zip"))
+        );
         let download = zip_at(
             dir.path(),
             "Other.zip",
             &["pack.mcmeta", "assets/minecraft/a"],
         );
         install_resource_pack(&download, &packs, false).unwrap();
-        assert!(download.exists() && packs.join("Other.zip").is_file());
+        assert!(
+            crate::platform::fs::exists(&download)
+                && crate::platform::fs::is_file(packs.join("Other.zip"))
+        );
     }
 
     #[test]
@@ -487,8 +493,12 @@ mod tests {
         );
         let name = install_data_pack(&src, &world).unwrap();
         assert_eq!(name, "tweaks");
-        assert!(world.join("datapacks/tweaks/pack.mcmeta").is_file());
-        assert!(world.join("datapacks/tweaks/data/x/y.json").is_file());
+        assert!(crate::platform::fs::is_file(
+            world.join("datapacks/tweaks/pack.mcmeta")
+        ));
+        assert!(crate::platform::fs::is_file(
+            world.join("datapacks/tweaks/data/x/y.json")
+        ));
         // The game's own reader finds it.
         assert_eq!(crate::game::datapack::discover(&world).len(), 1);
     }

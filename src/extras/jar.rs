@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn the_real_jars_give_their_sprites_when_downloaded() {
         let dir = crate::assets::dir().join("downloads/mods");
-        if !dir.is_dir() {
+        if !crate::platform::fs::is_dir(&dir) {
             eprintln!("skipped: no downloads/mods");
             return;
         }

@@ -296,8 +296,11 @@ mod tests {
         store.set_cap(size * 2 / 3 + 1);
         store.flush().unwrap();
         assert!(store.usage() <= size * 2 / 3 + 1);
-        assert!(!dir.join("r.0.1.0.lod").exists(), "oldest-used goes first");
-        assert!(dir.join("r.0.0.0.lod").exists());
+        assert!(
+            !crate::platform::fs::exists(dir.join("r.0.1.0.lod")),
+            "oldest-used goes first"
+        );
+        assert!(crate::platform::fs::exists(dir.join("r.0.0.0.lod")));
         let _ = fs::remove_dir_all(&dir);
     }
 

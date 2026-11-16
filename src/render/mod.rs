@@ -484,24 +484,29 @@ impl Layouts {
     }
 }
 
-impl Renderer {
-    pub fn new(
-        window: Arc<Window>,
-        atlas: &Atlas,
-        sky: &SkyImages,
-        mob_textures: &[RgbaImage],
-    ) -> Result<Self> {
-        let size = window.inner_size();
+/// The GPU: asked for once. Native asks inside `Renderer::new` and waits;
+/// the browser can't wait, so the web entry awaits `Gpu::request` first and
+/// hands the result in (M71).
+pub struct Gpu {
+    pub instance: wgpu::Instance,
+    pub surface: wgpu::Surface<'static>,
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+}
+
+impl Gpu {
+    pub async fn request(window: Arc<Window>) -> Result<Self> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let surface = instance.create_surface(window)?;
-        let adapter = crate::platform::task::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 ..Default::default()
-            },
-        ))?;
+            })
+            .await?;
         log::info!("GPU adapter: {:?}", adapter.get_info());
         // Timestamps for the GPU profiler, where the GPU has them.
         let features =
@@ -515,19 +520,64 @@ impl Renderer {
             }
         );
         // The adapter's own texture limit (wgpu's default asks for 8192),
-        // which the GUI is told too.
-        let max_side = adapter.limits().max_texture_dimension_2d;
-        let required_limits = wgpu::Limits {
-            max_texture_dimension_2d: max_side,
-            ..wgpu::Limits::default()
+        // which the GUI is told too. In the browser the adapter's limits are
+        // all it offers (WebGL2 can't meet wgpu's defaults).
+        let required_limits = if cfg!(target_arch = "wasm32") {
+            adapter.limits()
+        } else {
+            wgpu::Limits {
+                max_texture_dimension_2d: adapter.limits().max_texture_dimension_2d,
+                ..wgpu::Limits::default()
+            }
         };
-        let (device, queue) =
-            crate::platform::task::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
                 label: Some("rustcraft device"),
                 required_features: features,
                 required_limits,
                 ..Default::default()
-            }))?;
+            })
+            .await?;
+        Ok(Self {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+        })
+    }
+
+    /// The texture size limit the GUI is told.
+    pub fn texture_limit(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
+    }
+
+    /// Whether this is the WebGL2 fallback (some effects need WebGPU).
+    pub fn is_gl(&self) -> bool {
+        self.adapter.get_info().backend == wgpu::Backend::Gl
+    }
+}
+
+impl Renderer {
+    pub fn new(
+        window: Arc<Window>,
+        gpu: Option<Gpu>,
+        atlas: &Atlas,
+        sky: &SkyImages,
+        mob_textures: &[RgbaImage],
+    ) -> Result<Self> {
+        let size = window.inner_size();
+        let gpu = match gpu {
+            Some(gpu) => gpu,
+            None => crate::platform::task::block_on(Gpu::request(window))?,
+        };
+        let Gpu {
+            surface,
+            adapter,
+            device,
+            queue,
+            ..
+        } = gpu;
         let device_limit = device.limits().max_texture_dimension_2d;
         crate::startup::set_gpu_limit(device_limit);
 

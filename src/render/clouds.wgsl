@@ -35,7 +35,7 @@ fn fs_main(in: CloudOutput) -> @location(0) vec4<f32> {
     let size = BLOCKS_PER_TEXEL * f32(textureDimensions(cloud_texture).x);
     let drift = globals.camera.w * DRIFT_PER_TICK;
     let uv = vec2<f32>(in.world.x + drift, in.world.z) / size;
-    let texel = textureSample(cloud_texture, cloud_sampler, uv);
+    let texel = textureSampleLevel(cloud_texture, cloud_sampler, uv, 0.0);
     if texel.a < 0.5 {
         discard;
     }

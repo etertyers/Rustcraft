@@ -25,6 +25,12 @@ pub fn touch(_path: impl AsRef<Path>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Reads an image file (`image::open` goes to the operating system).
+pub fn open_image(path: impl AsRef<Path>) -> image::ImageResult<image::DynamicImage> {
+    let bytes = read(path).map_err(image::ImageError::IoError)?;
+    image::load_from_memory(&bytes)
+}
+
 /// Whether something is at `path`.
 pub fn exists(path: impl AsRef<Path>) -> bool {
     metadata(path).is_ok()
@@ -216,6 +222,14 @@ mod web {
                 writable: true,
                 dirty: false,
             })
+        }
+
+        /// Writes the file out (the browser's storage has no disk to sync).
+        pub fn sync_all(&self) -> io::Result<()> {
+            if self.dirty {
+                storage().write(&self.path, self.data.get_ref())?;
+            }
+            Ok(())
         }
 
         pub fn metadata(&self) -> io::Result<Metadata> {

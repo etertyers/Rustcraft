@@ -1,9 +1,9 @@
 //! Saving chunks: each chunk is encoded with bincode and compressed with
 //! LZ4. Region files (32×32 chunks each) hold the chunks the player changed.
 
+use crate::platform::fs::{self, File};
 use std::{
     collections::BTreeMap,
-    fs::{self, File},
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
@@ -489,7 +489,7 @@ type Blobs = Vec<Option<Vec<u8>>>;
 
 /// Every saved chunk's encoded bytes, by slot (all `None` if there's no file).
 fn read_blobs(path: &Path) -> Result<Blobs, SaveError> {
-    if !path.exists() {
+    if !crate::platform::fs::exists(path) {
         return Ok(vec![None; REGION_CHUNKS]);
     }
     let (version, blobs) = read_region(path)?;

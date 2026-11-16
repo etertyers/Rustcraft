@@ -1920,8 +1920,8 @@ pub(crate) mod tests {
         guest.ender_chest[3] = Some(ItemStack::new(items::EMERALD, 1));
         game.others.push(guest);
         game.save().unwrap();
-        assert!(dir().player_path("Kenzo").is_file());
-        assert!(dir().player_path("Guest").is_file());
+        assert!(crate::platform::fs::is_file(dir().player_path("Kenzo")));
+        assert!(crate::platform::fs::is_file(dir().player_path("Guest")));
         drop(game);
 
         let mut game = Game::open(dir(), items.clone(), models.clone()).unwrap();

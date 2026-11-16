@@ -14,9 +14,9 @@ pub mod lua;
 pub mod lua;
 pub mod route;
 
+use crate::platform::fs::File;
 use std::{
     collections::HashMap,
-    fs::File,
     io::{BufReader, Read},
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -88,7 +88,7 @@ impl Source {
     /// Whether the mod has a resource layer (`assets/minecraft/`).
     pub fn has_assets(&self) -> bool {
         match self {
-            Source::Dir(dir) => dir.join("assets/minecraft").is_dir(),
+            Source::Dir(dir) => crate::platform::fs::is_dir(dir.join("assets/minecraft")),
             Source::Zip { path, prefix } => File::open(path)
                 .ok()
                 .and_then(|f| zip::ZipArchive::new(BufReader::new(f)).ok())
@@ -227,7 +227,7 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                 .file_stem()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if !(path.is_dir() || is_zip) || file_name.starts_with('.') {
+            if !(crate::platform::fs::is_dir(&path) || is_zip) || file_name.starts_with('.') {
                 continue;
             }
             let what = kind::detect(&path);
@@ -258,7 +258,7 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                         continue;
                     }
                 }
-            } else if path.join("mod.ron").is_file() {
+            } else if crate::platform::fs::is_file(path.join("mod.ron")) {
                 Source::Dir(path.clone())
             } else {
                 // A mod inside one wrapping folder: use that folder.
@@ -267,7 +267,7 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                     .flatten()
                     .flatten()
                     .map(|e| e.path())
-                    .find(|p| p.join("mod.ron").is_file())
+                    .find(|p| crate::platform::fs::is_file(p.join("mod.ron")))
                 {
                     Some(inner) => Source::Dir(inner),
                     None => continue,

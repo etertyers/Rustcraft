@@ -39,7 +39,7 @@ pub fn discover(world: &Path) -> Vec<Pack> {
     };
     let mut packs: Vec<Pack> = entries
         .flatten()
-        .filter(|e| e.path().is_dir())
+        .filter(|e| crate::platform::fs::is_dir(e.path()))
         .filter_map(|e| {
             let dir = e.path();
             let meta: serde_json::Value =
@@ -136,7 +136,7 @@ fn files_under(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<_> = entries.flatten().map(|e| e.path()).collect();
     entries.sort();
     for path in entries {
-        if path.is_dir() {
+        if crate::platform::fs::is_dir(&path) {
             files_under(&path, ext, out);
         } else if path.extension().is_some_and(|e| e == ext) {
             out.push(path);
@@ -247,7 +247,10 @@ pub fn load(packs: &[Pack]) -> (Loaded, Vec<String>) {
         let Ok(spaces) = fs::read_dir(&data) else {
             continue;
         };
-        let mut spaces: Vec<_> = spaces.flatten().filter(|e| e.path().is_dir()).collect();
+        let mut spaces: Vec<_> = spaces
+            .flatten()
+            .filter(|e| crate::platform::fs::is_dir(e.path()))
+            .collect();
         spaces.sort_by_key(|e| e.file_name());
         for space in spaces {
             let ns = space.file_name().to_string_lossy().into_owned();

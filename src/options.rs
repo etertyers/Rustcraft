@@ -213,6 +213,18 @@ pub struct Options {
     pub distant: crate::lod::DistantTerrain,
 }
 
+/// The browser starts in Vanilla style with Shaders off: the packs aren't
+/// there until the player adds them, and it is the configuration the web
+/// gate measures (M71, M73).
+fn default_visuals() -> crate::render::visuals::Visuals {
+    let mut visuals = crate::render::visuals::Visuals::default();
+    if crate::platform::WEB {
+        visuals.look = crate::render::visuals::LookKind::Vanilla;
+        visuals.style = crate::render::visuals::Style::Vanilla;
+    }
+    visuals
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -247,7 +259,7 @@ impl Default for Options {
             damage_tilt: 1.0,
             glint_speed: 0.5,
             glint_strength: 0.75,
-            visuals: Default::default(),
+            visuals: default_visuals(),
             extras: Default::default(),
             distant: Default::default(),
         }

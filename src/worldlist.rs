@@ -143,7 +143,9 @@ fn read_info(path: PathBuf) -> Option<WorldInfo> {
         return None;
     }
     let meta = read_meta(&path)?;
-    let icon = image::open(path.join(ICON_FILE)).ok().map(|i| i.to_rgba8());
+    let icon = crate::platform::fs::open_image(path.join(ICON_FILE))
+        .ok()
+        .map(|i| i.to_rgba8());
     Some(WorldInfo {
         size: size_on_disk(&path),
         icon,

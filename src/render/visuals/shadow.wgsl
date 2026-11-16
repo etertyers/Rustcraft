@@ -42,7 +42,7 @@ fn fs_main(in: VertexOutput) {
     if ((in.face >> 24u) & 4u) != 0u {
         return;
     }
-    let texel = textureSample(atlas_texture, atlas_sampler, in.uv);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
     if texel.a < 0.5 {
         discard;
     }

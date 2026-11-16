@@ -4,8 +4,8 @@
 //! downloads wrap their contents) and says which kind it is, so the Mods
 //! screen, the Resource Packs screen and drag-and-drop route it the same.
 
+use crate::platform::fs::File;
 use std::{
-    fs::File,
     io::BufReader,
     path::{Path, PathBuf},
 };
@@ -56,7 +56,7 @@ impl FileKind {
 /// Every file name inside `path`, with `/` separators: a `.zip`'s entries,
 /// or a folder's files three levels down at most.
 fn names_in(path: &Path) -> Vec<String> {
-    if path.is_dir() {
+    if crate::platform::fs::is_dir(path) {
         let mut out = Vec::new();
         walk(path, "", 0, &mut out);
         return out;
@@ -79,7 +79,7 @@ fn walk(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
     };
     for entry in entries.flatten() {
         let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
-        if entry.path().is_dir() {
+        if crate::platform::fs::is_dir(entry.path()) {
             out.push(format!("{name}/"));
             if depth < 3 {
                 walk(&entry.path(), &format!("{name}/"), depth + 1, out);

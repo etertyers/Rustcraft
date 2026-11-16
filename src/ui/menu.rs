@@ -4,10 +4,8 @@
 //! (name, seed, game mode) and Multiplayer (worlds open to LAN found on the
 //! network, and Direct Connect).
 
-use std::{
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use crate::platform::time::{SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
 
 use super::ClickSound;
 use egui::{Align, Button, Color32, Frame, Layout, RichText};
@@ -315,6 +313,10 @@ impl Menu {
         {
             self.screen = Screen::Mods(super::mods::ModsScreen::new());
         }
+        // A page has no program to quit.
+        if crate::platform::WEB {
+            return None;
+        }
         ui.add_space(8.0);
         ui.add_sized(BUTTON, Button::new("Quit Game"))
             .clicked_with_sound()
@@ -478,7 +480,9 @@ impl Menu {
             });
         };
         field(ui, "World Name", &mut self.name);
-        let folder = level::folder_name(&self.name, |name| self.saves.join(name).exists());
+        let folder = level::folder_name(&self.name, |name| {
+            crate::platform::fs::exists(self.saves.join(name))
+        });
         ui.label(RichText::new(format!("Will be saved in: {folder}")).color(GRAY));
         ui.add_space(12.0);
         field(ui, "Seed for the World Generator", &mut self.seed);

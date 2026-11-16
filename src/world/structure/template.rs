@@ -246,7 +246,7 @@ impl Registry {
             templates: HashMap::new(),
             pools: HashMap::new(),
         };
-        if dir.is_dir() {
+        if crate::platform::fs::is_dir(dir) {
             registry.load_dir(dir, dir)?;
         }
         for names in registry.pools.values_mut() {
@@ -262,7 +262,7 @@ impl Registry {
             .collect();
         entries.sort();
         for path in entries {
-            if path.is_dir() {
+            if crate::platform::fs::is_dir(&path) {
                 self.load_dir(root, &path)?;
                 continue;
             }

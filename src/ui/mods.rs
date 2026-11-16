@@ -984,7 +984,7 @@ mod tests {
         let mut options = Options::default();
         let style = options.visuals.style;
         screen.apply(&fa, &Fix::MoveToResourcePacks, &mut options);
-        assert!(!fa.exists());
+        assert!(!crate::platform::fs::exists(&fa));
         assert!(
             root.path()
                 .join("resourcepacks/Fresh Animations.zip")
@@ -1100,8 +1100,13 @@ mod tests {
         // The test mod.ron is not valid RON, but the file is a Lua mod.
         assert_eq!(route::advise(&zip).fix, Fix::Install);
         screen.apply(&zip, &Fix::Install, &mut Options::default());
-        assert!(zip.exists(), "a download is copied, not moved");
-        assert!(root.path().join("mods/cool.zip").is_file());
+        assert!(
+            crate::platform::fs::exists(&zip),
+            "a download is copied, not moved"
+        );
+        assert!(crate::platform::fs::is_file(
+            root.path().join("mods/cool.zip")
+        ));
         assert!(screen.needs_restart());
     }
 
@@ -1125,7 +1130,7 @@ mod tests {
         let mut options = Options::default();
         let pending = screen.pending.remove(0);
         screen.apply(&pending.path, &pending.advice.fix, &mut options);
-        assert!(fa.exists(), "a drop copies");
+        assert!(crate::platform::fs::exists(&fa), "a drop copies");
         assert!(
             root.path()
                 .join("resourcepacks/FreshAnimations_v1.zip")
@@ -1151,7 +1156,9 @@ mod tests {
         let (_, worlds) = screen.world_choice.clone().expect("asks which world");
         assert_eq!(worlds.len(), 1);
         screen.add_to_world(&pack, &worlds[0].1);
-        assert!(world.join("datapacks/tweaks/pack.mcmeta").is_file());
+        assert!(crate::platform::fs::is_file(
+            world.join("datapacks/tweaks/pack.mcmeta")
+        ));
     }
 
     #[test]

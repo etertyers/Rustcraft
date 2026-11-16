@@ -1053,7 +1053,7 @@ mod tests {
     #[test]
     fn the_vanilla_sounds_decode_and_every_event_has_a_file() {
         let assets = crate::assets::dir();
-        if !assets.join("vanilla/assets/minecraft/sounds").is_dir() {
+        if !crate::platform::fs::is_dir(assets.join("vanilla/assets/minecraft/sounds")) {
             return;
         }
         let res = Resources::load(&assets, Vec::new()).unwrap();
