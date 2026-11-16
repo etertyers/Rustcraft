@@ -187,7 +187,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
 | 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | released (`v1.5.0`) |
-| 1.6 | M70–M73 | O | `docs/milestones/v1.6.md` | in progress (the web version) |
+| 1.6 | M70–M73 | O | `docs/milestones/v1.6.md` | built on `m73-web-speed`, awaiting Kenzo's check (M72 and M73 have known gaps, see the entries) |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`; after M69 merges, tag `v1.5.0` and rebuild the `.app`.
 

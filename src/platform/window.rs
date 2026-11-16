@@ -152,3 +152,34 @@ pub fn request_save() {
 pub fn take_save_request() -> bool {
     SAVE_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
+
+static CAMERA: std::sync::Mutex<(f32, f32, u64)> = std::sync::Mutex::new((0.0, 0.0, 0));
+
+/// Called once per drawn frame with the camera's yaw and pitch, so tests and
+/// the console can see what the game did with the mouse (`web::camera`).
+pub fn publish_camera(yaw: f32, pitch: f32) {
+    let mut c = CAMERA.lock().unwrap_or_else(|e| e.into_inner());
+    *c = (yaw, pitch, c.2 + 1);
+}
+
+/// (yaw, pitch, frames drawn so far).
+pub fn camera() -> (f32, f32, u64) {
+    *CAMERA.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+static SURFACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Called once per drawn frame with the size the surface is configured at
+/// (what the GPU draws into), for tests and the console.
+pub fn publish_surface(width: u32, height: u32) {
+    SURFACE.store(
+        (u64::from(width) << 32) | u64::from(height),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// The surface size last published.
+pub fn surface() -> (u32, u32) {
+    let packed = SURFACE.load(std::sync::atomic::Ordering::Relaxed);
+    ((packed >> 32) as u32, packed as u32)
+}

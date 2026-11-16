@@ -85,7 +85,7 @@ pub fn query_args(query: &str) -> Vec<String> {
 }
 
 /// Query keys the page itself uses, which are not game flags.
-const PAGE_ONLY: &[&str] = &["single-thread", "webgl", "debug"];
+const PAGE_ONLY: &[&str] = &["single-thread", "webgl", "debug", "mute"];
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn var(name: &str) -> Result<String, VarError> {

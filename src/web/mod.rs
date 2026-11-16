@@ -45,6 +45,8 @@ extern "C" {
     pub fn install_pointer_lock(canvas: &web_sys::HtmlCanvasElement);
     #[wasm_bindgen(js_name = installKeyboardLock)]
     pub fn install_keyboard_lock();
+    #[wasm_bindgen(js_name = markGesture)]
+    pub fn mark_gesture();
     #[wasm_bindgen(js_name = listenForGesture)]
     pub fn listen_for_gesture();
     #[wasm_bindgen(js_name = hadGesture)]
@@ -222,6 +224,26 @@ pub fn import_world(bytes: &[u8]) -> Result<String, JsValue> {
     crate::platform::world_zip::import(&crate::level::saves_dir(), bytes).map_err(js_err)
 }
 
+/// [yaw, pitch, frames drawn]: what the camera is doing (tests, console).
+#[wasm_bindgen]
+pub fn camera() -> Vec<f64> {
+    let (yaw, pitch, frames) = crate::platform::window::camera();
+    vec![f64::from(yaw), f64::from(pitch), frames as f64]
+}
+
+/// [width, height] of the surface the GPU draws into (tests, console).
+#[wasm_bindgen]
+pub fn surface() -> Vec<u32> {
+    let (w, h) = crate::platform::window::surface();
+    vec![w, h]
+}
+
+/// A file from the browser's storage (the perf test reads its results).
+#[wasm_bindgen]
+pub fn read_file(path: &str) -> Option<Vec<u8>> {
+    fs::read(path).ok()
+}
+
 /// Resolves when everything written so far has reached OPFS.
 #[wasm_bindgen]
 pub async fn storage_idle() -> Result<(), JsValue> {
@@ -259,6 +281,8 @@ pub fn start() -> Result<(), JsValue> {
         install_pointer_lock(&canvas);
     }
     install_keyboard_lock();
+    // `start` runs from the "Click to start" click: that is the gesture.
+    mark_gesture();
     listen_for_gesture();
     let lost = Closure::<dyn FnMut()>::new(crate::platform::window::set_lock_lost);
     on_pointer_lock_lost(&lost);

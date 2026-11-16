@@ -2080,6 +2080,36 @@ pub(crate) mod tests {
         assert!((170..230).contains(&some), "{some}");
     }
 
+    /// M73 follow-up: every mouse-motion event turns the camera, at once, by
+    /// its movement times `config::MOUSE_SENSITIVITY`: a burst of small moves
+    /// (the browser sends one per frame or more) ends where one big move
+    /// does, and nothing waits for a tick.
+    #[test]
+    fn every_mouse_event_turns_the_camera_at_the_native_sensitivity() {
+        let mut game = flat_game(GameMode::Survival);
+        game.player.camera.yaw = 1.0;
+        game.player.camera.pitch = 0.0;
+        let start = game.player.camera.yaw;
+        let time = game.time();
+        game.look(120.0, 0.0);
+        let one_move = game.player.camera.yaw - start;
+        assert!((one_move - 120.0 * config::MOUSE_SENSITIVITY).abs() < 1e-6);
+        // At once: no tick ran between the event and the camera moving.
+        assert_eq!(game.time(), time);
+        game.player.camera.yaw = start;
+        for _ in 0..40 {
+            game.look(3.0, 0.0);
+        }
+        let burst = game.player.camera.yaw - start;
+        assert!((burst - one_move).abs() < 1e-5, "{burst} vs {one_move}");
+        // Vertical moves add up the same way, and stop at straight up.
+        game.player.camera.pitch = 0.0;
+        for _ in 0..40 {
+            game.look(0.0, -3.0);
+        }
+        assert!((game.player.camera.pitch - 120.0 * config::MOUSE_SENSITIVITY).abs() < 1e-5);
+    }
+
     #[test]
     fn controls_options_invert_the_mouse_and_toggle_sneak_and_sprint() {
         let mut game = flat_game(GameMode::Survival);

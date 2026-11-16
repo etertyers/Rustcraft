@@ -103,10 +103,10 @@ export function installPointerLock(canvas) {
   canvas.requestPointerLock = (options) => {
     // Unadjusted movement where supported; otherwise the plain lock. A
     // refusal (no focus yet, the user pressed Esc) is not an error.
-    const quiet = (p) => { p?.catch?.(() => {}); return p; };
+    const quiet = (p) => { p?.catch?.((e) => console.warn("pointer lock refused:", e?.name, e?.message)); return p; };
     try {
       const p = request({ unadjustedMovement: true, ...options });
-      p?.catch?.(() => { quiet(request(options)); });
+      p?.catch?.((e) => { console.warn("unadjusted pointer lock refused:", e?.name, e?.message); quiet(request(options)); });
       return p;
     } catch {
       try { return quiet(request(options)); } catch { /* ignored */ }
@@ -129,13 +129,21 @@ export function installKeyboardLock() {
 
 // True once the player has clicked or pressed a key (audio may start).
 let gesture = false;
+// The "Click to start" click is a gesture: audio can start with the game,
+// not on the first click in the world (new AudioContext() blocks the page
+// for 200 to 600 ms on an M1, which froze the camera).
+export function markGesture() {
+  gesture = true;
+}
 export function listenForGesture() {
   const on = () => { gesture = true; };
   addEventListener("pointerdown", on, { once: true, capture: true });
   addEventListener("keydown", on, { once: true, capture: true });
 }
 export function hadGesture() {
-  return gesture;
+  // ?mute keeps the audio engine off (the perf tests use it to measure
+  // the game without sound decoding).
+  return gesture && !location.search.includes("mute");
 }
 
 export function hardwareConcurrency() {

@@ -5,20 +5,20 @@
 # Mojang's files (assets/vanilla), the packs and the mod jars (assets/downloads)
 # never go in: the script refuses to copy them and checks the result.
 #
-#   scripts/build-web.sh [--debug] [--no-opt]
+#   scripts/build-web.sh [--debug] [--no-opt] [--names]   (--names keeps function names for profiling)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PROFILE=release; FLAGS=(--release); OPT=1
-for a in "$@"; do case $a in --debug) PROFILE=debug; FLAGS=();; --no-opt) OPT=0;; esac; done
+PROFILE=release; FLAGS=(--release); OPT=1; NAMES=()
+for a in "$@"; do case $a in --debug) PROFILE=debug; FLAGS=();; --no-opt) OPT=0;; --names) NAMES=(--keep-debug);; esac; done
 OUT=target/web
 # Empty the folder rather than remove it, so a running serve-web.sh keeps working.
 mkdir -p "$OUT"; find "$OUT" -mindepth 1 -delete; mkdir -p "$OUT/pkg"
 
 cargo rustc --lib "${FLAGS[@]}" --target wasm32-unknown-unknown --crate-type cdylib
 WASM=target/wasm32-unknown-unknown/$PROFILE/rustcraft.wasm
-wasm-bindgen "$WASM" --target web --out-dir "$OUT/pkg" --out-name rustcraft --no-typescript
+wasm-bindgen "$WASM" --target web --out-dir "$OUT/pkg" --out-name rustcraft --no-typescript "${NAMES[@]+"${NAMES[@]}"}"
 if [ "$OPT" = 1 ] && [ "$PROFILE" = release ]; then
-  wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-simd \
+  wasm-opt -O3 ${NAMES:+-g} --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-simd \
     --enable-mutable-globals --enable-reference-types -o "$OUT/pkg/rustcraft_bg.opt.wasm" "$OUT/pkg/rustcraft_bg.wasm"
   mv "$OUT/pkg/rustcraft_bg.opt.wasm" "$OUT/pkg/rustcraft_bg.wasm"
 fi

@@ -129,6 +129,38 @@ mod tests {
         assert_eq!(scaled_size(3, 3, 50), (2, 2), "rounds up, never to zero");
     }
 
+    /// M73 follow-up: the browser's drawing buffer is the canvas's CSS size
+    /// times devicePixelRatio, and Render Scale Auto works on that: a 1440×900
+    /// page at ratio 1 is drawn whole, at ratio 2 (2880×1800, over 4 MP) the
+    /// world is drawn at 75% while the UI keeps the full buffer.
+    #[test]
+    fn auto_scale_follows_the_css_size_times_the_device_pixel_ratio() {
+        let buffer = |css: (u32, u32), dpr: f64| {
+            (
+                (f64::from(css.0) * dpr).round() as u32,
+                (f64::from(css.1) * dpr).round() as u32,
+            )
+        };
+        let small = buffer((1440, 900), 1.0);
+        assert_eq!(sizes(small, true, AUTO).scene, small);
+        let retina = buffer((1440, 900), 2.0);
+        assert_eq!(retina, (2880, 1800));
+        let s = sizes(retina, true, AUTO);
+        assert_eq!(auto_percent(retina.0, retina.1), 75);
+        assert_eq!(s.scene, (2160, 1350));
+        assert_eq!(s.ui, retina);
+        // Without shaders the world is the whole buffer at any ratio, so no
+        // blurry upscale at Render Scale 100%.
+        assert_eq!(sizes(retina, false, AUTO).scene, retina);
+        assert_eq!(sizes(retina, true, 100).scene, retina);
+        // A resize is just another buffer size.
+        for css in [(700, 500), (900, 600), (1500, 800), (3000, 2000)] {
+            let b = buffer(css, 2.0);
+            assert_eq!(sizes(b, true, AUTO).ui, b);
+            assert_eq!(sizes(b, false, 100).scene, b);
+        }
+    }
+
     #[test]
     fn the_ui_is_always_drawn_at_the_windows_full_size() {
         for window in [(1920, 1080), (3024, 1964), (3840, 2160), (1, 1)] {
