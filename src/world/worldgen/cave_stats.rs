@@ -704,8 +704,7 @@ mod tests {
             stats.system_shares.len()
         );
         // Deep down it is deepslate and tuff (95% of the solid blocks).
-        for b in 0..4 {
-            let [stone, deep, tuff] = stats.family[b];
+        for (b, &[stone, deep, tuff]) in stats.family.iter().take(4).enumerate() {
             assert!(
                 (deep + tuff) * 100 >= (stone + deep + tuff) * 95,
                 "band {b}: {stone} stone, {deep} deepslate, {tuff} tuff"
