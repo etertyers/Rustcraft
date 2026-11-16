@@ -36,8 +36,8 @@ pub fn marks_path() -> PathBuf {
 
 /// Today as `YYYY-MM-DD` (UTC).
 pub fn today() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let secs = crate::platform::time::SystemTime::now()
+        .duration_since(crate::platform::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     date_of(secs)
 }
@@ -59,7 +59,7 @@ pub fn date_of(secs: u64) -> String {
 impl Marks {
     /// The marks in `path`, none if it's missing or unreadable.
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        crate::platform::fs::read_to_string(path)
             .ok()
             .and_then(|text| ron::from_str(&text).ok())
             .unwrap_or_default()
@@ -69,7 +69,7 @@ impl Marks {
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(std::io::Error::other)?;
-        std::fs::write(path, text)
+        crate::platform::fs::write(path, text)
     }
 
     pub fn get(&self, id: &str, set: &str) -> Option<&Mark> {
@@ -163,7 +163,7 @@ mod tests {
     fn a_missing_or_broken_file_is_no_marks() {
         let dir = crate::world::save::TempDir::new("marks-none");
         assert_eq!(Marks::load(&dir.path().join("nope.ron")), Marks::default());
-        std::fs::write(dir.path().join("bad.ron"), "(((").unwrap();
+        crate::platform::fs::write(dir.path().join("bad.ron"), "(((").unwrap();
         assert_eq!(Marks::load(&dir.path().join("bad.ron")), Marks::default());
     }
 

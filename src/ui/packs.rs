@@ -3,10 +3,8 @@
 //! with the highest priority on top and the defaults always at the bottom.
 //! Done applies the selection; the game reloads its textures in place.
 
-use std::{
-    path::PathBuf,
-    time::{Duration, Instant, SystemTime},
-};
+use crate::platform::time::{Instant, SystemTime};
+use std::{path::PathBuf, time::Duration};
 
 use super::ClickSound;
 use egui::{Button, Color32, RichText, TextureHandle, vec2};
@@ -267,7 +265,7 @@ impl PackScreen {
 
     /// Shows the packs folder in the Finder, making it if needed.
     fn open_folder(&self) {
-        if let Err(err) = std::fs::create_dir_all(&self.dir) {
+        if let Err(err) = crate::platform::fs::create_dir_all(&self.dir) {
             return warn!("creating {}: {err}", self.dir.display());
         }
         if let Err(err) = std::process::Command::new("open").arg(&self.dir).spawn() {
@@ -352,7 +350,9 @@ fn row(ui: &mut egui::Ui, entry: &mut Entry, buttons: &[(&str, Click)], click: &
 
 /// When `dir` last changed, if it exists.
 fn modified(dir: &std::path::Path) -> Option<SystemTime> {
-    std::fs::metadata(dir).and_then(|m| m.modified()).ok()
+    crate::platform::fs::metadata(dir)
+        .and_then(|m| m.modified())
+        .ok()
 }
 
 #[cfg(test)]
@@ -411,7 +411,7 @@ mod tests {
     fn rescanning_keeps_the_selection() {
         let (dir, mut screen) = screen_with(&["a.zip", "b.zip"], &["b.zip"]);
         write_zip(&dir.path().join("new.zip"), &[("pack.mcmeta", MCMETA)]);
-        std::fs::remove_file(dir.path().join("a.zip")).unwrap();
+        crate::platform::fs::remove_file(dir.path().join("a.zip")).unwrap();
         let selection = screen.selection();
         screen.rescan(&selection);
         assert_eq!(screen.selection(), ["b.zip"]);

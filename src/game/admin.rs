@@ -1,9 +1,9 @@
 //! Who may do what on a hosted world (M43): operators, bans and the
 //! whitelist, kept in plain text files beside the world's level.
 
+use crate::platform::fs;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::Path,
 };
 
@@ -89,7 +89,8 @@ mod tests {
 
     #[test]
     fn lists_survive_a_save_and_bans_and_the_whitelist_refuse() {
-        let dir = std::env::temp_dir().join(format!("rc-admin-{}", std::process::id()));
+        let dir = crate::platform::env::temp_dir()
+            .join(format!("rc-admin-{}", crate::platform::env::process_id()));
         fs::create_dir_all(&dir).unwrap();
         let mut admin = Admin::default();
         admin.ops.insert("Kenzo".into());

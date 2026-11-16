@@ -168,7 +168,7 @@ impl Ambient {
     /// Reads the mod's regions and categories from its jar in `dir`.
     pub fn load(dir: &std::path::Path) -> Option<Self> {
         let jar = super::jar::find_jar_in(dir, "AmbientSounds_")?;
-        let mut zip = zip::ZipArchive::new(std::fs::File::open(&jar).ok()?).ok()?;
+        let mut zip = zip::ZipArchive::new(crate::platform::fs::File::open(&jar).ok()?).ok()?;
         let names: Vec<String> = zip
             .file_names()
             .filter_map(|n| n.ok().map(|n| n.into_owned()))

@@ -165,7 +165,7 @@ pub fn measure(seed: u64, side: i32) -> Dirt {
     let positions: Vec<ChunkPos> = (first..first + side)
         .flat_map(|z| (first..first + side).map(move |x| ChunkPos::new(x, z)))
         .collect();
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let threads = crate::platform::task::available_parallelism().map_or(4, |n| n.get());
     let per = positions.len().div_ceil(threads);
     let mut total = Dirt {
         area: (side as u64 * CHUNK_SIZE as u64).pow(2),
@@ -213,7 +213,7 @@ pub fn measure(seed: u64, side: i32) -> Dirt {
                                     }
                                 } else if let Some((y, _)) = dirt(&carved) {
                                     part.carver.insert(at);
-                                    if std::env::var_os("M67_DEBUG").is_some() && part.carver.len() < 12 {
+                                    if crate::platform::env::var_os("M67_DEBUG").is_some() && part.carver.len() < 12 {
                                         let area = terrain.area(pos);
                                         let c = area.get(at.0, at.1);
                                         let name = |ch: &Chunk, yy: i32| ch.get(x, yy, z).def().name.clone();

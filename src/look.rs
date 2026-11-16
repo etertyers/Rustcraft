@@ -2,7 +2,8 @@
 //! atlas, block models, item icons, sky, mob textures and GUI images.
 //! Built at startup and again whenever the selected packs change.
 
-use std::{path::Path, sync::Arc, time::Instant};
+use crate::platform::time::Instant;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use image::RgbaImage;
@@ -528,7 +529,7 @@ mod tests {
     fn a_vanilla_mob_texture_of_the_wrong_size_is_skipped() {
         let dir = crate::world::save::TempDir::new("vanilla-mobs");
         let root = dir.path().join("vanilla/assets/minecraft/textures/entity");
-        std::fs::create_dir_all(&root).unwrap();
+        crate::platform::fs::create_dir_all(&root).unwrap();
         for (name, w, h) in [("pig", 64, 32), ("horse", 128, 128)] {
             RgbaImage::from_pixel(w, h, image::Rgba([9, 9, 9, 255]))
                 .save(root.join(format!("{name}.png")))
@@ -564,8 +565,8 @@ mod tests {
         let dir = crate::world::save::TempDir::new("base-horse");
         let base = dir.path().join("textures/entity");
         let vanilla = dir.path().join("vanilla/assets/minecraft/textures/entity");
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::create_dir_all(&vanilla).unwrap();
+        crate::platform::fs::create_dir_all(&base).unwrap();
+        crate::platform::fs::create_dir_all(&vanilla).unwrap();
         let save = |root: &std::path::Path, name: &str, size: u32| {
             RgbaImage::from_pixel(size, size, image::Rgba([9, 9, 9, 255]))
                 .save(root.join(format!("{name}.png")))

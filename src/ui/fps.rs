@@ -1,6 +1,8 @@
 //! Frames-per-second counter.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::platform::time::Instant;
 
 /// How often the displayed FPS refreshes.
 const SAMPLE_PERIOD: Duration = Duration::from_millis(500);

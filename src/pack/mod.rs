@@ -272,7 +272,7 @@ impl Pack {
     /// A file relative to the pack's root.
     fn read_file(&self, path: &str) -> Option<Vec<u8>> {
         match &self.files {
-            Files::Dir(dir) => std::fs::read(dir.join(path)).ok(),
+            Files::Dir(dir) => crate::platform::fs::read(dir.join(path)).ok(),
             Files::Zip {
                 archive,
                 names,
@@ -373,7 +373,7 @@ pub fn find_by_words(dir: &Path, want: &[&str], deny: &[&str]) -> Option<String>
             .filter(char::is_ascii_lowercase)
             .collect::<String>()
     };
-    let mut names: Vec<String> = std::fs::read_dir(dir)
+    let mut names: Vec<String> = crate::platform::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
         .collect();
@@ -459,7 +459,7 @@ pub fn missing_for(
 /// Every pack in `dir`, sorted by name; ones that can't be read are
 /// skipped with a warning.
 pub fn list(dir: &Path) -> Vec<Pack> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::platform::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut packs: Vec<Pack> = entries
@@ -590,9 +590,10 @@ pub(crate) mod tests {
     fn opens_folders_and_zips_even_wrapped_in_a_folder() {
         let dir = TempDir::new("packs");
         let folder = dir.path().join("Folder Pack");
-        std::fs::create_dir_all(folder.join("assets/minecraft/textures/block")).unwrap();
-        std::fs::write(folder.join("pack.mcmeta"), MCMETA).unwrap();
-        std::fs::write(
+        crate::platform::fs::create_dir_all(folder.join("assets/minecraft/textures/block"))
+            .unwrap();
+        crate::platform::fs::write(folder.join("pack.mcmeta"), MCMETA).unwrap();
+        crate::platform::fs::write(
             folder.join("assets/minecraft/textures/block/stone.png"),
             b"png",
         )
@@ -613,7 +614,7 @@ pub(crate) mod tests {
             ],
         );
         write_zip(&dir.path().join("broken.zip"), &[("readme.txt", b"hi")]);
-        std::fs::write(dir.path().join("notes.txt"), b"not a pack").unwrap();
+        crate::platform::fs::write(dir.path().join("notes.txt"), b"not a pack").unwrap();
 
         let packs = list(dir.path());
         let names: Vec<&str> = packs.iter().map(Pack::name).collect();

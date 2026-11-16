@@ -156,10 +156,10 @@ pub fn advise_as(path: &Path, kind: FileKind) -> Advice {
 /// Starts the game again a moment after this one has quit (Restart now):
 /// the same program with the same arguments.
 pub fn relaunch() {
-    let Ok(exe) = std::env::current_exe() else {
+    let Ok(exe) = crate::platform::env::current_exe() else {
         return log::warn!("can't restart: the game's own path is unknown");
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = crate::platform::env::args().skip(1).collect();
     let result = std::process::Command::new("sh")
         .arg("-c")
         .arg("sleep 1; exec \"$0\" \"$@\"")
@@ -175,33 +175,33 @@ pub fn relaunch() {
 fn move_path(src: &Path, dest: &Path) -> Result<()> {
     if dest.exists() {
         if dest.is_dir() {
-            std::fs::remove_dir_all(dest)
+            crate::platform::fs::remove_dir_all(dest)
         } else {
-            std::fs::remove_file(dest)
+            crate::platform::fs::remove_file(dest)
         }
         .with_context(|| format!("replacing {}", dest.display()))?;
     }
-    if std::fs::rename(src, dest).is_ok() {
+    if crate::platform::fs::rename(src, dest).is_ok() {
         return Ok(());
     }
     copy_path(src, dest)?;
     if src.is_dir() {
-        std::fs::remove_dir_all(src)
+        crate::platform::fs::remove_dir_all(src)
     } else {
-        std::fs::remove_file(src)
+        crate::platform::fs::remove_file(src)
     }
     .with_context(|| format!("removing {}", src.display()))
 }
 
 fn copy_path(src: &Path, dest: &Path) -> Result<()> {
     if src.is_dir() {
-        std::fs::create_dir_all(dest)?;
-        for entry in std::fs::read_dir(src)? {
+        crate::platform::fs::create_dir_all(dest)?;
+        for entry in crate::platform::fs::read_dir(src)? {
             let entry = entry?;
             copy_path(&entry.path(), &dest.join(entry.file_name()))?;
         }
     } else {
-        std::fs::copy(src, dest)
+        crate::platform::fs::copy(src, dest)
             .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
     }
     Ok(())
@@ -212,7 +212,8 @@ fn target(src: &Path, dir: &Path) -> Result<PathBuf> {
     let name = src
         .file_name()
         .with_context(|| format!("{} has no name", src.display()))?;
-    std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
+    crate::platform::fs::create_dir_all(dir)
+        .with_context(|| format!("making {}", dir.display()))?;
     Ok(dir.join(name))
 }
 
@@ -226,7 +227,7 @@ pub fn install_resource_pack(src: &Path, packs_dir: &Path, move_it: bool) -> Res
             move_path(src, &dest)?;
         } else {
             if dest.is_dir() {
-                std::fs::remove_dir_all(&dest)?;
+                crate::platform::fs::remove_dir_all(&dest)?;
             }
             copy_path(src, &dest)?;
         }
@@ -257,14 +258,15 @@ pub fn install_data_pack(src: &Path, world: &Path) -> Result<String> {
     let folder = display_name(src);
     let dest = world.join("datapacks").join(&folder);
     if dest.exists() {
-        std::fs::remove_dir_all(&dest).with_context(|| format!("replacing {folder}"))?;
+        crate::platform::fs::remove_dir_all(&dest)
+            .with_context(|| format!("replacing {folder}"))?;
     }
     if src.is_dir() {
         // A wrapped folder: the one that holds pack.mcmeta.
         let root = if src.join("pack.mcmeta").is_file() {
             src.to_owned()
         } else {
-            std::fs::read_dir(src)?
+            crate::platform::fs::read_dir(src)?
                 .flatten()
                 .map(|e| e.path())
                 .find(|p| p.join("pack.mcmeta").is_file())
@@ -293,7 +295,7 @@ pub fn install_data_pack(src: &Path, world: &Path) -> Result<String> {
                 .context("no pack.mcmeta in it")?
         }
     };
-    std::fs::create_dir_all(&dest)?;
+    crate::platform::fs::create_dir_all(&dest)?;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let Some(path) = entry.enclosed_name() else {
@@ -307,10 +309,10 @@ pub fn install_data_pack(src: &Path, world: &Path) -> Result<String> {
         }
         let out = dest.join(rel);
         if entry.is_dir() {
-            std::fs::create_dir_all(&out)?;
+            crate::platform::fs::create_dir_all(&out)?;
         } else {
             if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent)?;
+                crate::platform::fs::create_dir_all(parent)?;
             }
             std::io::copy(&mut entry, &mut File::create(&out)?)?;
         }
@@ -320,7 +322,7 @@ pub fn install_data_pack(src: &Path, world: &Path) -> Result<String> {
 
 /// The saved worlds (folders with a `level.ron`) in `saves`, by name.
 pub fn worlds_in(saves: &Path) -> Vec<(String, PathBuf)> {
-    let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(saves)
+    let mut out: Vec<(String, PathBuf)> = crate::platform::fs::read_dir(saves)
         .into_iter()
         .flatten()
         .flatten()
@@ -459,7 +461,7 @@ mod tests {
         let dir = TempDir::new("move-pack");
         let mods = dir.path().join("mods");
         let packs = dir.path().join("resourcepacks");
-        std::fs::create_dir_all(&mods).unwrap();
+        crate::platform::fs::create_dir_all(&mods).unwrap();
         let in_mods = zip_at(&mods, "FA.zip", &["pack.mcmeta", "assets/minecraft/a"]);
         let id = install_resource_pack(&in_mods, &packs, true).unwrap();
         assert_eq!(id, "FA.zip");
@@ -477,7 +479,7 @@ mod tests {
     fn a_data_pack_zip_is_unpacked_into_the_world_without_its_wrapper() {
         let dir = TempDir::new("data-pack");
         let world = dir.path().join("saves/w");
-        std::fs::create_dir_all(&world).unwrap();
+        crate::platform::fs::create_dir_all(&world).unwrap();
         let src = zip_at(
             dir.path(),
             "tweaks.zip",

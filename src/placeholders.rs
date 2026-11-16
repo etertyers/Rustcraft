@@ -170,7 +170,7 @@ impl Vanilla {
         }
         let path = root.join("lang/en_us.json");
         let lang = serde_json::from_str(
-            &std::fs::read_to_string(&path)
+            &crate::platform::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?,
         )
         .with_context(|| format!("parsing {}", path.display()))?;
@@ -178,7 +178,7 @@ impl Vanilla {
     }
 
     fn json(&self, path: &str) -> Option<Value> {
-        let text = std::fs::read_to_string(self.root.join(path)).ok()?;
+        let text = crate::platform::fs::read_to_string(self.root.join(path)).ok()?;
         crate::pack::parse_json(&text).ok()
     }
 
@@ -676,7 +676,8 @@ pub fn collect(assets: &Path) -> Result<Generated> {
     let vanilla = Vanilla::open(assets)?;
     let data = assets.join("data");
     let read = |file: &str| -> Result<String> {
-        std::fs::read_to_string(data.join(file)).with_context(|| format!("reading {file}"))
+        crate::platform::fs::read_to_string(data.join(file))
+            .with_context(|| format!("reading {file}"))
     };
     let blocks = names(&read("blocks.ron")?)?;
     let items = names(&read("items.ron")?)?;
@@ -696,8 +697,8 @@ pub fn collect(assets: &Path) -> Result<Generated> {
     let listing = |dir: &str| -> Result<BTreeSet<String>> {
         let path = vanilla.root.join(dir);
         let mut names = BTreeSet::new();
-        for entry in
-            std::fs::read_dir(&path).with_context(|| format!("reading {}", path.display()))?
+        for entry in crate::platform::fs::read_dir(&path)
+            .with_context(|| format!("reading {}", path.display()))?
         {
             let file = entry?.file_name().to_string_lossy().into_owned();
             if let Some(name) = file.strip_suffix(".json")
@@ -868,9 +869,9 @@ pub fn markdown(found: &Generated) -> String {
 pub fn generate(assets: &Path, docs: &Path) -> Result<Generated> {
     let found = collect(assets)?;
     let data = assets.join("data");
-    std::fs::write(data.join("placeholder_blocks.ron"), blocks_ron(&found))?;
-    std::fs::write(data.join("placeholder_items.ron"), items_ron(&found))?;
-    std::fs::write(docs.join("placeholders.md"), markdown(&found))?;
+    crate::platform::fs::write(data.join("placeholder_blocks.ron"), blocks_ron(&found))?;
+    crate::platform::fs::write(data.join("placeholder_items.ron"), items_ron(&found))?;
+    crate::platform::fs::write(docs.join("placeholders.md"), markdown(&found))?;
     Ok(found)
 }
 
@@ -1020,12 +1021,14 @@ mod tests {
 
     #[test]
     fn none_of_the_skipped_ids_are_registered() {
-        let mobs: BTreeSet<String> =
-            names(&std::fs::read_to_string(crate::assets::dir().join("data/mobs.ron")).unwrap())
-                .unwrap()
-                .into_iter()
-                .map(|m| m.name)
-                .collect();
+        let mobs: BTreeSet<String> = names(
+            &crate::platform::fs::read_to_string(crate::assets::dir().join("data/mobs.ron"))
+                .unwrap(),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
         for name in SKIPPED {
             assert!(blocks::by_name(name).is_none(), "block {name}");
             assert!(items::by_name(name).is_none(), "item {name}");

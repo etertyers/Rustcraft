@@ -3,9 +3,9 @@
 //! (`function/**/*.mcfunction`), function tags (`tags/function/*.json`),
 //! predicates (`predicate/*.json`) and loot tables (`loot_table/*.json`).
 
+use crate::platform::fs;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -371,7 +371,8 @@ mod tests {
 
     #[test]
     fn a_pack_folder_loads_functions_tags_predicates_and_loot() {
-        let root = std::env::temp_dir().join(format!("rc-pack-{}", std::process::id()));
+        let root = crate::platform::env::temp_dir()
+            .join(format!("rc-pack-{}", crate::platform::env::process_id()));
         let _ = fs::remove_dir_all(&root);
         let pack = root.join("datapacks/demo");
         let write = |path: &str, text: &str| {

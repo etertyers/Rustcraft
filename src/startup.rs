@@ -40,7 +40,9 @@ pub fn set_gpu_limit(side: u32) {
 pub fn probe_gpu_limit() -> u32 {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    if let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) {
+    if let Ok(adapter) =
+        crate::platform::task::block_on(instance.request_adapter(&Default::default()))
+    {
         set_gpu_limit(adapter.limits().max_texture_dimension_2d);
     }
     gpu_limit()
@@ -196,9 +198,9 @@ pub fn marker_path() -> PathBuf {
 pub fn begin(marker: &Path) -> bool {
     let left = marker.exists();
     if let Some(dir) = marker.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = crate::platform::fs::create_dir_all(dir);
     }
-    if let Err(err) = std::fs::write(marker, b"starting\n") {
+    if let Err(err) = crate::platform::fs::write(marker, b"starting\n") {
         log::warn!("can't write {}: {err}", marker.display());
     }
     left
@@ -206,7 +208,7 @@ pub fn begin(marker: &Path) -> bool {
 
 /// The first frame was drawn: the start worked.
 pub fn finish(marker: &Path) {
-    let _ = std::fs::remove_file(marker);
+    let _ = crate::platform::fs::remove_file(marker);
 }
 
 #[cfg(test)]
@@ -416,7 +418,8 @@ mod tests {
     fn gpu_limit() -> Option<u32> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+        let adapter =
+            crate::platform::task::block_on(instance.request_adapter(&Default::default())).ok()?;
         Some(adapter.limits().max_texture_dimension_2d)
     }
 
@@ -795,7 +798,7 @@ mod tests {
             .active_packs(&crate::pack::builtin_dir());
         app.options_for_test().resource_packs = vec!["bad.zip".to_owned()];
         app.apply_resource_packs_for_test();
-        let started = std::time::Instant::now();
+        let started = crate::platform::time::Instant::now();
         while app.poll_pending_for_test() {
             assert!(started.elapsed().as_secs() < 60, "never finished");
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -806,7 +809,7 @@ mod tests {
         );
         assert_eq!(app.applied_packs_for_test(), good, "the old look stays");
         // The test options file is per process; the bad pack isn't in it.
-        let on_disk = std::fs::read_to_string(Options::path()).unwrap_or_default();
+        let on_disk = crate::platform::fs::read_to_string(Options::path()).unwrap_or_default();
         assert!(!on_disk.contains("bad.zip"), "not saved: {on_disk}");
     }
 }

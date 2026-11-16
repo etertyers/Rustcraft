@@ -7,6 +7,10 @@
 
 pub mod client;
 pub mod kind;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lua;
+#[cfg(target_arch = "wasm32")]
+#[path = "lua_web.rs"]
 pub mod lua;
 pub mod route;
 
@@ -21,6 +25,9 @@ use std::{
 use anyhow::{Context, Result, bail};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
+
+/// What the Mods screen says where Lua can't run (the browser build, M70).
+pub const LUA_UNAVAILABLE: &str = "Lua mods aren't available in the browser version";
 
 /// The game's version, compared with a mod's `rustcraft` field.
 pub const GAME_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -66,7 +73,7 @@ impl Source {
     /// A file inside the mod, `None` if it isn't there.
     pub fn read(&self, rel: &str) -> Option<Vec<u8>> {
         match self {
-            Source::Dir(dir) => std::fs::read(dir.join(rel)).ok(),
+            Source::Dir(dir) => crate::platform::fs::read(dir.join(rel)).ok(),
             Source::Zip { path, prefix } => {
                 let file = File::open(path).ok()?;
                 let mut archive = zip::ZipArchive::new(BufReader::new(file)).ok()?;
@@ -140,7 +147,7 @@ impl Config {
     }
 
     pub fn load() -> Self {
-        std::fs::read_to_string(Self::path())
+        crate::platform::fs::read_to_string(Self::path())
             .ok()
             .and_then(|text| ron::from_str(&text).ok())
             .unwrap_or_default()
@@ -148,7 +155,7 @@ impl Config {
 
     pub fn save(&self) -> Result<()> {
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())?;
-        std::fs::write(Self::path(), text).context("writing mods.ron")
+        crate::platform::fs::write(Self::path(), text).context("writing mods.ron")
     }
 }
 
@@ -207,7 +214,7 @@ pub fn parse_manifest(text: &str) -> Result<Manifest> {
 pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
     let mut found: Vec<Found> = Vec::new();
     for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = crate::platform::fs::read_dir(dir) else {
             continue;
         };
         let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
@@ -255,7 +262,7 @@ pub fn discover(dirs: &[PathBuf], bundled_dir: Option<&Path>) -> Vec<Found> {
                 Source::Dir(path.clone())
             } else {
                 // A mod inside one wrapping folder: use that folder.
-                match std::fs::read_dir(&path)
+                match crate::platform::fs::read_dir(&path)
                     .into_iter()
                     .flatten()
                     .flatten()
@@ -1036,12 +1043,13 @@ mod tests {
 
     #[test]
     fn a_newer_bundled_mod_replaces_an_older_copy_in_the_users_folder() {
-        let root = std::env::temp_dir().join(format!("rc-bundled-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::platform::env::temp_dir()
+            .join(format!("rc-bundled-{}", crate::platform::env::process_id()));
+        let _ = crate::platform::fs::remove_dir_all(&root);
         let write = |dir: &str, version: &str| {
             let path = root.join(dir).join("fullbright");
-            std::fs::create_dir_all(&path).unwrap();
-            std::fs::write(
+            crate::platform::fs::create_dir_all(&path).unwrap();
+            crate::platform::fs::write(
                 path.join("mod.ron"),
                 format!(
                     "(id: \"fullbright\", name: \"Fullbright\", version: \"{version}\", \
@@ -1062,7 +1070,7 @@ mod tests {
         let found = discover(&dirs, Some(&dirs[1]));
         assert!(!found[0].bundled);
         assert_eq!(found[0].manifest.as_ref().unwrap().version, "1.0.2");
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::platform::fs::remove_dir_all(&root);
     }
 
     #[test]

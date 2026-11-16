@@ -842,9 +842,9 @@ mod tests {
     fn lit_game() -> Game {
         let mut game = flat_game(GameMode::Survival).with_mobs(mob_registry());
         game.time = 6000;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let deadline = crate::platform::time::Instant::now() + std::time::Duration::from_secs(20);
         while game.chunks.light_at(3, 64, 3).is_none() {
-            assert!(std::time::Instant::now() < deadline, "no light");
+            assert!(crate::platform::time::Instant::now() < deadline, "no light");
             game.chunks.update(crate::world::chunk::ChunkPos::new(0, 0));
             std::thread::sleep(std::time::Duration::from_millis(2));
         }

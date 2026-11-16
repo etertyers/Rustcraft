@@ -43,14 +43,14 @@ impl Listener {
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, incoming) = crossbeam_channel::unbounded();
         let accept_stop = stop.clone();
-        std::thread::Builder::new()
-            .name("lan-accept".to_owned())
-            .spawn(move || accept(listener, tx, accept_stop))?;
+        crate::platform::task::spawn("lan-accept".to_owned(), move || {
+            accept(listener, tx, accept_stop)
+        })?;
         let announce_stop = stop.clone();
         let message = announcement(&motd, port);
-        std::thread::Builder::new()
-            .name("lan-announce".to_owned())
-            .spawn(move || announce(message, announce_stop))?;
+        crate::platform::task::spawn("lan-announce".to_owned(), move || {
+            announce(message, announce_stop)
+        })?;
         info!("open to LAN on port {port}");
         Ok(Self {
             port,
@@ -149,22 +149,20 @@ impl Finder {
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, found) = crossbeam_channel::unbounded();
         let listen_stop = stop.clone();
-        std::thread::Builder::new()
-            .name("lan-finder".to_owned())
-            .spawn(move || {
-                let mut buf = [0u8; 1024];
-                while !listen_stop.load(Ordering::Relaxed) {
-                    let Ok((len, from)) = socket.recv_from(&mut buf) else {
-                        continue;
-                    };
-                    let text = String::from_utf8_lossy(&buf[..len]);
-                    if let Some((motd, port)) = read_announcement(&text)
-                        && tx.send((motd, SocketAddr::new(from.ip(), port))).is_err()
-                    {
-                        break;
-                    }
+        crate::platform::task::spawn("lan-finder".to_owned(), move || {
+            let mut buf = [0u8; 1024];
+            while !listen_stop.load(Ordering::Relaxed) {
+                let Ok((len, from)) = socket.recv_from(&mut buf) else {
+                    continue;
+                };
+                let text = String::from_utf8_lossy(&buf[..len]);
+                if let Some((motd, port)) = read_announcement(&text)
+                    && tx.send((motd, SocketAddr::new(from.ip(), port))).is_err()
+                {
+                    break;
                 }
-            })?;
+            }
+        })?;
         Ok(Self {
             found,
             stop,

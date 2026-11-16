@@ -1264,7 +1264,7 @@ mod tests {
     #[test]
     #[ignore]
     fn nether_slice() {
-        let Ok(path) = std::env::var("NETHER_SLICE") else {
+        let Ok(path) = crate::platform::env::var("NETHER_SLICE") else {
             return;
         };
         let nether = Nether::new(20111118);

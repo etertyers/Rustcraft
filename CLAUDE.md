@@ -12,6 +12,7 @@ Rustcraft is a Minecraft clone for macOS (Apple Silicon), written in Rust with w
 - LAN multiplayer for up to 8 players (Open to LAN, a server and clients), with chat.
 - Commands with vanilla Java syntax (selectors, `/execute`, scoreboards, data packs, command blocks). Cheat commands need Allow Cheats, or an operator on LAN.
 - Resource packs, an options menu with rebindable keys, advancements, Lua mods (with a bundled Fullbright mod), farming and fishing.
+- **A web build (v1.6, M70–M73):** the same crate compiled to `wasm32-unknown-unknown` and run in a browser on Mac and Windows (Eaglercraft's approach: the client on the main thread, the server and the generators in Web Workers). It leaves out LAN and Lua mods, and asks for Mojang's files at first start instead of bundling them. See `docs/web.md`.
 
 **Reference list:** `docs/blocks-and-items.md` lists every 1.0.0 block and item with its original numeric ID. Modern names are in `assets/data/blocks.ron` and `items.ron`.
 
@@ -19,7 +20,7 @@ Rustcraft is a Minecraft clone for macOS (Apple Silicon), written in Rust with w
 
 **New content gets added with its recipes.**
 
-**Out of scope:** online (internet) multiplayer, accounts and dedicated servers, running Java (Fabric/Forge) mods, Windows/Linux builds (wgpu may run there, but don't spend effort on it), comparators and observers, the Wither, and ocean monuments.
+**Out of scope:** online (internet) multiplayer, accounts and dedicated servers, running Java (Fabric/Forge) mods, native Windows/Linux builds (the web build is how Windows players play; wgpu may run natively there, but don't spend effort on it), comparators and observers, the Wither, and ocean monuments.
 
 ## 2. Tech stack
 
@@ -42,6 +43,7 @@ Rustcraft is a Minecraft clone for macOS (Apple Silicon), written in Rust with w
 | Benchmarks (v1.1) | `criterion` | Performance gate from M14 on |
 | Lua mods (v1.2) | `mlua` (Lua 5.4, `vendored` feature) | Sandboxed mod scripts from M39 on |
 | Networking (v1.2) | `std::net` (TCP + UDP multicast) + `bincode` | LAN play from M36 on; no async runtime needed |
+| Web (v1.6) | `wasm-bindgen`, `web-sys`, `js-sys`, `web-time`, `getrandom` (`wasm_js`), `wasm-bindgen-futures` | The browser build from M70 on; target `wasm32-unknown-unknown`, stable Rust. wgpu uses WebGPU with WebGL2 as the fallback; no SharedArrayBuffer, no nightly, no build-std, no special headers. `mlua`, `libc`, `env_logger`, `pollster` and `egui-winit`'s clipboard are native-only (`[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`) |
 
 **Version policy:** At M0, pin the latest stable versions of these crates in `Cargo.toml` and commit `Cargo.lock`. Do not upgrade crates mid-milestone. If an API doesn't match your memory, check the docs for the pinned version (`cargo doc --open` or docs.rs) rather than guessing.
 
@@ -71,6 +73,10 @@ cargo run --release -- --creative    # a new creative world "Creative test", ope
 cargo run --release -- --world <name> [--creative] [--seed <n>]   # open that saved world, or create it
 cargo run --release -- --texture-audit [--mode vanilla|barebones|realistic]   # contact sheets + report in target/texture-audit/<mode>/ (git-ignored)
 cargo run --release -- --texture-viewer   # check textures by eye: B broken, K OK, U clear, F next flagged; marks go to texture-marks.ron (--texture-marks prints them); also Options → Video Settings → Texture Viewer, and /textures in a world
+cargo check --target wasm32-unknown-unknown                  # the web build still compiles (also run by the pre-commit hook and CI)
+cargo clippy --target wasm32-unknown-unknown -- -D warnings  # and is clippy-clean
+scripts/build-web.sh           # (M71) build target/web/ with wasm-bindgen + wasm-opt; refuses anything from assets/vanilla or assets/downloads
+scripts/serve-web.sh           # (M71) serve target/web/ on the LAN and print the URLs; add ?single-thread, ?perf-test, ?creative to the URL
 cargo run --release -- --help        # every flag (note the `--`: without it cargo rejects the flag itself)
 cargo run --release -- --shot <name>   # capture a scripted scene to docs/screenshots/<name>.png (--shot list)
 # Flags: --creative, --world <name>, --seed <n>, --flat, --gallery, --nether, --end, --underwater,
@@ -113,6 +119,8 @@ audit/               # the texture checker (M60): CPU rasterizer, detectors, con
 cem/                 # OptiFine custom entity models (.jem) and their animation expressions (M58)
 render/              # wgpu pipelines, atlas, camera, shaders (*.wgsl), models, hand, sky (nested CLAUDE.md)
 lod/                 # Distant Terrain (M69): LOD tiles, the server's tile maker, store, meshing, colors
+platform/            # (M70) what differs between a computer and a browser, behind small traits: storage + fs, task, time, logging, env, assets. Game code never says cfg(wasm32)
+web/                 # (M71) the browser entry (wasm-bindgen), index.html, the JS loader; workers from M72
 look.rs, figure.rs   # everything texture-derived (rebuilt on pack change); the player as drawn
 pack/                # resource packs: layers, animations, block and item models
 player/              # controller, physics, collision, raycast, interaction, stats, effects, flying
@@ -135,6 +143,7 @@ docs/                # milestones/, architecture.md, DECISIONS.md, perf/, worldg
 **`docs/DECISIONS.md` is a log: search it with grep, never read it whole.**
 
 **Key conventions**
+- **Platform layer (M70):** game code doesn't use `std::fs`, `std::thread::Builder`, `std::time::Instant`, `std::env` or `std::process::exit` directly; it calls `crate::platform::{fs, task, time, env}` (native: the std items; browser: the browser's). `cfg(target_arch = "wasm32")` belongs in `platform/`, in a few stub files (`mods/lua_web.rs`, `net/lan_web.rs`) and in `web/`. Compiling for wasm32 isn't running on wasm32: a worker pool that can't start returns an error and the caller falls back to single thread mode.
 - **World size:** Y is up. Chunks are 16×16 columns made of vertical 16³ sections. Chunks hold **Y −64..319** (384 blocks, 24 sections; `config::MIN_Y` −64, `MAX_Y` 320 exclusive), with sea level at Y 63; the Nether and End keep 0..127 and 0..255 inside that (`Dimension::min_y`/`max_y`). Blocks are addressed by world Y everywhere (`Chunk::get(x, y: i32, z)`). Default render distance is **9 chunks** (`config::RENDER_DISTANCE`). **Never lower render distance, world height or visual quality to pass a performance target; stop and report instead.**
 - **IDs:** Since M14, blocks and items have modern Java Edition names (`minecraft:oak_log`), defined in `assets/data/blocks.ron` and `items.ron`; `build.rs` turns the names into constants (`world::blocks::OAK_LOG`, `inventory::items::STICK`). Runtime IDs are file positions and saves store names. A `BlockState` is a block plus modern block state properties (`world::props`). `assets/data/legacy.ron` maps v1.0's numeric 1.0.0 IDs to the new names. Properties (solid, transparent, hardness, drops, texture per face, light emission, tool type, placement, shape) live in `blocks.ron`. Never scatter block behavior across `match` arms; a block that behaves like another names it with `acts_as` (every wooden button acts as `oak_button`, every kind of leaves as `oak_leaves`), and code matches on `BlockState::kind()`.
 - **Textures (M15):** textures are looked up by modern resource location (`block/stone`) through `pack::Resources`: selected packs from `resourcepacks/` over Kenzo's `assets/textures/` over the vanilla fallback in `assets/vanilla/`; older names are in `assets/data/texture_names.ron`. `look::Look` builds everything texture-derived and is rebuilt when the packs change. Missing textures render as a magenta/black checkerboard so they're easy to spot. Don't generate or download other art.
@@ -178,6 +187,7 @@ Entries are in `docs/milestones/`, one file per version, each starting with its 
 | 1.3 | M43–M53 | H–J | `docs/milestones/v1.3.md` | released (`v1.3.0`) |
 | 1.4 | M54–M58 | K | `docs/milestones/v1.4.md` | released (`v1.4.0`); Low/High miss their budgets by a few percent |
 | 1.5 | M59–M69 | L–N | `docs/milestones/v1.5.md` | released (`v1.5.0`) |
+| 1.6 | M70–M73 | O | `docs/milestones/v1.6.md` | in progress (the web version) |
 
 After M30 merges, tag `v1.1.0` and rebuild the `.app`; after M42 merges, tag `v1.2.0` and rebuild the `.app`; after M53 merges, tag `v1.3.0`; after M58 merges, tag `v1.4.0` and rebuild the `.app`; after M69 merges, tag `v1.5.0` and rebuild the `.app`.
 
@@ -190,7 +200,7 @@ The rules in force. Where the old rules conflicted, the newer won (v1.2 over v1.
 3. **One PR per milestone**, titled `M<N>: <name>`. Within a checkpoint, branch each milestone from the previous milestone's branch (stacked). **Never merge without Kenzo.**
 4. **At the end of a checkpoint, stop.** Post a summary table (milestone, pass/fail, PR link, known issues) and wait. After Kenzo approves, merge the PRs into `main` in order with merge commits, tag each `m<N>`, and push the tags.
 5. **If something blocks a milestone** (a design question, a failing test you can't fix), stop early and ask.
-6. **Small, compilable steps.** Every commit builds and passes `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` and `cargo test`.
+6. **Small, compilable steps.** Every commit builds and passes `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` and `cargo test`, and (from M70) `cargo check --target wasm32-unknown-unknown` and `cargo clippy --target wasm32-unknown-unknown -- -D warnings`, so the web build doesn't break.
 7. **Test the logic, not the GPU.** Unit-test pure code: chunk indexing, meshing face counts, raycasts, collision, physics, inventory, crafting, save round-trips, light. Rendering is verified by running the game.
 8. **At most one screenshot per milestone.** Verify with `cargo test`, logs, printed counts and test flags instead. Take one at the end, of the most visual acceptance criterion, preferably with `--shot`, and open it once to check it. If nothing is visual, take none. Never take screenshots while debugging.
 9. **Kenzo does the visual checks.** Each PR lists the in-game checks for Kenzo, one line each.

@@ -96,12 +96,12 @@ impl Resources {
     /// the base layer (off, only Kenzo's assets and the packs count).
     pub fn load_with(assets: &Path, packs: Vec<Pack>, vanilla: bool) -> Result<Self> {
         let path = assets.join("data/texture_names.ron");
-        let text = std::fs::read_to_string(&path)
+        let text = crate::platform::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         let aliases =
             ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         let path = assets.join("data/texture_slices.ron");
-        let slices = match std::fs::read_to_string(&path) {
+        let slices = match crate::platform::fs::read_to_string(&path) {
             Ok(text) => {
                 ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
             }
@@ -422,9 +422,10 @@ mod tests {
     /// A base layer in 1.12 layout and two packs over it.
     fn stack(dir: &Path) -> Resources {
         let base = dir.join("base");
-        std::fs::create_dir_all(base.join("textures/blocks")).unwrap();
-        std::fs::create_dir_all(base.join("textures/items")).unwrap();
-        let write = |path: &str, bytes: &[u8]| std::fs::write(base.join(path), bytes).unwrap();
+        crate::platform::fs::create_dir_all(base.join("textures/blocks")).unwrap();
+        crate::platform::fs::create_dir_all(base.join("textures/items")).unwrap();
+        let write =
+            |path: &str, bytes: &[u8]| crate::platform::fs::write(base.join(path), bytes).unwrap();
         write(
             "textures/blocks/planks_oak.png",
             &png([1, 0, 0, 255], 16, 16),
@@ -506,24 +507,26 @@ mod tests {
     /// asked) with stone, dirt, sand and a model, and a pack with stone.
     fn layered(dir: &Path, with_vanilla: bool) -> Resources {
         let assets = dir.join("assets");
-        std::fs::create_dir_all(assets.join("data")).unwrap();
-        std::fs::create_dir_all(assets.join("textures/blocks")).unwrap();
-        std::fs::write(assets.join("data/texture_names.ron"), "{}").unwrap();
-        let write = |path: &str, bytes: &[u8]| std::fs::write(assets.join(path), bytes).unwrap();
+        crate::platform::fs::create_dir_all(assets.join("data")).unwrap();
+        crate::platform::fs::create_dir_all(assets.join("textures/blocks")).unwrap();
+        crate::platform::fs::write(assets.join("data/texture_names.ron"), "{}").unwrap();
+        let write = |path: &str, bytes: &[u8]| {
+            crate::platform::fs::write(assets.join(path), bytes).unwrap()
+        };
         write("textures/blocks/stone.png", &png([2, 0, 0, 255], 16, 16));
         write("textures/blocks/dirt.png", &png([3, 0, 0, 255], 16, 16));
         if with_vanilla {
             let root = assets.join("vanilla/assets/minecraft");
-            std::fs::create_dir_all(root.join("textures/block")).unwrap();
-            std::fs::create_dir_all(root.join("models/block")).unwrap();
+            crate::platform::fs::create_dir_all(root.join("textures/block")).unwrap();
+            crate::platform::fs::create_dir_all(root.join("models/block")).unwrap();
             for (name, red) in [("stone", 10), ("dirt", 11), ("sand", 12)] {
-                std::fs::write(
+                crate::platform::fs::write(
                     root.join(format!("textures/block/{name}.png")),
                     png([red, 0, 0, 255], 16, 16),
                 )
                 .unwrap();
             }
-            std::fs::write(
+            crate::platform::fs::write(
                 root.join("models/block/sand.json"),
                 br#"{"parent": "block/cube_all"}"#,
             )
@@ -592,7 +595,7 @@ mod tests {
     fn textures_on_sheets_are_cut_out_unless_a_layer_has_them_whole() {
         let dir = TempDir::new("slices");
         let base = dir.path().join("base");
-        std::fs::create_dir_all(base.join("textures/particle")).unwrap();
+        crate::platform::fs::create_dir_all(base.join("textures/particle")).unwrap();
         // A 128-pixel sheet that is red at (8, 32) and blue elsewhere.
         let mut sheet = RgbaImage::from_pixel(128, 128, image::Rgba([0, 0, 255, 255]));
         for y in 32..40 {
@@ -604,7 +607,7 @@ mod tests {
         sheet
             .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
             .unwrap();
-        std::fs::write(base.join("textures/particle/particles.png"), &bytes).unwrap();
+        crate::platform::fs::write(base.join("textures/particle/particles.png"), &bytes).unwrap();
         let slices = HashMap::from([(
             "particle/critical_hit".to_owned(),
             ("particle/particles".to_owned(), (8, 32, 8, 8)),
@@ -644,7 +647,7 @@ mod tests {
     fn the_shield_icon_is_cut_from_its_entity_texture() {
         let dir = TempDir::new("shield");
         let base = dir.path().join("base");
-        std::fs::create_dir_all(base.join("textures/entity")).unwrap();
+        crate::platform::fs::create_dir_all(base.join("textures/entity")).unwrap();
         // A sheet that is red inside the 12×22 plate at (1,1) and blue outside.
         let mut sheet = RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 255, 255]));
         for y in 1..23 {
@@ -656,7 +659,7 @@ mod tests {
         sheet
             .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
             .unwrap();
-        std::fs::write(
+        crate::platform::fs::write(
             base.join("textures/entity/shield_base_nopattern.png"),
             &bytes,
         )

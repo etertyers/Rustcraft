@@ -192,28 +192,26 @@ impl Physics {
     pub fn spawn() -> Self {
         let (jobs, job_rx) = bounded::<Job>(2);
         let (answer_tx, answers) = bounded::<Answer>(2);
-        std::thread::Builder::new()
-            .name("sound physics".to_owned())
-            .spawn(move || {
-                let mut room = Reverb::default();
-                while let Ok(job) = job_rx.recv() {
-                    let started = std::time::Instant::now();
-                    // The room is averaged over time, so it doesn't flicker.
-                    let now = reverb_around(&*job.world, job.listener);
-                    room = room.lerp(now, 0.3);
-                    let shapings = job
-                        .sources
-                        .iter()
-                        .map(|&s| shape(&*job.world, s, job.listener, room, job.underwater))
-                        .collect();
-                    let _ = answer_tx.try_send(Answer {
-                        shapings,
-                        room,
-                        micros: started.elapsed().as_micros() as u32,
-                    });
-                }
-            })
-            .ok();
+        crate::platform::task::spawn("sound physics", move || {
+            let mut room = Reverb::default();
+            while let Ok(job) = job_rx.recv() {
+                let started = crate::platform::time::Instant::now();
+                // The room is averaged over time, so it doesn't flicker.
+                let now = reverb_around(&*job.world, job.listener);
+                room = room.lerp(now, 0.3);
+                let shapings = job
+                    .sources
+                    .iter()
+                    .map(|&s| shape(&*job.world, s, job.listener, room, job.underwater))
+                    .collect();
+                let _ = answer_tx.try_send(Answer {
+                    shapings,
+                    room,
+                    micros: started.elapsed().as_micros() as u32,
+                });
+            }
+        })
+        .ok();
         Self { jobs, answers }
     }
 
@@ -395,7 +393,7 @@ mod tests {
         let world: Arc<dyn Solids> = Arc::new(room(8));
         let at = DVec3::new(0.5, 10.5, 0.5);
         assert!(physics.submit(world.clone(), at, false, vec![at + DVec3::X; 50]));
-        let started = std::time::Instant::now();
+        let started = crate::platform::time::Instant::now();
         let answer = loop {
             if let Some(a) = physics.latest() {
                 break a;

@@ -7,12 +7,11 @@
 //! (or whose level was written after it) gets one made from the head of
 //! `level.ron`; nothing here opens region files or reads the player.
 
+use crate::platform::fs;
+use crate::platform::time::Instant;
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
-    thread,
-    time::Instant,
 };
 
 use image::RgbaImage;
@@ -164,7 +163,7 @@ impl WorldScan {
     /// Starts reading `saves` and returns at once.
     pub fn start(saves: PathBuf) -> Self {
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
+        crate::platform::task::spawn_detached("world-scan", move || {
             let started = Instant::now();
             let mut count = 0;
             for entry in fs::read_dir(&saves).into_iter().flatten().flatten() {
@@ -201,7 +200,7 @@ impl WorldScan {
 mod tests {
     use super::*;
     use crate::{level::Level, world::save::TempDir};
-    use std::time::Duration;
+    use std::{thread, time::Duration};
 
     fn collect(saves: &Path) -> Vec<WorldInfo> {
         let mut scan = WorldScan::start(saves.to_owned());

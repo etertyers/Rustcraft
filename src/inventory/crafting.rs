@@ -162,8 +162,8 @@ pub struct Recipes {
 impl Recipes {
     /// The recipes in `path` and those of the active mods.
     pub fn load(path: &Path) -> Result<Self> {
-        let text =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let text = crate::platform::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
         let mut file: RecipesFile =
             ron::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         for active in &crate::mods::active().active {

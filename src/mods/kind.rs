@@ -74,7 +74,7 @@ fn names_in(path: &Path) -> Vec<String> {
 }
 
 fn walk(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::platform::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
@@ -164,7 +164,7 @@ pub fn detect(path: &Path) -> FileKind {
 /// The path of each `.zip`, `.jar` or folder directly inside `dir`,
 /// sorted by name.
 pub fn children(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::platform::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
@@ -243,15 +243,15 @@ mod tests {
     fn folders_are_recognized_too() {
         let dir = TempDir::new("kinds-folder");
         let pack = dir.path().join("pack");
-        std::fs::create_dir_all(pack.join("assets/minecraft")).unwrap();
-        std::fs::write(pack.join("pack.mcmeta"), "{}").unwrap();
+        crate::platform::fs::create_dir_all(pack.join("assets/minecraft")).unwrap();
+        crate::platform::fs::write(pack.join("pack.mcmeta"), "{}").unwrap();
         assert_eq!(detect(&pack), FileKind::ResourcePack);
         let wrapped = dir.path().join("outer");
-        std::fs::create_dir_all(wrapped.join("inner/data")).unwrap();
-        std::fs::write(wrapped.join("inner/pack.mcmeta"), "{}").unwrap();
+        crate::platform::fs::create_dir_all(wrapped.join("inner/data")).unwrap();
+        crate::platform::fs::write(wrapped.join("inner/pack.mcmeta"), "{}").unwrap();
         assert_eq!(detect(&wrapped), FileKind::DataPack);
         let empty = dir.path().join("empty");
-        std::fs::create_dir_all(&empty).unwrap();
+        crate::platform::fs::create_dir_all(&empty).unwrap();
         assert_eq!(detect(&empty), FileKind::Unknown);
     }
 

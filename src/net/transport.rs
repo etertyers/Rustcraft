@@ -108,65 +108,61 @@ where
         let (in_tx, in_rx) = crossbeam_channel::unbounded::<R>();
         let writer = stream.try_clone()?;
         let (open_w, traffic_w) = (open.clone(), traffic.clone());
-        std::thread::Builder::new()
-            .name("net-writer".to_owned())
-            .spawn(move || {
-                let mut writer = BufWriter::new(writer);
-                while let Ok(msg) = out_rx.recv() {
-                    let frame = encode(&msg);
-                    let ok = writer
-                        .write_all(&(frame.len() as u32).to_le_bytes())
-                        .is_ok()
-                        && writer.write_all(&frame).is_ok();
-                    // What's queued goes out together, flushed once it's all
-                    // written.
-                    if !ok || (out_rx.is_empty() && writer.flush().is_err()) {
-                        break;
-                    }
-                    traffic_w
-                        .sent
-                        .fetch_add(frame.len() as u64 + 4, Ordering::Relaxed);
+        crate::platform::task::spawn("net-writer", move || {
+            let mut writer = BufWriter::new(writer);
+            while let Ok(msg) = out_rx.recv() {
+                let frame = encode(&msg);
+                let ok = writer
+                    .write_all(&(frame.len() as u32).to_le_bytes())
+                    .is_ok()
+                    && writer.write_all(&frame).is_ok();
+                // What's queued goes out together, flushed once it's all
+                // written.
+                if !ok || (out_rx.is_empty() && writer.flush().is_err()) {
+                    break;
                 }
-                let _ = writer.flush();
-                open_w.store(false, Ordering::Relaxed);
-            })?;
+                traffic_w
+                    .sent
+                    .fetch_add(frame.len() as u64 + 4, Ordering::Relaxed);
+            }
+            let _ = writer.flush();
+            open_w.store(false, Ordering::Relaxed);
+        })?;
         let reader = stream.try_clone()?;
         let (open_r, traffic_r) = (open.clone(), traffic.clone());
-        std::thread::Builder::new()
-            .name("net-reader".to_owned())
-            .spawn(move || {
-                let mut reader = BufReader::new(reader);
-                loop {
-                    let mut len = [0; 4];
-                    if reader.read_exact(&mut len).is_err() {
-                        break;
-                    }
-                    let len = u32::from_le_bytes(len) as usize;
-                    if len > MAX_FRAME {
-                        debug!("frame of {len} bytes refused");
-                        break;
-                    }
-                    let mut frame = vec![0; len];
-                    if reader.read_exact(&mut frame).is_err() {
-                        break;
-                    }
-                    traffic_r
-                        .received
-                        .fetch_add(len as u64 + 4, Ordering::Relaxed);
-                    match decode(&frame) {
-                        Some(msg) => {
-                            if in_tx.send(msg).is_err() {
-                                break;
-                            }
-                        }
-                        None => {
-                            debug!("unreadable frame of {len} bytes");
+        crate::platform::task::spawn("net-reader".to_owned(), move || {
+            let mut reader = BufReader::new(reader);
+            loop {
+                let mut len = [0; 4];
+                if reader.read_exact(&mut len).is_err() {
+                    break;
+                }
+                let len = u32::from_le_bytes(len) as usize;
+                if len > MAX_FRAME {
+                    debug!("frame of {len} bytes refused");
+                    break;
+                }
+                let mut frame = vec![0; len];
+                if reader.read_exact(&mut frame).is_err() {
+                    break;
+                }
+                traffic_r
+                    .received
+                    .fetch_add(len as u64 + 4, Ordering::Relaxed);
+                match decode(&frame) {
+                    Some(msg) => {
+                        if in_tx.send(msg).is_err() {
                             break;
                         }
                     }
+                    None => {
+                        debug!("unreadable frame of {len} bytes");
+                        break;
+                    }
                 }
-                open_r.store(false, Ordering::Relaxed);
-            })?;
+            }
+            open_r.store(false, Ordering::Relaxed);
+        })?;
         Ok(Self {
             tx: out_tx,
             rx: in_rx,
@@ -252,9 +248,13 @@ mod tests {
         );
         server.send(ServerMsg::Chunk(Arc::new(chunk)));
         let wait = |f: &mut dyn FnMut() -> bool| {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let deadline =
+                crate::platform::time::Instant::now() + std::time::Duration::from_secs(5);
             while !f() {
-                assert!(std::time::Instant::now() < deadline, "nothing arrived");
+                assert!(
+                    crate::platform::time::Instant::now() < deadline,
+                    "nothing arrived"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         };

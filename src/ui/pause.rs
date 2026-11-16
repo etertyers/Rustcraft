@@ -187,11 +187,12 @@ impl PauseMenu {
                         self.options = Some(OptionsScreen::default());
                     }
                     ui.add_space(8.0);
+                    // LAN play needs sockets, which the browser doesn't have.
                     let lan = ui.add_enabled(
-                        self.can_open_lan,
+                        self.can_open_lan && crate::platform::LAN,
                         Button::new("Open to LAN").min_size(BUTTON.into()),
                     );
-                    if lan.clicked_with_sound() {
+                    if crate::platform::LAN && lan.clicked_with_sound() {
                         self.lan = Some(LanScreen {
                             mode: crate::player::mode::GameMode::Survival,
                             cheats: self.world_cheats,

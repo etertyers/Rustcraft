@@ -870,7 +870,7 @@ mod tests {
 #[cfg(test)]
 mod timing {
     use super::*;
-    use std::time::Instant;
+    use crate::platform::time::Instant;
 
     #[test]
     #[ignore]

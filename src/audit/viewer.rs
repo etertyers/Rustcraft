@@ -10,8 +10,9 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, mpsc},
-    time::Instant,
 };
+
+use crate::platform::time::Instant;
 
 use egui::{Color32, Key as EKey, RichText, TextureHandle, TextureOptions, vec2};
 use image::RgbaImage;
@@ -184,7 +185,7 @@ enum Loading {
 fn load_in_background(set: &str) -> Loading {
     let (tx, rx) = mpsc::channel();
     let set = set.to_owned();
-    std::thread::spawn(move || {
+    crate::platform::task::spawn_detached("texture-viewer", move || {
         let result = (|| -> anyhow::Result<Loaded> {
             let assets = crate::assets::dir();
             let stack = super::stack(&set, &assets.join("downloads/resourcepacks"))
@@ -1224,7 +1225,7 @@ mod tests {
             );
             out.textures_delta.clear();
         };
-        let started = std::time::Instant::now();
+        let started = crate::platform::time::Instant::now();
         while viewer.loaded_in.is_none() {
             frame(&mut viewer);
             assert!(started.elapsed().as_secs() < 60, "the set never loaded");
@@ -1291,7 +1292,7 @@ mod tests {
             };
             let path = host._dir.path().join("texture-marks.ron");
             host.viewer().model.set_path(path);
-            let started = std::time::Instant::now();
+            let started = crate::platform::time::Instant::now();
             while host.viewer().loaded_in.is_none() {
                 host.frame(vec2(1280.0, 720.0), 1.0);
                 assert!(started.elapsed().as_secs() < 90, "never loaded");

@@ -519,7 +519,7 @@ mod tests {
             .starting_in(crate::world::dimension::Dimension::Nether);
         game.player.mode = GameMode::Creative;
         for second in 0..40 {
-            let started = std::time::Instant::now();
+            let started = crate::platform::time::Instant::now();
             while started.elapsed().as_secs_f32() < 1.0 {
                 if second >= 3 {
                     game.glide(10.9 * 0.05, 72.0);

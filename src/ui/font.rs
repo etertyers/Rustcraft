@@ -630,8 +630,8 @@ mod tests {
     fn without_a_bitmap_font_text_falls_back_to_egui_and_bold_still_exists() {
         // A layer stack with nothing in it: no default.json, no ascii.png.
         let dir = crate::world::save::TempDir::new("no-font");
-        std::fs::create_dir_all(dir.path().join("data")).unwrap();
-        std::fs::write(dir.path().join("data/texture_names.ron"), "{}").unwrap();
+        crate::platform::fs::create_dir_all(dir.path().join("data")).unwrap();
+        crate::platform::fs::write(dir.path().join("data/texture_names.ron"), "{}").unwrap();
         let res = Resources::load_with(dir.path(), Vec::new(), false).unwrap();
         let glyphs = load(&res);
         assert!(!has_glyphs(&glyphs), "{} glyphs", glyphs.len());

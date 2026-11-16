@@ -35,7 +35,7 @@ impl LodSettings {
         if self.threads > 0 {
             return self.threads;
         }
-        std::thread::available_parallelism()
+        crate::platform::task::available_parallelism()
             .map_or(2, |n| n.get())
             .saturating_sub(2)
             .max(1)
@@ -131,20 +131,18 @@ impl LodManager {
         for n in 0..settings.worker_count() {
             let (job_rx, done_tx) = (job_rx.clone(), done_tx.clone());
             let colors = colors.clone();
-            std::thread::Builder::new()
-                .name(format!("lod-{n}"))
-                .spawn(move || {
-                    background();
-                    while let Ok(job) = job_rx.recv() {
-                        let out = work(job, &colors);
-                        if let Some(out) = out
-                            && done_tx.send(out).is_err()
-                        {
-                            break;
-                        }
+            crate::platform::task::spawn(format!("lod-{n}"), move || {
+                background();
+                while let Ok(job) = job_rx.recv() {
+                    let out = work(job, &colors);
+                    if let Some(out) = out
+                        && done_tx.send(out).is_err()
+                    {
+                        break;
                     }
-                })
-                .expect("spawn an LOD worker");
+                }
+            })
+            .expect("spawn an LOD worker");
         }
         Self {
             settings,
@@ -681,8 +679,11 @@ mod tests {
         use crate::lod::maker::LodMaker;
         use crate::world::biome::BiomeColors;
         use crate::world::worldgen::terrain::Terrain;
-        let dir = std::env::temp_dir().join(format!("rustcraft-lod-view-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::platform::env::temp_dir().join(format!(
+            "rustcraft-lod-view-{}",
+            crate::platform::env::process_id()
+        ));
+        let _ = crate::platform::fs::remove_dir_all(&dir);
         let colors = Arc::new(ColorTable::new(None, BiomeColors::uniform()));
         let mut maker = LodMaker::new(
             Arc::new(Terrain::new(12345)),
@@ -718,6 +719,6 @@ mod tests {
         assert!(!gone.is_empty());
         assert_eq!(lod.memory(), 0);
         assert!(lod.disk_usage() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::platform::fs::remove_dir_all(&dir);
     }
 }

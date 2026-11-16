@@ -565,8 +565,10 @@ impl TempDir {
         use std::sync::atomic::{AtomicU32, Ordering};
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("rustcraft-test-{}-{n}-{name}", std::process::id()));
+        let dir = crate::platform::env::temp_dir().join(format!(
+            "rustcraft-test-{}-{n}-{name}",
+            crate::platform::env::process_id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         Self(dir)

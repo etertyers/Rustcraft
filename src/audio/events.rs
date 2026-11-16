@@ -427,7 +427,8 @@ mod tests {
 
 #[cfg(test)]
 mod played {
-    use std::{collections::BTreeSet, fs, path::Path};
+    use crate::platform::fs;
+    use std::{collections::BTreeSet, path::Path};
 
     use super::*;
     use crate::{audio::build_table, pack::Resources};

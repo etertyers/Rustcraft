@@ -1300,7 +1300,7 @@ impl Game {
     /// player made of it. The world waits while every player is arriving
     /// in a dimension or watching the credits.
     fn tick(&mut self) {
-        let started = std::time::Instant::now();
+        let started = crate::platform::time::Instant::now();
         self.tick_inner();
         let ms = started.elapsed().as_secs_f32() * 1000.0;
         self.tick_ms = self.tick_ms * 0.95 + ms * 0.05;
@@ -1763,7 +1763,8 @@ pub(super) fn effects_move(body: &mut Body, effects: &crate::player::effects::Ef
 
 /// Command storage as `command_storage.ron`: each compound's text form by id.
 fn load_storage(dir: &std::path::Path) -> std::collections::BTreeMap<String, nbt::Nbt> {
-    let text = std::fs::read_to_string(dir.join("command_storage.ron")).unwrap_or_default();
+    let text =
+        crate::platform::fs::read_to_string(dir.join("command_storage.ron")).unwrap_or_default();
     let saved: std::collections::BTreeMap<String, String> =
         ron::from_str(&text).unwrap_or_default();
     saved
@@ -1776,7 +1777,7 @@ fn save_storage(storage: &std::collections::BTreeMap<String, nbt::Nbt>, dir: &st
     let text: std::collections::BTreeMap<&String, String> =
         storage.iter().map(|(k, v)| (k, v.snbt())).collect();
     if let Ok(out) = ron::ser::to_string_pretty(&text, ron::ser::PrettyConfig::default()) {
-        let _ = std::fs::write(dir.join("command_storage.ron"), out);
+        let _ = crate::platform::fs::write(dir.join("command_storage.ron"), out);
     }
 }
 
@@ -1789,7 +1790,7 @@ pub struct Scheduled {
 }
 
 fn load_schedule(dir: &std::path::Path) -> Vec<Scheduled> {
-    std::fs::read_to_string(dir.join("scheduled.txt"))
+    crate::platform::fs::read_to_string(dir.join("scheduled.txt"))
         .unwrap_or_default()
         .lines()
         .filter_map(|l| {
@@ -1807,7 +1808,7 @@ fn save_schedule(scheduled: &[Scheduled], dir: &std::path::Path) {
         .iter()
         .map(|s| format!("{} {}\n", s.due, s.id))
         .collect();
-    let _ = std::fs::write(dir.join("scheduled.txt"), text);
+    let _ = crate::platform::fs::write(dir.join("scheduled.txt"), text);
 }
 
 fn one() -> f64 {
@@ -1828,7 +1829,7 @@ fn level_random_seed() -> u64 {
 
 /// One chunk worker per core, leaving one core for the main thread.
 pub fn chunk_workers() -> usize {
-    let workers = std::thread::available_parallelism()
+    let workers = crate::platform::task::available_parallelism()
         .map_or(2, |n| n.get().saturating_sub(1))
         .max(1);
     info!("{workers} chunk worker threads");
@@ -1837,7 +1838,8 @@ pub fn chunk_workers() -> usize {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::time::{Duration, Instant};
+    use crate::platform::time::Instant;
+    use std::time::Duration;
 
     use glam::IVec3;
 
@@ -2186,7 +2188,7 @@ pub(crate) mod tests {
     #[test]
     #[ignore]
     fn opens_a_real_v1_world() {
-        let Some(from) = std::env::var_os("RUSTCRAFT_V1_WORLD") else {
+        let Some(from) = crate::platform::env::var_os("RUSTCRAFT_V1_WORLD") else {
             return;
         };
         let saves = TempDir::new("v1");

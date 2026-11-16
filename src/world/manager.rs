@@ -13,12 +13,9 @@
 //! With a region store, workers load saved chunks instead of generating
 //! them, and `save` writes the chunks changed since the last save.
 
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    thread::JoinHandle,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use crate::platform::{task::JoinHandle, time::Instant};
 
 use glam::IVec3;
 
@@ -302,34 +299,32 @@ impl ChunkManager {
                     store.clone(),
                 );
                 let stats = stats.clone();
-                std::thread::Builder::new()
-                    .name(format!("chunk-worker-{i}"))
-                    .spawn(move || {
-                        for job in jobs {
-                            let started = std::time::Instant::now();
-                            let result = match job {
-                                Job::Generate(pos) => {
-                                    let chunk = source.load_or_generate(store.as_deref(), pos);
-                                    stats.generated.record(started.elapsed());
-                                    Done::Generated(Box::new(chunk))
-                                }
-                                Job::Mesh(pos, area, revision, models, draws) => {
-                                    let light = light_chunk(&models, &area);
-                                    let mesh = if draws {
-                                        mesh_chunk(&models, &area, &light)
-                                    } else {
-                                        Mesh::default()
-                                    };
-                                    stats.meshed.record(started.elapsed());
-                                    Done::Meshed(pos, mesh, light, revision)
-                                }
-                            };
-                            if done.send(result).is_err() {
-                                break;
+                crate::platform::task::spawn(format!("chunk-worker-{i}"), move || {
+                    for job in jobs {
+                        let started = crate::platform::time::Instant::now();
+                        let result = match job {
+                            Job::Generate(pos) => {
+                                let chunk = source.load_or_generate(store.as_deref(), pos);
+                                stats.generated.record(started.elapsed());
+                                Done::Generated(Box::new(chunk))
                             }
+                            Job::Mesh(pos, area, revision, models, draws) => {
+                                let light = light_chunk(&models, &area);
+                                let mesh = if draws {
+                                    mesh_chunk(&models, &area, &light)
+                                } else {
+                                    Mesh::default()
+                                };
+                                stats.meshed.record(started.elapsed());
+                                Done::Meshed(pos, mesh, light, revision)
+                            }
+                        };
+                        if done.send(result).is_err() {
+                            break;
                         }
-                    })
-                    .expect("spawning a chunk worker thread")
+                    }
+                })
+                .expect("spawning a chunk worker thread")
             })
             .collect::<Vec<_>>();
 
@@ -1361,7 +1356,7 @@ mod tests {
     #[ignore]
     fn flight_at_fly_speed_never_stalls() {
         use crate::config::{FLY_SPEED, RENDER_DISTANCE};
-        let workers = std::thread::available_parallelism()
+        let workers = crate::platform::task::available_parallelism()
             .map_or(2, |n| n.get().saturating_sub(1))
             .max(1);
         let source = ChunkSource::Terrain(Box::new(Terrain::new(42)));

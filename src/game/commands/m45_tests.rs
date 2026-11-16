@@ -1,7 +1,7 @@
 //! M45: data packs, functions, schedules, `/tick`, the world border and
 //! `/forceload`, with Kenzo (host) and Alex in a flat world.
 
-use std::fs;
+use crate::platform::fs;
 
 use glam::DVec3;
 
@@ -17,9 +17,9 @@ fn world_with_pack(
 ) -> (Game, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
     let guard = PACKS.lock().unwrap_or_else(|e| e.into_inner());
     let mut game = world();
-    let root = std::env::temp_dir().join(format!(
+    let root = crate::platform::env::temp_dir().join(format!(
         "rc-m45-{}-{}",
-        std::process::id(),
+        crate::platform::env::process_id(),
         files.iter().map(|(p, _)| p.len()).sum::<usize>()
     ));
     let _ = fs::remove_dir_all(&root);

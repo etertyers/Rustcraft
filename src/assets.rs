@@ -70,11 +70,11 @@ static ROOT: OnceLock<(PathBuf, RootSource)> = OnceLock::new();
 
 fn root() -> &'static (PathBuf, RootSource) {
     ROOT.get_or_init(|| {
-        let args: Vec<String> = std::env::args().collect();
-        let exe = std::env::current_exe().unwrap_or_default();
+        let args: Vec<String> = crate::platform::env::args().collect();
+        let exe = crate::platform::env::current_exe().unwrap_or_default();
         let found = resolve(
             assets_flag(&args),
-            std::env::var_os("RUSTCRAFT_ASSETS").map(PathBuf::from),
+            crate::platform::env::var_os("RUSTCRAFT_ASSETS").map(PathBuf::from),
             &exe,
         );
         log::info!(
@@ -107,7 +107,7 @@ pub fn source() -> RootSource {
 
 /// The entries of `dir` with the given extension (`""` for any), or 0.
 fn count_in(dir: &Path, extension: &str) -> usize {
-    std::fs::read_dir(dir).map_or(0, |entries| {
+    crate::platform::fs::read_dir(dir).map_or(0, |entries| {
         entries
             .filter_map(Result::ok)
             .filter(|e| {
@@ -134,7 +134,7 @@ pub fn layers(assets: &Path) -> String {
 }
 
 fn count_hidden(dir: &Path) -> usize {
-    std::fs::read_dir(dir).map_or(0, |entries| {
+    crate::platform::fs::read_dir(dir).map_or(0, |entries| {
         entries
             .filter_map(Result::ok)
             .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
@@ -145,7 +145,7 @@ fn count_hidden(dir: &Path) -> usize {
 /// The `Contents/Resources` folder of the macOS app bundle the game runs
 /// from, if it runs from one.
 fn bundle_resources() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
+    let exe = crate::platform::env::current_exe().ok()?;
     resources_of(&exe)
 }
 
@@ -169,7 +169,7 @@ pub fn in_app_bundle() -> bool {
 /// `~/Library/Application Support/Rustcraft`, for saves and options when
 /// running from the app bundle.
 pub fn support_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
+    let home = crate::platform::env::var_os("HOME")?;
     Some(Path::new(&home).join("Library/Application Support/Rustcraft"))
 }
 
@@ -187,7 +187,7 @@ pub struct AssetReport {
 /// name (vanilla has no such file).
 fn vanilla_texture_index(assets: &Path) -> std::collections::HashMap<String, Vec<String>> {
     fn walk(dir: &Path, root: &Path, index: &mut std::collections::HashMap<String, Vec<String>>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = crate::platform::fs::read_dir(dir) else {
             return;
         };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
@@ -371,7 +371,7 @@ mod tests {
         let exe = tmp.path().join("Rustcraft.app/Contents/MacOS/rustcraft");
         // A folder named `assets` in the current folder must not matter:
         // resolve() never looks at it.
-        std::fs::create_dir_all(tmp.path().join("assets")).unwrap();
+        crate::platform::fs::create_dir_all(tmp.path().join("assets")).unwrap();
         let (root, source) = resolve(None, None, &exe);
         assert_eq!(
             root,
@@ -394,15 +394,16 @@ mod tests {
         );
         assert_eq!(resolve(None, None, exe).1, RootSource::Bundle);
         // A dev build finds the tree it sits in, by walking up from the exe.
-        let tree = std::env::temp_dir().join(format!("rc-tree-{}", std::process::id()));
-        std::fs::create_dir_all(tree.join("assets/data")).unwrap();
-        std::fs::write(tree.join("assets/data/blocks.ron"), "").unwrap();
+        let tree = crate::platform::env::temp_dir()
+            .join(format!("rc-tree-{}", crate::platform::env::process_id()));
+        crate::platform::fs::create_dir_all(tree.join("assets/data")).unwrap();
+        crate::platform::fs::write(tree.join("assets/data/blocks.ron"), "").unwrap();
         let dev = tree.join("target/release/rustcraft");
         assert_eq!(
             resolve(None, None, &dev),
             (tree.join("assets"), RootSource::Repo)
         );
-        std::fs::remove_dir_all(&tree).unwrap();
+        crate::platform::fs::remove_dir_all(&tree).unwrap();
     }
 
     #[test]
@@ -421,12 +422,12 @@ mod tests {
         let needle = ["env!(\"CARGO_MANIFEST", "_DIR\")"].concat();
         let mut stack = vec![repo_root().join("src")];
         while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            for entry in crate::platform::fs::read_dir(&dir).unwrap().flatten() {
                 let path = entry.path();
                 if path.is_dir() {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") {
-                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = crate::platform::fs::read_to_string(&path).unwrap();
                     assert!(
                         !text.contains(&needle),
                         "{} bakes in the build path; use assets::dir() or repo_root()",
