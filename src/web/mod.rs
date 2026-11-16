@@ -9,6 +9,7 @@
 //! persisted files (options, packs) go to OPFS in the background.
 
 mod store;
+pub mod workers;
 
 use std::io::{Cursor, Read};
 
@@ -20,6 +21,8 @@ use crate::platform::{fs, layers};
 extern "C" {
     #[wasm_bindgen(js_name = opfsList, catch)]
     pub async fn opfs_list() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = opfsIdle, catch)]
+    async fn opfs_idle() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = opfsRead, catch)]
     pub async fn opfs_read(path: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = opfsWrite, catch)]
@@ -36,6 +39,8 @@ extern "C" {
     pub async fn storage_estimate() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = onPointerLockLost)]
     pub fn on_pointer_lock_lost(cb: &Closure<dyn FnMut()>);
+    #[wasm_bindgen(js_name = onLeavingPage)]
+    fn on_leaving_page(cb: &Closure<dyn FnMut()>);
     #[wasm_bindgen(js_name = installPointerLock)]
     pub fn install_pointer_lock(canvas: &web_sys::HtmlCanvasElement);
     #[wasm_bindgen(js_name = installKeyboardLock)]
@@ -44,8 +49,26 @@ extern "C" {
     pub fn listen_for_gesture();
     #[wasm_bindgen(js_name = hadGesture)]
     pub fn had_gesture() -> bool;
+    #[wasm_bindgen(js_name = downloadBytes)]
+    fn download_bytes_js(filename: &str, bytes: &[u8]);
+    #[wasm_bindgen(js_name = pickFile)]
+    fn pick_file_js(accept: &str, cb: &Closure<dyn FnMut(js_sys::Uint8Array)>);
     #[wasm_bindgen(js_name = hardwareConcurrency)]
     pub fn hardware_concurrency() -> u32;
+}
+
+/// Saves `bytes` as a download.
+pub fn download_bytes(filename: &str, bytes: &[u8]) {
+    download_bytes_js(filename, bytes);
+}
+
+/// Asks for a file; it arrives through `platform::window::take_picked_zip`.
+pub fn pick_file(accept: &str) {
+    let cb = Closure::<dyn FnMut(js_sys::Uint8Array)>::new(|bytes: js_sys::Uint8Array| {
+        crate::platform::window::set_picked(bytes.to_vec());
+    });
+    pick_file_js(accept, &cb);
+    cb.forget();
 }
 
 const VANILLA_ZIP: &str = "vanilla.zip";
@@ -186,6 +209,32 @@ pub fn pack_add(name: &str, bytes: &[u8]) -> Result<(), JsValue> {
     put(&format!("assets/downloads/resourcepacks/{name}"), bytes).map_err(js_err)
 }
 
+/// A saved world as a .zip (the Select World screen's Export; also for
+/// scripts).
+#[wasm_bindgen]
+pub fn export_world(name: &str) -> Result<Vec<u8>, JsValue> {
+    crate::platform::world_zip::export(&crate::level::saves_dir(), name).map_err(js_err)
+}
+
+/// Unpacks a world .zip into the saves; returns the folder name it got.
+#[wasm_bindgen]
+pub fn import_world(bytes: &[u8]) -> Result<String, JsValue> {
+    crate::platform::world_zip::import(&crate::level::saves_dir(), bytes).map_err(js_err)
+}
+
+/// Resolves when everything written so far has reached OPFS.
+#[wasm_bindgen]
+pub async fn storage_idle() -> Result<(), JsValue> {
+    opfs_idle().await.map(|_| ())
+}
+
+/// Saves the world now (the page's tab-hidden and unload hooks call it; the
+/// tests do too).
+#[wasm_bindgen]
+pub fn save_now() {
+    crate::platform::window::request_save();
+}
+
 /// Step 3: the game. `?creative`, `?world=Name`, `?seed=5`, `?distance=9`,
 /// `?perf-test`, ... are the native flags (`--creative`, ...).
 #[wasm_bindgen]
@@ -214,6 +263,9 @@ pub fn start() -> Result<(), JsValue> {
     let lost = Closure::<dyn FnMut()>::new(crate::platform::window::set_lock_lost);
     on_pointer_lock_lost(&lost);
     lost.forget();
+    let leaving = Closure::<dyn FnMut()>::new(crate::platform::window::request_save);
+    on_leaving_page(&leaving);
+    leaving.forget();
     hide_overlay();
     let event_loop = winit::event_loop::EventLoop::new().map_err(js_err)?;
     event_loop.spawn_app(app);

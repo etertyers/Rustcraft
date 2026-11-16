@@ -107,3 +107,15 @@ pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
         std::task::Poll::Pending => panic!("block_on: the browser build can't wait for a future"),
     }
 }
+
+/// The browser's generator workers for a `ChunkManager` with no threads of
+/// its own; `None` natively (it has threads) and in single thread mode.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn gen_pool() -> Option<Box<dyn crate::world::offload::GenPool>> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn gen_pool() -> Option<Box<dyn crate::world::offload::GenPool>> {
+    crate::web::workers::generators()
+}

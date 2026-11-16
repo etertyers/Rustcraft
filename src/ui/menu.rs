@@ -345,6 +345,18 @@ impl Menu {
 
     fn select_world(&mut self, ui: &mut egui::Ui) -> Option<MenuAction> {
         self.collect_worlds(ui.ctx());
+        // A world zip the player picked (browser): unpack it and list again.
+        if let Some(bytes) = crate::platform::window::take_picked_zip() {
+            match crate::platform::world_zip::import(&self.saves, &bytes) {
+                Ok(name) => {
+                    log::info!("imported world {name}");
+                    self.worlds.clear();
+                    self.scan = Some(WorldScan::start(self.saves.clone()));
+                    self.selected = None;
+                }
+                Err(err) => log::warn!("can't import that world: {err:#}"),
+            }
+        }
         heading(ui, "Select World");
         let mut play = None;
         let list_height = (ui.available_height() - 120.0).max(80.0);
@@ -412,6 +424,38 @@ impl Menu {
                 self.screen = Screen::CreateWorld;
             }
         });
+        // Worlds as .zip files, in the browser (the Mac app has the folder).
+        if crate::platform::WEB {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 2.0 * BUTTON[0] - 8.0).max(0.0) / 2.0);
+                let exported = self.selected.clone();
+                if ui
+                    .add_enabled(
+                        exported.is_some(),
+                        Button::new("Export Selected World").min_size(BUTTON.into()),
+                    )
+                    .clicked_with_sound()
+                    && let Some(name) = exported
+                        .as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().into_owned())
+                {
+                    match crate::platform::world_zip::export(&self.saves, &name) {
+                        Ok(bytes) => {
+                            crate::platform::window::download(&format!("{name}.zip"), &bytes)
+                        }
+                        Err(err) => log::warn!("can't export {name}: {err:#}"),
+                    }
+                }
+                if ui
+                    .add(Button::new("Import World (.zip)").min_size(BUTTON.into()))
+                    .clicked_with_sound()
+                {
+                    crate::platform::window::pick_zip();
+                }
+            });
+        }
         ui.add_space(8.0);
         if ui
             .add_sized(BUTTON, Button::new("Cancel"))

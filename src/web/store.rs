@@ -6,12 +6,13 @@ use std::{io, path::Path};
 
 use crate::platform::storage::{Entry, MemoryStorage, Stat, Storage, set_storage, storage};
 
-/// Files that survive a reload: settings, packs, marks.
+/// Files that survive a reload: settings, packs, marks and the worlds.
 fn persisted(path: &str) -> bool {
     path == "options.ron"
         || path == "texture-marks.ron"
         || path.starts_with("resourcepacks/")
         || path.starts_with("assets/downloads/resourcepacks/")
+        || path.starts_with("saves/")
 }
 
 pub struct WebStorage {
@@ -32,12 +33,18 @@ fn key(path: &Path) -> String {
 }
 
 impl WebStorage {
+    /// Sends a file, or everything in a folder, to OPFS.
     fn persist(&self, path: &Path) {
         let key = key(path);
         if !persisted(&key) {
             return;
         }
         let Ok(data) = self.memory.read(path) else {
+            if let Ok(entries) = self.memory.list(path) {
+                for e in entries {
+                    self.persist(&path.join(e.name));
+                }
+            }
             return;
         };
         wasm_bindgen_futures::spawn_local(async move {

@@ -21,6 +21,7 @@ pub mod light;
 pub mod manager;
 pub mod materials;
 pub mod mesh;
+pub mod offload;
 pub mod piston;
 pub mod plants;
 pub mod portal;

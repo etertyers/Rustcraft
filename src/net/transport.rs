@@ -173,13 +173,13 @@ where
     }
 }
 
-fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
+pub(super) fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
     let bytes = bincode::serde::encode_to_vec(msg, bincode::config::standard())
         .expect("messages always encode");
     lz4_flex::compress_prepend_size(&bytes)
 }
 
-fn decode<T: DeserializeOwned>(frame: &[u8]) -> Option<T> {
+pub(super) fn decode<T: DeserializeOwned>(frame: &[u8]) -> Option<T> {
     let bytes = lz4_flex::decompress_size_prepended(frame).ok()?;
     let (msg, _) = bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).ok()?;
     Some(msg)

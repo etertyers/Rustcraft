@@ -63,6 +63,19 @@ impl ChunkSource {
         }
     }
 
+    /// What a generator worker needs to make this source's chunks, if they
+    /// can be made elsewhere (not a gallery's fixed chunks or a client's).
+    pub fn gen_spec(&self) -> Option<(super::offload::GenKind, u64)> {
+        use super::offload::GenKind;
+        match self {
+            ChunkSource::Terrain(t) => Some((GenKind::Terrain, t.seed())),
+            ChunkSource::Nether(n) => Some((GenKind::Nether, n.world_seed())),
+            ChunkSource::End(e) => Some((GenKind::End, e.world_seed())),
+            ChunkSource::Flat => Some((GenKind::Flat, 0)),
+            ChunkSource::Fixed(_) | ChunkSource::Remote => None,
+        }
+    }
+
     pub fn seed(&self) -> Option<u64> {
         match self {
             ChunkSource::Terrain(terrain) => Some(terrain.seed()),
@@ -126,6 +139,11 @@ pub struct ChunkManager {
     workers: Vec<JoinHandle<()>>,
     /// Set when no worker thread could start.
     inline: Option<Inline>,
+    /// Where new chunks are generated instead (the browser's generator
+    /// workers); saved chunks are still read here.
+    pool: Option<Box<dyn super::offload::GenPool>>,
+    /// Chunks the pool was asked for and hasn't answered.
+    pooled: usize,
     generating: FastSet<ChunkPos>,
     meshing: FastSet<ChunkPos>,
     meshed: FastSet<ChunkPos>,
@@ -324,7 +342,7 @@ impl ChunkManager {
         });
 
         let offsets = offsets(radius);
-        Self {
+        let mut manager = Self {
             world: World::default(),
             source,
             store,
@@ -338,6 +356,8 @@ impl ChunkManager {
             },
             workers,
             inline,
+            pool: None,
+            pooled: 0,
             generating: FastSet::default(),
             meshing: FastSet::default(),
             meshed: FastSet::default(),
@@ -360,7 +380,14 @@ impl ChunkManager {
             edits: None,
             rewritten: FastSet::default(),
             forgotten: Vec::new(),
+        };
+        // No threads here: the browser's generator workers take the generating.
+        if manager.inline.is_some()
+            && let Some(pool) = crate::platform::task::gen_pool()
+        {
+            manager.set_gen_pool(pool);
         }
+        manager
     }
 
     /// How long the worker threads have spent generating and meshing.
@@ -903,20 +930,71 @@ impl ChunkManager {
         Ok(count)
     }
 
+    /// Generates new chunks in `pool` (generator workers) instead of on
+    /// this thread; meshing and everything else stays as it was. Only for a
+    /// manager with no worker threads of its own (single thread mode); the
+    /// browser's worker pool starts it.
+    pub fn set_gen_pool(&mut self, pool: Box<dyn super::offload::GenPool>) {
+        if self.inline.is_some() && self.source.gen_spec().is_some() {
+            self.max_in_flight = INLINE_IN_FLIGHT.max(pool.capacity() * 2);
+            self.pool = Some(pool);
+        }
+    }
+
     /// Single thread mode: runs queued jobs until the budget is spent (at
-    /// least one, so work always advances).
+    /// least one, so work always advances), and collects what the generator
+    /// pool has finished.
     fn run_inline(&mut self) {
         let Some(inline) = &self.inline else {
             return;
         };
         let started = crate::platform::time::Instant::now();
         while let Ok(job) = inline.jobs.try_recv() {
-            let result = run_job(job, &self.source, self.store.as_deref(), &self.stats);
+            let result = match (&mut self.pool, job) {
+                (Some(pool), Job::Generate(pos)) => {
+                    // A saved chunk is read here; a new one goes to a worker.
+                    match self.store.as_deref().map(|s| s.load(pos)) {
+                        Some(Ok(Some(_))) | Some(Err(_)) => run_job(
+                            Job::Generate(pos),
+                            &self.source,
+                            self.store.as_deref(),
+                            &self.stats,
+                        ),
+                        _ => {
+                            if let Some((kind, seed)) = self.source.gen_spec() {
+                                pool.submit(super::offload::GenRequest { kind, seed, pos });
+                                self.pooled += 1;
+                            }
+                            continue;
+                        }
+                    }
+                }
+                (_, job) => run_job(job, &self.source, self.store.as_deref(), &self.stats),
+            };
             if inline.done.send(result).is_err() {
                 break;
             }
             if started.elapsed() >= INLINE_BUDGET {
                 break;
+            }
+        }
+        if let Some(pool) = &mut self.pool {
+            let mut finished = Vec::new();
+            pool.poll(&mut finished);
+            for (pos, bytes) in finished {
+                self.pooled = self.pooled.saturating_sub(1);
+                let chunk = match super::offload::decode(&bytes) {
+                    Ok(chunk) => chunk,
+                    Err(err) => {
+                        error!(
+                            "a generator worker's chunk {pos:?} is unreadable ({err}); generating it here"
+                        );
+                        self.source.generate(pos)
+                    }
+                };
+                if inline.done.send(Done::Generated(Box::new(chunk))).is_err() {
+                    break;
+                }
             }
         }
     }
