@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""The performance gate: compares perf results with docs/perf/baseline.json.
+"""The performance gate: compares perf results with a baseline in docs/perf/.
+
+The baseline is picked by the machine model in the results file (its
+"machine", e.g. Macmini9,1 or Mac16,12): the docs/perf/baseline*.json whose
+top-level "machine" matches. baseline.json is the M1 Mac mini's (the sessions
+run the gate there), baseline-m4.json is Kenzo's M4's. A machine with no
+baseline of its own is compared with baseline.json, which refuses it (exit
+2), as before. --baseline <file> names one explicitly (and is how a new
+machine's baseline file is started with --update-baseline).
 
     scripts/perf_gate.py docs/perf/m54.json
     scripts/perf_gate.py docs/perf/m62.json docs/perf/m62-*.json   (every row)
@@ -42,6 +50,23 @@ RATIO_RULES = {
 }
 BENCH_RULE = ("max_ratio", 1.05)
 ABSOLUTE_RULES = {"frames_over_50ms": 0}
+
+
+PERF_DIR = Path(__file__).resolve().parent.parent / "docs" / "perf"
+
+
+def pick_baseline(machine, perf_dir=PERF_DIR):
+    """The baseline file for `machine`: the one whose top-level "machine"
+    matches (baseline.json first), or baseline.json when none does."""
+    default = Path(perf_dir) / "baseline.json"
+    candidates = [default] + sorted(p for p in Path(perf_dir).glob("baseline*.json") if p != default)
+    for path in candidates:
+        try:
+            if json.loads(path.read_text()).get("machine") == machine:
+                return path
+        except (OSError, ValueError):
+            continue
+    return default
 
 
 def load(path):
@@ -129,7 +154,7 @@ def print_table(rows):
 def main():
     ap = argparse.ArgumentParser(description="Compare perf results with the baseline.")
     ap.add_argument("results", nargs="+")
-    ap.add_argument("--baseline", default="docs/perf/baseline.json")
+    ap.add_argument("--baseline", help="a baseline file (default: the one for the results' machine)")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--accept", metavar="REASON")
     args = ap.parse_args()
@@ -150,7 +175,12 @@ def main():
 def gate(args, results_path):
     """Checks one results file; returns the exit code."""
     results = load(results_path)
-    baseline_path = Path(args.baseline)
+    baseline_path = Path(args.baseline) if args.baseline else pick_baseline(results.get("machine"))
+    try:
+        shown = baseline_path.resolve().relative_to(PERF_DIR.parent.parent)
+    except ValueError:
+        shown = baseline_path
+    print(f"baseline: {shown} (results from {results.get('machine')})")
     baseline = load(baseline_path) if baseline_path.exists() else None
     row_name = results.get("row", "vanilla")
 
