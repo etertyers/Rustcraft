@@ -69,6 +69,28 @@ thread_local! {
     static SERVER: RefCell<Option<Server>> = const { RefCell::new(None) };
 }
 
+/// Reads the saved worlds from OPFS into the worker's memory.
+async fn restore_saves() -> Result<u32, JsValue> {
+    let listed = super::opfs_list().await?;
+    let mut n = 0;
+    for path in js_sys::Array::from(&listed)
+        .iter()
+        .filter_map(|v| v.as_string())
+        .filter(|p| p.starts_with("saves/"))
+    {
+        let Some(data) = super::opfs_read(&path)
+            .await
+            .ok()
+            .filter(|v| !v.is_undefined())
+        else {
+            continue;
+        };
+        super::put(&path, &js_sys::Uint8Array::new(&data).to_vec()).map_err(super::js_err)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// Worker side: saves the world now.
 #[wasm_bindgen]
 pub fn server_worker_save() {
@@ -81,15 +103,17 @@ pub fn server_worker_save() {
     });
 }
 
-/// Worker side: tells guests the world is closing and saves it.
+/// Worker side: tells guests the world is closing, saves it and resolves
+/// once every file has reached OPFS.
 #[wasm_bindgen]
-pub fn server_worker_close() {
+pub async fn server_worker_close() {
     SERVER.with(|s| {
         if let Some(server) = s.borrow_mut().as_mut() {
             server.shut_down();
         }
     });
     server_worker_save();
+    let _ = super::opfs_idle().await;
 }
 
 /// Worker side: the whole server. Resolves once it's running; the timer keeps
@@ -102,13 +126,15 @@ pub async fn server_worker_run(
 ) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
     crate::platform::logging::init();
-    let _ = crate::platform::storage::set_storage(Box::new(
-        crate::platform::storage::MemoryStorage::new(),
-    ));
+    // Memory, with the saves mirrored to OPFS through synchronous access
+    // handles (glue.js `opfsWrite` in a worker); the page doesn't write them.
+    super::store::install();
     let spec = WorldSpec::from_bytes(&spec).ok_or("unreadable world spec")?;
     let archive = super::fetch_bytes(&assets_url).await?;
     let n = super::unzip_into(&archive, "assets/", |name| Some(name.to_owned()))?;
     log::info!("server worker: {n} asset files unpacked");
+    let restored = restore_saves().await?;
+    log::info!("server worker: {restored} saved files read from OPFS");
     let game = build_game(&spec).map_err(super::js_err)?;
     let mut server = Server::new(game);
     let transport: WorkerTransport<ServerMsg, ClientMsg, MessagePortPort> =
@@ -149,6 +175,7 @@ struct Status {
 pub struct Remote {
     worker: web_sys::Worker,
     status: Rc<RefCell<Status>>,
+    closing: bool,
     _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
 }
 
@@ -173,15 +200,19 @@ impl Remote {
     }
 
     /// Asks the worker to save the world and close it.
-    pub fn close(&self) {
+    pub fn close(&mut self) {
+        self.closing = true;
         self.command("close");
     }
 }
 
 impl Drop for Remote {
     fn drop(&mut self) {
-        // Give a close request a moment to be handled before the worker goes.
-        self.worker.terminate();
+        // After `close` the worker goes when it says it has saved ("closed");
+        // otherwise it goes now.
+        if !self.closing {
+            self.worker.terminate();
+        }
     }
 }
 
@@ -209,12 +240,17 @@ pub fn spawn(spec: &WorldSpec) -> anyhow::Result<(crate::client::ClientConnectio
                     .ok()
                     .and_then(|v| v.as_bool())
             };
-            if js_sys::Reflect::get(&data, &"type".into())
+            let kind = js_sys::Reflect::get(&data, &"type".into())
                 .ok()
-                .and_then(|v| v.as_string())
-                .as_deref()
-                == Some("status")
-            {
+                .and_then(|v| v.as_string());
+            if kind.as_deref() == Some("closed") {
+                // Saved and written to OPFS: now the worker can go.
+                if let Some(target) = event.target()
+                    && let Ok(worker) = target.dyn_into::<web_sys::Worker>()
+                {
+                    worker.terminate();
+                }
+            } else if kind.as_deref() == Some("status") {
                 let mut s = state.borrow_mut();
                 s.cheats = get("cheats").unwrap_or(false);
                 s.stopping = get("stopping").unwrap_or(false);
@@ -242,6 +278,7 @@ pub fn spawn(spec: &WorldSpec) -> anyhow::Result<(crate::client::ClientConnectio
         Remote {
             worker,
             status,
+            closing: false,
             _on_message: on_message,
         },
     ))

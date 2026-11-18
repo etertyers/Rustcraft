@@ -19,7 +19,11 @@ self.onmessage = async (event) => {
     return;
   }
   if (msg.type === "save") return server_worker_save();
-  if (msg.type === "close") return server_worker_close();
+  if (msg.type === "close") {
+    await server_worker_close();
+    self.postMessage({ type: "closed" });
+    return;
+  }
   if (msg.bytes) {
     const out = worker_generate(new Uint8Array(msg.bytes));
     if (out) {

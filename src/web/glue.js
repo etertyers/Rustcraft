@@ -1,6 +1,7 @@
 // Browser glue for the wasm build (M71): OPFS, the page's query string,
 // pointer lock and the keyboard. Kept small; everything with logic is Rust.
 
+const inWorker = typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope;
 let rootPromise = null;
 function root() {
   rootPromise ??= navigator.storage.getDirectory().then((r) =>
@@ -28,6 +29,19 @@ export async function opfsWrite(path, bytes) {
   return queued(path, async () => {
     const [dir, name] = await dirOf(path, true);
     const file = await dir.getFileHandle(name, { create: true });
+    if (inWorker) {
+      // Synchronous access handles (workers only, M76): no stream to keep
+      // open, and the one way Safari writes OPFS files.
+      const handle = await file.createSyncAccessHandle();
+      try {
+        handle.truncate(0);
+        handle.write(bytes, { at: 0 });
+        handle.flush();
+      } finally {
+        handle.close();
+      }
+      return;
+    }
     const w = await file.createWritable();
     await w.write(bytes);
     await w.close();

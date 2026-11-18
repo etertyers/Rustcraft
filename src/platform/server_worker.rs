@@ -47,7 +47,7 @@ mod native {
             false
         }
         pub fn save(&self) {}
-        pub fn close(&self) {}
+        pub fn close(&mut self) {}
     }
 
     pub fn requested() -> bool {
