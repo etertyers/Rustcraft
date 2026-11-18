@@ -339,6 +339,15 @@ pub fn builtin_dir() -> PathBuf {
     crate::assets::downloads_for(&assets).join("resourcepacks")
 }
 
+/// Whether the built-in folder holds the Barebones packs (`Bare Bones ….zip`).
+pub fn has_barebones_packs() -> bool {
+    crate::platform::fs::read_dir(builtin_dir()).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("Bare Bones"))
+    })
+}
+
 /// The packs in `dir` and the built-in ones in `builtin`, sorted by name.
 /// A pack in `dir` hides a built-in one with the same file name.
 pub fn list_with_builtin(dir: &Path, builtin: &Path) -> Vec<Pack> {

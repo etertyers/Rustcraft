@@ -15,6 +15,18 @@ fn persisted(path: &str) -> bool {
         || path.starts_with("saves/")
 }
 
+static SKIP_PERSIST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Runs `f` with writes kept in memory only: the built-in files are cached
+/// by the loader (`web/builtin.js`) in their own archives, so mirroring each
+/// file to OPFS as well would store them twice.
+pub fn without_persisting<T>(f: impl FnOnce() -> T) -> T {
+    SKIP_PERSIST.store(true, std::sync::atomic::Ordering::Relaxed);
+    let out = f();
+    SKIP_PERSIST.store(false, std::sync::atomic::Ordering::Relaxed);
+    out
+}
+
 pub struct WebStorage {
     memory: MemoryStorage,
 }
@@ -36,7 +48,7 @@ impl WebStorage {
     /// Sends a file, or everything in a folder, to OPFS.
     fn persist(&self, path: &Path) {
         let key = key(path);
-        if !persisted(&key) {
+        if !persisted(&key) || SKIP_PERSIST.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         let Ok(data) = self.memory.read(path) else {

@@ -130,9 +130,12 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
 
 /// Step 1. Installs the storage, unpacks the repo's assets (`assets_url`, the
 /// archive `scripts/build-web.sh` made) and what OPFS holds. Returns whether
-/// the vanilla layer is present.
+/// the vanilla layer is present. With `builtin` (the build has its own
+/// Minecraft files, M75) a vanilla layer the player stored earlier is left
+/// alone: the built-in one is loaded next. The loader's own cache of the
+/// built-in archives (`builtin/` in OPFS) is never read into memory here.
 #[wasm_bindgen]
-pub async fn boot(assets_url: String) -> Result<bool, JsValue> {
+pub async fn boot(assets_url: String, builtin: bool) -> Result<bool, JsValue> {
     console_error_panic_hook::set_once();
     crate::platform::logging::init();
     store::install();
@@ -147,6 +150,7 @@ pub async fn boot(assets_url: String) -> Result<bool, JsValue> {
     for path in js_sys::Array::from(&listed)
         .iter()
         .filter_map(|v| v.as_string())
+        .filter(|p| !p.starts_with("builtin/") && !(builtin && p == VANILLA_ZIP))
     {
         let Some(data) = opfs_read(&path).await.ok().filter(|v| !v.is_undefined()) else {
             continue;
@@ -162,15 +166,27 @@ pub async fn boot(assets_url: String) -> Result<bool, JsValue> {
             put(&path, &bytes).map_err(js_err)?;
         }
     }
+    if builtin {
+        // The built-in files load next (web/loader.js); nothing to report yet.
+        return Ok(false);
+    }
     let report = vanilla_report();
     log::info!("{}", report.summary());
     Ok(vanilla && report.complete())
 }
 
 fn vanilla_report() -> layers::VanillaReport {
+    vanilla_report_with(true)
+}
+
+fn vanilla_report_with(all_sounds: bool) -> layers::VanillaReport {
     let prefix = format!("{VANILLA_ROOT}/");
     let paths = store::paths_under(&prefix);
-    layers::check_vanilla(&paths, &|p| fs::read(format!("{prefix}{p}")).ok())
+    layers::check_vanilla_with(
+        &paths,
+        &|p| fs::read(format!("{prefix}{p}")).ok(),
+        all_sounds,
+    )
 }
 
 /// Setup screen: one picked file (a folder pick gives each file's relative
@@ -181,6 +197,91 @@ pub fn vanilla_add(path: &str, bytes: &[u8]) -> bool {
         Some(dest) => put(&dest, bytes).is_ok(),
         None => false,
     }
+}
+
+/// Built-in layers (M75): a resource pack from the build's own files. Kept
+/// in memory only; the loader caches the archive it came from.
+#[wasm_bindgen]
+pub fn builtin_pack_add(name: &str, bytes: &[u8]) -> Result<(), JsValue> {
+    store::without_persisting(|| pack_add(name, bytes))
+}
+
+/// Built-in layers (M75): a mod jar, which the extras read sprites and sounds
+/// from (`extras::jar`).
+#[wasm_bindgen]
+pub fn builtin_mod_add(name: &str, bytes: &[u8]) -> Result<(), JsValue> {
+    let name = name.rsplit('/').next().unwrap_or(name);
+    store::without_persisting(|| put(&format!("assets/downloads/mods/{name}"), bytes))
+        .map_err(js_err)
+}
+
+/// Checks the vanilla layer in memory (the rules of `scripts/check-vanilla.sh`);
+/// the summary, or the problems as an error. With `all_sounds` false the
+/// sound files may still be missing (they arrive in the background).
+#[wasm_bindgen]
+pub fn vanilla_check(all_sounds: bool) -> Result<String, JsValue> {
+    let report = vanilla_report_with(all_sounds);
+    if report.complete() {
+        Ok(report.summary())
+    } else {
+        Err(js_err(report.summary()))
+    }
+}
+
+/// A zip being unpacked a little at a time, so a layer that arrives while the
+/// game runs (the sounds) never stalls a frame.
+struct Unpacking {
+    zip: zip::ZipArchive<Cursor<Vec<u8>>>,
+    next: usize,
+}
+
+thread_local! {
+    static UNPACKING: std::cell::RefCell<Option<Unpacking>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts unpacking a vanilla layer zip (entries `assets/minecraft/...`);
+/// returns how many entries it has. `bg_zip_step` does the work.
+#[wasm_bindgen]
+pub fn bg_zip_start(bytes: &[u8]) -> Result<u32, JsValue> {
+    let zip = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).map_err(js_err)?;
+    let n = zip.len() as u32;
+    UNPACKING.with(|u| *u.borrow_mut() = Some(Unpacking { zip, next: 0 }));
+    Ok(n)
+}
+
+/// Unpacks entries for up to `budget_ms` milliseconds (at least one);
+/// true once the whole zip is in.
+#[wasm_bindgen]
+pub fn bg_zip_step(budget_ms: f64) -> Result<bool, JsValue> {
+    UNPACKING.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        let Some(work) = cell.as_mut() else {
+            return Ok(true);
+        };
+        let started = crate::platform::time::Instant::now();
+        let mut buf = Vec::new();
+        while work.next < work.zip.len() {
+            let mut entry = work.zip.by_index(work.next).map_err(js_err)?;
+            work.next += 1;
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().map(|n| n.into_owned()).map_err(js_err)?;
+            if let Some(dest) = layers::vanilla_destination(&name) {
+                buf.clear();
+                entry.read_to_end(&mut buf).map_err(js_err)?;
+                put(&dest, &buf).map_err(js_err)?;
+            }
+            if started.elapsed().as_secs_f64() * 1000.0 >= budget_ms {
+                break;
+            }
+        }
+        let done = work.next >= work.zip.len();
+        if done {
+            *cell = None;
+        }
+        Ok(done)
+    })
 }
 
 /// Setup screen: a picked .zip (a jar or a download of the assets).

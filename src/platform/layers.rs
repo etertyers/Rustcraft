@@ -47,6 +47,17 @@ pub fn check_vanilla(
     paths: &HashSet<String>,
     read: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> VanillaReport {
+    check_vanilla_with(paths, read, true)
+}
+
+/// Like [`check_vanilla`], but with `all_sounds` false the `.ogg` files
+/// `sounds.json` names may be missing: what the built-in files (M75) need
+/// before the title screen, while the sounds still arrive in the background.
+pub fn check_vanilla_with(
+    paths: &HashSet<String>,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+    all_sounds: bool,
+) -> VanillaReport {
     let mut report = VanillaReport::default();
     let count = |dir: &str| {
         let prefix = format!("{dir}/");
@@ -112,7 +123,7 @@ pub fn check_vanilla(
         .filter(|n| !paths.contains(&format!("sounds/{n}.ogg")))
         .collect();
     missing.sort();
-    if let Some(first) = missing.first() {
+    if let Some(first) = missing.first().filter(|_| all_sounds) {
         report.problems.push(format!(
             "the vanilla layer is missing {} sound files (of {} named, e.g. {first}.ogg)",
             missing.len(),
@@ -223,6 +234,27 @@ mod tests {
         assert!(r.complete(), "{:?}", r.problems);
         assert_eq!((r.sound_files, r.font_pages), (2, 1));
         assert!(r.summary().starts_with("vanilla layer complete"));
+    }
+
+    #[test]
+    fn the_core_check_lets_sound_files_arrive_later_but_still_needs_everything_else() {
+        let (paths, files) = layer(&[
+            "sounds/block/stone/step2.ogg",
+            "sounds/block/stone/step1.ogg",
+        ]);
+        let core = check_vanilla_with(&paths, &|p| files.get(p).cloned(), false);
+        assert!(core.complete(), "{:?}", core.problems);
+        let full = check_vanilla(&paths, &|p| files.get(p).cloned());
+        assert!(!full.complete() && full.problems[0].contains("2 sound files"));
+        // Nothing else is let off: a missing model folder or font still fails.
+        let (paths, files) = layer(&["models/block/stone.json", "sounds/block/stone/step1.ogg"]);
+        let core = check_vanilla_with(&paths, &|p| files.get(p).cloned(), false);
+        assert!(core.problems[0].contains("no models/"));
+        let (paths, files) = layer(&["font/default.json"]);
+        assert!(
+            check_vanilla_with(&paths, &|p| files.get(p).cloned(), false).problems[0]
+                .contains("font/default.json")
+        );
     }
 
     #[test]

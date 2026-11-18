@@ -114,6 +114,7 @@ mod web {
     pub struct Metadata {
         is_dir: bool,
         len: u64,
+        modified_ms: u64,
     }
 
     impl Metadata {
@@ -132,12 +133,18 @@ mod web {
         pub fn file_type(&self) -> FileType {
             FileType(self.is_dir)
         }
-        /// The browser's storage keeps no modification times.
+        /// When it last changed: a counter in the browser's memory storage
+        /// (it only says "changed since"), so a folder that gets a new file
+        /// reads as modified.
         pub fn modified(&self) -> io::Result<crate::platform::time::SystemTime> {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "no modification times",
-            ))
+            if self.modified_ms == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "no modification time",
+                ));
+            }
+            Ok(crate::platform::time::UNIX_EPOCH
+                + std::time::Duration::from_millis(self.modified_ms))
         }
     }
 
@@ -146,6 +153,7 @@ mod web {
         Ok(Metadata {
             is_dir: s.is_dir,
             len: s.len,
+            modified_ms: s.modified_ms,
         })
     }
 
@@ -165,6 +173,7 @@ mod web {
             Ok(Metadata {
                 is_dir: self.entry.is_dir,
                 len: self.entry.len,
+                modified_ms: 0,
             })
         }
         pub fn file_type(&self) -> io::Result<FileType> {
@@ -236,6 +245,7 @@ mod web {
             Ok(Metadata {
                 is_dir: false,
                 len: self.data.get_ref().len() as u64,
+                modified_ms: 0,
             })
         }
     }

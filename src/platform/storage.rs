@@ -26,6 +26,10 @@ pub struct Entry {
 pub struct Stat {
     pub is_dir: bool,
     pub len: u64,
+    /// When it last changed, in milliseconds since 1970 (natively) or a
+    /// counter that grows with every change (in memory); 0 when unknown.
+    /// The Resource Packs screen compares it to notice a pack that arrived.
+    pub modified_ms: u64,
 }
 
 pub trait Storage: Send + Sync {
@@ -99,6 +103,11 @@ impl Storage for NativeStorage {
         Ok(Stat {
             is_dir: m.is_dir(),
             len: if m.is_dir() { 0 } else { m.len() },
+            modified_ms: m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_millis() as u64),
         })
     }
 
@@ -115,6 +124,10 @@ impl Storage for NativeStorage {
 struct Tree {
     files: BTreeMap<PathBuf, Vec<u8>>,
     dirs: BTreeSet<PathBuf>,
+    /// A counter that grows with every change, and when each path (and each
+    /// folder above it) last changed by it.
+    clock: u64,
+    changed: BTreeMap<PathBuf, u64>,
 }
 
 /// Files in memory, lost when the page closes.
@@ -143,6 +156,22 @@ impl MemoryStorage {
 impl Tree {
     fn is_dir(&self, p: &Path) -> bool {
         p.as_os_str().is_empty() || self.dirs.contains(p)
+    }
+
+    /// Notes that `p` and every folder above it changed now.
+    fn touch(&mut self, p: &Path) {
+        self.clock += 1;
+        let now = self.clock;
+        let mut cur = PathBuf::new();
+        self.changed.insert(cur.clone(), now);
+        for c in p.components() {
+            cur.push(c);
+            self.changed.insert(cur.clone(), now);
+        }
+    }
+
+    fn modified(&self, p: &Path) -> u64 {
+        self.changed.get(p).copied().unwrap_or(0)
     }
 
     fn make_dirs(&mut self, p: &Path) {
@@ -175,6 +204,7 @@ impl Storage for MemoryStorage {
         if t.is_dir(&p) {
             return Err(io::Error::other("is a directory"));
         }
+        t.touch(&p);
         t.files.insert(p, data.to_vec());
         Ok(())
     }
@@ -218,6 +248,7 @@ impl Storage for MemoryStorage {
         let p = norm(path);
         let mut t = self.tree();
         if t.files.remove(&p).is_some() {
+            t.touch(&p);
             return Ok(());
         }
         if !t.dirs.contains(&p) {
@@ -225,6 +256,7 @@ impl Storage for MemoryStorage {
         }
         t.files.retain(|f, _| !f.starts_with(&p));
         t.dirs.retain(|d| !d.starts_with(&p));
+        t.touch(&p);
         Ok(())
     }
 
@@ -235,12 +267,14 @@ impl Storage for MemoryStorage {
             return Ok(Stat {
                 is_dir: false,
                 len: f.len() as u64,
+                modified_ms: t.modified(&p),
             });
         }
         if t.is_dir(&p) {
             return Ok(Stat {
                 is_dir: true,
                 len: 0,
+                modified_ms: t.modified(&p),
             });
         }
         Err(not_found(path))
@@ -253,6 +287,7 @@ impl Storage for MemoryStorage {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, "is a file"));
         }
         t.make_dirs(&p);
+        t.touch(&p);
         Ok(())
     }
 
@@ -371,6 +406,21 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         exercise(&NativeStorage, &tmp);
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn memory_storage_tells_when_a_folder_last_changed() {
+        let s = MemoryStorage::new();
+        s.create_dir_all(Path::new("packs")).unwrap();
+        let before = s.stat(Path::new("packs")).unwrap().modified_ms;
+        assert!(before > 0);
+        s.write(Path::new("packs/a.zip"), b"x").unwrap();
+        let after = s.stat(Path::new("packs")).unwrap().modified_ms;
+        assert!(after > before, "a new file changes its folder");
+        s.write(Path::new("elsewhere.txt"), b"y").unwrap();
+        assert_eq!(s.stat(Path::new("packs")).unwrap().modified_ms, after);
+        s.delete(Path::new("packs/a.zip")).unwrap();
+        assert!(s.stat(Path::new("packs")).unwrap().modified_ms > after);
     }
 
     #[test]

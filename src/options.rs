@@ -220,7 +220,13 @@ fn default_visuals() -> crate::render::visuals::Visuals {
     let mut visuals = crate::render::visuals::Visuals::default();
     if crate::platform::WEB {
         visuals.look = crate::render::visuals::LookKind::Vanilla;
-        visuals.style = crate::render::visuals::Style::Vanilla;
+        // Barebones, as natively, once its packs are there (built in, M75, or
+        // added at the setup screen); Vanilla without them.
+        visuals.style = if crate::pack::has_barebones_packs() {
+            crate::render::visuals::Style::Barebones
+        } else {
+            crate::render::visuals::Style::Vanilla
+        };
     }
     visuals
 }

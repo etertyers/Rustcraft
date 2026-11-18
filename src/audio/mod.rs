@@ -808,7 +808,10 @@ impl Audio {
         };
         if let Some(manager) = &mut self.manager {
             match manager.play(data) {
-                Ok(handle) => self.music = Some((event.to_owned(), handle, entry.volume)),
+                Ok(handle) => {
+                    info!("music: playing {} ({event})", entry.name);
+                    self.music = Some((event.to_owned(), handle, entry.volume));
+                }
                 Err(err) => debug!("can't play {}: {err}", entry.name),
             }
         }
