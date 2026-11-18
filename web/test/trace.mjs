@@ -30,13 +30,13 @@ for (const e of events.filter((e) => e.name === "ProfileChunk")) {
   let t = (samples.at(-1)?.t ?? 0);
   (p.samples ?? []).forEach((id, i) => { t += deltas[i] ?? 0; samples.push({ t, name: nodes.get(`${e.id}:${id}`) ?? "?", chunk: e.id }); });
 }
-for (const fr of events.filter((e) => e.ph === "X" && e.name === "FireAnimationFrame" && e.dur > 40000 && e.dur < 200000)) {
+for (const fr of events.filter((e) => e.ph === "X" && e.name === "FireAnimationFrame" && e.dur > 40000).sort((a, b) => b.dur - a.dur).slice(0, 4)) {
   const prof = events.find((e) => e.name === "Profile");
   const start = prof?.args?.data?.startTime ?? 0;
   const inside = samples.filter((x) => start + x.t >= fr.ts && start + x.t <= fr.ts + fr.dur);
   const by = {};
   for (const x of inside) by[x.name] = (by[x.name] ?? 0) + 1;
-  console.log(`CPU samples in the ${(fr.dur / 1000).toFixed(0)} ms frame: ${inside.length}`);
+  console.log(`CPU samples in the ${(fr.dur / 1000).toFixed(0)} ms frame at +${((fr.ts - events[0].ts) / 1e6).toFixed(1)} s: ${inside.length}`);
   for (const [k, v] of Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 12)) console.log(`    ${v}  ${k}`);
 }
 const long = events.filter((e) => e.ph === "X" && e.dur > 25000).sort((a, b) => b.dur - a.dur);

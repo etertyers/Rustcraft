@@ -7,6 +7,8 @@
 
 pub mod events;
 pub mod table;
+#[cfg(target_arch = "wasm32")]
+mod web_music;
 
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, io::Cursor, time::Duration};
 
@@ -326,7 +328,10 @@ pub struct Audio {
     cache: HashMap<String, Option<StaticSoundData>>,
     random: Random,
     /// The track playing, its event and its own volume.
-    music: Option<(String, LongSoundHandle, f32)>,
+    music: Option<(String, Track, f32)>,
+    /// The Master Volume last given to `update` (a browser media element has
+    /// no main track to carry it).
+    master: f32,
     /// Seconds until the next track may start.
     music_wait: f32,
     /// Songs playing from jukeboxes: where, the stream and the file's volume.
@@ -345,6 +350,44 @@ pub struct Audio {
     sends: Option<Vec<kira::track::SendTrackHandle>>,
     /// Ambient Sounds' beds that are sounding, by key.
     beds: HashMap<String, PlayingBed>,
+}
+
+/// The background music playing: a kira stream, or (in the browser, where
+/// kira can't stream) a media element.
+enum Track {
+    Kira(LongSoundHandle),
+    #[cfg(target_arch = "wasm32")]
+    Element(web_music::Element),
+}
+
+impl Track {
+    fn playing(&self) -> bool {
+        match self {
+            Track::Kira(handle) => handle.state() == PlaybackState::Playing,
+            #[cfg(target_arch = "wasm32")]
+            Track::Element(element) => element.playing(),
+        }
+    }
+
+    /// `amplitude` is linear, 0 to 1.
+    fn set_volume(&mut self, amplitude: f32) {
+        match self {
+            Track::Kira(handle) => handle.set_volume(decibels(amplitude), Tween::default()),
+            #[cfg(target_arch = "wasm32")]
+            Track::Element(element) => element.set_volume(amplitude),
+        }
+    }
+
+    fn fade_out(&mut self, seconds: f32) {
+        match self {
+            Track::Kira(handle) => handle.stop(Tween {
+                duration: Duration::from_secs_f32(seconds),
+                ..Tween::default()
+            }),
+            #[cfg(target_arch = "wasm32")]
+            Track::Element(element) => element.fade_out(seconds),
+        }
+    }
 }
 
 /// A bed of ambient sound: the file playing now, how long it has played
@@ -374,6 +417,7 @@ impl Audio {
             cache: HashMap::new(),
             random: Random(0x9E37_79B9_7F4A_7C15),
             music: None,
+            master: 1.0,
             music_wait: 5.0,
             records: HashMap::new(),
             record_near: false,
@@ -533,6 +577,7 @@ impl Audio {
     ) {
         let mute = MUTE_STEPS.load(Ordering::Relaxed);
         let cues: Vec<Cue> = drain().into_iter().filter(|cue| keeps(cue, mute)).collect();
+        self.master = master;
         if let Some(manager) = &mut self.manager {
             manager
                 .main_track()
@@ -767,15 +812,22 @@ impl Audio {
         let playing = self
             .music
             .as_ref()
-            .is_some_and(|(_, handle, _)| handle.state() == PlaybackState::Playing);
+            .is_some_and(|(_, handle, _)| handle.playing());
+        let master = self.master;
         if let Some((event, handle, own)) = &mut self.music {
-            handle.set_volume(decibels(*own * volume * 0.7), Tween::default());
+            // On the main track kira applies Master itself; a media element
+            // needs it multiplied in.
+            let amplitude = match handle {
+                Track::Kira(_) => *own * volume * 0.7,
+                #[cfg(target_arch = "wasm32")]
+                Track::Element(_) => *own * volume * 0.7 * master,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = master;
+            handle.set_volume(amplitude);
             let changed = request != Some(event.as_str());
             if changed && playing {
-                handle.stop(Tween {
-                    duration: Duration::from_secs(2),
-                    ..Tween::default()
-                });
+                handle.fade_out(2.0);
             }
             if !playing {
                 self.music = None;
@@ -798,6 +850,20 @@ impl Audio {
             self.music_wait = 30.0;
             return;
         };
+        // The browser streams the track itself (decoding it whole here would
+        // stall the page for about 450 ms).
+        #[cfg(target_arch = "wasm32")]
+        if let Some(element) =
+            web_music::start(&bytes, (entry.volume * volume * 0.7 * self.master).min(1.0))
+        {
+            info!(
+                "music: playing {} ({event}), streamed by the browser",
+                entry.name
+            );
+            self.music = Some((event.to_owned(), Track::Element(element), entry.volume));
+            self.music_wait = 30.0 + self.random.next() * 150.0;
+            return;
+        }
         let data = match LongSoundData::from_cursor(Cursor::new(bytes)) {
             Ok(data) => data.volume(decibels(entry.volume * volume * 0.7)),
             Err(err) => {
@@ -810,7 +876,7 @@ impl Audio {
             match manager.play(data) {
                 Ok(handle) => {
                     info!("music: playing {} ({event})", entry.name);
-                    self.music = Some((event.to_owned(), handle, entry.volume));
+                    self.music = Some((event.to_owned(), Track::Kira(handle), entry.volume));
                 }
                 Err(err) => debug!("can't play {}: {err}", entry.name),
             }
