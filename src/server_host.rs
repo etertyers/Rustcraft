@@ -6,27 +6,42 @@
 //! on this thread. The test flights (`--bench`, `--shot`) still need the
 //! world itself, which only a local host has ([`ServerHost::local_mut`]).
 
-use crate::{player::mode::GameMode, server::Server};
+use crate::{platform::server_worker::Remote, player::mode::GameMode, server::Server};
 
 /// A running server and what `App` can do with it.
 pub struct ServerHost {
-    server: Server,
+    host: Host,
+}
+
+enum Host {
+    /// The server in this process.
+    Local(Box<Server>),
+    /// The server in a Web Worker (the browser build, `?server-worker`): it
+    /// ticks itself; the window only reads what it reports.
+    Remote(Remote),
 }
 
 impl ServerHost {
     /// A server running in this process.
     pub fn new(server: Server) -> Self {
-        Self { server }
+        Self {
+            host: Host::Local(Box::new(server)),
+        }
     }
 
-    /// Runs the server for `dt` seconds (whole ticks at 20 per second).
+    /// A server running in a Web Worker.
+    pub fn remote(remote: Remote) -> Self {
+        Self {
+            host: Host::Remote(remote),
+        }
+    }
+
+    /// Runs the server for `dt` seconds (whole ticks at 20 per second). A
+    /// worker's server runs itself.
     pub fn advance(&mut self, dt: f32) {
-        self.server.advance(dt);
-    }
-
-    /// Joins a client: the server's end of a connection.
-    pub fn connect(&mut self, conn: crate::server::ServerConnection) {
-        self.server.connect(conn);
+        if let Host::Local(server) = &mut self.host {
+            server.advance(dt);
+        }
     }
 
     /// Opens the world to LAN; returns the port.
@@ -36,52 +51,89 @@ impl ServerHost {
         guest_mode: GameMode,
         cheats: bool,
     ) -> std::io::Result<u16> {
-        self.server.open_to_lan(port, guest_mode, cheats)
+        match &mut self.host {
+            Host::Local(server) => server.open_to_lan(port, guest_mode, cheats),
+            Host::Remote(_) => Err(std::io::Error::other("a worker's world can't open to LAN")),
+        }
     }
 
     /// The port the world is open to LAN on, if it is.
     pub fn lan_port(&self) -> Option<u16> {
-        self.server.lan_port()
+        match &self.host {
+            Host::Local(server) => server.lan_port(),
+            Host::Remote(_) => None,
+        }
     }
 
     /// Whether the world was made with Allow Cheats.
     pub fn cheats(&self) -> bool {
-        self.server.game.cheats
+        match &self.host {
+            Host::Local(server) => server.game.cheats,
+            Host::Remote(remote) => remote.cheats(),
+        }
     }
 
     /// The host player's game mode.
     pub fn mode(&self) -> GameMode {
-        self.server.game.player.mode
+        match &self.host {
+            Host::Local(server) => server.game.player.mode,
+            Host::Remote(_) => GameMode::default(),
+        }
     }
 
     /// `/stop` was run: the window should save and go back to the title.
     pub fn stopping(&self) -> bool {
-        self.server.stopping
+        match &self.host {
+            Host::Local(server) => server.stopping,
+            Host::Remote(remote) => remote.stopping(),
+        }
     }
 
     /// Shows the host player a line of text.
     pub fn tell_host(&mut self, text: String) {
-        self.server.game.player.show(text);
+        if let Host::Local(server) = &mut self.host {
+            server.game.player.show(text);
+        }
     }
 
     /// Saves the world, everyone in it included.
     pub fn save(&mut self) -> anyhow::Result<()> {
-        self.server.game.save()
+        match &mut self.host {
+            Host::Local(server) => server.game.save(),
+            Host::Remote(remote) => {
+                remote.save();
+                Ok(())
+            }
+        }
     }
 
     /// Tells guests the world is closing and saves it.
     pub fn close(&mut self) -> anyhow::Result<()> {
-        self.server.shut_down();
-        self.save()
+        match &mut self.host {
+            Host::Local(server) => {
+                server.shut_down();
+                server.game.save()
+            }
+            Host::Remote(remote) => {
+                remote.close();
+                Ok(())
+            }
+        }
     }
 
     /// The server itself, for the test flights and scenes (`--bench`,
-    /// `--shot`), which drive the world directly. A remote host has none.
+    /// `--shot`), which drive the world directly. A worker's server has none.
     pub fn local(&self) -> Option<&Server> {
-        Some(&self.server)
+        match &self.host {
+            Host::Local(server) => Some(server),
+            Host::Remote(_) => None,
+        }
     }
 
     pub fn local_mut(&mut self) -> Option<&mut Server> {
-        Some(&mut self.server)
+        match &mut self.host {
+            Host::Local(server) => Some(server),
+            Host::Remote(_) => None,
+        }
     }
 }

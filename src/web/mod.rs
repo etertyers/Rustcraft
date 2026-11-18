@@ -8,6 +8,8 @@
 //! whatever the player stored in OPFS before the game starts, and writes of
 //! persisted files (options, packs) go to OPFS in the background.
 
+pub mod port;
+pub mod server_worker;
 mod store;
 pub mod workers;
 
@@ -76,7 +78,7 @@ pub fn pick_file(accept: &str) {
 const VANILLA_ZIP: &str = "vanilla.zip";
 const VANILLA_ROOT: &str = "assets/vanilla/assets/minecraft";
 
-fn js_err(err: impl std::fmt::Display) -> JsValue {
+pub(super) fn js_err(err: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&err.to_string())
 }
 
@@ -90,7 +92,7 @@ fn put(path: &str, data: &[u8]) -> std::io::Result<()> {
 
 /// Unpacks a zip into `dest` (a prefix such as `assets/`), keeping each
 /// entry's path under it. Returns the number of files.
-fn unzip_into(
+pub(super) fn unzip_into(
     bytes: &[u8],
     dest: &str,
     keep: impl Fn(&str) -> Option<String>,
@@ -115,12 +117,17 @@ fn unzip_into(
     Ok(count)
 }
 
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
-    let window = web_sys::window().ok_or("no window")?;
-    let response: web_sys::Response =
-        wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
-            .await?
-            .dyn_into()?;
+pub(super) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
+    // A page has a `window`; a worker has its own global scope.
+    let promise = match web_sys::window() {
+        Some(window) => window.fetch_with_str(url),
+        None => js_sys::global()
+            .dyn_into::<web_sys::WorkerGlobalScope>()?
+            .fetch_with_str(url),
+    };
+    let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(promise)
+        .await?
+        .dyn_into()?;
     if !response.ok() {
         return Err(js_err(format!("{url}: HTTP {}", response.status())));
     }

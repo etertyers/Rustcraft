@@ -220,3 +220,14 @@ export function musicFade(id, seconds) {
   };
   step();
 }
+
+// Calls `callback` every `ms` milliseconds, on the page or in a worker (the
+// server worker's tick, M76).
+export function everyMs(ms, callback) {
+  return setInterval(callback, ms);
+}
+
+// A message from a worker to the page that started it.
+export function workerPost(message) {
+  self.postMessage(message);
+}

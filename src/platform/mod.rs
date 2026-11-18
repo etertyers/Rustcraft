@@ -17,6 +17,7 @@ pub mod env;
 pub mod fs;
 pub mod layers;
 pub mod logging;
+pub mod server_worker;
 pub mod storage;
 pub mod task;
 pub mod time;
