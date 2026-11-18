@@ -382,7 +382,10 @@ impl ChunkManager {
             forgotten: Vec::new(),
         };
         // No threads here: the browser's generator workers take the generating.
+        // A client's chunks come from the server (which owns the pool, in its
+        // own worker on the web), so it asks for none.
         if manager.inline.is_some()
+            && !matches!(*manager.source, ChunkSource::Remote)
             && let Some(pool) = crate::platform::task::gen_pool()
         {
             manager.set_gen_pool(pool);

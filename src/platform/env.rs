@@ -90,6 +90,7 @@ const PAGE_ONLY: &[&str] = &[
     "webgl",
     "debug",
     "mute",
+    "server-worker",
     "eager",
     "nobackground",
 ];

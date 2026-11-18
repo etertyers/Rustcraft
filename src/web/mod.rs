@@ -8,6 +8,8 @@
 //! whatever the player stored in OPFS before the game starts, and writes of
 //! persisted files (options, packs) go to OPFS in the background.
 
+pub mod port;
+pub mod server_worker;
 mod store;
 pub mod workers;
 
@@ -76,7 +78,7 @@ pub fn pick_file(accept: &str) {
 const VANILLA_ZIP: &str = "vanilla.zip";
 const VANILLA_ROOT: &str = "assets/vanilla/assets/minecraft";
 
-fn js_err(err: impl std::fmt::Display) -> JsValue {
+pub(super) fn js_err(err: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&err.to_string())
 }
 
@@ -90,7 +92,7 @@ fn put(path: &str, data: &[u8]) -> std::io::Result<()> {
 
 /// Unpacks a zip into `dest` (a prefix such as `assets/`), keeping each
 /// entry's path under it. Returns the number of files.
-fn unzip_into(
+pub(super) fn unzip_into(
     bytes: &[u8],
     dest: &str,
     keep: impl Fn(&str) -> Option<String>,
@@ -115,12 +117,17 @@ fn unzip_into(
     Ok(count)
 }
 
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
-    let window = web_sys::window().ok_or("no window")?;
-    let response: web_sys::Response =
-        wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
-            .await?
-            .dyn_into()?;
+pub(super) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
+    // A page has a `window`; a worker has its own global scope.
+    let promise = match web_sys::window() {
+        Some(window) => window.fetch_with_str(url),
+        None => js_sys::global()
+            .dyn_into::<web_sys::WorkerGlobalScope>()?
+            .fetch_with_str(url),
+    };
+    let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(promise)
+        .await?
+        .dyn_into()?;
     if !response.ok() {
         return Err(js_err(format!("{url}: HTTP {}", response.status())));
     }
@@ -310,6 +317,45 @@ pub async fn vanilla_finish() -> Result<String, JsValue> {
 pub fn pack_add(name: &str, bytes: &[u8]) -> Result<(), JsValue> {
     let name = name.rsplit('/').next().unwrap_or(name);
     put(&format!("assets/downloads/resourcepacks/{name}"), bytes).map_err(js_err)
+}
+
+/// Makes the page's copy of `saves/` match OPFS: the server worker writes
+/// the worlds there, the page lists, exports and deletes them from memory.
+/// Nothing is written back to OPFS (the worker is the one writer).
+pub(super) async fn refresh_saves() -> Result<u32, JsValue> {
+    let listed = opfs_list().await?;
+    let paths: std::collections::HashSet<String> = js_sys::Array::from(&listed)
+        .iter()
+        .filter_map(|v| v.as_string())
+        .filter(|p| p.starts_with("saves/"))
+        .collect();
+    let mut changed = 0;
+    for path in &paths {
+        let Some(data) = opfs_read(path).await.ok().filter(|v| !v.is_undefined()) else {
+            continue;
+        };
+        let bytes = js_sys::Uint8Array::new(&data).to_vec();
+        if fs::read(path).ok().as_deref() != Some(bytes.as_slice()) {
+            store::without_persisting(|| put(path, &bytes)).map_err(js_err)?;
+            changed += 1;
+        }
+    }
+    // Files the worker no longer has (a world it deleted).
+    for rel in store::paths_under("saves/") {
+        let path = format!("saves/{rel}");
+        if !paths.contains(&path) {
+            store::without_persisting(|| fs::remove_file(&path)).map_err(js_err)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+/// Brings the page's copy of `saves/` up to date with OPFS (tests, console);
+/// the number of files that changed.
+#[wasm_bindgen]
+pub async fn refresh_saves_now() -> Result<u32, JsValue> {
+    refresh_saves().await
 }
 
 /// A saved world as a .zip (the Select World screen's Export; also for

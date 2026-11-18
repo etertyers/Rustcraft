@@ -68,7 +68,7 @@ impl WebStorage {
 
     fn forget(&self, path: &Path) {
         let key = key(path);
-        if persisted(&key) {
+        if persisted(&key) && !SKIP_PERSIST.load(std::sync::atomic::Ordering::Relaxed) {
             wasm_bindgen_futures::spawn_local(async move {
                 let _ = super::opfs_delete(&key).await;
             });

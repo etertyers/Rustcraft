@@ -446,3 +446,5 @@ One line per decision: date, decision, reason.
 2026-11-16: The web build's default style is Barebones when its packs are built in, else Vanilla, with Shaders off either way (`options::default_visuals`, M75): Shaders off is the web gate's configuration (M73); the user can switch.
 2026-11-16: The local web build carries Mojang's files, the packs and the jars in `target/web/builtin/` (git-ignored, M75), like the .app bundle; `--lite` is the build without them and the one to host; `scripts/check-web-output.sh` enforces both.
 2026-11-17: Web gate on a 60 Hz display = average >= 59.5 FPS with < 1% missed frames (same rule at 120 Hz); reason: hitting the refresh rate is the goal, Kenzo's answer to M76's open question.
+2026-11-18: M76 server worker is opt-in (`?server-worker`) until the web gate flight can drive a worker's world; reason: `--bench` flies the world through the in-process server.
+2026-11-18: The page's world list/export/import/delete use the page's own copy of `saves/`, refreshed from OPFS when the server worker closes, instead of a message protocol; reason: OPFS is shared and the worker is the only writer, so the copy can't diverge.

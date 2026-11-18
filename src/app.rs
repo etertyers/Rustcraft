@@ -736,8 +736,28 @@ impl App {
         }
         match self.world_kind.clone() {
             Some(kind) => {
-                let world = self.start_game(kind)?;
-                self.play(world);
+                use crate::platform::server_worker::{WorldSpec, requested};
+                let spec = match &kind {
+                    WorldKind::Saved { name, seed, mode } if requested() => Some(WorldSpec {
+                        name: name.clone(),
+                        seed: *seed,
+                        mode: *mode,
+                        cheats: false,
+                    }),
+                    WorldKind::New { name, mode } if requested() => Some(WorldSpec {
+                        name: name.clone(),
+                        seed: None,
+                        mode: *mode,
+                        cheats: false,
+                    }),
+                    _ => None,
+                };
+                if let Some(spec) = spec {
+                    self.play_remote(spec)?;
+                } else {
+                    let world = self.start_game(kind)?;
+                    self.play(world);
+                }
                 if let (Some(port), Some(server)) = (self.lan_at_start, self.server.as_mut()) {
                     let mode = server.mode();
                     match server.open_to_lan(port, mode, false) {
@@ -825,6 +845,38 @@ impl App {
         self.server = Some(ServerHost::new(server));
         self.link = Some(link);
         self.game = Some(game);
+    }
+
+    /// Plays a world whose server runs in a Web Worker (the browser build
+    /// with `?server-worker`): this window is only its client, like a LAN
+    /// guest, and the welcome arrives when the worker has the world ready.
+    fn play_remote(&mut self, spec: crate::platform::server_worker::WorldSpec) -> Result<()> {
+        let (items, models, mobs) = (
+            self.items.clone().expect("loaded in init"),
+            self.models.clone().expect("loaded in init"),
+            self.mob_defs.clone().expect("loaded in init"),
+        );
+        let (conn, remote) = crate::platform::server_worker::spawn(&spec)?;
+        let name = self.player_name();
+        let mut link = Client::join(conn, &name, self.player_settings());
+        link.send(crate::net::protocol::ClientMsg::Skin {
+            png: self.skin_png.clone(),
+            slim: self.skin_slim,
+        });
+        let mut game = Game::new_client(
+            items,
+            models,
+            mobs,
+            self.options.render_distance,
+            chunk_workers(),
+        );
+        game.apply_options(&self.options);
+        game.set_view_mode(self.start_view);
+        info!("playing {:?} from a server worker", spec.name);
+        self.server = Some(ServerHost::remote(remote));
+        self.link = Some(link);
+        self.game = Some(game);
+        Ok(())
     }
 
     /// Joins the world open to LAN at `address` (host:port): this window is
@@ -2562,6 +2614,34 @@ impl App {
                 }
                 return;
             }
+            MenuAction::Open(dir) if crate::platform::server_worker::requested() => {
+                let name = dir
+                    .path()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let spec = crate::platform::server_worker::WorldSpec {
+                    name,
+                    seed: None,
+                    mode: GameMode::default(),
+                    cheats: false,
+                };
+                return self.start_remote_from_menu(spec);
+            }
+            MenuAction::Create {
+                name,
+                seed,
+                mode,
+                cheats,
+            } if crate::platform::server_worker::requested() => {
+                let spec = crate::platform::server_worker::WorldSpec {
+                    name,
+                    seed: Some(seed),
+                    mode,
+                    cheats,
+                };
+                return self.start_remote_from_menu(spec);
+            }
             MenuAction::Open(dir) => Game::open(dir, items, models),
             MenuAction::Create {
                 name,
@@ -2587,6 +2667,22 @@ impl App {
                 error!("{err:#}");
                 if let Some(menu) = self.menu.as_mut() {
                     menu.error = Some(format!("Couldn't open the world: {err:#}"));
+                }
+            }
+        }
+    }
+
+    fn start_remote_from_menu(&mut self, spec: crate::platform::server_worker::WorldSpec) {
+        match self.play_remote(spec) {
+            Ok(()) => {
+                self.menu = None;
+                self.stack.set_in_world(true, true);
+                self.apply_grab();
+            }
+            Err(err) => {
+                error!("{err:#}");
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.error = Some(format!("Couldn't start the server worker: {err:#}"));
                 }
             }
         }

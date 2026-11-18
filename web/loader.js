@@ -3,11 +3,11 @@
 // builtin.js) and goes straight to "Click to start"; a --lite build, or built-in
 // files that fail to load, get the asset setup screen instead. The rest of the
 // built-in files (the sounds, the big pack) arrive while the game runs.
-import init, { boot, vanilla_add, vanilla_add_zip, vanilla_finish, vanilla_check, pack_add, builtin_pack_add, builtin_mod_add, bg_zip_start, bg_zip_step, start, save_now, export_world, import_world, storage_idle, read_file, camera, surface } from "./pkg/rustcraft.js";
+import init, { boot, vanilla_add, vanilla_add_zip, vanilla_finish, vanilla_check, pack_add, builtin_pack_add, builtin_mod_add, bg_zip_start, bg_zip_step, start, save_now, refresh_saves_now, export_world, import_world, storage_idle, read_file, camera, surface } from "./pkg/rustcraft.js";
 import { fetchManifest, layersOf, dropStale, layerBytes } from "./builtin.js";
 
 // For tests and the console: window.rustcraft.save_now() saves the world.
-window.rustcraft = { save_now, export_world, import_world, storage_idle, read_file, pack_add, camera, surface, loadTimes: {} };
+window.rustcraft = { save_now, refresh_saves_now, export_world, import_world, storage_idle, read_file, pack_add, camera, surface, loadTimes: {} };
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $("status").textContent = t; };
