@@ -59,6 +59,7 @@ use crate::{
         models::{DYE_COLORS, add_arrow, add_minecart, add_mob, add_mob_model},
     },
     server::Server,
+    server_host::ServerHost,
     shots,
     ui::{
         DebugStats, DebugUi, Hud,
@@ -265,7 +266,7 @@ pub struct App {
     chat: crate::ui::chat::Chat,
     /// The world being played, served in this process, and this client's
     /// link to it; `game` is the client's copy of the world.
-    server: Option<Server>,
+    server: Option<ServerHost>,
     link: Option<Client>,
     /// This player's skin as a PNG, sent to the server on joining.
     skin_png: Vec<u8>,
@@ -738,7 +739,7 @@ impl App {
                 let world = self.start_game(kind)?;
                 self.play(world);
                 if let (Some(port), Some(server)) = (self.lan_at_start, self.server.as_mut()) {
-                    let mode = server.game.player.mode;
+                    let mode = server.mode();
                     match server.open_to_lan(port, mode, false) {
                         Ok(port) => println!("open to LAN on port {port}"),
                         Err(err) => error!("can't open to LAN: {err}"),
@@ -821,7 +822,7 @@ impl App {
         // frame.
         server.advance(0.0);
         link.receive(&mut game);
-        self.server = Some(server);
+        self.server = Some(ServerHost::new(server));
         self.link = Some(link);
         self.game = Some(game);
     }
@@ -877,7 +878,7 @@ impl App {
                 format!("Couldn't open to LAN: {err}")
             }
         };
-        server.game.player.show(text);
+        server.tell_host(text);
         self.resume();
     }
 
@@ -1199,7 +1200,12 @@ impl App {
     /// pointer on the slot the scene names.
     fn show_staged_screen(&mut self) {
         use crate::game::ShotScreen;
-        let world = self.server.as_ref().map(|s| &s.game).or(self.game.as_ref());
+        let world = self
+            .server
+            .as_ref()
+            .and_then(|s| s.local())
+            .map(|s| &s.game)
+            .or(self.game.as_ref());
         let Some(staged) = world.and_then(Game::shot_ui) else {
             return;
         };
@@ -1599,7 +1605,7 @@ impl App {
         if self.bench.is_none() && self.shot.is_none() && self.playing() && self.stack.is_empty() {
             self.pause = Some(PauseMenu {
                 can_open_lan: self.server.as_ref().is_some_and(|s| s.lan_port().is_none()),
-                world_cheats: self.server.as_ref().is_some_and(|s| s.game.cheats),
+                world_cheats: self.server.as_ref().is_some_and(|s| s.cheats()),
                 ..PauseMenu::default()
             });
             self.stack.push(Layer::Pause);
@@ -1732,11 +1738,10 @@ impl App {
     /// Saves the world and goes back to the title screen.
     fn quit_to_title(&mut self) {
         self.tell_server(crate::net::protocol::ClientMsg::Disconnect);
-        if let Some(mut server) = self.server.take() {
-            server.shut_down();
-            if let Err(err) = server.game.save() {
-                error!("saving on quitting to the title failed: {err:#}");
-            }
+        if let Some(mut server) = self.server.take()
+            && let Err(err) = server.close()
+        {
+            error!("saving on quitting to the title failed: {err:#}");
         }
         self.link = None;
         self.game = None;
@@ -2655,7 +2660,10 @@ impl App {
             return;
         };
         // The bench flies the world's player; this client follows.
-        if let (Some(bench), Some(server)) = (&self.bench, self.server.as_mut()) {
+        if let (Some(bench), Some(server)) = (
+            &self.bench,
+            self.server.as_mut().and_then(|s| s.local_mut()),
+        ) {
             let world = &mut server.game;
             if let Some(start) = bench.start().filter(|_| world.time() == 0) {
                 world.teleport(glam::DVec3::from_array(start), 0.0, -0.35);
@@ -2691,7 +2699,7 @@ impl App {
             return self.leave_world(reason);
         }
         // `/stop` saves and goes back to the title screen.
-        if self.server.as_ref().is_some_and(|s| s.stopping) {
+        if self.server.as_ref().is_some_and(|s| s.stopping()) {
             return self.quit_to_title();
         }
         // Another dimension's chunks replace this one's.
@@ -2756,7 +2764,7 @@ impl App {
         if let Some(run) = self.shot.as_mut() {
             match run.staged {
                 None if game.chunks.settled(center) && lod_settled => {
-                    match self.server.as_mut() {
+                    match self.server.as_mut().and_then(|s| s.local_mut()) {
                         Some(server) => (run.shot.stage)(&mut server.game),
                         None => (run.shot.stage)(game),
                     }
@@ -3374,6 +3382,7 @@ impl App {
                 .or(self
                     .server
                     .as_ref()
+                    .and_then(|s| s.local())
                     .map_or(game.shot_advancements(), |s| s.game.shot_advancements()))
                 .and_then(|tab| advancements_view(game, self.icons.as_deref(), tab)),
             effects: game
@@ -3553,6 +3562,7 @@ impl App {
                         let generated = self
                             .server
                             .as_ref()
+                            .and_then(|s| s.local())
                             .map_or(game.chunks.work_stats(), |s| s.game.chunks.work_stats());
                         let stats = game.chunks.work_stats();
                         (generated.generated.summary(), stats.meshed.summary())
@@ -3821,7 +3831,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if crate::platform::window::take_save_request()
             && let Some(server) = self.server.as_mut()
-            && let Err(err) = server.game.save()
+            && let Err(err) = server.save()
         {
             error!("saving the world failed: {err:#}");
         }
@@ -3846,11 +3856,10 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(server) = self.server.as_mut() {
-            server.shut_down();
-            if let Err(err) = server.game.save() {
-                error!("saving on quit failed: {err:#}");
-            }
+        if let Some(server) = self.server.as_mut()
+            && let Err(err) = server.close()
+        {
+            error!("saving on quit failed: {err:#}");
         }
         // Drop the GPU surface before the window it points to.
         self.debug_ui = None;

@@ -33,6 +33,7 @@ pub mod platform;
 pub mod player;
 pub mod render;
 pub mod server;
+pub mod server_host;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod setup;
 pub mod shots;
