@@ -74,6 +74,10 @@ The browser keeps Cmd+W / Ctrl+W (close tab), Cmd+Q, Ctrl+T, Cmd+R / Ctrl+R and 
 
 Browsers give a page the storage (OPFS) and the GPU (WebGPU) the game needs only on `https://` or `http://localhost`. So `http://<the Mac's address>:8080/` does **not** work from another computer. Use `scripts/serve-web.sh --https`: it makes a self-signed certificate in `target/web-cert/` and prints `https://<the Mac's address>:8080/`; open that on the PC, click through the one certificate warning ("Advanced", "Proceed"), and pick Minecraft's files at the setup screen. The loader says so if the page isn't on a secure address.
 
+## The server in its own worker (M76, opt-in)
+
+`?server-worker` (with `?creative`, `?world=Name&seed=N`, or Create/Open in the menu) starts the world's server in a Web Worker with its own wasm instance: `web/worker.js` `server` kind, `src/web/server_worker.rs`. The page is only the client (the same protocol as a LAN guest, over a `MessagePort`). The worker needs just `assets.zip` (no Minecraft files or packs): block models with placeholder texture rects are enough for lighting and shapes. It owns the generator workers, and is the only writer of `saves/` in OPFS (synchronous access handles). Tests: `web/test/server-worker*.mjs`. Not the default yet (see `docs/milestones/v1.6.md`, M76).
+
 ## What runs where today
 
 - The page is the client: winit on a canvas, wgpu on WebGPU (WebGL2 is requested as the fallback, but untested), egui, kira audio, input.
