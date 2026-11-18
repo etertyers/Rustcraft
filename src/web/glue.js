@@ -175,3 +175,48 @@ export function onLeavingPage(cb) {
   document.addEventListener("visibilitychange", () => { if (document.hidden) cb(); });
   addEventListener("pagehide", () => cb());
 }
+
+// Background music in the browser (M76): kira can't stream on the web, so it
+// decodes a whole track (a few minutes of stereo float: 100+ MB, a ~450 ms
+// stall of the page). A media element streams and decodes off the page's
+// thread. Used where the browser can play Ogg Vorbis; kira is the fallback.
+const tracks = new Map();
+let nextTrack = 1;
+export function musicSupported() {
+  try { return new Audio().canPlayType('audio/ogg; codecs="vorbis"') !== ""; } catch { return false; }
+}
+export function musicStart(bytes, volume) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: "audio/ogg" }));
+  const audio = new Audio(url);
+  audio.volume = Math.min(1, Math.max(0, volume));
+  const id = nextTrack++;
+  const track = { audio, url, over: false };
+  const finish = () => { track.over = true; URL.revokeObjectURL(url); };
+  audio.addEventListener("ended", finish);
+  audio.addEventListener("error", finish);
+  audio.play().catch(finish);
+  tracks.set(id, track);
+  return id;
+}
+export function musicPlaying(id) {
+  const t = tracks.get(id);
+  if (!t || t.over) { tracks.delete(id); return false; }
+  return !t.audio.paused || !t.audio.ended;
+}
+export function musicVolume(id, volume) {
+  const t = tracks.get(id);
+  if (t && !t.over) t.audio.volume = Math.min(1, Math.max(0, volume));
+}
+export function musicFade(id, seconds) {
+  const t = tracks.get(id);
+  if (!t || t.over || t.fading) return;
+  t.fading = true;
+  const start = t.audio.volume, began = performance.now();
+  const step = () => {
+    const k = (performance.now() - began) / (seconds * 1000);
+    if (k >= 1) { t.audio.pause(); t.over = true; URL.revokeObjectURL(t.url); return; }
+    t.audio.volume = start * (1 - k);
+    setTimeout(step, 50);
+  };
+  step();
+}

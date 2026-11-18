@@ -60,7 +60,8 @@ for (let i = 1; i <= runs; i++) {
     results.push(JSON.parse(raw));
     (await import("node:fs")).writeFileSync(`/tmp/${name}-logs.txt`, logs.join("\n"));
     console.log(logs.filter((l) => /flight|ended at|display:|generator workers|WARN.*(shader|pipeline)/i.test(l)).map((l) => l.slice(0, 330)).join("\n"));
-    console.log(`run ${i}: ${results.at(-1).measures.average_fps.toFixed(1)} fps avg, 1% low ${results.at(-1).measures.one_percent_low_fps.toFixed(1)}, worst ${results.at(-1).measures.worst_frame_ms.toFixed(1)} ms, over 33/50 ms: ${results.at(-1).measures.frames_over_33ms}/${results.at(-1).measures.frames_over_50ms}`);
+    const mm = results.at(-1).measures;
+    console.log(`run ${i}: ${mm.average_fps.toFixed(2)} fps avg (${mm.refresh_hz} Hz), missed ${mm.missed_frame_pct.toFixed(2)}%, 1% low ${mm.one_percent_low_fps.toFixed(1)}, worst ${mm.worst_frame_ms.toFixed(1)} ms, over 33/50 ms: ${mm.frames_over_33ms}/${mm.frames_over_50ms}`);
   } catch (e) {
     console.log(`run ${i} FAILED: ${e.message}`);
     (await import("node:fs")).writeFileSync(`/tmp/${name}-fail-logs.txt`, logs.join("\n"));
