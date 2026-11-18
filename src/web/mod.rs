@@ -319,6 +319,45 @@ pub fn pack_add(name: &str, bytes: &[u8]) -> Result<(), JsValue> {
     put(&format!("assets/downloads/resourcepacks/{name}"), bytes).map_err(js_err)
 }
 
+/// Makes the page's copy of `saves/` match OPFS: the server worker writes
+/// the worlds there, the page lists, exports and deletes them from memory.
+/// Nothing is written back to OPFS (the worker is the one writer).
+pub(super) async fn refresh_saves() -> Result<u32, JsValue> {
+    let listed = opfs_list().await?;
+    let paths: std::collections::HashSet<String> = js_sys::Array::from(&listed)
+        .iter()
+        .filter_map(|v| v.as_string())
+        .filter(|p| p.starts_with("saves/"))
+        .collect();
+    let mut changed = 0;
+    for path in &paths {
+        let Some(data) = opfs_read(path).await.ok().filter(|v| !v.is_undefined()) else {
+            continue;
+        };
+        let bytes = js_sys::Uint8Array::new(&data).to_vec();
+        if fs::read(path).ok().as_deref() != Some(bytes.as_slice()) {
+            store::without_persisting(|| put(path, &bytes)).map_err(js_err)?;
+            changed += 1;
+        }
+    }
+    // Files the worker no longer has (a world it deleted).
+    for rel in store::paths_under("saves/") {
+        let path = format!("saves/{rel}");
+        if !paths.contains(&path) {
+            store::without_persisting(|| fs::remove_file(&path)).map_err(js_err)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+/// Brings the page's copy of `saves/` up to date with OPFS (tests, console);
+/// the number of files that changed.
+#[wasm_bindgen]
+pub async fn refresh_saves_now() -> Result<u32, JsValue> {
+    refresh_saves().await
+}
+
 /// A saved world as a .zip (the Select World screen's Export; also for
 /// scripts).
 #[wasm_bindgen]

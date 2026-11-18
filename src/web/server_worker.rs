@@ -244,7 +244,14 @@ pub fn spawn(spec: &WorldSpec) -> anyhow::Result<(crate::client::ClientConnectio
                 .ok()
                 .and_then(|v| v.as_string());
             if kind.as_deref() == Some("closed") {
-                // Saved and written to OPFS: now the worker can go.
+                // Saved and written to OPFS: the page's copy of the saves
+                // catches up, and the worker can go.
+                wasm_bindgen_futures::spawn_local(async {
+                    match super::refresh_saves().await {
+                        Ok(n) => log::info!("saves refreshed from OPFS ({n} files changed)"),
+                        Err(err) => log::warn!("couldn't refresh the saves: {err:?}"),
+                    }
+                });
                 if let Some(target) = event.target()
                     && let Ok(worker) = target.dyn_into::<web_sys::Worker>()
                 {

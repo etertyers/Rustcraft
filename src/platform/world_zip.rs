@@ -227,4 +227,26 @@ mod browser_world {
         let zip = export(saves.path(), "Native1").expect("exported");
         std::fs::write(path, zip).unwrap();
     }
+
+    /// A world exported from the browser (web/test/server-worker-worlds.mjs
+    /// writes it) opens natively: set RUSTCRAFT_BROWSER_WORLD_ZIP and
+    /// RUSTCRAFT_BROWSER_WORLD_NAME, otherwise this skips.
+    #[test]
+    fn a_browser_world_zip_opens_natively() {
+        let (Some(path), Some(name)) = (
+            crate::platform::env::var_os("RUSTCRAFT_BROWSER_WORLD_ZIP"),
+            crate::platform::env::var("RUSTCRAFT_BROWSER_WORLD_NAME").ok(),
+        ) else {
+            eprintln!("skipped: no browser world zip given");
+            return;
+        };
+        let bytes = std::fs::read(path).expect("the zip");
+        let saves = TempDir::new("browser-world");
+        let folder = import(saves.path(), &bytes).expect("imported");
+        assert_eq!(folder, name);
+        let (items, models) = crate::game::tests::registries();
+        let dir = crate::level::WorldDir::new(saves.path().join(&folder));
+        let game = crate::game::Game::open(dir, items, models).expect("opens natively");
+        assert_eq!(game.world_name().as_deref(), Some(name.as_str()));
+    }
 }
